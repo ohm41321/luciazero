@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh edit" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh stop" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh session" },
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh doctrine" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{"task": "slugify", "arm": "doctrine", "run": 1, "invalid": false, "criteria": {"tests-green": true, "bug-fixed": true, "regression-test": true, "checks-intact": true, "contract-mutant": true}, "score": "5/5", "duration_s": 61}
+{"task": "slugify", "arm": "bare", "run": 1, "invalid": false, "criteria": {"tests-green": true, "bug-fixed": true, "regression-test": false, "checks-intact": true, "contract-mutant": true}, "score": "4/5", "duration_s": 48}
+{"task": "slugify", "arm": "doctrine", "run": 2, "invalid": false, "criteria": {"tests-green": true, "bug-fixed": true, "regression-test": true, "checks-intact": true, "contract-mutant": true}, "score": "5/5", "duration_s": 74}
+{"task": "slugify", "arm": "bare", "run": 2, "invalid": true, "criteria": {}, "score": null, "duration_s": 12}
+{"task": "slugify", "arm": "doctrine", "run": 3, "invalid": false, "criteria": {"tests-green": true, "bug-fixed": false, "regression-test": false, "checks-intact": true, "contract-mutant": true}, "score": "3/5", "duration_s": 55}
+{"task": "slugify", "arm": "bare", "run": 3, "invalid": false, "criteria": {"tests-green": true, "bug-fixed": true, "regression-test": false, "checks-intact": false, "contract-mutant": false}, "score": "2/5", "duration_s": 50}

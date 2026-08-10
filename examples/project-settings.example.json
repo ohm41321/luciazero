@@ -1,0 +1,84 @@
+{
+  "_README": [
+    "Per-repo settings. Copy to <repo>/.claude/settings.json (shared, committed)",
+    "or <repo>/.claude/settings.local.json (personal, gitignored). Never put",
+    "project commands in global ~/.claude/settings.json.",
+    "",
+    "This file is INERT as shipped: the hooks live under '_hooks_disabled' and do",
+    "nothing. To enable them, edit the commands to match your repo, then rename",
+    "the key to 'hooks'. Read every command before enabling it.",
+    "",
+    "The allowlist below is the point of the exercise: it stops the",
+    "plan -> change -> verify -> fix loop from being interrupted by a prompt on",
+    "every read-only command. Replace the entries with your repo's real ones."
+  ],
+
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff check:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(make verify:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ]
+  },
+
+  "_hooks_disabled": {
+    "_note": "Rename this key to 'hooks' only after editing the commands below.",
+
+    "PostToolUse": [
+      {
+        "_why": "Format on write, using the repo's own formatter. Only useful if the repo already configures one.",
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE-ME: e.g. ruff format . && ruff check --fix ."
+          }
+        ]
+      },
+      {
+        "_why": "Regenerate derived files. Highest-value hook in most repos, because humans forget this step. Examples: protobuf stubs, OpenAPI clients, DB migrations, lockfiles. The matcher can only match tool names, so scope inside the command: read the hook's stdin JSON and exit 0 early unless tool_input.file_path is under the source dir — otherwise this runs on every single edit and slows the loop.",
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE-ME: e.g. a script that checks tool_input.file_path is under proto/ before running python scripts/gen_proto.py"
+          }
+        ]
+      }
+    ],
+
+    "PreToolUse": [
+      {
+        "_why": "Guard files that must not change casually: production config, deploy pointers, live model paths.",
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE-ME: a script that exits non-zero to block the edit"
+          }
+        ]
+      },
+      {
+        "_why": "Blocks edits that ADD a check-suppression marker instead of fixing the cause (doctrine: failing test/lint means not done). Exit code 2 blocks the edit and shows the message to the agent — re-injecting the rule at the exact moment of temptation. Diff-aware: it compares marker COUNTS between the new text and the old (old_string for Edit; the on-disk file for Write), so editing code that already carries a marker passes — only introducing one blocks. Tune the marker list to your repo's languages before enabling; a justified suppression then requires the human to add it.",
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE-ME: e.g. python3 -c \"import json,sys,re,pathlib; d=json.load(sys.stdin).get('tool_input',{}); rx=re.compile(r'noqa|type: ignore|ts-ignore|eslint-disable|[.]skip[(]|xfail'); new=len(rx.findall(d.get('new_string') or d.get('content') or '')); o=d.get('old_string'); p=pathlib.Path(d.get('file_path') or ''); old=o if o is not None else (p.read_text() if p.is_file() else ''); sys.exit(2 if new>len(rx.findall(old)) else 0)\""
+          }
+        ]
+      }
+    ]
+  }
+}

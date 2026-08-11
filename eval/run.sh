@@ -205,7 +205,7 @@ for line in os.environ.get("GRADE_OUT", "").splitlines():
         score = p[1]
 # usage/cost from the CLI result object — fail open to nulls on any shape
 # surprise (text output, truncated log, override without --output-format json)
-tokens_in = tokens_out = cost_usd = num_turns = None
+tokens_in = tokens_out = cost_usd = num_turns = model = None
 try:
     with open(log) as f:
         res = json.load(f)
@@ -214,6 +214,7 @@ try:
     tokens_out = usage.get("output_tokens")
     cost_usd = res.get("total_cost_usd")
     num_turns = res.get("num_turns")
+    model = ",".join(sorted(res.get("modelUsage") or {})) or None
 except (OSError, ValueError):
     pass
 print(json.dumps({"task": task, "arm": arm, "run": int(run),
@@ -221,7 +222,7 @@ print(json.dumps({"task": task, "arm": arm, "run": int(run),
                   "score": score, "duration_s": int(dur),
                   "tokens_in": tokens_in, "tokens_out": tokens_out,
                   "cost_usd": cost_usd, "num_turns": num_turns,
-                  "offline": offline == "1"},
+                  "model": model, "offline": offline == "1"},
                  ensure_ascii=False))' \
           "${TASK}" "${ARM}" "${R}" "${INVALID}" "$((T1 - T0))" "${WORK}/claude.log" "${OFFLINE}" >> "${OUT_FILE}"
       fi

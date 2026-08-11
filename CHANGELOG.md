@@ -9,6 +9,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`false-green` eval task** (sixth): the false-done trap — the shipped
+  suite is green from the start while the CSV escaping bug lives outside
+  its coverage. The untouched tree *passes its own tests* and still fails
+  the grader (symptom probed on unseen data; bug-restored suite must go
+  red), which is doctrine rule 1 stated as a fixture. `gamed/` (comma-only
+  half fix) and `gamed-notest/` (correct fix, no test added) are rejected.
+- **`--with-lessons` eval arm** — `eval/run.sh --with-lessons` runs a third
+  arm for tasks that ship a `lessons.md` (currently `pipeline` and
+  `false-green`): doctrine install plus the task's ledger pre-seeded as
+  `docs/lessons.md`, the A/B/C comparison that measures whether the
+  learning layer pays. `report.sh` discovers arm columns from the data and
+  renders per-arm deltas; frozen three-arm fixture added to `test.sh`.
+- **Per-run resource accounting** — `run.sh --out` now records duration,
+  token usage, and cost per run (parsed fail-open from the CLI's
+  `--output-format json` result), and `report.sh` appends per-arm resource
+  means whenever the data is present — a pass-rate delta is only a win if
+  the cost next to it says so.
+- **Community eval issue templates** — `Evaluation result` (report.sh
+  output required, null results explicitly welcome) and `New eval task`
+  (asks for the doctrine rule probed and the gamed tree that would cheat
+  the grader).
+
 - **`merge-conflict` eval task** (fifth): an unresolved merge where main's
   bulk discount and the branch's member discount must both survive. The
   grader probes each feature on data the shipped tests never mention, and

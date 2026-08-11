@@ -1,0 +1,37 @@
+name: Evaluation result
+description: Share A/B numbers from running eval/run.sh — replications welcome, null results doubly so
+labels: [eval-result]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        The project's claims live or die on reproducible numbers, and one
+        machine's runs are not enough. A result that shows *no* doctrine
+        effect is as valuable as one that shows an effect — please post both.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup
+      description: Model, CLI version, luciazero version/SHA, task set, runs per arm, date, EVAL_CLAUDE_ARGS overrides if any.
+      placeholder: |
+        model: claude-sonnet-5
+        luciazero: v1.5.0
+        tasks: all
+        runs: 5 per arm
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: report.sh output
+      description: Paste the rendered table from `eval/report.sh results.jsonl` — not hand-edited numbers. Attach or link the raw JSONL if you can.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything that could bias the numbers — warm caches, prompt edits, aborted runs, INVALID counts.
+    validations:
+      required: false

@@ -281,12 +281,17 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   echo "ok  eval grader ${TN} red/green/anti-gamed"
 done
 
-# 4d2. report.sh renders the frozen fixture byte-exactly and rejects garbage
+# 4d2. report.sh renders the frozen fixtures byte-exactly and rejects garbage
 RPT="$(mktemp)"
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results.jsonl" > "${RPT}" \
   || { rm -f "${RPT}"; fail "report.sh failed on the checked-in fixture"; }
 cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report.md" \
   || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report.md"; }
+# the three-arm + usage fixture: lessons column, per-arm deltas, resource means
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-lessons.jsonl" > "${RPT}" \
+  || { rm -f "${RPT}"; fail "report.sh failed on the lessons fixture"; }
+cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report-lessons.md" \
+  || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report-lessons.md"; }
 printf 'not json\n' > "${RPT}"
 if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
   rm -f "${RPT}"; fail "report.sh accepted malformed input"

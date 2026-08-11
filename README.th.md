@@ -72,7 +72,7 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 | `skills/retro/` | เก็บเกี่ยวบทเรียนลง notes ของโปรเจกต์ | เมื่อเรียก |
 | `claude/agents/reviewer.md` | Subagent ผู้ตรวจเชิงหักล้าง | เมื่อเรียก (ก่อนประกาศ "เสร็จ") |
 | `claude/hooks/` | Enforcement pack — hook เตือน verify, strict gate แบบ opt-in, statusline | Opt-in |
-| `eval/` | A/B harness — 5 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | รันเอง (เสียเงิน API) |
+| `eval/` | A/B harness — 6 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | รันเอง (เสียเงิน API) |
 | `demo.sh` | เดโม 2 นาที — บั๊กฝัง, session ของคุณเอง, grader เป็นกลาง | รันเอง |
 
 เทียบกับ superpowers, SuperClaude, proof-loop และของ built-in ใน harness — รวมทั้งจุดที่เขาทำได้ดีกว่า: [docs/comparison.md](docs/comparison.md)
@@ -200,7 +200,7 @@ exit code จับ *ผ่านเทสต์แต่ผิด* ไม่ไ
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia-laptop.png" width="240" alt="Lucia นั่งไล่ eval harness บนโน้ตบุ๊ก">
 </p>
 
-**Setup วัดตัวเอง** `eval/` คือ A/B harness เล็ก ๆ: task บั๊กฝังชุดเดียวกัน รันแบบมีและไม่มี doctrine แล้ว grade แบบ offline ด้วยเกณฑ์พฤติกรรม ห้า task แต่ละตัวจิ้มกฎคนละข้อ — slugify (วินัย regression test), red-suite (แรงล่อให้บิด test เข้าหาบั๊ก), flaky-report (ทำความล้มเหลวแบบมา ๆ หาย ๆ ให้ deterministic), pipeline (แก้ต้นเหตุ vs แปะที่อาการ ตัดสินด้วย diff locality), merge-conflict (merge ค้างกลางทาง — ห้ามทำ feature ฝั่งใดฝั่งหนึ่งหายเงียบ ๆ) CI พิสูจน์ grader ทุกตัวสามทางทุก push: `reference/` ต้องผ่าน, `project/` ที่ยังไม่แก้ต้องตก, tree โกง `gamed/` ต้องถูกปฏิเสธ `eval/run.sh --runs N` + `eval/report.sh` สร้างตาราง pass-rate รายเกณฑ์; ดู `eval/README.md` รวมทั้ง honesty box เรื่อง n น้อย
+**Setup วัดตัวเอง** `eval/` คือ A/B harness เล็ก ๆ: task บั๊กฝังชุดเดียวกัน รันแบบมีและไม่มี doctrine แล้ว grade แบบ offline ด้วยเกณฑ์พฤติกรรม หก task แต่ละตัวจิ้มกฎคนละข้อ — slugify (วินัย regression test), red-suite (แรงล่อให้บิด test เข้าหาบั๊ก), flaky-report (ทำความล้มเหลวแบบมา ๆ หาย ๆ ให้ deterministic), pipeline (แก้ต้นเหตุ vs แปะที่อาการ ตัดสินด้วย diff locality), merge-conflict (merge ค้างกลางทาง — ห้ามทำ feature ฝั่งใดฝั่งหนึ่งหายเงียบ ๆ), false-green (suite เขียวตั้งแต่ต้นแต่บั๊กอยู่นอก coverage — กับดัก false done) `--with-lessons` เพิ่ม arm ที่สามที่ seed `docs/lessons.md` ของ task ไว้ล่วงหน้า วัดว่า learning layer คุ้มจริงไหม; ผลรันยังบันทึก duration, token และค่าใช้จ่ายต่อ run ด้วย CI พิสูจน์ grader ทุกตัวสามทางทุก push: `reference/` ต้องผ่าน, `project/` ที่ยังไม่แก้ต้องตก, tree โกง `gamed/` ต้องถูกปฏิเสธ `eval/run.sh --runs N` + `eval/report.sh` สร้างตาราง pass-rate รายเกณฑ์; ดู `eval/README.md` รวมทั้ง honesty box เรื่อง n น้อย
 
 ## ความปลอดภัย
 

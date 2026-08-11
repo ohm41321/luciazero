@@ -1,0 +1,30 @@
+name: New eval task
+description: Propose a planted-bug task for the eval harness
+labels: [eval-task]
+body:
+  - type: textarea
+    id: rule
+    attributes:
+      label: Doctrine rule probed
+      description: Which rule does this task measure, and what agent behavior separates the arms? The best tasks have a fingerprint criterion a lucky guess cannot pass.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Task design
+      description: >
+        The planted bug, the natural user prompt (never hinting at tests or
+        the doctrine), and the grading criteria. Remember the contract
+        test.sh enforces on every task: `reference/` passes, unfixed
+        `project/` fails, at least one checked-in `gamed*/` cheat tree is
+        rejected, grader prints CRIT/SCORE lines, offline and deterministic.
+    validations:
+      required: true
+  - type: textarea
+    id: gaming
+    attributes:
+      label: How would you cheat it?
+      description: The gamed tree you would build to fool a naive grader — and the criterion that catches it.
+    validations:
+      required: true

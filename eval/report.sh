@@ -26,13 +26,28 @@ with open(path) as f:
                 raise ValueError("criteria is not an object")
             rows.append({"task": row["task"], "arm": row["arm"],
                          "invalid": bool(row["invalid"]),
-                         "criteria": dict(row["criteria"])})
+                         "criteria": dict(row["criteria"]),
+                         "duration_s": row.get("duration_s"),
+                         "tokens_out": row.get("tokens_out"),
+                         "cost_usd": row.get("cost_usd")})
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             sys.exit(f"FAIL: {path}:{i}: malformed result line ({e})")
 if not rows:
     sys.exit(f"FAIL: {path}: no result rows")
 
-ARMS = ("doctrine", "bare")
+# arm columns are discovered from the data, in a fixed preferred order, so a
+# --with-lessons results file grows a third column without a flag here
+PREFERRED = ("doctrine", "lessons", "bare")
+seen = {r["arm"] for r in rows}
+ARMS = [a for a in PREFERRED if a in seen] + sorted(seen - set(PREFERRED))
+DELTA_ARMS = [a for a in ARMS if a != "bare"] if "bare" in seen else []
+DELTA_HDRS = ["delta"] if DELTA_ARMS == ["doctrine"] else \
+             [f"{a}-bare" for a in DELTA_ARMS]
+
+def mean(vals):
+    vals = [v for v in vals if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
 tasks = sorted({r["task"] for r in rows})
 print("# Eval report")
 low_n = False
@@ -46,10 +61,11 @@ for task in tasks:
     if min(n.values()) < 5:
         low_n = True
     crits = []           # first-seen order, i.e. the grader's order
-    for r in valid["doctrine"] + valid["bare"]:
-        for c in r["criteria"]:
-            if c not in crits:
-                crits.append(c)
+    for arm in ARMS:
+        for r in valid[arm]:
+            for c in r["criteria"]:
+                if c not in crits:
+                    crits.append(c)
 
     def rate(arm, pred):
         if n[arm] == 0:
@@ -69,18 +85,43 @@ for task in tasks:
         return f"{pp:+d}pp"
 
     print(f"\n## {task}\n")
-    print("| criterion | doctrine | bare | delta |")
-    print("|---|---|---|---|")
+    print("| criterion | " + " | ".join(ARMS + DELTA_HDRS) + " |")
+    print("|---" * (1 + len(ARMS) + len(DELTA_HDRS)) + "|")
     for c in crits:
-        d = rate("doctrine", lambda r: r["criteria"].get(c, False))
-        b = rate("bare", lambda r: r["criteria"].get(c, False))
-        print(f"| {c} | {cell(d)} | {cell(b)} | {delta(d, b)} |")
+        by_arm = {a: rate(a, lambda r: r["criteria"].get(c, False)) for a in ARMS}
+        cells = [cell(by_arm[a]) for a in ARMS] + \
+                [delta(by_arm[a], by_arm.get("bare")) for a in DELTA_ARMS]
+        print(f"| {c} | " + " | ".join(cells) + " |")
     ok = lambda r: bool(r["criteria"]) and all(r["criteria"].values())
-    d, b = rate("doctrine", ok), rate("bare", ok)
-    print(f"| **all criteria** | {cell(d)} | {cell(b)} | {delta(d, b)} |")
+    by_arm = {a: rate(a, ok) for a in ARMS}
+    cells = [cell(by_arm[a]) for a in ARMS] + \
+            [delta(by_arm[a], by_arm.get("bare")) for a in DELTA_ARMS]
+    print("| **all criteria** | " + " | ".join(cells) + " |")
     inv = ", ".join(f"{arm} {invalid[arm]}" for arm in ARMS if invalid[arm])
     if inv:
         print(f"\ninvalid runs excluded: {inv}")
+    # resource means, only when the results actually carry usage data — older
+    # files (and runs without --output-format json) render exactly as before
+    if any(r["cost_usd"] is not None or r["tokens_out"] is not None
+           for arm in ARMS for r in valid[arm]):
+        parts = []
+        for arm in ARMS:
+            if not valid[arm]:
+                continue
+            bits = []
+            d = mean([r["duration_s"] for r in valid[arm]])
+            t = mean([r["tokens_out"] for r in valid[arm]])
+            c = mean([r["cost_usd"] for r in valid[arm]])
+            if d is not None:
+                bits.append(f"{d:.0f}s")
+            if t is not None:
+                bits.append(f"{t / 1000:.1f}k out-tok")
+            if c is not None:
+                bits.append(f"${c:.2f}")
+            if bits:
+                parts.append(f"{arm} " + " / ".join(bits))
+        if parts:
+            print("\nmeans over valid runs: " + "; ".join(parts))
 
 print("\n---")
 if low_n:

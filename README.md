@@ -72,7 +72,7 @@ No dependencies, no runtime (python3 only for the opt-in enforcement pack):
 | `skills/retro/` | Procedure — harvest lessons into project notes | On demand |
 | `claude/agents/reviewer.md` | Adversarial reviewer subagent | On demand (before "done") |
 | `claude/hooks/` | Enforcement pack — verify-nudge hooks, opt-in strict gate, statusline | Opt-in |
-| `eval/` | A/B harness — 5 planted-bug tasks, self-proving graders | Manual (costs API money) |
+| `eval/` | A/B harness — 6 planted-bug tasks, self-proving graders | Manual (costs API money) |
 | `demo.sh` | Two-minute demo — planted bug, your session, objective grader | Manual |
 
 How it stacks up against superpowers, SuperClaude, proof-loop, and the harness built-ins — including what they do better: [docs/comparison.md](docs/comparison.md).
@@ -200,7 +200,7 @@ An exit code cannot catch *passes-the-tests-but-wrong*. For risky diffs the doct
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia-laptop.png" width="240" alt="Lucia grinding through the eval harness on her laptop">
 </p>
 
-**The setup measures itself.** `eval/` is a small A/B harness: the same planted-bug tasks run with and without the doctrine installed, graded offline by behavioral criteria. Five tasks, each probing a different rule — slugify (regression-test discipline), red-suite (bending tests toward a bug), flaky-report (making an intermittent failure deterministic), pipeline (root-cause vs symptom patch, graded by diff locality), merge-conflict (a botched merge where neither side's feature may be silently dropped). CI proves every grader three ways on every push: `reference/` passes, unfixed `project/` fails, and the checked-in `gamed/` cheat trees are rejected. `eval/run.sh --runs N` + `eval/report.sh` produce per-criterion pass-rate tables; see `eval/README.md`, including its honesty box about small n.
+**The setup measures itself.** `eval/` is a small A/B harness: the same planted-bug tasks run with and without the doctrine installed, graded offline by behavioral criteria. Six tasks, each probing a different rule — slugify (regression-test discipline), red-suite (bending tests toward a bug), flaky-report (making an intermittent failure deterministic), pipeline (root-cause vs symptom patch, graded by diff locality), merge-conflict (a botched merge where neither side's feature may be silently dropped), false-green (a suite that is green from the start while the bug lives outside its coverage — the false-done trap). `--with-lessons` adds a third arm that pre-seeds the task's `docs/lessons.md`, measuring whether the learning layer pays; results also record per-run duration, tokens, and cost. CI proves every grader three ways on every push: `reference/` passes, unfixed `project/` fails, and the checked-in `gamed/` cheat trees are rejected. `eval/run.sh --runs N` + `eval/report.sh` produce per-criterion pass-rate tables; see `eval/README.md`, including its honesty box about small n.
 
 ## Safety
 

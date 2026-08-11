@@ -208,6 +208,20 @@ An exit code cannot catch *passes-the-tests-but-wrong*. For risky diffs the doct
 
 **The setup measures itself.** `eval/` is a small A/B harness: the same planted-bug tasks run with and without the doctrine installed, graded offline by behavioral criteria. Six tasks, each probing a different rule — slugify (regression-test discipline), red-suite (bending tests toward a bug), flaky-report (making an intermittent failure deterministic), pipeline (root-cause vs symptom patch, graded by diff locality), merge-conflict (a botched merge where neither side's feature may be silently dropped), false-green (a suite that is green from the start while the bug lives outside its coverage — the false-done trap). `--with-lessons` adds a third arm that pre-seeds the task's `docs/lessons.md`, measuring whether the learning layer pays; results also record per-run duration, tokens, and cost. CI proves every grader three ways on every push: `reference/` passes, unfixed `project/` fails, and the checked-in `gamed/` cheat trees are rejected. `eval/run.sh --runs N` + `eval/report.sh` produce per-criterion pass-rate tables; see `eval/README.md`, including its honesty box about small n.
 
+**Latest results (2026-08-11).** Six tasks, doctrine vs bare (+ lessons on the two tasks that ship a ledger), two models — all-criteria pass rates, n = valid runs per arm:
+
+| task | haiku · doctrine | haiku · bare | haiku Δ | haiku · lessons | sonnet · doctrine | sonnet · bare | sonnet Δ | sonnet · lessons |
+|---|---|---|---|---|---|---|---|---|
+| false-green | 8/10 (80%) | 7/10 (70%) | +10pp | 7/10 (70%) | 5/5 (100%) | 4/5 (80%) | +20pp | 5/5 (100%) |
+| flaky-report | 10/10 (100%) | 10/10 (100%) | +0pp | – | 5/5 (100%) | 5/5 (100%) | +0pp | – |
+| merge-conflict | 1/10 (10%) | 0/10 (0%) | +10pp | – | 3/5 (60%) | 0/5 (0%) | +60pp | – |
+| pipeline | 4/10 (40%) | 0/10 (0%) | +40pp | 1/10 (10%) | 5/5 (100%) | 3/5 (60%) | +40pp | 5/5 (100%) |
+| red-suite | 10/10 (100%) | 10/10 (100%) | +0pp | – | 5/5 (100%) | 5/5 (100%) | +0pp | – |
+| slugify | 3/10 (30%) | 0/10 (0%) | +30pp | – | 5/5 (100%) | 0/5 (0%) | +100pp | – |
+| **total** | **36/60 (60%)** | **27/60 (45%)** | **+15pp** | **8/20 (40%)** | **28/30 (93%)** | **17/30 (56%)** | **+37pp** | **10/10 (100%)** |
+
+Haiku ran 10 rounds with zero infrastructure failures. Sonnet ran 5 rounds; in round 5 the OAuth session expired mid-run, so eight arms (merge-conflict/bare, pipeline all arms, red-suite both, slugify both) came back INVALID. They were re-run to completion after re-authenticating, so every sonnet arm is now at n=5 with no invalid rows left. Those eight top-up runs executed on Windows/Git Bash against the same commit — same tasks, same graders, different OS from the other 62 rows. Sonnet rows report modelUsage as claude-sonnet-5 plus claude-haiku-4-5 (subtasks run on haiku). Opus has not been measured yet — a third model column is planned. Δ is doctrine − bare pass-rate, floored. Regenerate anytime with `eval/report.sh results-haiku.jsonl` / `eval/report.sh results-sonnet.jsonl`; the honesty box in `eval/README.md` applies — n is tiny, compare rates, never single runs.
+
 ## Safety
 
 Hooks execute commands on your machine automatically. The example settings file is inert by design — every hook in it is commented out and must be edited before it does anything. Read any hook before enabling it, and do not enable one that pushes, deploys, deletes, or writes outside the repository.

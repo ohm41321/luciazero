@@ -62,7 +62,11 @@ for task in tasks:
     invalid = {arm: sum(1 for r in trows if r["arm"] == arm and r["invalid"])
                for arm in ARMS}
     n = {arm: len(valid[arm]) for arm in ARMS}
-    if min(n.values()) < 5:
+    # only arms this task actually ran count toward the low-n warning — a
+    # lessons column absent because the task ships no lessons.md is not
+    # missing data
+    present = [arm for arm in ARMS if any(r["arm"] == arm for r in trows)]
+    if present and min(n[arm] for arm in present) < 5:
         low_n = True
     crits = []           # first-seen order, i.e. the grader's order
     for arm in ARMS:

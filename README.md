@@ -180,7 +180,7 @@ It is deliberately short, and `test.sh` enforces a word-count ceiling on it, bec
 
 `/done` is the closeout ritual: full-tier verify with the decisive line quoted, a skeptic pass over the final diff, an independent adversarial review when the diff earns it, an explicit scope check naming anything left out, and a fixed report format. The test-honesty question — *would the new tests fail if the change were reverted?* — has a mechanical form: the bundled `scripts/revert-probe.sh` checks the old code into a throwaway git worktree, overlays only the changed test files, runs your verify command there, and inverts the result (exit 0/1/2 = bites/vacuous/unassessable).
 
-`/handoff` writes a state capsule (`HANDOFF.md`) when a session ends mid-task: goal, verified state, the one literal next command, open and refuted hypotheses, landmines. The next session — or the other harness — reads it, re-verifies against the tree, and deletes it.
+`/handoff` writes a state capsule (`HANDOFF.md`) when a session ends mid-task: goal, verified state, the one literal next command, open and refuted hypotheses, landmines, and a `Read first` section — which `docs/lessons.md` entries touch the unfinished work, plus any machine-local heuristics copied verbatim (the capsule is their only way across machines). The next session — or the other harness — reads it, follows the pointers, re-verifies against the tree, and deletes it.
 
 `/experiment` is the measured-change protocol for "make it faster" work: metric and win threshold defined before touching code, baseline with repetitions, one variable per experiment, verdict recorded to `docs/experiments.md` — where a null result is worth as much as a win, and losers are reverted immediately.
 

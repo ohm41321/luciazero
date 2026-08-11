@@ -30,6 +30,12 @@ Create `HANDOFF.md` at the repo root:
 
 ## Landmines
 - <thing that looks safe but is not, discovered this session>
+
+## Read first
+- docs/lessons.md: <quote the symptom line of each lesson that touches the
+  unfinished work — 1-3 entries, not the whole ledger>
+- from this machine's cross-repo heuristics (do not travel with the repo):
+  <copy the specific entries that apply, verbatim>
 ```
 
 Rules:
@@ -38,6 +44,7 @@ Rules:
 - **State only what this session knows.** No aspirations, no backlog — that belongs in the issue tracker.
 - **Refuted hypotheses stay in the capsule** — they are exactly what the next session would otherwise waste an hour re-deriving. If a lesson is permanent (true beyond this task), it also goes through `/retro`.
 - Uncommitted changes: say so explicitly, and name the files. The capsule must not imply a clean tree that is not clean.
+- **Read first is a selection, not a copy.** The repo's `docs/lessons.md` travels with the code — quote only the symptom lines relevant to the unfinished work so the reader knows which entries to open before touching it (rule 8, applied for them). Machine-local memory is the exception: entries in this machine's `luciazero-heuristics.md` (config dir) do **not** travel, so any that apply get copied verbatim — the capsule is their only ride. Nothing relevant? Say `none` — an empty section is information too.
 
 ## 2. Route it
 
@@ -49,7 +56,7 @@ Rules:
 
 A session that finds `HANDOFF.md`:
 
-1. Read it **before** touching the code.
+1. Read it **before** touching the code — including the lessons entries `Read first` points at, and copy any machine-local heuristics it carries into your own config-dir ledger if they earn their keep.
 2. Run the Verify command(s) to confirm the described state is still true — the capsule describes the past; the tree is the truth.
 3. **Delete the capsule** (or `git rm` on the branch) once absorbed. Never leave a consumed capsule to go stale; never update one incrementally across many sessions — write a fresh one at each handoff.
 

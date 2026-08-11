@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`/handoff` capsules carry memory pointers** — a new `Read first`
+  section quotes the `docs/lessons.md` entries relevant to the unfinished
+  work (a selection, never a copy — the ledger travels with the repo) and
+  copies applicable machine-local `luciazero-heuristics.md` entries
+  verbatim, since the capsule is the only way those cross machines. The
+  consume protocol tells the reader to follow the pointers before touching
+  code and to adopt carried heuristics that earn their keep.
+
 - **`eval/run.sh --use-login`** — run the real eval on an existing Claude
   subscription (Pro/Max) instead of API dollars: seeds each per-run sandbox
   config dir with this machine's login state — `~/.claude.json`, plus

@@ -210,17 +210,38 @@ exit code จับ *ผ่านเทสต์แต่ผิด* ไม่ไ
 
 **ผลล่าสุด (2026-08-11)** หก task, doctrine vs bare (+ lessons เฉพาะสอง task ที่มี ledger), สองโมเดล — อัตราผ่านเกณฑ์รวม (all criteria), n = จำนวนรอบที่ valid ต่อ arm:
 
-| task | haiku · doctrine | haiku · bare | haiku Δ | haiku · lessons | sonnet · doctrine | sonnet · bare | sonnet Δ | sonnet · lessons |
-|---|---|---|---|---|---|---|---|---|
-| false-green | 8/10 (80%) | 7/10 (70%) | +10pp | 7/10 (70%) | 5/5 (100%) | 4/5 (80%) | +20pp | 5/5 (100%) |
-| flaky-report | 10/10 (100%) | 10/10 (100%) | +0pp | – | 5/5 (100%) | 5/5 (100%) | +0pp | – |
-| merge-conflict | 1/10 (10%) | 0/10 (0%) | +10pp | – | 3/5 (60%) | 0/5 (0%) | +60pp | – |
-| pipeline | 4/10 (40%) | 0/10 (0%) | +40pp | 1/10 (10%) | 5/5 (100%) | 3/5 (60%) | +40pp | 5/5 (100%) |
-| red-suite | 10/10 (100%) | 10/10 (100%) | +0pp | – | 5/5 (100%) | 5/5 (100%) | +0pp | – |
-| slugify | 3/10 (30%) | 0/10 (0%) | +30pp | – | 5/5 (100%) | 0/5 (0%) | +100pp | – |
-| **รวม** | **36/60 (60%)** | **27/60 (45%)** | **+15pp** | **8/20 (40%)** | **28/30 (93%)** | **17/30 (56%)** | **+37pp** | **10/10 (100%)** |
+| โมเดล | doctrine | bare | Δ | lessons |
+|---|---|---|---|---|
+| **haiku** · n=10 | **36/60 (60%)** | **27/60 (45%)** | **+15pp** | 8/20 (40%) |
+| **sonnet** · n=5 | **28/30 (93%)** | **17/30 (56%)** | **+37pp** | 10/10 (100%) |
 
-Haiku รัน 10 รอบ ไม่มี infrastructure fail เลย Sonnet รัน 5 รอบ; รอบที่ 5 OAuth session หมดอายุกลางคัน ทำให้แปด arm (merge-conflict/bare, pipeline ทั้งสาม arm, red-suite สอง arm, slugify สอง arm) ออกมาเป็น INVALID หลัง re-auth แล้วรันซ้ำจนครบ ตอนนี้ทุก arm ของ sonnet จึงอยู่ที่ n=5 และไม่เหลือแถว invalid แปดรอบที่รันเสริมนี้รันบน Windows/Git Bash บน commit เดียวกัน — task และ grader ชุดเดียวกัน แต่คนละ OS กับอีก 62 แถว แถวของ sonnet รายงาน modelUsage เป็น claude-sonnet-5 บวก claude-haiku-4-5 (subtask รันบน haiku) ยังไม่ได้วัด opus — วางแผนจะเพิ่มเป็นคอลัมน์โมเดลที่สามในอนาคต Δ คือ doctrine − bare แบบ floor เรนเดอร์ใหม่ได้ทุกเมื่อด้วย `eval/report.sh results-haiku.jsonl` / `eval/report.sh results-sonnet.jsonl`; honesty box ใน `eval/README.md` ยังใช้ — n น้อย เปรียบเทียบ rate อย่าเทียบรอบเดียว
+แยกตาม task เรียงตาม Δ ของ sonnet แต่ละ bar คือ arm หนึ่งย่อเป็นสเกล 10 ช่อง — ช่องทึบ = รอบที่ผ่านทุกเกณฑ์:
+
+**sonnet · n=5 ต่อ arm**
+
+| task | doctrine | bare | Δ | lessons |
+|---|---|---|---|---|
+| slugify | `██████████` 5/5 | `··········` 0/5 | **+100pp** | – |
+| merge-conflict | `██████····` 3/5 | `··········` 0/5 | **+60pp** | – |
+| pipeline | `██████████` 5/5 | `██████····` 3/5 | **+40pp** | `██████████` 5/5 |
+| false-green | `██████████` 5/5 | `████████··` 4/5 | **+20pp** | `██████████` 5/5 |
+| flaky-report | `██████████` 5/5 | `██████████` 5/5 | +0pp | – |
+| red-suite | `██████████` 5/5 | `██████████` 5/5 | +0pp | – |
+| **รวม** | **28/30 (93%)** | **17/30 (56%)** | **+37pp** | **10/10 (100%)** |
+
+**haiku · n=10 ต่อ arm**
+
+| task | doctrine | bare | Δ | lessons |
+|---|---|---|---|---|
+| slugify | `███·······` 3/10 | `··········` 0/10 | **+30pp** | – |
+| merge-conflict | `█·········` 1/10 | `··········` 0/10 | **+10pp** | – |
+| pipeline | `████······` 4/10 | `··········` 0/10 | **+40pp** | `█·········` 1/10 |
+| false-green | `████████··` 8/10 | `███████···` 7/10 | **+10pp** | `███████···` 7/10 |
+| flaky-report | `██████████` 10/10 | `██████████` 10/10 | +0pp | – |
+| red-suite | `██████████` 10/10 | `██████████` 10/10 | +0pp | – |
+| **รวม** | **36/60 (60%)** | **27/60 (45%)** | **+15pp** | **8/20 (40%)** |
+
+Haiku รัน 10 รอบ ไม่มี infrastructure fail เลย Sonnet รัน 5 รอบ; รอบที่ 5 OAuth session หมดอายุกลางคัน ทำให้แปด arm (merge-conflict/bare, pipeline ทั้งสาม arm, red-suite สอง arm, slugify สอง arm) ออกมาเป็น INVALID หลัง re-auth แล้วรันซ้ำจนครบ ตอนนี้ทุก arm ของ sonnet จึงอยู่ที่ n=5 และไม่เหลือแถว invalid แปดรอบที่รันเสริมนี้รันบน Windows/Git Bash บน commit เดียวกัน — task และ grader ชุดเดียวกัน แต่คนละ OS กับอีก 62 แถว แถวของ sonnet รายงาน modelUsage เป็น claude-sonnet-5 บวก claude-haiku-4-5 (subtask รันบน haiku) ยังไม่ได้วัด opus — วางแผนจะเพิ่มเป็นบล็อกโมเดลที่สามในอนาคต Δ คือ doctrine − bare แบบ floor เรนเดอร์ใหม่ได้ทุกเมื่อด้วย `eval/report.sh results-haiku.jsonl` / `eval/report.sh results-sonnet.jsonl`; honesty box ใน `eval/README.md` ยังใช้ — n น้อย เปรียบเทียบ rate อย่าเทียบรอบเดียว
 
 ## ความปลอดภัย
 

@@ -352,6 +352,27 @@ cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
 rm -rf "${OFJ}"
 echo "ok  offline smoke mode end to end"
 
+# 4d2d. --use-login plumbing: with login state under a fake HOME the sandbox
+# seed line must appear once per arm; with an empty fake HOME the flag must
+# warn instead of failing the run. Both offline — no CLI, no auth, no spend.
+UL="$(mktemp -d)"
+mkdir -p "${UL}/home/.claude"
+printf '{"fake": "login-state"}\n' > "${UL}/home/.claude.json"
+printf '{"fake": "credentials"}\n' > "${UL}/home/.claude/.credentials.json"
+HOME="${UL}/home" "${ROOT}/eval/run.sh" --offline --use-login --out "${UL}/r.jsonl" false-green \
+  > "${UL}/out.log" 2>"${UL}/err.log" \
+  || { rm -rf "${UL}"; fail "run.sh --use-login exited non-zero"; }
+[ "$(grep -c 'login state seeded into sandbox config' "${UL}/out.log")" = 2 ] \
+  || { rm -rf "${UL}"; fail "--use-login did not seed both arms' sandboxes"; }
+mkdir -p "${UL}/empty-home"
+HOME="${UL}/empty-home" "${ROOT}/eval/run.sh" --offline --use-login false-green \
+  > /dev/null 2>"${UL}/err2.log" \
+  || { rm -rf "${UL}"; fail "run.sh --use-login with no login state exited non-zero"; }
+grep -q 'warn: --use-login found no login state' "${UL}/err2.log" \
+  || { rm -rf "${UL}"; fail "--use-login did not warn on missing login state"; }
+rm -rf "${UL}"
+echo "ok  --use-login seeds sandboxes and warns when no login state exists"
+
 # 4d3. revert-probe: a biting test passes, a vacuous test fails, non-git is
 # unassessable — all in throwaway git fixtures, never the caller's tree
 RP="${ROOT}/skills/done/scripts/revert-probe.sh"

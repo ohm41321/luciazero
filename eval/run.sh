@@ -6,12 +6,13 @@
 #   arm B (bare)     — empty sandbox config
 # then grades both with the task's offline grade.sh.
 #
-# COSTS REAL API MONEY and requires the `claude` CLI. It is deliberately NOT
-# part of test.sh/CI. Results are indicative, not proof: n is small and models
+# COSTS REAL INFERENCE — API dollars via ANTHROPIC_API_KEY, or subscription
+# quota via --use-login — and requires the `claude` CLI. It is deliberately
+# NOT part of test.sh/CI. Results are indicative, not proof: n is small and models
 # are nondeterministic — run each arm several times and compare pass RATES
 # (see eval/README.md). That is what --runs and --out exist for:
 #
-#   eval/run.sh [--runs N] [--out results.jsonl] [--with-lessons] [task-name ...]
+#   eval/run.sh [--runs N] [--out results.jsonl] [--with-lessons] [--use-login] [task-name ...]
 #
 # --runs N        repeat every (task, arm) N times (default 1)
 # --out F         append one JSON line per (task, arm, run) to F — criteria
@@ -23,6 +24,15 @@
 #                 pre-seeded as docs/lessons.md in the work copy — measures
 #                 whether the learning layer lifts pass rates over doctrine
 #                 alone. Tasks without a lessons.md keep two arms.
+# --use-login     seed each sandbox config dir with this machine's Claude
+#                 login state (~/.claude.json, and .credentials.json when the
+#                 OS stores tokens on disk instead of a keychain) so runs bill
+#                 the operator's existing subscription quota instead of
+#                 needing ANTHROPIC_API_KEY. The copies live only inside the
+#                 per-run mktemp config dir and are deleted with it; nothing
+#                 leaves the machine. Fail-soft: if the seed is not enough to
+#                 authenticate, check-result.sh marks the arm INVALID — no
+#                 quota is spent on an arm that never ran.
 # --offline       synthetic smoke mode, zero API, no claude CLI needed:
 #                 doctrine-style arms get the task's reference/ tree, bare
 #                 keeps the planted bug. Exercises copy -> grade -> JSONL ->
@@ -42,17 +52,43 @@ RUNS=1
 OUT_FILE=""
 WITH_LESSONS=0
 OFFLINE=0
+USE_LOGIN=0
 TASKS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --runs) RUNS="${2:?--runs needs a number}"; shift 2 ;;
     --out)  OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
     --with-lessons) WITH_LESSONS=1; shift ;;
+    --use-login) USE_LOGIN=1; shift ;;
     --offline) OFFLINE=1; shift ;;
-    -*) echo "unknown option: $1 (supported: --runs N, --out FILE, --with-lessons, --offline)" >&2; exit 1 ;;
+    -*) echo "unknown option: $1 (supported: --runs N, --out FILE, --with-lessons, --use-login, --offline)" >&2; exit 1 ;;
     *) TASKS+=("$1"); shift ;;
   esac
 done
+
+# Copy the operator's login state into a sandbox config dir. The CLI keeps
+# top-level state (onboarding, account) in $CLAUDE_CONFIG_DIR/.claude.json and
+# — on OSes without a keychain — OAuth tokens in .credentials.json; a fresh
+# mktemp dir has neither, which is why an otherwise logged-in machine reads as
+# "Not logged in" inside the sandbox. Deliberately fail-soft: a partial seed
+# costs nothing, because check-result.sh rejects any "Not logged in" result.
+seed_login() {
+  SEEDED=0
+  if [ -f "${HOME}/.claude.json" ]; then
+    cp "${HOME}/.claude.json" "$1/.claude.json"
+    SEEDED=1
+  fi
+  if [ -f "${HOME}/.claude/.credentials.json" ]; then
+    cp "${HOME}/.claude/.credentials.json" "$1/.credentials.json"
+    chmod 600 "$1/.credentials.json"
+    SEEDED=1
+  fi
+  if [ "${SEEDED}" = 1 ]; then
+    echo "   login state seeded into sandbox config"
+  else
+    echo "warn: --use-login found no login state under ${HOME} (expected ~/.claude.json)" >&2
+  fi
+}
 
 if [ "${OFFLINE}" = 1 ]; then
   echo "OFFLINE SMOKE MODE: synthetic trees, zero API — this tests the"
@@ -88,6 +124,9 @@ for TASK in "${TASKS[@]}"; do
       WORK="$(mktemp -d)"
       cp -R "${TDIR}/project/." "${WORK}/"
 
+      if [ "${USE_LOGIN}" = 1 ]; then
+        seed_login "${CFG}"
+      fi
       if [ "${ARM}" != bare ]; then
         CLAUDE_CONFIG_DIR="${CFG}" "${ROOT}/install.sh" >/dev/null
       fi

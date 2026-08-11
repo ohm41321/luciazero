@@ -42,6 +42,8 @@ eval/run.sh --runs 5 --out results.jsonl   # the honest way: repeat, then
 eval/report.sh results.jsonl               # per-criterion pass-rate table
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
 eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
+eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
+                                           # subscription quota, no API key
 ```
 
 `--offline` needs no `claude` CLI and no API key: doctrine-style arms get the
@@ -62,10 +64,17 @@ per-arm resource means whenever that data is present — a discipline that
 lifts pass rates by tripling cost is not a free win, so the cost shows up
 next to the delta.
 
-**Costs real API money** and needs the `claude` CLI **plus `ANTHROPIC_API_KEY`
-in the environment** — the sandbox `CLAUDE_CONFIG_DIR` isolates any
-credentials stored in your real `~/.claude`, so without the env var both arms
-fail identically. `run.sh` marks an arm whose `claude` invocation exited
+**Costs real inference** and needs the `claude` CLI plus one of two ways to
+pay: `ANTHROPIC_API_KEY` in the environment (API dollars), or `--use-login`
+(your existing Claude subscription quota). The sandbox `CLAUDE_CONFIG_DIR`
+isolates any credentials stored in your real `~/.claude`, so without either,
+both arms fail identically as "Not logged in". `--use-login` copies this
+machine's login state (`~/.claude.json`, plus `.credentials.json` where the
+OS stores tokens on disk rather than in a keychain) into each per-run mktemp
+config dir; the copy is deleted with the sandbox and never leaves the
+machine. On subscription runs the CLI reports `cost_usd` as 0, so quote token
+counts, not dollars. If the seed is not enough to authenticate on your OS,
+nothing is spent — the arm is simply marked INVALID (see below). `run.sh` marks an arm whose `claude` invocation exited
 non-zero as **INVALID** rather than grading it (and records it as such in the
 JSONL): an agent that never ran is not behavioral data. Exit 0 is not trusted
 either: `check-result.sh` inspects the result payload, because the CLI has

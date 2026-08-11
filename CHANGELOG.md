@@ -9,6 +9,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`eval/run.sh --use-login`** — run the real eval on an existing Claude
+  subscription (Pro/Max) instead of API dollars: seeds each per-run sandbox
+  config dir with this machine's login state (`~/.claude.json`, plus
+  `.credentials.json` where the OS keeps tokens on disk). The copy lives
+  only inside the mktemp sandbox and is deleted with it. Fail-soft by
+  design: if the seed does not authenticate, `check-result.sh` marks the
+  arm INVALID and nothing is spent. Plumbing (seed per arm, warn on missing
+  login state) is proven offline in `test.sh`.
+
 - **`eval/check-result.sh`** — a zero exit code no longer proves the agent
   ran: the CLI has wrapped a `Not logged in` error in subtype `"success"`
   (observed 2026-08-11, caught free by a 1-run smoke). The guard inspects

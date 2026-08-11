@@ -83,6 +83,18 @@ seed_login() {
     chmod 600 "$1/.credentials.json"
     SEEDED=1
   fi
+  # macOS keeps OAuth tokens in the Keychain, not on disk — export them into
+  # the sandbox as .credentials.json. A denied or missing Keychain item just
+  # skips this (fail-soft, see above).
+  if [ ! -f "$1/.credentials.json" ] && command -v security >/dev/null 2>&1; then
+    if CRED="$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null)" \
+      && [ -n "${CRED}" ]; then
+      printf '%s\n' "${CRED}" > "$1/.credentials.json"
+      chmod 600 "$1/.credentials.json"
+      SEEDED=1
+      echo "   keychain credentials exported into sandbox config"
+    fi
+  fi
   if [ "${SEEDED}" = 1 ]; then
     echo "   login state seeded into sandbox config"
   else

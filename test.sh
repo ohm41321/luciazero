@@ -364,8 +364,19 @@ HOME="${UL}/home" "${ROOT}/eval/run.sh" --offline --use-login --out "${UL}/r.jso
   || { rm -rf "${UL}"; fail "run.sh --use-login exited non-zero"; }
 [ "$(grep -c 'login state seeded into sandbox config' "${UL}/out.log")" = 2 ] \
   || { rm -rf "${UL}"; fail "--use-login did not seed both arms' sandboxes"; }
-mkdir -p "${UL}/empty-home"
-HOME="${UL}/empty-home" "${ROOT}/eval/run.sh" --offline --use-login false-green \
+# fake `security` binaries make the macOS Keychain branch deterministic on
+# any OS: one that answers with a credential blob, one that always denies
+mkdir -p "${UL}/bin" "${UL}/nobin" "${UL}/empty-home"
+printf '#!/bin/sh\n[ "$1" = find-generic-password ] || exit 1\nprintf %s "{}"\n' > "${UL}/bin/security"
+printf '#!/bin/sh\nexit 1\n' > "${UL}/nobin/security"
+chmod +x "${UL}/bin/security" "${UL}/nobin/security"
+HOME="${UL}/empty-home" PATH="${UL}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --offline --use-login false-green > "${UL}/out2.log" 2>&1 \
+  || { rm -rf "${UL}"; fail "run.sh --use-login (keychain path) exited non-zero"; }
+[ "$(grep -c 'keychain credentials exported into sandbox config' "${UL}/out2.log")" = 2 ] \
+  || { rm -rf "${UL}"; fail "--use-login did not export keychain credentials"; }
+HOME="${UL}/empty-home" PATH="${UL}/nobin:${PATH}" \
+  "${ROOT}/eval/run.sh" --offline --use-login false-green \
   > /dev/null 2>"${UL}/err2.log" \
   || { rm -rf "${UL}"; fail "run.sh --use-login with no login state exited non-zero"; }
 grep -q 'warn: --use-login found no login state' "${UL}/err2.log" \

@@ -69,10 +69,13 @@ pay: `ANTHROPIC_API_KEY` in the environment (API dollars), or `--use-login`
 (your existing Claude subscription quota). The sandbox `CLAUDE_CONFIG_DIR`
 isolates any credentials stored in your real `~/.claude`, so without either,
 both arms fail identically as "Not logged in". `--use-login` copies this
-machine's login state (`~/.claude.json`, plus `.credentials.json` where the
-OS stores tokens on disk rather than in a keychain) into each per-run mktemp
-config dir; the copy is deleted with the sandbox and never leaves the
-machine. On subscription runs the CLI reports `cost_usd` as 0, so quote token
+machine's login state into each per-run mktemp config dir — `~/.claude.json`,
+plus OAuth tokens from `.credentials.json` (Linux) or exported from the
+Keychain (macOS, may prompt once to allow access); the copy is deleted with
+the sandbox and never leaves the machine. If none of that authenticates on
+your setup, the documented fallback is `claude setup-token` once and
+`export CLAUDE_CODE_OAUTH_TOKEN=...` — env vars pass into the sandbox, no
+flag needed. On subscription runs the CLI reports `cost_usd` as 0, so quote token
 counts, not dollars. If the seed is not enough to authenticate on your OS,
 nothing is spent — the arm is simply marked INVALID (see below). `run.sh` marks an arm whose `claude` invocation exited
 non-zero as **INVALID** rather than grading it (and records it as such in the

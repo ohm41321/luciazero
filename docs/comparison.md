@@ -2,7 +2,7 @@
 
 Honest positioning against the alternatives a visitor will find in one
 search. Every claim below was checked against the named project's public
-README/source on **2026-08-10**; these projects move fast, so treat the date
+README/source on **2026-08-11**; these projects move fast, so treat the date
 as part of each claim. Corrections welcome — an unfair line here would break
 this repo's own first rule.
 
@@ -60,9 +60,11 @@ trade-offs below.
 
 ## Known weaknesses (ours)
 
-- n=4 eval tasks and no published A/B numbers yet — the harness ships, the
-  evidence campaign has not run.
+- Sample sizes in the published A/B benchmark (n=10 for Haiku, n=5 for
+  Sonnet across 6 tasks) are still small — compare rates, not single runs,
+  and larger evidence campaigns are needed.
 - No runtime, no orchestration, no durable state — by design, but it means
   this repo alone does not give you overnight autonomy.
-- Distribution: unpublished at the time of writing; not yet listed in
+- Ecosystem listing: published on npm (`luciazero` v1.5.0) and the Claude
+  Code plugin marketplace (`ohm41321/luciazero`), but not yet listed in
   [awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code).

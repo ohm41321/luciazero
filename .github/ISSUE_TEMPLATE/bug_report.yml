@@ -1,0 +1,43 @@
+name: Bug report
+description: Something misbehaves — a hook, an installer, a skill, a grader
+labels: [bug]
+body:
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Install channel
+      description: Pick the one this machine actually uses (the README says to pick one).
+      options:
+        - Claude Code plugin (/plugin install luciazero@luciazero)
+        - Classic (npx luciazero / ./install.sh)
+        - Classic with enforcement pack (--with-hooks)
+        - Codex CLI (npx luciazero codex / ./install-codex.sh)
+        - Skills only (npx skills add ohm41321/luciazero)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        The repo's own rule applies to bug reports too — paste the decisive
+        output, not a summary. For classic installs, `./install.sh --status`
+        output is the fastest diagnosis; for hooks, the exact nudge/gate
+        message.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`npm view luciazero version`-style version, git SHA, or plugin version."
+    validations:
+      required: false

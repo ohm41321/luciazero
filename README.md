@@ -72,7 +72,7 @@ No dependencies, no runtime (python3 only for the opt-in enforcement pack):
 | `skills/retro/` | Procedure — harvest lessons into project notes | On demand |
 | `claude/agents/reviewer.md` | Adversarial reviewer subagent | On demand (before "done") |
 | `claude/hooks/` | Enforcement pack — verify-nudge hooks, opt-in strict gate, statusline | Opt-in |
-| `eval/` | A/B harness — 4 planted-bug tasks, self-proving graders | Manual (costs API money) |
+| `eval/` | A/B harness — 5 planted-bug tasks, self-proving graders | Manual (costs API money) |
 | `demo.sh` | Two-minute demo — planted bug, your session, objective grader | Manual |
 
 How it stacks up against superpowers, SuperClaude, proof-loop, and the harness built-ins — including what they do better: [docs/comparison.md](docs/comparison.md).
@@ -103,6 +103,21 @@ plainly that you are handing back a red state. Failing output:
 
 test_totals ... FAIL: expected 14, got 8
 ```
+
+## What it prevents
+
+Each failure mode maps to a shipped mechanism, not a promise:
+
+| Failure mode | What catches it |
+|---|---|
+| "Done!" with no verify run | the Stop-hook nudge; in strict mode a red verify blocks the stop with the failing output quoted |
+| `cat test.sh` counted as running the tests | `LUCIAZERO_VERIFY_CMD` exact-match mode |
+| A check weakened, skipped, or deleted to reach green | doctrine rule 3, plus the inert check-suppression guard in the example project settings |
+| New tests that pass with and without the fix | `revert-probe.sh` — exit 1 means the test is vacuous |
+| Scope silently dropped from the request | `/done` step 4: every part is delivered or named as left out |
+| The same dead end re-derived next session | `/retro` ledgers (`docs/lessons.md`, cross-repo heuristics) seeding `/debug` |
+
+The mechanical rows are exercised by `test.sh` on every push; the procedural rows are what the eval harness exists to measure.
 
 ## Classic install & enforcement pack
 
@@ -185,7 +200,7 @@ An exit code cannot catch *passes-the-tests-but-wrong*. For risky diffs the doct
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia-laptop.png" width="240" alt="Lucia grinding through the eval harness on her laptop">
 </p>
 
-**The setup measures itself.** `eval/` is a small A/B harness: the same planted-bug tasks run with and without the doctrine installed, graded offline by behavioral criteria. Four tasks, each probing a different rule — slugify (regression-test discipline), red-suite (bending tests toward a bug), flaky-report (making an intermittent failure deterministic), pipeline (root-cause vs symptom patch, graded by diff locality). CI proves every grader three ways on every push: `reference/` passes, unfixed `project/` fails, and the checked-in `gamed/` cheat trees are rejected. `eval/run.sh --runs N` + `eval/report.sh` produce per-criterion pass-rate tables; see `eval/README.md`, including its honesty box about small n.
+**The setup measures itself.** `eval/` is a small A/B harness: the same planted-bug tasks run with and without the doctrine installed, graded offline by behavioral criteria. Five tasks, each probing a different rule — slugify (regression-test discipline), red-suite (bending tests toward a bug), flaky-report (making an intermittent failure deterministic), pipeline (root-cause vs symptom patch, graded by diff locality), merge-conflict (a botched merge where neither side's feature may be silently dropped). CI proves every grader three ways on every push: `reference/` passes, unfixed `project/` fails, and the checked-in `gamed/` cheat trees are rejected. `eval/run.sh --runs N` + `eval/report.sh` produce per-criterion pass-rate tables; see `eval/README.md`, including its honesty box about small n.
 
 ## Safety
 

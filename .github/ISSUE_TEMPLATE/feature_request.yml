@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose an addition or change
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong or is missing today, concretely.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: fit
+    attributes:
+      label: Doctrine fit
+      description: >
+        Which of the nine rules does this serve? The doctrine has an enforced
+        word ceiling and the skill set is deliberately small — "more rules"
+        needs a stronger case than "more coverage". Additions that make an
+        existing rule mechanically checkable are the easiest yes.
+    validations:
+      required: false

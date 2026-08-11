@@ -72,7 +72,7 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 | `skills/retro/` | เก็บเกี่ยวบทเรียนลง notes ของโปรเจกต์ | เมื่อเรียก |
 | `claude/agents/reviewer.md` | Subagent ผู้ตรวจเชิงหักล้าง | เมื่อเรียก (ก่อนประกาศ "เสร็จ") |
 | `claude/hooks/` | Enforcement pack — hook เตือน verify, strict gate แบบ opt-in, statusline | Opt-in |
-| `eval/` | A/B harness — 4 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | รันเอง (เสียเงิน API) |
+| `eval/` | A/B harness — 5 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | รันเอง (เสียเงิน API) |
 | `demo.sh` | เดโม 2 นาที — บั๊กฝัง, session ของคุณเอง, grader เป็นกลาง | รันเอง |
 
 เทียบกับ superpowers, SuperClaude, proof-loop และของ built-in ใน harness — รวมทั้งจุดที่เขาทำได้ดีกว่า: [docs/comparison.md](docs/comparison.md)
@@ -103,6 +103,21 @@ plainly that you are handing back a red state. Failing output:
 
 test_totals ... FAIL: expected 14, got 8
 ```
+
+## กันความพังแบบไหนบ้าง
+
+ทุกโหมดความพังจับคู่กับกลไกที่ ship จริง ไม่ใช่คำสัญญา:
+
+| โหมดความพัง | อะไรจับ |
+|---|---|
+| "เสร็จแล้ว!" โดยไม่เคยรัน verify | nudge ของ Stop hook; ใน strict mode verify แดงจะ block การจบ session พร้อม quote output ที่พัง |
+| `cat test.sh` ถูกนับว่ารันเทสต์ | โหมด exact-match ของ `LUCIAZERO_VERIFY_CMD` |
+| check ถูกลดความเข้ม ข้าม หรือลบเพื่อให้เขียว | doctrine กฎข้อ 3 บวก check-suppression guard (inert) ใน project settings ตัวอย่าง |
+| เทสต์ใหม่ที่ผ่านทั้งแบบมีและไม่มี fix | `revert-probe.sh` — exit 1 คือเทสต์กลวง |
+| scope หายเงียบ ๆ จากคำขอ | `/done` ขั้น 4: ทุกส่วนต้องส่งมอบหรือบอกชัดว่าตัดออกเพราะอะไร |
+| ทางตันเดิมถูกไล่ซ้ำ session หน้า | ledger ของ `/retro` (`docs/lessons.md`, heuristics ข้าม repo) ป้อนเข้า `/debug` |
+
+แถวที่เป็นกลไกถูก `test.sh` ทดสอบทุก push; แถวที่เป็น procedure คือสิ่งที่ eval harness มีไว้วัด
 
 ## ติดตั้งแบบ classic & enforcement pack
 
@@ -185,7 +200,7 @@ exit code จับ *ผ่านเทสต์แต่ผิด* ไม่ไ
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia-laptop.png" width="240" alt="Lucia นั่งไล่ eval harness บนโน้ตบุ๊ก">
 </p>
 
-**Setup วัดตัวเอง** `eval/` คือ A/B harness เล็ก ๆ: task บั๊กฝังชุดเดียวกัน รันแบบมีและไม่มี doctrine แล้ว grade แบบ offline ด้วยเกณฑ์พฤติกรรม สี่ task แต่ละตัวจิ้มกฎคนละข้อ — slugify (วินัย regression test), red-suite (แรงล่อให้บิด test เข้าหาบั๊ก), flaky-report (ทำความล้มเหลวแบบมา ๆ หาย ๆ ให้ deterministic), pipeline (แก้ต้นเหตุ vs แปะที่อาการ ตัดสินด้วย diff locality) CI พิสูจน์ grader ทุกตัวสามทางทุก push: `reference/` ต้องผ่าน, `project/` ที่ยังไม่แก้ต้องตก, tree โกง `gamed/` ต้องถูกปฏิเสธ `eval/run.sh --runs N` + `eval/report.sh` สร้างตาราง pass-rate รายเกณฑ์; ดู `eval/README.md` รวมทั้ง honesty box เรื่อง n น้อย
+**Setup วัดตัวเอง** `eval/` คือ A/B harness เล็ก ๆ: task บั๊กฝังชุดเดียวกัน รันแบบมีและไม่มี doctrine แล้ว grade แบบ offline ด้วยเกณฑ์พฤติกรรม ห้า task แต่ละตัวจิ้มกฎคนละข้อ — slugify (วินัย regression test), red-suite (แรงล่อให้บิด test เข้าหาบั๊ก), flaky-report (ทำความล้มเหลวแบบมา ๆ หาย ๆ ให้ deterministic), pipeline (แก้ต้นเหตุ vs แปะที่อาการ ตัดสินด้วย diff locality), merge-conflict (merge ค้างกลางทาง — ห้ามทำ feature ฝั่งใดฝั่งหนึ่งหายเงียบ ๆ) CI พิสูจน์ grader ทุกตัวสามทางทุก push: `reference/` ต้องผ่าน, `project/` ที่ยังไม่แก้ต้องตก, tree โกง `gamed/` ต้องถูกปฏิเสธ `eval/run.sh --runs N` + `eval/report.sh` สร้างตาราง pass-rate รายเกณฑ์; ดู `eval/README.md` รวมทั้ง honesty box เรื่อง n น้อย
 
 ## ความปลอดภัย
 

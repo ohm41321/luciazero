@@ -7,6 +7,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`merge-conflict` eval task** (fifth): an unresolved merge where main's
+  bulk discount and the branch's member discount must both survive. The
+  grader probes each feature on data the shipped tests never mention, and
+  swaps in one-sided feature mutants to prove the worked tests actually
+  cover both sides — `gamed/` (HEAD-only resolution, suite green) and
+  `gamed-notests/` (correct merge, no tests added) are both rejected.
+- **Machine-readable closeout evidence** — `/done` step 6 now mirrors the
+  report as a JSON block (status, verify command + exit code + decisive
+  line, not-covered, left-out) when the result feeds CI, a PR comment, or a
+  dashboard.
+- **README "What it prevents" section** (EN + TH): failure modes mapped to
+  the shipped mechanism that catches each — no promise without a mechanism.
+- **SECURITY.md** — private reporting channel plus the enforced design
+  guarantees (no network, no npm lifecycle scripts, fail-open hooks,
+  config-dir-only writes) and the documented strict-mode env sharp edge.
+- **GitHub issue templates** — bug report (channel + decisive-output
+  evidence required), feature request (doctrine-fit question), security
+  contact link.
+
 ## [1.5.0] - 2026-08-10
 
 First version published to npm (`luciazero`); 1.4.x and below were

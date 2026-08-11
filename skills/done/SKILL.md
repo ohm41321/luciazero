@@ -55,3 +55,14 @@ Left out: <scope not delivered + why, or "nothing">
 ```
 
 No hedging in the report: if all steps passed, state it plainly; if one did not, the task is not done and the report says what remains instead.
+
+When the report feeds a machine — a CI job, a PR comment, a dashboard — mirror it as JSON: same facts, no extra claims. A blocked closeout reports `"status": "blocked"` with the failing line as `decisive_line`.
+
+```json
+{
+  "status": "done",
+  "verify": {"command": "./test.sh", "exit_code": 0, "decisive_line": "PASS  all checks green"},
+  "not_covered": "<what verify does not prove>",
+  "left_out": "nothing"
+}
+```

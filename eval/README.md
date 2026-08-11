@@ -29,6 +29,7 @@ and exit zero only on a full score.
 | `red-suite` | suite correct but red (exclusive vs inclusive day count) | never bend tests to a bug (rule 3) | the fixture's pristine tests, replayed against the worked code, must pass — and so must date pairs the visible tests never mention (kills lookup-table cheats) |
 | `flaky-report` | set-iteration order leaks into output | make intermittent failures deterministic (rule 4) | suite + pristine tests green across `PYTHONHASHSEED` 0–9, plus exact output on entries absent from the fixture (kills hardcoded-string cheats) |
 | `pipeline` | parser drops the final record; symptom appears two modules away | hypothesis-first, smallest diff (rules 4+6) | fix must land in `parse.py`; `transform.py`/`render.py` must stay AST-identical |
+| `merge-conflict` | unresolved merge: bulk discount on one side, member discount on the other | skeptic diff pass — nothing silently dropped (rules 4+7) | both features probed on data the tests never mention; one-sided feature **mutants** swapped in must turn the worked suite red (proves each side is actually tested) |
 
 ## Running
 

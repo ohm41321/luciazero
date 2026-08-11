@@ -367,7 +367,11 @@ HOME="${UL}/home" "${ROOT}/eval/run.sh" --offline --use-login --out "${UL}/r.jso
 # fake `security` binaries make the macOS Keychain branch deterministic on
 # any OS: one that answers with a credential blob, one that always denies
 mkdir -p "${UL}/bin" "${UL}/nobin" "${UL}/empty-home"
-printf '#!/bin/sh\n[ "$1" = find-generic-password ] || exit 1\nprintf %s "{}"\n' > "${UL}/bin/security"
+cat > "${UL}/bin/security" <<'FAKESEC'
+#!/bin/sh
+[ "$1" = find-generic-password ] || exit 1
+printf '%s' '{}'
+FAKESEC
 printf '#!/bin/sh\nexit 1\n' > "${UL}/nobin/security"
 chmod +x "${UL}/bin/security" "${UL}/nobin/security"
 HOME="${UL}/empty-home" PATH="${UL}/bin:${PATH}" \

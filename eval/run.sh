@@ -23,11 +23,15 @@
 #                 pre-seeded as docs/lessons.md in the work copy — measures
 #                 whether the learning layer lifts pass rates over doctrine
 #                 alone. Tasks without a lessons.md keep two arms.
+# --offline       synthetic smoke mode, zero API, no claude CLI needed:
+#                 doctrine-style arms get the task's reference/ tree, bare
+#                 keeps the planted bug. Exercises copy -> grade -> JSONL ->
+#                 report end to end. NOT agent behavior: rows are marked
+#                 "offline": true and report.sh brands the output SYNTHETIC.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVAL="${ROOT}/eval"
-command -v claude >/dev/null 2>&1 || { echo "FAIL: the 'claude' CLI is required" >&2; exit 1; }
 
 # --output-format json makes the CLI print one result object (usage, cost,
 # turn count) to claude.log; the usage parse below fails open to nulls if an
@@ -37,16 +41,26 @@ CLAUDE_ARGS=${EVAL_CLAUDE_ARGS:-"--permission-mode bypassPermissions --max-turns
 RUNS=1
 OUT_FILE=""
 WITH_LESSONS=0
+OFFLINE=0
 TASKS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --runs) RUNS="${2:?--runs needs a number}"; shift 2 ;;
     --out)  OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
     --with-lessons) WITH_LESSONS=1; shift ;;
-    -*) echo "unknown option: $1 (supported: --runs N, --out FILE, --with-lessons)" >&2; exit 1 ;;
+    --offline) OFFLINE=1; shift ;;
+    -*) echo "unknown option: $1 (supported: --runs N, --out FILE, --with-lessons, --offline)" >&2; exit 1 ;;
     *) TASKS+=("$1"); shift ;;
   esac
 done
+
+if [ "${OFFLINE}" = 1 ]; then
+  echo "OFFLINE SMOKE MODE: synthetic trees, zero API — this tests the"
+  echo "pipeline, it does NOT measure agent behavior. Never publish it."
+  echo
+else
+  command -v claude >/dev/null 2>&1 || { echo "FAIL: the 'claude' CLI is required (or use --offline)" >&2; exit 1; }
+fi
 if [ "${#TASKS[@]}" -eq 0 ]; then
   for D in "${EVAL}/tasks"/*/; do TASKS+=("$(basename "${D}")"); done
 fi
@@ -85,20 +99,32 @@ for TASK in "${TASKS[@]}"; do
       echo "== ${TASK} / ${ARM} (run ${R}/${RUNS}) =="
       RC=0
       T0="$(date +%s)"
-      # shellcheck disable=SC2086  # CLAUDE_ARGS is intentionally word-split
-      (cd "${WORK}" && CLAUDE_CONFIG_DIR="${CFG}" \
-        claude -p "$(cat "${TDIR}/PROMPT.md")" ${CLAUDE_ARGS} >"${WORK}/claude.log" 2>&1) || RC=$?
+      if [ "${OFFLINE}" = 1 ]; then
+        if [ "${ARM}" != bare ]; then cp -R "${TDIR}/reference/." "${WORK}/"; fi
+        printf 'offline smoke — no agent was run\n' > "${WORK}/claude.log"
+      else
+        # shellcheck disable=SC2086  # CLAUDE_ARGS is intentionally word-split
+        (cd "${WORK}" && CLAUDE_CONFIG_DIR="${CFG}" \
+          claude -p "$(cat "${TDIR}/PROMPT.md")" ${CLAUDE_ARGS} >"${WORK}/claude.log" 2>&1) || RC=$?
+      fi
       T1="$(date +%s)"
 
       INVALID=false
       GRADE_OUT=""
       GRADE_RC=0
+      CHK=""
       if [ "${RC}" -ne 0 ]; then
         # An arm where the agent never ran is not behavioral data — grading it
         # would manufacture a fake doctrine-vs-bare delta.
         INVALID=true
         echo "== ${TASK} / ${ARM}: INVALID — claude exited ${RC}; log tail:"
         tail -5 "${WORK}/claude.log" | sed 's/^/   /'
+      elif [ "${OFFLINE}" != 1 ] \
+        && ! CHK="$("${EVAL}/check-result.sh" "${WORK}/claude.log" 2>&1)"; then
+        # exit 0 does not prove the agent ran: the CLI has reported subtype
+        # "success" around a "Not logged in" error payload before
+        INVALID=true
+        echo "== ${TASK} / ${ARM}: ${CHK}"
       else
         GRADE_OUT="$("${TDIR}/grade.sh" "${WORK}")" || GRADE_RC=$?
         printf '%s\n' "${GRADE_OUT}" | sed 's/^/   /'
@@ -117,7 +143,7 @@ for TASK in "${TASKS[@]}"; do
       if [ -n "${OUT_FILE}" ]; then
         GRADE_OUT="${GRADE_OUT}" python3 -c '
 import json, os, sys
-task, arm, run, invalid, dur, log = sys.argv[1:7]
+task, arm, run, invalid, dur, log, offline = sys.argv[1:8]
 crit = {}
 score = None
 for line in os.environ.get("GRADE_OUT", "").splitlines():
@@ -143,9 +169,10 @@ print(json.dumps({"task": task, "arm": arm, "run": int(run),
                   "invalid": invalid == "true", "criteria": crit,
                   "score": score, "duration_s": int(dur),
                   "tokens_in": tokens_in, "tokens_out": tokens_out,
-                  "cost_usd": cost_usd, "num_turns": num_turns},
+                  "cost_usd": cost_usd, "num_turns": num_turns,
+                  "offline": offline == "1"},
                  ensure_ascii=False))' \
-          "${TASK}" "${ARM}" "${R}" "${INVALID}" "$((T1 - T0))" "${WORK}/claude.log" >> "${OUT_FILE}"
+          "${TASK}" "${ARM}" "${R}" "${INVALID}" "$((T1 - T0))" "${WORK}/claude.log" "${OFFLINE}" >> "${OUT_FILE}"
       fi
       echo "   workdir kept for inspection: ${WORK}"
       rm -rf "${CFG}"

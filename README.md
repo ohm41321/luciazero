@@ -16,6 +16,54 @@ Luciazero makes a coding agent run its own `plan → change → verify → fix` 
 
 Everything in this repo — a 9-rule doctrine, six skills, an adversarial reviewer agent, enforcement hooks, an eval harness — exists to make that rule hold without a human in the loop.
 
+## What it looks like
+
+Actual output of the shipped scripts, not mockups — the GIF is recorded from `docs/assets/statusline-demo.sh`, which drives the real hooks through the loop (re-record it yourself: `vhs docs/assets/demo.tape`):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="The enforcement pack in 15 seconds: edit shows unverified, stopping triggers the nudge, a red verify shows RED, the fix turns it green">
+</p>
+
+The statusline keeps the verify state on screen:
+
+```
+Opus | ✎ unverified          # edits made, no verify run since
+Opus | ✅ verify 3m           # last verify green, 3 minutes ago
+Opus | ❌ verify RED 40s      # last verify failed — the loop is not done
+```
+
+Ending a session with unverified edits triggers the one-shot nudge:
+
+```
+Doctrine rule 1: edits were made but no verify command has run since the last
+edit. Run the repo's verify command and quote its decisive line — or finish
+anyway and say plainly that the change is unverified. (This nudge fires once.)
+```
+
+And in opt-in strict mode, a red verify actually blocks the stop, evidence attached:
+
+```
+Strict verify gate: './test.sh' is RED. Fix it before finishing — or say
+plainly that you are handing back a red state. Failing output:
+
+test_totals ... FAIL: expected 14, got 8
+```
+
+## What it prevents
+
+Each failure mode maps to a shipped mechanism, not a promise:
+
+| Failure mode | What catches it |
+|---|---|
+| "Done!" with no verify run | the Stop-hook nudge; in strict mode a red verify blocks the stop with the failing output quoted |
+| `cat test.sh` counted as running the tests | `LUCIAZERO_VERIFY_CMD` exact-match mode |
+| A check weakened, skipped, or deleted to reach green | doctrine rule 3, plus the inert check-suppression guard in the example project settings |
+| New tests that pass with and without the fix | `revert-probe.sh` — exit 1 means the test is vacuous |
+| Scope silently dropped from the request | `/done` step 4: every part is delivered or named as left out |
+| The same dead end re-derived next session | `/retro` ledgers (`docs/lessons.md`, cross-repo heuristics) seeding `/debug` |
+
+The mechanical rows are exercised by `test.sh` on every push; the procedural rows are what the eval harness exists to measure.
+
 ## Install
 
 **Claude Code — plugin (recommended).** One install carries the six skills, the `reviewer` agent, the verify-tracking hooks, and the doctrine:
@@ -76,54 +124,6 @@ No dependencies, no runtime (python3 only for the opt-in enforcement pack):
 | `demo.sh` | Two-minute demo — planted bug, your session, objective grader | Manual |
 
 How it stacks up against superpowers, SuperClaude, proof-loop, and the harness built-ins — including what they do better: [docs/comparison.md](docs/comparison.md).
-
-## What it looks like
-
-Actual output of the shipped scripts, not mockups — the GIF is recorded from `docs/assets/statusline-demo.sh`, which drives the real hooks through the loop (re-record it yourself: `vhs docs/assets/demo.tape`):
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="The enforcement pack in 15 seconds: edit shows unverified, stopping triggers the nudge, a red verify shows RED, the fix turns it green">
-</p>
-
-The statusline keeps the verify state on screen:
-
-```
-Opus | ✎ unverified          # edits made, no verify run since
-Opus | ✅ verify 3m           # last verify green, 3 minutes ago
-Opus | ❌ verify RED 40s      # last verify failed — the loop is not done
-```
-
-Ending a session with unverified edits triggers the one-shot nudge:
-
-```
-Doctrine rule 1: edits were made but no verify command has run since the last
-edit. Run the repo's verify command and quote its decisive line — or finish
-anyway and say plainly that the change is unverified. (This nudge fires once.)
-```
-
-And in opt-in strict mode, a red verify actually blocks the stop, evidence attached:
-
-```
-Strict verify gate: './test.sh' is RED. Fix it before finishing — or say
-plainly that you are handing back a red state. Failing output:
-
-test_totals ... FAIL: expected 14, got 8
-```
-
-## What it prevents
-
-Each failure mode maps to a shipped mechanism, not a promise:
-
-| Failure mode | What catches it |
-|---|---|
-| "Done!" with no verify run | the Stop-hook nudge; in strict mode a red verify blocks the stop with the failing output quoted |
-| `cat test.sh` counted as running the tests | `LUCIAZERO_VERIFY_CMD` exact-match mode |
-| A check weakened, skipped, or deleted to reach green | doctrine rule 3, plus the inert check-suppression guard in the example project settings |
-| New tests that pass with and without the fix | `revert-probe.sh` — exit 1 means the test is vacuous |
-| Scope silently dropped from the request | `/done` step 4: every part is delivered or named as left out |
-| The same dead end re-derived next session | `/retro` ledgers (`docs/lessons.md`, cross-repo heuristics) seeding `/debug` |
-
-The mechanical rows are exercised by `test.sh` on every push; the procedural rows are what the eval harness exists to measure.
 
 ## Classic install & enforcement pack
 

@@ -9,6 +9,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`eval/check-result.sh`** — a zero exit code no longer proves the agent
+  ran: the CLI has wrapped a `Not logged in` error in subtype `"success"`
+  (observed 2026-08-11, caught free by a 1-run smoke). The guard inspects
+  the result payload (`is_error`, `terminal_reason: api_error`, login
+  errors) and `run.sh` books a refuted arm as INVALID with the reason
+  quoted; every accept/reject path is fixture-proven in `test.sh`.
+- **`eval/run.sh --offline`** — synthetic smoke mode: no `claude` CLI, no
+  API key, zero cost. Doctrine-style arms get the task's `reference/` tree,
+  bare keeps the planted bug, and the whole copy → grade → JSONL → report
+  loop runs in seconds. Rows are branded `"offline": true` and `report.sh`
+  prints a SYNTHETIC banner so the numbers can never pass as behavioral
+  results; end-to-end proven in `test.sh` plus a frozen fixture pair.
+- **README narrative reorder** (EN + TH): the demo GIF and the
+  "What it prevents" table now sit directly under the intro, before
+  Install — a newcomer sees what the pack does in 30 seconds before being
+  asked to install anything.
+
 - **README demo GIF** — 15 seconds of the enforcement pack's real behavior:
   edit → `✎ unverified`, stop attempt → the rule-1 nudge, red verify →
   `❌ verify RED`, fix → `✅ verify`. Recorded from the checked-in

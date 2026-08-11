@@ -23,7 +23,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          skills/luciazero-bootstrap/scripts/detect.sh
          skills/done/scripts/revert-probe.sh
          claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh
-         eval/run.sh eval/report.sh)
+         eval/run.sh eval/report.sh eval/check-result.sh)
 # every task grader, auto-discovered — a new task cannot skip the lint net
 for G in "${ROOT}"/eval/tasks/*/grade.sh; do SCRIPTS+=("${G#"${ROOT}"/}"); done
 
@@ -305,6 +305,52 @@ if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
 fi
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
+
+# 4d2b. check-result.sh: exit 0 does not prove the agent ran — the CLI has
+# wrapped a "Not logged in" error in subtype "success" (2026-08-11); each
+# rejection and acceptance path is proven against a fixture log
+CRF="$(mktemp -d)"
+CR="${ROOT}/eval/check-result.sh"
+printf '{"subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Not logged in · Please run /login"}' > "${CRF}/notlogged.json"
+printf '{"result":"Not logged in · Please run /login"}' > "${CRF}/sneaky.json"
+printf '{"subtype":"success","is_error":false,"result":"fixed the bug"}' > "${CRF}/good.json"
+printf 'plain text transcript\n' > "${CRF}/text.log"
+RC=0; OUT="$("${CR}" "${CRF}/notlogged.json" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in result"; }
+echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
+RC=0; "${CR}" "${CRF}/sneaky.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a login error without is_error"; }
+"${CR}" "${CRF}/good.json" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected a healthy result"; }
+"${CR}" "${CRF}/text.log" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected plain-text output"; }
+RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
+rm -rf "${CRF}"
+echo "ok  check-result rejects error payloads behind exit 0"
+
+# 4d2c. offline smoke mode: full copy -> grade -> JSONL -> report loop with
+# zero API; rows must be branded offline and the report must say SYNTHETIC
+OFJ="$(mktemp -d)"
+"${ROOT}/eval/run.sh" --offline --with-lessons --out "${OFJ}/r.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh --offline exited non-zero"; }
+python3 - "${OFJ}/r.jsonl" <<'PY' || { rm -rf "${OFJ}"; fail "offline JSONL rows wrong"; }
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 3, f"want 3 arms, got {len(rows)}"
+assert {r["arm"] for r in rows} == {"doctrine", "bare", "lessons"}
+assert all(r["offline"] is True for r in rows), "rows not branded offline"
+assert all(r["invalid"] is False for r in rows), "offline rows marked invalid"
+by = {r["arm"]: r for r in rows}
+assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
+assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
+PY
+"${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
+  || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \
+  || { rm -rf "${OFJ}"; fail "report.sh failed on the offline fixture"; }
+cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
+  || { rm -rf "${OFJ}"; fail "report.sh output drifted from eval/testdata/sample-report-offline.md"; }
+rm -rf "${OFJ}"
+echo "ok  offline smoke mode end to end"
 
 # 4d3. revert-probe: a biting test passes, a vacuous test fails, non-git is
 # unassessable — all in throwaway git fixtures, never the caller's tree

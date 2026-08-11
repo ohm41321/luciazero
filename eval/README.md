@@ -41,7 +41,15 @@ eval/run.sh slugify                        # one task
 eval/run.sh --runs 5 --out results.jsonl   # the honest way: repeat, then
 eval/report.sh results.jsonl               # per-criterion pass-rate table
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
+eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
 ```
+
+`--offline` needs no `claude` CLI and no API key: doctrine-style arms get the
+task's `reference/` tree, bare keeps the planted bug, and the full
+copy → grade → JSONL → report loop runs in seconds. It exists so anyone can
+try the harness before spending money — and it is **synthetic**: rows carry
+`"offline": true` and `report.sh` brands the output `SYNTHETIC OFFLINE
+SMOKE`. Never quote offline numbers as results.
 
 Arm A installs this repo into a sandbox `CLAUDE_CONFIG_DIR`; arm B runs with
 an empty config. Same prompt, same fixture, same grader. `--with-lessons`
@@ -59,7 +67,11 @@ in the environment** — the sandbox `CLAUDE_CONFIG_DIR` isolates any
 credentials stored in your real `~/.claude`, so without the env var both arms
 fail identically. `run.sh` marks an arm whose `claude` invocation exited
 non-zero as **INVALID** rather than grading it (and records it as such in the
-JSONL): an agent that never ran is not behavioral data. It is deliberately
+JSONL): an agent that never ran is not behavioral data. Exit 0 is not trusted
+either: `check-result.sh` inspects the result payload, because the CLI has
+reported subtype `"success"` around a `Not logged in` error — that arm is
+INVALID too, with the reason quoted (each accept/reject path is
+fixture-proven by `test.sh`). It is deliberately
 not part of `test.sh` or CI — CI only verifies the graders themselves, three
 ways per task, all offline: `reference/` passes, unfixed `project/` fails,
 `gamed/` is rejected.

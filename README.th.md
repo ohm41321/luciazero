@@ -16,6 +16,54 @@ Luciazero ทำให้ coding agent รันลูป `plan → change → v
 
 ทุกอย่างใน repo นี้ — doctrine 9 ข้อ, skill หกตัว, reviewer agent สายหักล้าง, enforcement hooks, eval harness — มีไว้เพื่อทำให้กฎข้อนี้เป็นจริงโดยไม่ต้องมีคนคอยดูทุกลูป
 
+## หน้าตาเวลาใช้งานจริง
+
+เอาต์พุตจริงของสคริปต์ที่ ship มา ไม่ใช่ mockup — GIF อัดจาก `docs/assets/statusline-demo.sh` ซึ่งขับ hook ตัวจริงผ่าน loop ทั้งวง (อัดซ้ำเองได้: `vhs docs/assets/demo.tape`):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="Enforcement pack ใน 15 วินาที: แก้ไฟล์ขึ้น unverified, จะจบ session โดน nudge, verify แดงขึ้น RED, แก้แล้วกลับเขียว">
+</p>
+
+statusline โชว์สถานะ verify บนหน้าจอตลอดเวลา:
+
+```
+Opus | ✎ unverified          # แก้โค้ดแล้ว ยังไม่รัน verify เลย
+Opus | ✅ verify 3m           # verify ล่าสุดเขียว เมื่อ 3 นาทีก่อน
+Opus | ❌ verify RED 40s      # verify ล่าสุดแดง — ลูปยังไม่จบ
+```
+
+จะจบ session ทั้งที่แก้โค้ดแล้วยังไม่ verify → โดนเตือนหนึ่งครั้ง:
+
+```
+Doctrine rule 1: edits were made but no verify command has run since the last
+edit. Run the repo's verify command and quote its decisive line — or finish
+anyway and say plainly that the change is unverified. (This nudge fires once.)
+```
+
+และใน strict mode (opt-in) verify ที่แดงจะ*บล็อก*การจบ session จริง ๆ พร้อมแนบหลักฐาน:
+
+```
+Strict verify gate: './test.sh' is RED. Fix it before finishing — or say
+plainly that you are handing back a red state. Failing output:
+
+test_totals ... FAIL: expected 14, got 8
+```
+
+## กันความพังแบบไหนบ้าง
+
+ทุกโหมดความพังจับคู่กับกลไกที่ ship จริง ไม่ใช่คำสัญญา:
+
+| โหมดความพัง | อะไรจับ |
+|---|---|
+| "เสร็จแล้ว!" โดยไม่เคยรัน verify | nudge ของ Stop hook; ใน strict mode verify แดงจะ block การจบ session พร้อม quote output ที่พัง |
+| `cat test.sh` ถูกนับว่ารันเทสต์ | โหมด exact-match ของ `LUCIAZERO_VERIFY_CMD` |
+| check ถูกลดความเข้ม ข้าม หรือลบเพื่อให้เขียว | doctrine กฎข้อ 3 บวก check-suppression guard (inert) ใน project settings ตัวอย่าง |
+| เทสต์ใหม่ที่ผ่านทั้งแบบมีและไม่มี fix | `revert-probe.sh` — exit 1 คือเทสต์กลวง |
+| scope หายเงียบ ๆ จากคำขอ | `/done` ขั้น 4: ทุกส่วนต้องส่งมอบหรือบอกชัดว่าตัดออกเพราะอะไร |
+| ทางตันเดิมถูกไล่ซ้ำ session หน้า | ledger ของ `/retro` (`docs/lessons.md`, heuristics ข้าม repo) ป้อนเข้า `/debug` |
+
+แถวที่เป็นกลไกถูก `test.sh` ทดสอบทุก push; แถวที่เป็น procedure คือสิ่งที่ eval harness มีไว้วัด
+
 ## ติดตั้ง
 
 **Claude Code — plugin (แนะนำ)** ติดตั้งครั้งเดียวได้ครบ: skill ทั้งหก, agent `reviewer`, hook ติดตามการ verify และ doctrine:
@@ -76,54 +124,6 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 | `demo.sh` | เดโม 2 นาที — บั๊กฝัง, session ของคุณเอง, grader เป็นกลาง | รันเอง |
 
 เทียบกับ superpowers, SuperClaude, proof-loop และของ built-in ใน harness — รวมทั้งจุดที่เขาทำได้ดีกว่า: [docs/comparison.md](docs/comparison.md)
-
-## หน้าตาเวลาใช้งานจริง
-
-เอาต์พุตจริงของสคริปต์ที่ ship มา ไม่ใช่ mockup — GIF อัดจาก `docs/assets/statusline-demo.sh` ซึ่งขับ hook ตัวจริงผ่าน loop ทั้งวง (อัดซ้ำเองได้: `vhs docs/assets/demo.tape`):
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="Enforcement pack ใน 15 วินาที: แก้ไฟล์ขึ้น unverified, จะจบ session โดน nudge, verify แดงขึ้น RED, แก้แล้วกลับเขียว">
-</p>
-
-statusline โชว์สถานะ verify บนหน้าจอตลอดเวลา:
-
-```
-Opus | ✎ unverified          # แก้โค้ดแล้ว ยังไม่รัน verify เลย
-Opus | ✅ verify 3m           # verify ล่าสุดเขียว เมื่อ 3 นาทีก่อน
-Opus | ❌ verify RED 40s      # verify ล่าสุดแดง — ลูปยังไม่จบ
-```
-
-จะจบ session ทั้งที่แก้โค้ดแล้วยังไม่ verify → โดนเตือนหนึ่งครั้ง:
-
-```
-Doctrine rule 1: edits were made but no verify command has run since the last
-edit. Run the repo's verify command and quote its decisive line — or finish
-anyway and say plainly that the change is unverified. (This nudge fires once.)
-```
-
-และใน strict mode (opt-in) verify ที่แดงจะ*บล็อก*การจบ session จริง ๆ พร้อมแนบหลักฐาน:
-
-```
-Strict verify gate: './test.sh' is RED. Fix it before finishing — or say
-plainly that you are handing back a red state. Failing output:
-
-test_totals ... FAIL: expected 14, got 8
-```
-
-## กันความพังแบบไหนบ้าง
-
-ทุกโหมดความพังจับคู่กับกลไกที่ ship จริง ไม่ใช่คำสัญญา:
-
-| โหมดความพัง | อะไรจับ |
-|---|---|
-| "เสร็จแล้ว!" โดยไม่เคยรัน verify | nudge ของ Stop hook; ใน strict mode verify แดงจะ block การจบ session พร้อม quote output ที่พัง |
-| `cat test.sh` ถูกนับว่ารันเทสต์ | โหมด exact-match ของ `LUCIAZERO_VERIFY_CMD` |
-| check ถูกลดความเข้ม ข้าม หรือลบเพื่อให้เขียว | doctrine กฎข้อ 3 บวก check-suppression guard (inert) ใน project settings ตัวอย่าง |
-| เทสต์ใหม่ที่ผ่านทั้งแบบมีและไม่มี fix | `revert-probe.sh` — exit 1 คือเทสต์กลวง |
-| scope หายเงียบ ๆ จากคำขอ | `/done` ขั้น 4: ทุกส่วนต้องส่งมอบหรือบอกชัดว่าตัดออกเพราะอะไร |
-| ทางตันเดิมถูกไล่ซ้ำ session หน้า | ledger ของ `/retro` (`docs/lessons.md`, heuristics ข้าม repo) ป้อนเข้า `/debug` |
-
-แถวที่เป็นกลไกถูก `test.sh` ทดสอบทุก push; แถวที่เป็น procedure คือสิ่งที่ eval harness มีไว้วัด
 
 ## ติดตั้งแบบ classic & enforcement pack
 

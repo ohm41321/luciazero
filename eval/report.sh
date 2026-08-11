@@ -29,7 +29,8 @@ with open(path) as f:
                          "criteria": dict(row["criteria"]),
                          "duration_s": row.get("duration_s"),
                          "tokens_out": row.get("tokens_out"),
-                         "cost_usd": row.get("cost_usd")})
+                         "cost_usd": row.get("cost_usd"),
+                         "offline": bool(row.get("offline", False))})
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             sys.exit(f"FAIL: {path}:{i}: malformed result line ({e})")
 if not rows:
@@ -50,6 +51,9 @@ def mean(vals):
 
 tasks = sorted({r["task"] for r in rows})
 print("# Eval report")
+if any(r["offline"] for r in rows):
+    print("\n**SYNTHETIC OFFLINE SMOKE — these rows exercise the pipeline "
+          "with pre-built trees; no agent ran. Never quote them as results.**")
 low_n = False
 for task in tasks:
     trows = [r for r in rows if r["task"] == task]

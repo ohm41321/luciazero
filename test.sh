@@ -19,6 +19,7 @@ export CLAUDE_CONFIG_DIR
 
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
+         docs/assets/statusline-demo.sh
          skills/luciazero-bootstrap/scripts/detect.sh
          skills/done/scripts/revert-probe.sh
          claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh

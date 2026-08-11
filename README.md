@@ -79,7 +79,13 @@ How it stacks up against superpowers, SuperClaude, proof-loop, and the harness b
 
 ## What it looks like
 
-Actual output of the shipped scripts, not mockups. The statusline keeps the verify state on screen:
+Actual output of the shipped scripts, not mockups — the GIF is recorded from `docs/assets/statusline-demo.sh`, which drives the real hooks through the loop (re-record it yourself: `vhs docs/assets/demo.tape`):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="The enforcement pack in 15 seconds: edit shows unverified, stopping triggers the nudge, a red verify shows RED, the fix turns it green">
+</p>
+
+The statusline keeps the verify state on screen:
 
 ```
 Opus | ✎ unverified          # edits made, no verify run since

@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **README demo GIF** — 15 seconds of the enforcement pack's real behavior:
+  edit → `✎ unverified`, stop attempt → the rule-1 nudge, red verify →
+  `❌ verify RED`, fix → `✅ verify`. Recorded from the checked-in
+  `docs/assets/statusline-demo.sh`, which drives the shipped hooks in a
+  sandbox (so the GIF cannot drift from what the scripts actually print),
+  via the checked-in `docs/assets/demo.tape` (`vhs`). The driver script is
+  under `test.sh`'s shellcheck net.
+
 - **`false-green` eval task** (sixth): the false-done trap — the shipped
   suite is green from the start while the CSV escaping bug lives outside
   its coverage. The untouched tree *passes its own tests* and still fails

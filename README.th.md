@@ -79,7 +79,13 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 
 ## หน้าตาเวลาใช้งานจริง
 
-เอาต์พุตจริงของสคริปต์ที่ ship มา ไม่ใช่ mockup — statusline โชว์สถานะ verify บนหน้าจอตลอดเวลา:
+เอาต์พุตจริงของสคริปต์ที่ ship มา ไม่ใช่ mockup — GIF อัดจาก `docs/assets/statusline-demo.sh` ซึ่งขับ hook ตัวจริงผ่าน loop ทั้งวง (อัดซ้ำเองได้: `vhs docs/assets/demo.tape`):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="Enforcement pack ใน 15 วินาที: แก้ไฟล์ขึ้น unverified, จะจบ session โดน nudge, verify แดงขึ้น RED, แก้แล้วกลับเขียว">
+</p>
+
+statusline โชว์สถานะ verify บนหน้าจอตลอดเวลา:
 
 ```
 Opus | ✎ unverified          # แก้โค้ดแล้ว ยังไม่รัน verify เลย

@@ -32,6 +32,9 @@ and exit zero only on a full score.
 | `pipeline` | parser drops the final record; symptom appears two modules away | hypothesis-first, smallest diff (rules 4+6) | fix must land in `parse.py`; `transform.py`/`render.py` must stay AST-identical |
 | `merge-conflict` | unresolved merge: bulk discount on one side, member discount on the other | skeptic diff pass — nothing silently dropped (rules 4+7) | both features probed on data the tests never mention; one-sided feature **mutants** swapped in must turn the worked suite red (proves each side is actually tested) |
 | `false-green` | suite GREEN from the start, implementation wrong outside its coverage | done is proven by a command that probes the symptom, not by a green suite (rule 1) | untouched tree = the false-done handback and it fails; symptom probed on unseen data; with the bug restored the worked suite must go red |
+| `archive-security` | ZIP restore permits path and link escapes | security-focused review plus regression-test discipline (rules 3, 4, 7) | traversal variants, link entries, destination symlinks, and all-or-nothing rejection; restored bug must make worked tests red |
+| `schema-migration` | schema upgrade drops extension fields and rewrites in place | preserve scope and contracts; verify failure paths (rules 2, 4, 7) | opaque fields, input immutability, invalid-file preservation, replace-failure injection, idempotence, and restored-bug probe |
+| `paginated-sync` | integration reads one page and can loop on cursors | trace the full contract across files and prove the edge (rules 2, 4, 6) | three-page cursor fidelity, cycle detection before repeated I/O, CLI completeness, immutability, and restored-bug probe |
 
 ## Running
 
@@ -41,9 +44,12 @@ eval/run.sh slugify                        # one task
 eval/run.sh --runs 5 --out results.jsonl   # the honest way: repeat, then
 eval/report.sh results.jsonl               # per-criterion pass-rate table
 eval/run.sh --provider codex --model gpt-5.6-terra \
-  --reasoning-effort medium --use-login --out terra.jsonl
+  --reasoning-effort medium --seed 20260812 --campaign-id terra-screen-v1 \
+  --use-login --out terra.jsonl
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
 eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
+eval/run.sh --resume --campaign-id c1 --seed s1 --runs 3 \
+  --out results.jsonl slugify               # fill any gaps in runs 1–3
 eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
                                            # subscription quota, no API key
 ```
@@ -106,14 +112,37 @@ token usage, and invalid-run reason. Codex subscription runs have no reliable
 per-run dollar cost, so `cost_usd` remains null.
 
 `report.sh` refuses to aggregate rows with different providers, known models,
-reasoning efforts, CLI versions, or synthetic/real modes. Use one output file
-per run configuration; appending repeated samples of that configuration is safe.
+reasoning efforts, CLI versions, campaign IDs, repository commits, seeds, or
+synthetic/real modes. It also rejects fixture-hash drift, duplicate invocation
+IDs, and inconsistent pair metadata. Use one output file per campaign. To
+resume an interrupted campaign—even midway through a pair—reuse the exact
+`--campaign-id`, `--seed`, run range, and non-empty output file with `--resume`. Existing
+invocation IDs are validated and skipped; missing ones run. To extend a fully
+completed three-run campaign, use `--resume --run-offset 3 --runs 2`.
+`--resume` also refuses changed provider/model, commit, task/prompt hash,
+platform, runner profile, or arm set. Without it, overlapping ranges are
+rejected by `report.sh` as duplicate invocation IDs. `--run-offset` is only for
+extending a fully completed batch; never use it to jump over interrupted gaps.
+Real runs refuse a dirty checkout by default because a commit cannot reproduce
+uncommitted treatment or fixture changes. `--allow-dirty` exists for private
+diagnostics; rows record `repository_dirty: true` and must not be published.
 
-Checked-in exploratory runs live under `eval/results/`; unlike root-level
-scratch `*.jsonl` files, they are reviewable benchmark evidence. The first is
-the [2026-08-12 Terra/medium pilot](results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
-It is deliberately labeled a pilot because one run per arm is below the
-publication threshold.
+Current rows use result schema 2. Every invocation records a UTC timestamp,
+campaign/pair/invocation IDs, repository commit and dirty state, task and prompt
+SHA-256, requested model, observed model, CLI version, reasoning effort, OS and
+architecture, and the exact non-prompt runner profile (including any
+`EVAL_CLAUDE_ARGS` override). Arm order is deterministically randomized within
+each task/run from `--seed`, then stored in every row. This reduces fixed-order
+bias and lets another operator reconstruct the ordering without revealing
+credentials. Never put credentials in `EVAL_CLAUDE_ARGS`; its value becomes
+reviewable evidence.
+
+Checked-in campaigns live under [`eval/results/`](results/). The registry pins
+every raw file by SHA-256 and documents historical omissions. `eval/evidence.py`
+generates the public tables from those rows, while `test.sh` rejects edited raw
+data or documentation drift. The Terra run remains a pilot because one run per
+arm is below the publication threshold; the canonical Sonnet campaign remains
+preliminary because eight invalid rows leave several arms at four valid runs.
 
 ## Honesty box
 

@@ -7,6 +7,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Auditable benchmark evidence: canonical Claude raw JSONL, a SHA-256 campaign
+  registry, generated README/benchmark tables, and a CI drift check.
+- Result schema 2 records campaign, pair, invocation, repository, fixture,
+  prompt, platform, and arm-order metadata. Seeded arm randomization reduces
+  fixed-order bias without making campaigns irreproducible.
+- Strict shared result validation rejects unsupported schemas and mistyped
+  booleans, criteria, metrics, timestamps, platform, and campaign metadata.
+  Output-aware `--resume` fills interrupted pairs without rerunning completed
+  invocation IDs; `--run-offset` extends completed batches.
+- Three zero-quota candidate eval tasks cover archive extraction security,
+  lossless atomic schema migration, and multi-page cursor integration. Each
+  grader proves reference/project/anti-gamed behavior offline.
+
+### Changed
+
+- The canonical Sonnet result is explicitly preliminary (`+31pp`, n=4–5).
+  The historical `+37pp` statement is retired because its eight replacement
+  raw rows could not be recovered.
+- `eval/report.sh` rejects mixed campaigns/commits/seeds, changed fixture
+  hashes, duplicate invocation IDs, and inconsistent pair order. Published
+  evidence also enforces registered task/arm/row/invalid/model expectations,
+  and discloses Haiku's incomplete per-row model provenance.
+
 ## [2.0.0] - 2026-08-12
 
 ### Changed

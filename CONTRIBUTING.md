@@ -15,7 +15,8 @@ Must pass before any PR. It covers:
   directories, including the opt-in enforcement pack.
 
 CI runs the same command. Real behavioral eval runs are separate and manual:
-they invoke the Claude CLI and consume API credit or subscription quota.
+they invoke the selected Claude or Codex CLI and consume API credit or
+subscription quota.
 
 ## Rules of the repo
 

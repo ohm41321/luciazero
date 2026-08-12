@@ -114,17 +114,25 @@ separate passes.
 
 ## Evidence
 
-### Published Claude results
+<!-- BEGIN GENERATED: benchmark-evidence -->
 
-Snapshot: 2026-08-11. All-criteria pass rate:
+### Claude results
+
+Snapshot: 2026-08-11. All-criteria pass rate generated from checked-in raw rows:
 
 | Claude model | Luciazero | Bare | Difference |
 |---|---:|---:|---:|
-| Haiku, 10 valid/task | 36/60 (60%) | 27/60 (45%) | +15pp |
+| Haiku†, 10 valid/task | 36/60 (60%) | 27/60 (45%) | +15pp |
 | Sonnet, 4–5 valid/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
 
 The `Luciazero` arm installs the classic pack without hooks; it is not a clean
-doctrine-only ablation. *Sonnet is below the five-valid-runs publication floor.
+doctrine-only ablation. *Sonnet is preliminary because eight invalid rows leave
+several arms at four valid runs. The previously stated `+37pp` top-up is retired
+because its replacement raw rows could not be recovered.
+
+†Model provenance is incomplete for Haiku: only 70/140 rows encode model
+identity. The other 70 are attributed at campaign-file/report level and
+cannot be independently verified per row.
 
 ### GPT/Codex pilot — exploratory
 
@@ -132,12 +140,15 @@ Snapshot: 2026-08-12.
 
 | Model | Valid invocations | Paired tasks | Luciazero | Bare | Observed difference |
 |---|---:|---:|---:|---:|---:|
-| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 runs, 28/28 criteria | 5/5 runs, 28/28 criteria | 0pp† |
+| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 runs, 28/28 criteria | 5/5 runs, 28/28 criteria | +0pp† |
 
 *One Luciazero run was invalidated by model capacity. †This is a
 **ceiling-effect warning, not evidence of uplift or no effect**: the pilot has
-only one run per arm per task. See the [full benchmark](docs/benchmark.md) and
+only one run per arm per task. See the [full benchmark](docs/benchmark.md),
+[campaign registry](eval/results/campaigns.json), and
 [raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
+
+<!-- END GENERATED: benchmark-evidence -->
 
 ## Requirements and safety
 
@@ -167,6 +178,8 @@ More detail:
 - [Architecture and trade-offs](docs/comparison.md)
 - [Eval methodology](eval/README.md)
 - [Benchmark results and GPT plan](docs/benchmark.md)
+- [Raw campaign registry](eval/results/campaigns.json)
+- [Experiment log](docs/experiments.md)
 - [Contributing](CONTRIBUTING.md)
 - [Publishing](docs/publishing.md)
 - [Changelog](CHANGELOG.md)

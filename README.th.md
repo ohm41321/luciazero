@@ -112,31 +112,41 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 
 ## หลักฐาน
 
-### ผล Claude ที่เผยแพร่
+<!-- BEGIN GENERATED: benchmark-evidence -->
 
-Snapshot: 2026-08-11 อัตราผ่านครบทุกเกณฑ์:
+### ผล Claude
 
-| Claude model | Luciazero | Bare | ผลต่าง |
+Snapshot: 2026-08-11 อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:
+
+| โมเดล Claude | Luciazero | Bare | ผลต่าง |
 |---|---:|---:|---:|
-| Haiku, valid 10/task | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet, valid 4–5/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
+| Haiku†, 10 valid/task | 36/60 (60%) | 27/60 (45%) | +15pp |
+| Sonnet, 4–5 valid/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
 
-Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ doctrine
-เพียงอย่างเดียว *ผล Sonnet ยังต่ำกว่าเกณฑ์เผยแพร่ที่ต้องมี valid run อย่างน้อย 5
-ครั้งต่อ arm
+Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ
+doctrine เพียงอย่างเดียว *Sonnet ยังเป็นผล preliminary เพราะ invalid 8 rows
+ทำให้หลาย arm มี valid run เพียง 4 รอบ ส่วนผล top-up `+37pp` เดิมถูกยกเลิก
+เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้
+
+†Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก
+model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign
+จึงตรวจสอบโมเดลซ้ำแบบราย row ไม่ได้
 
 ### GPT/Codex pilot — ผลสำรวจเบื้องต้น
 
-Snapshot: 2026-08-12
+Snapshot: 2026-08-12.
 
-| Model | Valid invocation | Task ที่จับคู่ได้ | Luciazero | Bare | ผลต่างที่พบ |
+| โมเดล | invocation ที่ valid | task ที่จับคู่ได้ | Luciazero | Bare | ผลต่างที่พบ |
 |---|---:|---:|---:|---:|---:|
-| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 run, 28/28 criteria | 5/5 run, 28/28 criteria | 0pp† |
+| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 runs, 28/28 criteria | 5/5 runs, 28/28 criteria | +0pp† |
 
 *Luciazero 1 run ถูกตัดเป็น invalid เพราะ model capacity เต็ม †นี่คือ
 **สัญญาณว่า benchmark อาจง่ายเกินไป ไม่ใช่หลักฐานว่ามีหรือไม่มี uplift** เพราะ
-pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเต็ม](docs/benchmark.md) และ
-[ข้อมูล pilot ดิบ](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl)
+pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเต็ม](docs/benchmark.md),
+[campaign registry](eval/results/campaigns.json) และ
+[raw pilot](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl)
+
+<!-- END GENERATED: benchmark-evidence -->
 
 ## Requirement และความปลอดภัย
 
@@ -166,6 +176,8 @@ eval grader ที่พิสูจน์ตัวเองได้ และ 
 - [สถาปัตยกรรมและ trade-off](docs/comparison.md)
 - [วิธีทำ eval](eval/README.md)
 - [ผล benchmark และแผน GPT](docs/benchmark.md)
+- [ทะเบียน raw campaign](eval/results/campaigns.json)
+- [บันทึกการทดลอง](docs/experiments.md)
 - [การ contribute](CONTRIBUTING.md)
 - [การ publish](docs/publishing.md)
 - [Changelog](CHANGELOG.md)

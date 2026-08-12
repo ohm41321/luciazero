@@ -81,6 +81,10 @@ while IFS= read -r AGENT_NAME; do
 done < <(catalog "${ROOT}/claude/agents/catalog.txt")
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/skills/lucia-relay/scripts/relay.py" || fail "relay.py syntax"
+python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
+  "${ROOT}/eval/evidence.py" || fail "evidence.py syntax"
+python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
+  "${ROOT}/eval/result_schema.py" || fail "result_schema.py syntax"
 echo "ok  skill + agent frontmatter"
 
 # 4b. doctrine budget — loaded on every turn of every session; this enforces "stays short"
@@ -447,6 +451,77 @@ grep -q 'luciazero-heuristics.md' "${ROOT}/skills/retro/SKILL.md" || fail "retro
 grep -q 'luciazero discipline' "${ROOT}/skills/retro/SKILL.md" || fail "retro skill lost the discipline-report integration"
 echo "ok  learning-layer skill wiring"
 
+# 4c7. published benchmark tables are generated from immutable, digest-checked
+# raw campaigns. A stale table or edited JSONL must turn CI red.
+python3 "${ROOT}/eval/evidence.py" --check >/dev/null \
+  || fail "benchmark evidence digest or generated documentation drift"
+python3 - "${ROOT}/eval" <<'PY' \
+  || fail "benchmark evidence accepted duplicate schema-v2 invocations"
+import hashlib, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from evidence import validate_campaign_rows
+
+campaign = {
+    "expected_result_schema": 2, "expected_runs_per_cell": 2,
+    "expected_invalid": {}, "expected_model_rows": 4,
+    "id": "c", "tasks": ["t"], "lessons_tasks": [], "observed_model": "m",
+    "expected_task_sha256": {"t": {"task": "a" * 64, "prompt": "b" * 64}},
+}
+base = {"result_schema": 2, "task": "t", "invalid": False,
+        "model": "m", "requested_model": "m", "criteria": {"ok": True},
+        "campaign_id": "c", "repository_dirty": False, "seed": "s",
+        "repository_commit": "abc", "runner_profile": "runner",
+        "reasoning_effort": "medium", "cli_version": "cli",
+        "system": "system", "architecture": "arch",
+        "campaign_started_at": "2026-08-12T00:00:00+00:00",
+        "task_sha256": "a" * 64, "prompt_sha256": "b" * 64}
+rows = [
+    {**base, "arm": "doctrine", "run": 1, "pair_id": "c/t/1",
+     "arm_order": ["doctrine", "bare"], "invocation_id": "c/t/1/doctrine"},
+    {**base, "arm": "doctrine", "run": 1, "pair_id": "c/t/1",
+     "arm_order": ["doctrine", "bare"], "invocation_id": "c/t/1/doctrine"},
+    {**base, "arm": "bare", "run": 1, "pair_id": "c/t/1",
+     "arm_order": ["doctrine", "bare"], "invocation_id": "c/t/1/bare"},
+    {**base, "arm": "bare", "run": 2, "pair_id": "c/t/2",
+     "arm_order": ["bare", "doctrine"], "invocation_id": "c/t/2/bare"},
+]
+try:
+    validate_campaign_rows(campaign, rows, pathlib.Path("synthetic.jsonl"))
+except SystemExit as exc:
+    assert "duplicate" in str(exc)
+else:
+    raise AssertionError("duplicate invocation IDs were accepted")
+
+def expected_order(run):
+    return sorted(("doctrine", "bare"), key=lambda arm: hashlib.sha256(
+        f"s\0t\0{run}\0{arm}".encode()).digest())
+
+valid = [
+    {**base, "arm": arm, "run": run, "pair_id": f"c/t/{run}",
+     "arm_order": expected_order(run),
+     "invocation_id": f"c/t/{run}/{arm}"}
+    for run in (1, 2) for arm in ("doctrine", "bare")
+]
+valid[0]["repository_dirty"] = True
+try:
+    validate_campaign_rows(campaign, valid, pathlib.Path("synthetic.jsonl"))
+except SystemExit as exc:
+    assert "dirty-checkout" in str(exc)
+else:
+    raise AssertionError("dirty evidence rows were accepted")
+valid[0]["repository_dirty"] = False
+for row in valid:
+    if row["run"] == 1:
+        row["arm_order"] = list(reversed(expected_order(1)))
+try:
+    validate_campaign_rows(campaign, valid, pathlib.Path("synthetic.jsonl"))
+except SystemExit as exc:
+    assert "does not match seed" in str(exc)
+else:
+    raise AssertionError("tampered deterministic arm order was accepted")
+PY
+echo "ok  benchmark evidence digests + generated docs"
+
 # 4d. eval graders stay honest — auto-discovered, so no task can ship without
 # its proofs: PROMPT.md present, grader executable and following the output
 # contract, reference/ passes, unfixed project/ fails, and any checked-in
@@ -498,19 +573,49 @@ if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
 fi
 # Appended rows from unlike run configurations must never become one rate.
 printf '%s\n' \
-  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex","model":"model-a","reasoning_effort":"medium","cli_version":"codex 1"}' \
-  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex","model":"model-b","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"model-a","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"model-b","reasoning_effort":"medium","cli_version":"codex 1"}' \
   > "${RPT}"
 if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
   rm -f "${RPT}"; fail "report.sh combined different models"
 fi
 printf '%s\n' \
-  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"claude"}' \
-  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex"}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"claude"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex"}' \
   > "${RPT}"
 if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
   rm -f "${RPT}"; fail "report.sh combined different providers"
 fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","campaign_id":"a"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","campaign_id":"b"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different campaigns"
+fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","task_sha256":"aaa"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","task_sha256":"bbb"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined changed task fixtures"
+fi
+printf '%s\n' \
+  '{"result_schema":2,"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh accepted incomplete schema-v2 metadata"
+fi
+for BAD_ROW in \
+  '{"result_schema":3,"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":"false","criteria":{"ok":true},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":"fail"},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":"fast"}'; do
+  printf '%s\n' "${BAD_ROW}" > "${RPT}"
+  if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+    rm -f "${RPT}"; fail "report.sh accepted a type-invalid result row"
+  fi
+done
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
 
@@ -575,7 +680,7 @@ exit 1
 FAKECODEX
 chmod +x "${CFX}/bin/codex"
 PATH="${CFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
-  --model gpt-5.6-terra --reasoning-effort medium \
+  --model gpt-5.6-terra --reasoning-effort medium --allow-dirty \
   --out "${CFX}/result.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${CFX}"; fail "run.sh rejected a recorded invalid Codex run"; }
 python3 - "${CFX}/result.jsonl" <<'PY' \
@@ -631,7 +736,8 @@ chmod +x "${SFX}/bin/codex"
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" PATH="${SFX}/bin:${PATH}" \
   "${ROOT}/eval/run.sh" --provider codex --model gpt-5.6-terra \
-  --reasoning-effort medium --use-login --out "${SFX}/ok.jsonl" false-green \
+  --reasoning-effort medium --use-login --allow-dirty \
+  --out "${SFX}/ok.jsonl" false-green \
   >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "successful fake Codex adapter run failed"; }
 for ARM in doctrine bare; do
@@ -675,7 +781,7 @@ PY
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=1 \
   PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
-  --model gpt-5.6-terra --reasoning-effort medium --use-login \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
   --out "${SFX}/bad.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "malformed Codex usage aborted run.sh"; }
 python3 - "${SFX}/bad.jsonl" <<'PY' \
@@ -690,7 +796,7 @@ PY
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=2 \
   PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
-  --model gpt-5.6-terra --reasoning-effort medium --use-login \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
   --out "${SFX}/nonobject.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "non-object Codex event aborted run.sh"; }
 python3 - "${SFX}/nonobject.jsonl" <<'PY' \
@@ -708,7 +814,8 @@ echo "ok  Codex success path isolates auth, config, arms, and usage errors"
 # 4d2c. offline smoke mode: full copy -> grade -> JSONL -> report loop with
 # zero API; rows must be branded offline and the report must say SYNTHETIC
 OFJ="$(mktemp -d)"
-"${ROOT}/eval/run.sh" --offline --with-lessons --out "${OFJ}/r.jsonl" false-green >/dev/null 2>&1 \
+"${ROOT}/eval/run.sh" --offline --with-lessons --seed fixture-seed \
+  --campaign-id fixture-campaign --out "${OFJ}/r.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "run.sh --offline exited non-zero"; }
 python3 - "${OFJ}/r.jsonl" <<'PY' || { rm -rf "${OFJ}"; fail "offline JSONL rows wrong"; }
 import json, sys
@@ -718,6 +825,15 @@ assert {r["arm"] for r in rows} == {"doctrine", "bare", "lessons"}
 assert all(r["offline"] is True for r in rows), "rows not branded offline"
 assert all(r["provider"] == "claude" for r in rows), "default provider drifted"
 assert all(r["invalid"] is False for r in rows), "offline rows marked invalid"
+assert all(r["result_schema"] == 2 for r in rows)
+assert all(r["campaign_id"] == "fixture-campaign" for r in rows)
+assert len({r["pair_id"] for r in rows}) == 1
+assert [r["arm"] for r in rows] == rows[0]["arm_order"]
+assert all(r["seed"] == "fixture-seed" for r in rows)
+assert all(len(r["task_sha256"]) == 64 and len(r["prompt_sha256"]) == 64 for r in rows)
+assert all(r["repository_commit"] and r["system"] and r["architecture"] for r in rows)
+assert all(r["runner_profile"].startswith("claude -p ") for r in rows)
+assert len({r["invocation_id"] for r in rows}) == 3
 by = {r["arm"]: r for r in rows}
 assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
 assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
@@ -726,6 +842,101 @@ if "${ROOT}/eval/run.sh" --offline --model gpt-5.6-terra false-green \
   >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh accepted Codex-only flags for Claude"
 fi
+if "${ROOT}/eval/run.sh" --offline --runs 0 false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted zero repetitions"
+fi
+if "${ROOT}/eval/run.sh" --offline --run-offset nope false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted a non-numeric run offset"
+fi
+if "${ROOT}/eval/run.sh" --offline --resume --out "${OFJ}/missing.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed without explicit campaign ID and seed"
+fi
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --out "${OFJ}/missing.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed a missing output file"
+fi
+: > "${OFJ}/empty.jsonl"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --out "${OFJ}/empty.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed an empty output file"
+fi
+"${ROOT}/eval/run.sh" --offline --seed resume-seed --campaign-id resume-campaign \
+  --runs 1 --out "${OFJ}/resume.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh initial resumable batch exited non-zero"; }
+# Simulate an interruption after the first arm: resume must skip that exact
+# invocation and fill only its missing pair mate.
+python3 - "${OFJ}/resume.jsonl" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().splitlines()[0] + "\n")
+PY
+"${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/resume.jsonl" \
+  false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh resumed batch exited non-zero"; }
+python3 - "${OFJ}/resume.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "run.sh resumed batch reused invocation IDs"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert {row["run"] for row in rows} == {1}
+assert len({row["pair_id"] for row in rows}) == 1
+assert len({row["invocation_id"] for row in rows}) == 2
+PY
+"${ROOT}/eval/report.sh" "${OFJ}/resume.jsonl" >/dev/null \
+  || { rm -rf "${OFJ}"; fail "report.sh rejected a correctly resumed campaign"; }
+# Appending to a final JSON object without a newline would corrupt JSONL.
+cp "${OFJ}/resume.jsonl" "${OFJ}/no-newline.jsonl"
+python3 - "${OFJ}/no-newline.jsonl" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_bytes(path.read_bytes().rstrip(b"\n"))
+PY
+cp "${OFJ}/no-newline.jsonl" "${OFJ}/no-newline.before"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/no-newline.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed a JSONL file without a final newline"
+fi
+cmp -s "${OFJ}/no-newline.before" "${OFJ}/no-newline.jsonl" \
+  || { rm -rf "${OFJ}"; fail "failed resume mutated no-newline JSONL"; }
+# Drift in a later task must abort before an earlier missing arm is appended.
+python3 - "${OFJ}/resume.jsonl" "${OFJ}/preflight.jsonl" <<'PY'
+import json, pathlib, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+first = rows[0]
+later = dict(first, task="slugify", pair_id="resume-campaign/slugify/1",
+             invocation_id="resume-campaign/slugify/1/" + first["arm"],
+             task_sha256="0" * 64, prompt_sha256="0" * 64)
+pathlib.Path(sys.argv[2]).write_text(
+    "\n".join(json.dumps(row) for row in (first, later)) + "\n"
+)
+PY
+BEFORE_LINES="$(wc -l < "${OFJ}/preflight.jsonl" | tr -d ' ')"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/preflight.jsonl" \
+  false-green slugify >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed after a later task failed preflight"
+fi
+[ "${BEFORE_LINES}" = "$(wc -l < "${OFJ}/preflight.jsonl" | tr -d ' ')" ] \
+  || { rm -rf "${OFJ}"; fail "resume spent/appended before full task preflight"; }
+# A tampered deterministic order must also fail before filling a missing mate.
+python3 - "${OFJ}/resume.jsonl" "${OFJ}/order-drift.jsonl" <<'PY'
+import json, pathlib, sys
+row = json.loads(open(sys.argv[1]).readline())
+row["arm_order"] = list(reversed(row["arm_order"]))
+pathlib.Path(sys.argv[2]).write_text(json.dumps(row) + "\n")
+PY
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/order-drift.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed after deterministic arm-order drift"
+fi
+[ "$(wc -l < "${OFJ}/order-drift.jsonl" | tr -d ' ')" = 1 ] \
+  || { rm -rf "${OFJ}"; fail "arm-order drift appended before preflight"; }
 "${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
   || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \

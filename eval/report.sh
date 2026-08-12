@@ -9,9 +9,13 @@ set -euo pipefail
 
 FILE="${1:?usage: report.sh <results.jsonl>}"
 [ -f "${FILE}" ] || { echo "FAIL: no such file: ${FILE}" >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-python3 - "${FILE}" <<'PY'
+python3 - "${FILE}" "${SCRIPT_DIR}" <<'PY'
 import json, sys
+
+sys.path.insert(0, sys.argv[2])
+from result_schema import validate_result_row
 
 path = sys.argv[1]
 rows = []
@@ -21,33 +25,45 @@ with open(path) as f:
         if not line:
             continue
         try:
-            row = json.loads(line)
-            if not isinstance(row.get("criteria"), dict):
-                raise ValueError("criteria is not an object")
-            provider = row.get("provider", "claude")
+            raw = json.loads(line)
+            row = validate_result_row(raw, source=f"{path}:{i}")
+            result_schema = row["result_schema"]
+            provider = row["provider"]
             metadata = {
                 "provider": provider,
                 "model": row.get("model"),
+                "requested_model": row.get("requested_model"),
                 "reasoning_effort": row.get("reasoning_effort"),
                 "cli_version": row.get("cli_version"),
+                "campaign_id": row.get("campaign_id"),
+                "campaign_started_at": row.get("campaign_started_at"),
+                "repository_commit": row.get("repository_commit"),
+                "seed": row.get("seed"),
+                "runner_profile": row.get("runner_profile"),
+                "system": row.get("system"),
+                "architecture": row.get("architecture"),
             }
-            if not isinstance(provider, str) or not provider:
-                raise ValueError("provider is not a non-empty string")
-            if any(v is not None and not isinstance(v, str)
-                   for k, v in metadata.items() if k != "provider"):
-                raise ValueError("run-config metadata is not string or null")
+            aux = {field: row.get(field) for field in
+                   ("task_sha256", "prompt_sha256", "pair_id", "invocation_id")}
+            arm_order = row.get("arm_order")
+            offline = row["offline"]
             rows.append({"task": row["task"], "arm": row["arm"],
-                         "invalid": bool(row["invalid"]),
+                         "result_schema": result_schema,
+                         "invalid": row["invalid"],
                          "criteria": dict(row["criteria"]),
                          "duration_s": row.get("duration_s"),
                          "tokens_out": row.get("tokens_out"),
                          "cost_usd": row.get("cost_usd"),
-                         "offline": bool(row.get("offline", False)),
+                         "offline": offline,
+                         "repository_dirty": row["repository_dirty"],
+                         **aux, "arm_order": arm_order,
                          **metadata,
-                         "has_run_config": any(k in row for k in
+                         "has_run_config": any(k in raw for k in
                                                ("provider", "model",
                                                 "reasoning_effort",
-                                                "cli_version"))})
+                                                "cli_version", "campaign_id",
+                                                "repository_commit", "seed",
+                                                "runner_profile"))})
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             sys.exit(f"FAIL: {path}:{i}: malformed result line ({e})")
 if not rows:
@@ -60,17 +76,57 @@ if not rows:
 def known(field):
     return {r[field] for r in rows if r[field] not in (None, "")}
 
-for field in ("provider", "model", "reasoning_effort", "cli_version"):
+if len({r["result_schema"] for r in rows}) > 1:
+    sys.exit(f"FAIL: {path}: mixed result_schema values")
+
+for field in ("provider", "model", "requested_model", "reasoning_effort",
+              "cli_version", "campaign_id", "campaign_started_at",
+              "repository_commit", "seed", "runner_profile", "system",
+              "architecture"):
     values = known(field)
     if len(values) > 1:
         sys.exit(f"FAIL: {path}: mixed {field} values: {sorted(values, key=str)}")
 if len({r["offline"] for r in rows}) > 1:
     sys.exit(f"FAIL: {path}: synthetic and real rows cannot be combined")
+if len({r["repository_dirty"] for r in rows}) > 1:
+    sys.exit(f"FAIL: {path}: clean and dirty rows cannot be combined")
+if any(r["repository_dirty"] and not r["offline"] for r in rows):
+    print(f"WARNING: {path}: dirty-checkout rows are diagnostic only", file=sys.stderr)
+
+# Schema-v2 campaigns bind every task and prompt to one digest. This catches a
+# fixture edited halfway through a campaign even when provider settings match.
+for task in {r["task"] for r in rows}:
+    task_rows = [r for r in rows if r["task"] == task]
+    for field in ("task_sha256", "prompt_sha256"):
+        values = {r[field] for r in task_rows if r[field] not in (None, "")}
+        if len(values) > 1:
+            sys.exit(f"FAIL: {path}: task {task} has mixed {field} values")
+
+# A pair may be incomplete because an invocation was interrupted, but present
+# arms must be unique and agree on the recorded randomized order.
+for pair_id in {r["pair_id"] for r in rows if r["pair_id"] not in (None, "")}:
+    pair = [r for r in rows if r["pair_id"] == pair_id]
+    if len({r["arm"] for r in pair}) != len(pair):
+        sys.exit(f"FAIL: {path}: duplicate arm in pair {pair_id}")
+    orders = [r["arm_order"] for r in pair if r["arm_order"] is not None]
+    if any(not isinstance(order, list) or
+           any(not isinstance(arm, str) for arm in order) for order in orders):
+        sys.exit(f"FAIL: {path}: malformed arm_order in pair {pair_id}")
+    if orders and any(order != orders[0] for order in orders[1:]):
+        sys.exit(f"FAIL: {path}: inconsistent arm_order in pair {pair_id}")
+    if orders and any(r["arm"] not in orders[0] for r in pair):
+        sys.exit(f"FAIL: {path}: arm missing from arm_order in pair {pair_id}")
+
+invocations = [r["invocation_id"] for r in rows
+               if r["invocation_id"] not in (None, "")]
+if len(invocations) != len(set(invocations)):
+    sys.exit(f"FAIL: {path}: duplicate invocation_id")
 
 run_config = []
 for label, field in (("provider", "provider"), ("model", "model"),
                      ("reasoning", "reasoning_effort"),
-                     ("CLI", "cli_version")):
+                     ("CLI", "cli_version"), ("campaign", "campaign_id"),
+                     ("commit", "repository_commit"), ("seed", "seed")):
     values = known(field)
     if values:
         run_config.append(f"{label}={next(iter(values))}")

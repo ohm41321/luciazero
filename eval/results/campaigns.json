@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "campaigns": [
+    {
+      "id": "claude-haiku-2026-08-11",
+      "date": "2026-08-11",
+      "provider": "claude",
+      "display_model": "Claude Haiku",
+      "observed_model": "claude-haiku-4-5-20251001",
+      "reasoning_effort": null,
+      "status": "published",
+      "file": "claude-haiku-2026-08-11.jsonl",
+      "sha256": "fc1d323966817e0bd3b0f5e0d0184a8b25a6e28100c700c98585cd98dbb31901",
+      "expected_result_schema": 1,
+      "expected_runs_per_cell": 10,
+      "lessons_tasks": [
+        "false-green",
+        "pipeline"
+      ],
+      "expected_invalid": {},
+      "expected_model_rows": 70,
+      "model_provenance": "Only 70 of 140 rows encode model identity. The remaining 70 are attributed to Haiku only at the original campaign-file/report level and cannot be independently verified per row.",
+      "tasks": [
+        "false-green",
+        "flaky-report",
+        "merge-conflict",
+        "pipeline",
+        "red-suite",
+        "slugify"
+      ],
+      "limitations": [
+        "Historical rows predate campaign metadata: timestamps, repository commit, fixture hashes, pair IDs, arm order, and operating system were not recorded.",
+        "Every row says run=1 because each repetition was launched as a separate one-run invocation."
+      ]
+    },
+    {
+      "id": "claude-sonnet-preliminary-2026-08-11",
+      "date": "2026-08-11",
+      "provider": "claude",
+      "display_model": "Claude Sonnet",
+      "observed_model": "claude-haiku-4-5-20251001,claude-sonnet-5",
+      "reasoning_effort": null,
+      "status": "preliminary",
+      "file": "claude-sonnet-preliminary-2026-08-11.jsonl",
+      "sha256": "fafb7a91b788bb484a66cb6c7259d91e9f32412e167a72385e735e50e2865117",
+      "expected_result_schema": 1,
+      "expected_runs_per_cell": 5,
+      "lessons_tasks": [
+        "false-green",
+        "pipeline"
+      ],
+      "expected_invalid": {
+        "merge-conflict/bare": 1,
+        "pipeline/bare": 1,
+        "pipeline/doctrine": 1,
+        "pipeline/lessons": 1,
+        "red-suite/bare": 1,
+        "red-suite/doctrine": 1,
+        "slugify/bare": 1,
+        "slugify/doctrine": 1
+      },
+      "expected_model_rows": 62,
+      "model_provenance": "All 62 valid rows encode the observed modelUsage value; the eight invalid rows contain no observed model identity.",
+      "tasks": [
+        "false-green",
+        "flaky-report",
+        "merge-conflict",
+        "pipeline",
+        "red-suite",
+        "slugify"
+      ],
+      "limitations": [
+        "Eight rows are invalid after an OAuth expiry, leaving several arms at four valid runs.",
+        "Commit b24f6a2 described eight replacement runs and a +37pp result, but those raw replacement rows are not present in Git, the local stash, or the recoverable result files. This auditable preliminary file is canonical; the unrecoverable +37pp claim is retired.",
+        "Historical rows predate campaign metadata: timestamps, repository commit, fixture hashes, pair IDs, arm order, and operating system were not recorded.",
+        "Every row says run=1 because each repetition was launched as a separate one-run invocation."
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra-medium-pilot-2026-08-12",
+      "date": "2026-08-12",
+      "provider": "codex",
+      "display_model": "GPT-5.6 Terra, medium",
+      "observed_model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "status": "exploratory",
+      "featured": true,
+      "file": "gpt-5.6-terra-medium-pilot-2026-08-12.jsonl",
+      "sha256": "96c7401c297d915006b49115f96e17e0d7db9e28471ed2078dc7e1a29d1473aa",
+      "expected_result_schema": 1,
+      "expected_runs_per_cell": 1,
+      "lessons_tasks": [],
+      "expected_invalid": {
+        "flaky-report/doctrine": 1
+      },
+      "expected_model_rows": 12,
+      "model_provenance": "All 12 rows encode the requested and observed Codex model identity.",
+      "tasks": [
+        "false-green",
+        "flaky-report",
+        "merge-conflict",
+        "pipeline",
+        "red-suite",
+        "slugify"
+      ],
+      "limitations": [
+        "One run per arm per task is below the publication floor.",
+        "One Luciazero flaky-report run is invalid because model capacity was exhausted.",
+        "The pilot predates the adapter's explicit core-only child-process environment."
+      ]
+    }
+  ]
+}

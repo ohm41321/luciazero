@@ -60,9 +60,11 @@ trade-offs below.
 
 ## Known weaknesses (ours)
 
-- Sample sizes in the published A/B benchmark (n=10 for Haiku, n=5 for
-  Sonnet across 6 tasks) are still small — compare rates, not single runs,
-  and larger evidence campaigns are needed.
+- The published campaigns cover six small Python tasks. Haiku has n=10 per arm;
+  Sonnet is preliminary at n=4–5 because eight invalid rows could not be
+  replaced from auditable raw data. Three harder candidate tasks now pass
+  offline grader validation but have no model results yet. Larger, multi-language
+  campaigns and independent replications are still needed.
 - No runtime, no orchestration, no durable state — by design, but it means
   this repo alone does not give you overnight autonomy.
 - Ecosystem listing: published on npm (`luciazero` v1.5.0) and the Claude

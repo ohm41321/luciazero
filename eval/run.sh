@@ -14,7 +14,9 @@
 #
 #   eval/run.sh [--provider claude|codex] [--model MODEL]
 #               [--reasoning-effort LEVEL] [--runs N] [--out results.jsonl]
-#               [--with-lessons] [--use-login] [task-name ...]
+#               [--seed SEED] [--campaign-id ID] [--run-offset N]
+#               [--resume] [--with-lessons] [--use-login] [--allow-dirty]
+#               [task-name ...]
 #
 # --runs N        repeat every (task, arm) N times (default 1)
 # --out F         append one JSON line per (task, arm, run) to F — criteria
@@ -29,6 +31,16 @@
 # --provider P    claude (default) or codex
 # --model M       exact Codex model ID (default gpt-5.6-terra for codex)
 # --reasoning-effort E  Codex effort (default medium)
+# --seed S        deterministically randomize arm order within each task/run;
+#                 defaults to a new 64-bit seed printed and stored in every row
+# --campaign-id I stable identifier for this invocation batch; defaults to a
+#                 timestamp + repository commit + seed identifier
+# --run-offset N  number the first repetition N+1 (default 0); use only to
+#                 extend a fully completed batch, never to skip interrupted gaps
+# --resume        validate a non-empty existing --out campaign and skip IDs
+#                 already present; requires explicit --campaign-id and --seed
+# --allow-dirty   permit a real run from a dirty checkout; recorded in every
+#                 row, but unsuitable for published evidence
 # --use-login     seed each sandbox config dir with this machine's selected
 #                 CLI login state, so runs use subscription quota instead of
 #                 an API key. Copies are deleted with the config dir.
@@ -51,10 +63,17 @@ PROVIDER=claude
 MODEL=""
 REASONING_EFFORT=""
 RUNS=1
+RUN_OFFSET=0
 OUT_FILE=""
 WITH_LESSONS=0
 OFFLINE=0
 USE_LOGIN=0
+RUN_SEED=""
+RUN_SEED_EXPLICIT=0
+CAMPAIGN_ID=""
+CAMPAIGN_ID_EXPLICIT=0
+ALLOW_DIRTY=0
+RESUME=0
 TASKS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,7 +81,12 @@ while [ $# -gt 0 ]; do
     --model) MODEL="${2:?--model needs an exact model ID}"; shift 2 ;;
     --reasoning-effort) REASONING_EFFORT="${2:?--reasoning-effort needs a level}"; shift 2 ;;
     --runs) RUNS="${2:?--runs needs a number}"; shift 2 ;;
+    --run-offset) RUN_OFFSET="${2:?--run-offset needs a number}"; shift 2 ;;
     --out)  OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
+    --seed) RUN_SEED="${2:?--seed needs a value}"; RUN_SEED_EXPLICIT=1; shift 2 ;;
+    --campaign-id) CAMPAIGN_ID="${2:?--campaign-id needs a value}"; CAMPAIGN_ID_EXPLICIT=1; shift 2 ;;
+    --resume) RESUME=1; shift ;;
+    --allow-dirty) ALLOW_DIRTY=1; shift ;;
     --with-lessons) WITH_LESSONS=1; shift ;;
     --use-login) USE_LOGIN=1; shift ;;
     --offline) OFFLINE=1; shift ;;
@@ -88,6 +112,83 @@ case "${PROVIDER}" in
     ;;
   *) echo "FAIL: --provider must be claude or codex" >&2; exit 1 ;;
 esac
+
+case "${RUNS}" in
+  ''|*[!0-9]*) echo "FAIL: --runs must be a positive integer" >&2; exit 1 ;;
+esac
+[ "${RUNS}" -gt 0 ] || { echo "FAIL: --runs must be a positive integer" >&2; exit 1; }
+case "${RUN_OFFSET}" in
+  ''|*[!0-9]*) echo "FAIL: --run-offset must be a non-negative integer" >&2; exit 1 ;;
+esac
+RUNS=$((10#${RUNS}))
+RUN_OFFSET=$((10#${RUN_OFFSET}))
+LAST_RUN=$((RUN_OFFSET + RUNS))
+if [ "${RESUME}" = 1 ]; then
+  [ -n "${OUT_FILE}" ] || { echo "FAIL: --resume requires --out" >&2; exit 1; }
+  if [ "${RUN_SEED_EXPLICIT}" != 1 ] || [ "${CAMPAIGN_ID_EXPLICIT}" != 1 ]; then
+    echo "FAIL: --resume requires explicit --campaign-id and --seed" >&2
+    exit 1
+  fi
+  [ -s "${OUT_FILE}" ] || {
+    echo "FAIL: --resume requires an existing non-empty --out file" >&2
+    exit 1
+  }
+fi
+
+RUN_SEED="${RUN_SEED:-$(python3 -c 'import secrets; print(secrets.randbits(64))')}"
+STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+REPOSITORY_COMMIT="$(git -C "${ROOT}" rev-parse HEAD 2>/dev/null || printf unknown)"
+if [ -n "$(git -C "${ROOT}" status --porcelain 2>/dev/null || true)" ]; then
+  REPOSITORY_DIRTY=true
+  DIRTY_LABEL="-dirty"
+else
+  REPOSITORY_DIRTY=false
+  DIRTY_LABEL=""
+fi
+SYSTEM_NAME="$(uname -s 2>/dev/null || printf unknown)"
+SYSTEM_ARCH="$(uname -m 2>/dev/null || printf unknown)"
+if [ -z "${CAMPAIGN_ID}" ]; then
+  CAMPAIGN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-${REPOSITORY_COMMIT:0:12}-${RUN_SEED:0:12}"
+fi
+if [ "${OFFLINE}" != 1 ] && [ "${REPOSITORY_DIRTY}" = true ] \
+  && [ "${ALLOW_DIRTY}" != 1 ]; then
+  echo "FAIL: real eval requires a clean checkout for reproducibility" >&2
+  echo "      commit/stash changes, or pass --allow-dirty for a non-publishable run" >&2
+  exit 1
+fi
+if [ "${OFFLINE}" != 1 ] && [ "${REPOSITORY_COMMIT}" = unknown ] \
+  && [ "${ALLOW_DIRTY}" != 1 ]; then
+  echo "FAIL: real eval requires a Git commit for reproducibility" >&2
+  echo "      run from a Git checkout, or pass --allow-dirty for a non-publishable run" >&2
+  exit 1
+fi
+
+tree_hash() {
+  python3 - "$1" <<'PY'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    relative = path.relative_to(root)
+    if "__pycache__" in relative.parts or path.suffix == ".pyc":
+        continue
+    digest.update(str(relative).encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+
+ordered_arms() {
+  python3 - "${RUN_SEED}" "$1" "$2" "${@:3}" <<'PY'
+import hashlib, sys
+seed, task, run, *arms = sys.argv[1:]
+for arm in sorted(arms, key=lambda value: hashlib.sha256(
+        f"{seed}\0{task}\0{run}\0{value}".encode()).digest()):
+    print(arm)
+PY
+}
 
 # Copy the operator's login state into a sandbox config dir. The CLI keeps
 # top-level state (onboarding, account) in $CLAUDE_CONFIG_DIR/.claude.json and
@@ -150,16 +251,146 @@ fi
 
 if [ "${PROVIDER}" = codex ]; then
   AGENT_VERSION="$(codex --version 2>/dev/null || true)"
+  RUNNER_PROFILE="codex exec --model ${MODEL} --config model_reasoning_effort=${REASONING_EFFORT} --config shell_environment_policy.inherit=core --config shell_environment_policy.ignore_default_excludes=false --sandbox workspace-write --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --json"
   echo "eval: provider=codex, model=${MODEL}, reasoning=${REASONING_EFFORT}, ${#TASKS[@]} task(s), ${RUNS} run(s)/arm"
 else
   AGENT_VERSION="$(claude --version 2>/dev/null || true)"
+  RUNNER_PROFILE="claude -p ${CLAUDE_ARGS}"
   echo "eval: provider=claude, ${#TASKS[@]} task(s), ${RUNS} run(s)/arm, args: ${CLAUDE_ARGS}"
 fi
+echo "campaign=${CAMPAIGN_ID}, seed=${RUN_SEED}, commit=${REPOSITORY_COMMIT}${DIRTY_LABEL}"
 echo
+
+RECORDED_INVOCATIONS=()
+if [ "${RESUME}" = 1 ]; then
+  RESUME_INDEX="$(python3 - "${OUT_FILE}" "${EVAL}" "${CAMPAIGN_ID}" \
+    "${RUN_SEED}" "${PROVIDER}" "${MODEL}" "${REASONING_EFFORT}" \
+    "${AGENT_VERSION}" "${REPOSITORY_COMMIT}" "${REPOSITORY_DIRTY}" \
+    "${OFFLINE}" "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" <<'PY'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[2])
+from result_schema import validate_result_row
+
+(path, _, campaign_id, seed, provider, requested_model, effort, cli_version,
+ repository_commit, repository_dirty, offline, system, architecture,
+ runner_profile) = sys.argv[1:15]
+expected = {
+    "campaign_id": campaign_id, "seed": seed, "provider": provider,
+    "requested_model": requested_model or None,
+    "reasoning_effort": effort or None,
+    "repository_commit": repository_commit,
+    "repository_dirty": repository_dirty == "true",
+    "offline": offline == "1", "system": system,
+    "architecture": architecture, "runner_profile": runner_profile,
+}
+rows = []
+payload = pathlib.Path(path).read_bytes()
+if payload and not payload.endswith(b"\n"):
+    raise SystemExit("FAIL: --resume output must end with a newline")
+with open(path, encoding="utf-8") as stream:
+    for line_number, line in enumerate(stream, 1):
+        if not line.strip():
+            continue
+        try:
+            row = validate_result_row(json.loads(line), source=f"{path}:{line_number}")
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise SystemExit(f"FAIL: cannot resume malformed output ({exc})")
+        if row["result_schema"] != 2:
+            raise SystemExit("FAIL: --resume requires schema-v2 output")
+        mismatched = [field for field, value in expected.items() if row.get(field) != value]
+        if not expected["offline"] and row.get("cli_version") != cli_version:
+            mismatched.append("cli_version")
+        if mismatched:
+            raise SystemExit(
+                "FAIL: --resume configuration differs in " + ", ".join(sorted(set(mismatched)))
+            )
+        rows.append(row)
+if not rows:
+    raise SystemExit("FAIL: --resume output contains no result rows")
+starts = {row["campaign_started_at"] for row in rows}
+if len(starts) != 1:
+    raise SystemExit("FAIL: --resume output has mixed campaign_started_at values")
+ids = [row["invocation_id"] for row in rows]
+if len(ids) != len(set(ids)):
+    raise SystemExit("FAIL: --resume output already has duplicate invocation IDs")
+print(next(iter(starts)))
+for invocation_id in ids:
+    print(invocation_id)
+PY
+)" || exit $?
+  RESUME_LINE=0
+  while IFS= read -r RESUME_VALUE; do
+    if [ "${RESUME_LINE}" = 0 ]; then
+      STARTED_AT="${RESUME_VALUE}"
+    else
+      RECORDED_INVOCATIONS+=("${RESUME_VALUE}")
+    fi
+    RESUME_LINE=$((RESUME_LINE + 1))
+  done <<< "${RESUME_INDEX}"
+  echo "resume: ${#RECORDED_INVOCATIONS[@]} completed invocation(s) found"
+fi
+
+invocation_recorded() {
+  local WANTED="$1"
+  local RECORDED
+  for RECORDED in "${RECORDED_INVOCATIONS[@]}"; do
+    [ "${RECORDED}" = "${WANTED}" ] && return 0
+  done
+  return 1
+}
+
+# Validate every requested fixture before any provider invocation. This avoids
+# spending part of a resumed batch before discovering that a later task drifted.
+if [ "${RESUME}" = 1 ]; then
+  python3 - "${OUT_FILE}" "${EVAL}" "${WITH_LESSONS}" "${TASKS[@]}" <<'PY'
+import hashlib, json, pathlib, sys
+
+path, eval_dir, with_lessons, *tasks = sys.argv[1:]
+eval_root = pathlib.Path(eval_dir)
+
+def tree_hash(root):
+    digest = hashlib.sha256()
+    for item in sorted(path for path in root.rglob("*") if path.is_file()):
+        relative = item.relative_to(root)
+        if "__pycache__" in relative.parts or item.suffix == ".pyc":
+            continue
+        digest.update(str(relative).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+rows = [json.loads(line) for line in pathlib.Path(path).read_text().splitlines()
+        if line.strip()]
+for task in tasks:
+    task_dir = eval_root / "tasks" / task
+    prompt = task_dir / "PROMPT.md"
+    if not prompt.is_file():
+        continue
+    expected_arms = {"doctrine", "bare"}
+    if with_lessons == "1" and (task_dir / "lessons.md").is_file():
+        expected_arms.add("lessons")
+    expected_task = tree_hash(task_dir)
+    expected_prompt = hashlib.sha256(prompt.read_bytes()).hexdigest()
+    for row in rows:
+        if row.get("task") != task:
+            continue
+        if (row.get("task_sha256") != expected_task
+                or row.get("prompt_sha256") != expected_prompt):
+            raise SystemExit(f"FAIL: --resume task/prompt changed for {task}")
+        expected_order = sorted(expected_arms, key=lambda arm: hashlib.sha256(
+            f"{row['seed']}\0{task}\0{row['run']}\0{arm}".encode()
+        ).digest())
+        if row.get("arm_order") != expected_order:
+            raise SystemExit(f"FAIL: --resume arm order changed for {task}")
+PY
+fi
 
 for TASK in "${TASKS[@]}"; do
   TDIR="${EVAL}/tasks/${TASK}"
   [ -f "${TDIR}/PROMPT.md" ] || { echo "skip ${TASK}: no PROMPT.md"; continue; }
+  TASK_SHA256="$(tree_hash "${TDIR}")"
+  PROMPT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${TDIR}/PROMPT.md")"
 
   ARMS=(doctrine bare)
   if [ "${WITH_LESSONS}" = 1 ]; then
@@ -169,10 +400,20 @@ for TASK in "${TASKS[@]}"; do
       echo "note ${TASK}: no lessons.md — lessons arm skipped"
     fi
   fi
-
-  R=1
-  while [ "${R}" -le "${RUNS}" ]; do
-    for ARM in "${ARMS[@]}"; do
+  R=$((RUN_OFFSET + 1))
+  while [ "${R}" -le "${LAST_RUN}" ]; do
+    ORDERED_ARMS=()
+    while IFS= read -r ORDERED_ARM; do
+      ORDERED_ARMS+=("${ORDERED_ARM}")
+    done < <(ordered_arms "${TASK}" "${R}" "${ARMS[@]}")
+    ARM_ORDER="$(IFS=,; printf '%s' "${ORDERED_ARMS[*]}")"
+    PAIR_ID="${CAMPAIGN_ID}/${TASK}/${R}"
+    for ARM in "${ORDERED_ARMS[@]}"; do
+      INVOCATION_ID="${PAIR_ID}/${ARM}"
+      if [ "${RESUME}" = 1 ] && invocation_recorded "${INVOCATION_ID}"; then
+        echo "== ${TASK} / ${ARM} (run ${R}): SKIP — already recorded =="
+        continue
+      fi
       CFG="$(mktemp -d)"
       WORK="$(mktemp -d)"
       cp -R "${TDIR}/project/." "${WORK}/"
@@ -196,7 +437,7 @@ for TASK in "${TASKS[@]}"; do
         cp "${TDIR}/lessons.md" "${WORK}/docs/lessons.md"
       fi
 
-      echo "== ${TASK} / ${ARM} (run ${R}/${RUNS}) =="
+      echo "== ${TASK} / ${ARM} (run ${R}; batch $((R - RUN_OFFSET))/${RUNS}) =="
       RC=0
       T0="$(date +%s)"
       LOG="${WORK}/agent.log"
@@ -266,8 +507,11 @@ for TASK in "${TASKS[@]}"; do
       fi
       if [ -n "${OUT_FILE}" ]; then
         GRADE_OUT="${GRADE_OUT}" INVALID_REASON="${INVALID_REASON}" python3 -c '
-import json, os, sys
-task, arm, run, invalid, dur, log, offline, provider, requested_model, effort, cli_version = sys.argv[1:12]
+import datetime, json, math, os, sys
+(task, arm, run, invalid, dur, log, offline, provider, requested_model,
+ effort, cli_version, campaign_id, pair_id, arm_order, seed, started_at,
+ repository_commit, repository_dirty, task_sha256, prompt_sha256,
+ system_name, system_arch, runner_profile) = sys.argv[1:24]
 crit = {}
 score = None
 for line in os.environ.get("GRADE_OUT", "").splitlines():
@@ -276,6 +520,12 @@ for line in os.environ.get("GRADE_OUT", "").splitlines():
         crit[p[1]] = (p[2] == "pass")
     elif len(p) == 2 and p[0] == "SCORE":
         score = p[1]
+# Infrastructure-invalid rows are excluded, not partial behavioral failures.
+# Drop any CRIT lines printed before a grader/provider crash so the row remains
+# valid schema-v2 data and cannot leak partial results into later tooling.
+if invalid == "true":
+    crit = {}
+    score = None
 # usage/cost from the CLI result object — fail open to nulls on any shape
 # surprise (text output, truncated log, override without --output-format json)
 tokens_in = tokens_out = cached_tokens = reasoning_tokens = None
@@ -319,7 +569,30 @@ try:
         model = ",".join(sorted(res.get("modelUsage") or {})) or None
 except (OSError, ValueError):
     pass
-print(json.dumps({"task": task, "arm": arm, "run": int(run),
+def nonnegative_int_or_none(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+def nonnegative_number_or_none(value):
+    return value if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                     and value >= 0 and (not isinstance(value, float)
+                                         or math.isfinite(value))) else None
+tokens_in = nonnegative_int_or_none(tokens_in)
+tokens_out = nonnegative_int_or_none(tokens_out)
+cached_tokens = nonnegative_int_or_none(cached_tokens)
+reasoning_tokens = nonnegative_int_or_none(reasoning_tokens)
+num_turns = nonnegative_int_or_none(num_turns)
+cost_usd = nonnegative_number_or_none(cost_usd)
+print(json.dumps({"result_schema": 2,
+                  "campaign_id": campaign_id, "pair_id": pair_id,
+                  "invocation_id": pair_id + "/" + arm,
+                  "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  "campaign_started_at": started_at,
+                  "seed": seed, "arm_order": arm_order.split(","),
+                  "repository_commit": repository_commit,
+                  "repository_dirty": repository_dirty == "true",
+                  "task_sha256": task_sha256, "prompt_sha256": prompt_sha256,
+                  "system": system_name, "architecture": system_arch,
+                  "runner_profile": runner_profile,
+                  "task": task, "arm": arm, "run": int(run),
                   "invalid": invalid == "true", "criteria": crit,
                   "score": score, "duration_s": int(dur),
                   "tokens_in": tokens_in, "tokens_out": tokens_out,
@@ -327,13 +600,17 @@ print(json.dumps({"task": task, "arm": arm, "run": int(run),
                   "reasoning_output_tokens": reasoning_tokens,
                   "cost_usd": cost_usd, "num_turns": num_turns,
                   "provider": provider, "model": model,
+                  "requested_model": requested_model or None,
                   "reasoning_effort": effort or None,
                   "cli_version": cli_version or None,
                   "invalid_reason": os.environ.get("INVALID_REASON") or None,
                   "offline": offline == "1"},
                  ensure_ascii=False))' \
           "${TASK}" "${ARM}" "${R}" "${INVALID}" "$((T1 - T0))" "${LOG}" "${OFFLINE}" \
-          "${PROVIDER}" "${MODEL}" "${REASONING_EFFORT}" "${AGENT_VERSION}" >> "${OUT_FILE}"
+          "${PROVIDER}" "${MODEL}" "${REASONING_EFFORT}" "${AGENT_VERSION}" \
+          "${CAMPAIGN_ID}" "${PAIR_ID}" "${ARM_ORDER}" "${RUN_SEED}" "${STARTED_AT}" \
+          "${REPOSITORY_COMMIT}" "${REPOSITORY_DIRTY}" "${TASK_SHA256}" "${PROMPT_SHA256}" \
+          "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" >> "${OUT_FILE}"
       fi
       echo "   workdir kept for inspection: ${WORK}"
       rm -rf "${CFG}"

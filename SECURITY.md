@@ -20,7 +20,8 @@ way around any of them is a reportable vulnerability, not expected behavior:
 
 - **Core operation is offline.** Installers, hooks, Relay/report helpers, and
   eval graders never phone home. Real behavioral `eval/run.sh` runs are the
-  explicit exception: they invoke the Claude CLI; `--offline` does not.
+  explicit exception: they invoke the selected Claude or Codex CLI;
+  `--offline` does not.
 - **Nothing runs at npm install time.** The npm package has zero lifecycle
   scripts (`preinstall`/`install`/`postinstall`/`prepare` are all forbidden
   and checked); `npx luciazero` only launches the same audited bash

@@ -12,10 +12,11 @@ body:
     id: setup
     attributes:
       label: Setup
-      description: Model, CLI version, luciazero version/SHA, task set, runs per arm, date, EVAL_CLAUDE_ARGS overrides if any.
+      description: Provider, requested/observed model, reasoning effort, CLI version, Luciazero SHA, campaign ID and seed, task set, runs per arm, date, OS, and overrides if any.
       placeholder: |
-        model: claude-sonnet-5
-        luciazero: v1.5.0
+        provider/model: codex / gpt-5.6-terra / medium
+        luciazero: <git SHA>
+        campaign/seed: terra-screen-v1 / 20260812
         tasks: all
         runs: 5 per arm
     validations:
@@ -24,7 +25,7 @@ body:
     id: results
     attributes:
       label: report.sh output
-      description: Paste the rendered table from `eval/report.sh results.jsonl` — not hand-edited numbers. Attach or link the raw JSONL if you can.
+      description: Paste the rendered table from `eval/report.sh results.jsonl` — not hand-edited numbers. Raw JSONL is required before a result can be treated as published evidence.
       render: text
     validations:
       required: true

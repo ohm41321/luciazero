@@ -53,8 +53,10 @@ try the harness before spending money — and it is **synthetic**: rows carry
 `"offline": true` and `report.sh` brands the output `SYNTHETIC OFFLINE
 SMOKE`. Never quote offline numbers as results.
 
-Arm A installs this repo into a sandbox `CLAUDE_CONFIG_DIR`; arm B runs with
-an empty config. Same prompt, same fixture, same grader. `--with-lessons`
+Arm A (historically labeled `doctrine` in JSON output) installs the full classic
+Luciazero pack without hooks—doctrine, skills, and reviewer—into a sandbox
+`CLAUDE_CONFIG_DIR`; arm B runs with an empty config. This measures the installed
+bundle, not a doctrine-only ablation. Same prompt, same fixture, same grader. `--with-lessons`
 adds a third arm to every task that ships a `lessons.md`: doctrine install
 *plus* the task's ledger pre-seeded as `docs/lessons.md` in the work copy —
 the A/B/C comparison that tests whether `/retro`'s learning layer actually
@@ -93,7 +95,7 @@ ways per task, all offline: `reference/` passes, unfixed `project/` fails,
 - **n is tiny and models are nondeterministic.** One run per arm proves
   nothing; run each arm ≥5 times and compare pass *rates* — `report.sh`
   prints the rates, the n, and a warning until you do.
-- A doctrine effect can be masked by a model that already behaves well, or
+- A Luciazero effect can be masked by a model that already behaves well, or
   exaggerated by a prompt that hints at testing. Keep prompts natural.
 - A buggy grader manufactures fake deltas in either direction — which is why
   every new criterion needs a fixture that proves it can fail (`project/` or

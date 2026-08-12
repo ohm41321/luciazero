@@ -72,11 +72,9 @@ One-time setup, in this order:
 - [ ] Never add lifecycle scripts (`postinstall` etc.): npm v12 blocks them by
       default and scanners flag packages that carry them. `test.sh` enforces
       this; keep it that way.
-- [x] npmjs.com does not resolve relative image paths in READMEs — before the
-      first publish, switch all three mascot `<img src>` tags
-      (`docs/assets/lucia*.png`) to absolute
-      `https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/...`
-      URLs (GitHub renders both forms fine).
+- [x] npmjs.com does not resolve relative image paths in READMEs — README image
+      tags use absolute `raw.githubusercontent.com` URLs (GitHub renders them
+      too).
 
 ## 4. Directories, once live
 

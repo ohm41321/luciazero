@@ -8,7 +8,7 @@
 #   edit    — PostToolUse on Edit|Write|NotebookEdit : record "an edit happened"
 #   bash    — PostToolUse on Bash                    : record verify runs + status
 #   stop    — Stop                                   : warn once if edits are unverified
-#   session — SessionStart                           : point at an existing HANDOFF.md
+#   session — SessionStart                           : point at an existing Lucia Relay
 #   doctrine— SessionStart (plugin installs only)    : emit the doctrine as context
 #             (plugins cannot add a CLAUDE.md import line; this is the same
 #             word-ceiling-capped text the classic install imports. Silent when
@@ -26,10 +26,11 @@
 # Requires python3 (for JSON parsing). FAILS OPEN: any internal error exits 0,
 # so a broken hook can never block real work. Per-project state lives under
 # $TMPDIR and never touches the repo. One exception, documented honestly: the
-# stop hook appends one line per stop outcome (stop-clean / nudge /
-# strict-block) to luciazero-stats.log in the harness config dir — local only,
-# capped at ~250 lines, fail-open — so /retro can turn recurring discipline
-# gaps into recorded lessons. Uninstall keeps it (it is learned data).
+# stop hook appends one schema-versioned JSON line per stop outcome
+# (stop-clean / nudge / strict-block) to luciazero-stats.log in the harness
+# config dir — local only, capped at ~250 lines, fail-open. It records a
+# privacy-preserving project hash and verify mode, never the project path or
+# command. Uninstall keeps it (it is learned data).
 set -u
 
 MODE="${1:-}"
@@ -81,16 +82,35 @@ KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(s
 STATE="${TMPDIR:-/tmp}/luciazero-verify-state/${KEY}"
 mkdir -p "${STATE}" 2>/dev/null || exit 0
 
-stat_log() { # stat_log <event> — discipline stats for /retro; fail-open, capped
+stat_log() { # stat_log <event> — discipline stats; fail-open, capped
   SDIR="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
   SFILE="${SDIR}/luciazero-stats.log"
-  {
-    mkdir -p "${SDIR}" \
-      && printf '%s %s %s\n' "$(date +%Y-%m-%dT%H:%M)" "$1" "$(basename "${CWD}")" >> "${SFILE}"
-    if [ "$(wc -l < "${SFILE}")" -gt 500 ]; then
-      tail -n 250 "${SFILE}" > "${SFILE}.tmp" && mv "${SFILE}.tmp" "${SFILE}"
-    fi
-  } 2>/dev/null || true
+  VMODE=regex
+  [ -n "${VERIFY_CMD:-}" ] && VMODE=exact
+  [ -n "${LUCIAZERO_STRICT_VERIFY_CMD:-}" ] && VMODE=strict
+  python3 - "${SFILE}" "${CWD}" "$1" "${VMODE}" <<'PY' 2>/dev/null || true
+import datetime, hashlib, json, os, sys
+path, cwd, event, mode = sys.argv[1:]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+real = os.path.realpath(cwd)
+row = {
+    "schema": 2,
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "event": event,
+    "project_id": hashlib.sha256(real.encode()).hexdigest()[:12],
+    "project": os.path.basename(real) or "(root)",
+    "verify_mode": mode,
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+with open(path, encoding="utf-8", errors="replace") as handle:
+    lines = handle.readlines()
+if len(lines) > 500:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.writelines(lines[-250:])
+    os.replace(tmp, path)
+PY
 }
 
 # What counts as a verify run. Deliberately broad; override per-shell with
@@ -105,16 +125,21 @@ VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
 case "${MODE}" in
   edit)
     # Documentation writes do not re-arm the nudge: the closeout skills
-    # (/done, /retro, /handoff, /experiment) all write markdown AFTER the
-    # final green verify — nudging on those would punish the prescribed flow.
+    # Closeout skills write docs AFTER the final green verify. Relay's JSON is
+    # also a transient knowledge artifact, not implementation code.
     FP="$(pyfield "d.get('tool_input', {}).get('file_path')")"
     DOC_RE="${LUCIAZERO_DOC_REGEX:-\.(md|markdown|rst|txt)\$}"
-    if [ -n "${FP}" ] && printf '%s' "${FP}" | grep -qE "${DOC_RE}"; then
-      :  # doc-only write; verify state unchanged
-    else
-      touch "${STATE}/last_edit"
-      rm -f "${STATE}/nudged"        # new code edits re-arm the one-shot nudge
-    fi
+    case "${FP}" in
+      */LUCIA_RELAY.json|*/LUCIA_RELAY.md) : ;;
+      *)
+        if [ -n "${FP}" ] && printf '%s' "${FP}" | grep -qE "${DOC_RE}"; then
+          :  # doc-only write; verify state unchanged
+        else
+          touch "${STATE}/last_edit"
+          rm -f "${STATE}/nudged"    # new code edits re-arm the one-shot nudge
+        fi
+        ;;
+    esac
     ;;
   bash)
     CMD="$(pyfield "d.get('tool_input', {}).get('command')")"
@@ -232,17 +257,21 @@ print("yes" if e is not None and (v is None or e > v) else "no")' "${STATE}" 2>/
     [ "${NUDGE}" = no ] && stat_log stop-clean
     ;;
   session)
-    # SessionStart: if a handoff capsule exists, emit ONE pointer line as
-    # context (stdout) — never the capsule's contents, which must be read and
-    # re-verified, not trusted. Silent (zero context cost) when none exists.
-    CAP="${CWD}/HANDOFF.md"
-    [ -f "${CAP}" ] || exit 0
+    # SessionStart emits ONE pointer, never the relay contents. A legacy
+    # HANDOFF.md gets a migration warning but is not silently rewritten.
+    CAP="${CWD}/LUCIA_RELAY.json"
+    if [ ! -f "${CAP}" ]; then
+      if [ -f "${CWD}/HANDOFF.md" ]; then
+        echo "Legacy HANDOFF.md exists — read and re-verify it, then migrate the still-relevant state with /lucia-relay or delete the stale capsule."
+      fi
+      exit 0
+    fi
     AGE="$(python3 -c 'import os,sys,time;print(int((time.time()-os.path.getmtime(sys.argv[1]))//86400))' "${CAP}" 2>/dev/null || echo '')"
-    STALE="${LUCIAZERO_HANDOFF_STALE_DAYS:-7}"
+    STALE="${LUCIAZERO_RELAY_STALE_DAYS:-${LUCIAZERO_HANDOFF_STALE_DAYS:-7}}"
     if [ -n "${AGE}" ] && [ "${AGE}" -ge "${STALE}" ] 2>/dev/null; then
-      echo "HANDOFF.md exists but is ${AGE} days old — likely stale; a stale capsule is worse than none. Verify its claims with extra suspicion or delete it."
+      echo "LUCIA_RELAY.json exists but is ${AGE} days old — likely stale. Run /lucia-relay inspect, verify its claims with extra suspicion, then consume or replace it."
     else
-      echo "HANDOFF.md exists (age: ${AGE:-?}d) — read it before touching code, re-verify its claims against the tree, then delete it (/handoff consume protocol)."
+      echo "LUCIA_RELAY.json exists (age: ${AGE:-?}d) — run /lucia-relay inspect before touching code, re-verify its evidence, then consume it."
     fi
     ;;
   *)

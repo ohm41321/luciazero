@@ -1,7 +1,7 @@
 {
   "name": "luciazero",
-  "version": "1.5.0",
-  "description": "Verification-first discipline for coding agents (Claude Code + Codex CLI): 9-rule doctrine, six skills, reviewer agent, fail-open enforcement hooks. npx luciazero installs it.",
+  "version": "2.0.0",
+  "description": "Verification-first discipline for coding agents (Claude Code + Codex CLI): 9-rule doctrine, 9 skills, risk-routed reviewer, fail-open enforcement hooks. npx luciazero installs it.",
   "repository": { "type": "git", "url": "git+https://github.com/ohm41321/luciazero.git" },
   "homepage": "https://github.com/ohm41321/luciazero#readme",
   "bugs": { "url": "https://github.com/ohm41321/luciazero/issues" },
@@ -12,6 +12,7 @@
     "bin",
     "claude",
     "skills",
+    "migrations",
     "install.sh",
     "uninstall.sh",
     "install-codex.sh",

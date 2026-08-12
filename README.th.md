@@ -14,7 +14,7 @@ Luciazero ทำให้ coding agent รันลูป `plan → change → v
 
 > เสร็จ ต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่ด้วยความเห็นของฉัน ถ้าไม่มีคำสั่ง verify — นั่นคือบั๊กแรกที่ต้องแก้
 
-ทุกอย่างใน repo นี้ — doctrine 9 ข้อ, skill หกตัว, reviewer agent สายหักล้าง, enforcement hooks, eval harness — มีไว้เพื่อทำให้กฎข้อนี้เป็นจริงโดยไม่ต้องมีคนคอยดูทุกลูป
+ทุกอย่างใน repo นี้ — doctrine 9 ข้อ, skill 9 ตัว, reviewer แบบ route ตามความเสี่ยง, enforcement hooks และ eval harness — มีไว้เพื่อทำให้กฎข้อนี้เป็นจริงโดยไม่ต้องมีคนคอยดูทุกลูป
 
 ## หน้าตาเวลาใช้งานจริง
 
@@ -66,7 +66,7 @@ test_totals ... FAIL: expected 14, got 8
 
 ## ติดตั้ง
 
-**Claude Code — plugin (แนะนำ)** ติดตั้งครั้งเดียวได้ครบ: skill ทั้งหก, agent `reviewer`, hook ติดตามการ verify และ doctrine:
+**Claude Code — plugin (แนะนำ)** ติดตั้งครั้งเดียวได้ครบ: skill ทั้ง 9, agent `reviewer`, hook ติดตามการ verify และ doctrine:
 
 ```
 /plugin marketplace add ohm41321/luciazero
@@ -85,7 +85,7 @@ npx skills add ohm41321/luciazero
 
 ```bash
 npx luciazero               # Claude Code   (--with-hooks สำหรับ enforcement pack, --status)
-npx luciazero codex         # Codex CLI     (ถอนด้วย npx luciazero uninstall)
+npx luciazero codex         # Codex CLI     (ถอนด้วย npx luciazero uninstall-codex)
 ```
 
 `npx luciazero` เป็น wrapper บาง ๆ ที่ไม่มี lifecycle script — ไม่มีอะไรรันตอน npm install (`test.sh` บังคับข้อนี้ไว้) มันแค่เรียก bash installer ชุดเดิมที่ตรวจสอบได้ ตัวเดียวกับที่ได้จาก `git clone https://github.com/ohm41321/luciazero.git && ./install.sh` เลือกช่องทาง**เดียว** — plugin หรือ classic — เพื่อไม่ให้ hook ถูกต่อสายซ้ำสองชั้น อยากเห็นหลักฐานก่อนติดตั้ง? `./demo.sh` สร้าง repo ฝังบั๊กให้คุณแก้ใน session ของตัวเองแล้วให้ grader แบบ offline ตัดสิน
@@ -97,37 +97,43 @@ npx luciazero codex         # Codex CLI     (ถอนด้วย npx luciazero
 | จังหวะ | Skill | ทำอะไร |
 |---|---|---|
 | เข้า repository ครั้งแรก | `/luciazero-bootstrap` | หาหรือสร้างคำสั่ง verify, เพิ่ม smoke test 3–6 ตัว + ไฟล์ notes ของโปรเจกต์, พิสูจน์ว่า verify แดงได้จริง |
+| ก่อนงานเสี่ยงหรือมีหลายขั้น | `/plan` | ล็อก scope และนิยามหลักฐานผ่าน/ตกที่สังเกตได้; หยุดถามเฉพาะเมื่อมีการตัดสินใจสำคัญ |
 | บั๊กที่มองแวบแรกไม่ออก | `/debug` | reproduce ให้นิ่งก่อน, hypothesis ledger ที่ seed จากบทเรียนเก่า (`docs/lessons.md` + heuristics ข้าม repo), ปิดด้วย regression test ที่แดงก่อนแก้ |
+| regression มี revision ดี/เสียที่รู้แล้ว | `/bisect` | หา first bad commit ใน worktree ชั่วคราวโดยไม่แตะ tree ของผู้เรียก |
 | กำลังจะบอกว่า "เสร็จ" | `/done` | verify ระดับเต็มพร้อมยกบรรทัดชี้ขาด, อ่าน diff แบบผู้ไม่เชื่อ, เช็คความซื่อสัตย์ของ test ด้วย `revert-probe.sh`, รายงานฟอร์มตายตัว |
-| ต้องหยุดทั้งที่งานยังไม่จบ | `/handoff` | เขียน capsule `HANDOFF.md`: เป้าหมาย, สถานะที่ verify แล้ว, คำสั่งถัดไปหนึ่งคำสั่งแบบพิมพ์ตามได้ |
+| ส่งงานค้างให้ session/agent อื่น | `/lucia-relay` | เขียน `LUCIA_RELAY.json` + human view พร้อมหลักฐาน, fingerprint, negative knowledge และ protocol inspect/consume |
 | งานสาย "ทำให้เร็วขึ้น" | `/experiment` | ตั้ง metric + เกณฑ์ชนะก่อนแตะโค้ด, วัด baseline ซ้ำหลายรอบ, หนึ่งตัวแปรต่อรอบ, ตัวแพ้ถูก revert |
+| ดูวินัย verify ในเครื่อง | `/discipline-report` | กรอง outcome ตามเวลา/โปรเจกต์ ออก text หรือ JSON พร้อมคำแนะนำที่แยกหลักฐานออกจากข้อสันนิษฐาน |
 | หลังงานยากหรือ debug ยาว | `/retro` | route บทเรียนลง notes ของโปรเจกต์, ledger `docs/lessons.md` และ heuristics ข้าม repo; อ่าน stats log วินัยของตัวเอง |
 
-agent `reviewer` ไม่ต้องเรียกชื่อเอง — `/done` จะ spawn ให้เมื่อ diff เสี่ยงพอ หรือพิมพ์ขอ "adversarial review" ตอนไหนก็ได้
+`/done` จะ route diff เสี่ยงผ่าน reviewer ตัวเดียวใน focus `security`, `contract` หรือ `general`; ถ้าแตะทั้ง security และ public contract จะ review แยกสองรอบ
 
 ## สิ่งที่ได้
 
-ไม่มี dependency ไม่มี runtime (ใช้ python3 เฉพาะ enforcement pack ซึ่งเป็น opt-in):
+Luciazero ไม่ประกาศ dependency ต่อ third-party package; CLI ต้องใช้ Node.js 18+ ส่วน enforcement pack และ Relay helper ใช้ Python 3:
 
 | ชิ้นส่วน | หน้าที่ | โหลดเมื่อไหร่ |
 |---|---|---|
 | `claude/luciazero.md` | Doctrine — กฎ 9 ข้อ | ตลอดเวลา ทุกโปรเจกต์ ทุก session |
 | `skills/luciazero-bootstrap/` | ขั้นตอนทำ repo ให้พร้อมสำหรับ agent (มาพร้อม `scripts/detect.sh`) | เมื่อเรียก |
+| `skills/plan/` | protocol วางแผนโดยเริ่มจากหลักฐานและขอบเขต | เมื่อเรียก |
 | `skills/debug/` | ขั้นตอน debug แบบตั้ง hypothesis ก่อนแก้ | เมื่อเรียก |
+| `skills/bisect/` | หา first bad commit อย่างปลอดภัย (`scripts/safe-bisect.sh`) | เมื่อเรียก |
 | `skills/done/` | พิธีปิดงาน (มาพร้อม `scripts/revert-probe.sh`) | เมื่อเรียก |
-| `skills/handoff/` | state capsule ส่งต่อให้ session/agent ถัดไป | เมื่อเรียก |
+| `skills/lucia-relay/` | ส่งต่อความรู้แบบพกพาและตรวจสอบได้ (`scripts/relay.py`) | เมื่อเรียก |
 | `skills/experiment/` | โปรโตคอลวัดผลสำหรับงาน optimize | เมื่อเรียก |
+| `skills/discipline-report/` | วิเคราะห์ stop outcome ในเครื่อง | เมื่อเรียก |
 | `skills/retro/` | เก็บเกี่ยวบทเรียนลง notes ของโปรเจกต์ | เมื่อเรียก |
-| `claude/agents/reviewer.md` | Subagent ผู้ตรวจเชิงหักล้าง | เมื่อเรียก (ก่อนประกาศ "เสร็จ") |
+| `claude/agents/reviewer.md` | Reviewer เชิงหักล้างที่ route ตามความเสี่ยง | เมื่อเรียก (ก่อนประกาศ "เสร็จ") |
 | `claude/hooks/` | Enforcement pack — hook เตือน verify, strict gate แบบ opt-in, statusline | Opt-in |
-| `eval/` | A/B harness — 6 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | รันเอง (เสียเงิน API) |
+| `eval/` | A/B harness — 6 task บั๊กฝัง, grader พิสูจน์ตัวเองได้ | offline smoke ฟรี; รอบจริงใช้เครดิต API หรือโควตา subscription |
 | `demo.sh` | เดโม 2 นาที — บั๊กฝัง, session ของคุณเอง, grader เป็นกลาง | รันเอง |
 
 เทียบกับ superpowers, SuperClaude, proof-loop และของ built-in ใน harness — รวมทั้งจุดที่เขาทำได้ดีกว่า: [docs/comparison.md](docs/comparison.md)
 
 ## ติดตั้งแบบ classic & enforcement pack
 
-`./install.sh` ทำสี่อย่าง: คัดลอก `claude/luciazero.md` → `~/.claude/luciazero.md`, skill ทั้งหก → `~/.claude/skills/`, reviewer agent → `~/.claude/agents/reviewer.md` (ถ้ามีฉบับที่คุณแก้เองจะ backup ให้ก่อน) และเติมบรรทัด `@luciazero.md` ลง `~/.claude/CLAUDE.md` มัน backup `CLAUDE.md` ก่อนแตะเสมอ รันซ้ำได้ปลอดภัย และไม่เขียนอะไรนอก `~/.claude/` เลย — สี่ขั้นตอนนี้ก็คือการติดตั้งมือทั้งหมดด้วย
+`./install.sh` ทำสี่อย่าง: คัดลอก `claude/luciazero.md` → `~/.claude/luciazero.md`, skill 9 ตัวจาก catalog → `~/.claude/skills/`, reviewer จาก catalog → `~/.claude/agents/reviewer.md` และเติมบรรทัด `@luciazero.md` ลง `~/.claude/CLAUDE.md` มันเก็บ snapshot เจ้าของแบบ exact ไว้ใน `.luciazero-managed/`: ถ้าชื่อ skill/agent ชนกับของเดิม หรือคุณแก้ฉบับที่ติดตั้งไปแล้ว ระบบจะสำรองไว้ใต้ `.luciazero-backups/` ก่อนอัปเดต และตอนถอนจะลบเฉพาะฉบับ Luciazero ที่ยังไม่ถูกแก้ มันยัง backup `CLAUDE.md` ก่อนแตะเสมอ รันซ้ำได้ปลอดภัย และไม่เขียนอะไรนอก `~/.claude/`
 
 ### Enforcement pack (opt-in)
 
@@ -135,9 +141,9 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 ./install.sh --with-hooks    # ต้องมี python3
 ```
 
-ต่อสคริปต์สองตัวเข้า `~/.claude/settings.json` (backup ให้ก่อน, merge แบบ additive และ idempotent): **Stop hook เตือน verify** — ถ้าแก้โค้ดแล้วไม่มีคำสั่งแนว verify รันเลยหลังการแก้ล่าสุด การจบ session จะโดนเตือนหนึ่งครั้งตามตัวอย่างข้างบน เตือนครั้งเดียว ไม่วนลูป และ fail open — กับ **statusline** (ถ้าคุณมีของตัวเองอยู่แล้ว มันจะไม่แตะ) Stop hook ยังจดหนึ่งบรรทัดต่อผลลัพธ์การจบ session (`stop-clean` / `nudge` / `strict-block`) ลง `luciazero-stats.log` ใน config dir — อยู่ในเครื่องเท่านั้น เพดาน ~250 บรรทัด fail-open — ให้ `/retro` อ่านแล้วแปลงช่องโหว่วินัยที่เกิดซ้ำเป็นบทเรียนที่บันทึกไว้
+ต่อสคริปต์สองตัวเข้า `~/.claude/settings.json` (backup ให้ก่อน, merge แบบ additive และ idempotent): **Stop hook เตือน verify** กับ **statusline** Stop hook จด JSONL schema v2 (`stop-clean` / `nudge` / `strict-block`) ลง `luciazero-stats.log` ในเครื่อง เพดาน ~250 บรรทัด fail-open ใช้ project hash 12 ตัวแทน path จริง ดูรายงานด้วย `npx luciazero discipline --project .`
 
-อะไรนับเป็น verify ตัดสินด้วย regex กว้าง ๆ (test.sh, pytest, `npm test`, `cargo test`, …) — override ได้ด้วย `LUCIAZERO_VERIFY_REGEX` หรือดีกว่านั้น ตั้งคำสั่งจริงของ repo ด้วย `LUCIAZERO_VERIFY_CMD` (เช่นในบล็อก `env` ของ `.claude/settings.local.json` ประจำ repo): ในโหมด exact จะนับเฉพาะคำสั่งที่*เป็น*หรือ*ขึ้นต้นด้วย*มันเท่านั้น `cat test.sh` จึงทำให้สถานะเขียวปลอมไม่ได้ การเขียนไฟล์เอกสาร (`*.md` และพวก — `LUCIAZERO_DOC_REGEX`) จะไม่ re-arm การเตือน เพราะ skill สายปิดงานล้วนเขียน notes *หลัง* verify เขียวรอบสุดท้าย hook `SessionStart` จะพิมพ์ pointer หนึ่งบรรทัดเมื่อโปรเจกต์มี capsule `HANDOFF.md` ค้างอยู่ (เตือนความเก่าเมื่อเกิน `LUCIAZERO_HANDOFF_STALE_DAYS` ค่าเริ่มต้น 7 วัน) — ชี้ตำแหน่งเท่านั้น ไม่เอาเนื้อหามาใส่
+อะไรนับเป็น verify ตัดสินด้วย regex กว้าง ๆ หรือคำสั่ง exact ใน `LUCIAZERO_VERIFY_CMD`; `cat test.sh` จึงทำให้เขียวปลอมไม่ได้ ไฟล์เอกสารและ Relay จะไม่ re-arm หลัง verify เขียว Hook `SessionStart` ชี้ไปที่ `LUCIA_RELAY.json` และเตือนความเก่าเมื่อเกิน `LUCIAZERO_RELAY_STALE_DAYS` (ค่าเริ่มต้น 7 วัน); `HANDOFF.md` เก่าจะได้คำเตือน migration
 
 **Strict mode (opt-in ซ้อน opt-in)** ตั้ง `LUCIAZERO_STRICT_VERIFY_CMD` เป็นคำสั่ง verify *เร็ว*ของ repo — ใน settings **ส่วนตัว**เท่านั้น ห้ามอยู่ในไฟล์ที่ commit ข้อจำกัดที่บอกตรง ๆ: hook อ่านจาก environment variable และแยกไม่ออกว่า settings ชั้นไหนตั้งมันมา — `env` ใน `.claude/settings.json` ที่ commit มากับ repo ก็ไปถึงมันเช่นกัน — เพราะฉะนั้นให้ถือว่า repo ที่ ship ตัวแปรนี้มาเป็น repo ประสงค์ร้าย และลบตัวแปรนั้นทิ้งก่อนเริ่มทำงานใน repo นั้น เมื่อจะจบ session hook จะรันคำสั่งนั้นจริง ๆ (เว้นแต่สถานะเขียวอยู่แล้วหลังการแก้ล่าสุด) แล้ว**บล็อกการจบ**เมื่อแดง พร้อมยกเอาต์พุตที่พังให้ดู มี hard timeout ตัดจบเด็ดขาดผ่าน `LUCIAZERO_STRICT_TIMEOUT` (ค่าเริ่มต้น 120 วินาที); ทุก error ภายใน — timeout, คำสั่งหาย, JSON พัง — ถอยกลับเป็นการเตือนธรรมดา ไม่มีทางกลายเป็นการบล็อก และ continuation หลังโดนบล็อกจะไม่โดนบล็อกซ้ำ (`stop_hook_active`): นี่คือลูกระนาดพร้อมหลักฐาน ไม่ใช่กำแพง
 
@@ -152,11 +158,11 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 | ชิ้นส่วน | ไปอยู่ใน Codex เป็น |
 |---|---|
 | Doctrine | บล็อกคั่นด้วย marker ใน `~/.codex/AGENTS.md` (ติดตั้งซ้ำจะแทนที่ตรงที่เดิม) |
-| Skill ทั้งหก | `~/.codex/skills/` — ฟอร์แมต `SKILL.md` เดียวกัน คัดลอกตรง ๆ |
-| Agent `reviewer` | `~/.codex/skills/reviewer/` — Codex ไม่มี subagent จึง ship เป็น skill |
+| Skill ทั้ง 9 | `~/.codex/skills/` — ฟอร์แมต `SKILL.md` เดียวกัน คัดลอกตรง ๆ |
+| Agent `reviewer` | `~/.codex/skills/reviewer/` — ช่องทางนี้ติดตั้งเป็น skill แบบพกพา |
 | Enforcement pack | ไม่ติดตั้ง — Codex ไม่มี hook/statusline |
 
-เคารพ `CODEX_HOME`, backup `AGENTS.md`, idempotent, ไม่เขียนอะไรนอกไดเรกทอรีของ Codex — doctrine และ skill เขียนแบบเป็นกลางต่อแพลตฟอร์ม ข้อความชุดเดียวกันจึงใช้ได้ทั้งสอง CLI โดยไม่ต้องแปล
+เคารพ `CODEX_HOME`, backup `AGENTS.md`, ใช้นโยบาย snapshot/สำรองเมื่อชื่อชนแบบเดียวกับ classic, idempotent และไม่เขียนอะไรนอกไดเรกทอรีของ Codex — doctrine และ skill เขียนแบบเป็นกลางต่อแพลตฟอร์ม ข้อความชุดเดียวกันจึงใช้ได้ทั้งสอง CLI โดยไม่ต้องแปล
 
 ## Doctrine พูดว่าอะไร
 
@@ -174,21 +180,27 @@ agent `reviewer` ไม่ต้องเรียกชื่อเอง — `
 
 ## Skill แต่ละตัวทำอะไร
 
-`/luciazero-bootstrap` พา repository ผ่าน 6 เฟส: **detect** (รัน `scripts/detect.sh` สแกนหลักฐานในคำสั่งเดียว แล้วอ่าน config CI เอง — CI คือแหล่งความจริง; สคริปต์เสนอตัวเลือก ส่วน agent เป็นคนตัดสิน), **ตั้งคำสั่ง verify** (ใช้ตัวเดิมถ้ามี ไม่มีค่อยสร้างตัวจริงที่เล็กที่สุด: exit ไม่เป็นศูนย์เมื่อพัง รันจบเอง รัน offline และ*จับเวลาหนึ่งครั้ง* — ตัวเลขตัดสินว่าหนึ่งหรือสองระดับ; monorepo ให้ scope ระดับเร็ว), **smoke tests** (3–6 ตัวที่จับความพังระดับหายนะ — ไม่ใช่ coverage และบอกไว้ตรง ๆ), **guardrails** (เอาเฉพาะ hook ที่คุ้มค่าตัวเอง; ฝั่ง Codex เข้ารหัสเป็นคำสั่งใน `AGENTS.md` แทน), **notes ของโปรเจกต์** (เฉพาะสิ่งที่อ่านโค้ดแล้วไม่มีทางรู้) และ **พิสูจน์** (รันระดับเร็วสองครั้ง — เขียวที่ไม่ซ้ำคือ flake; พังบรรทัดที่ cover จริง ยืนยันว่าแดง แล้วกู้คืน) ทั้งหมด language-agnostic: มัน detect ไม่ใช่ assume
+`/luciazero-bootstrap` พา repository ผ่าน 6 เฟส: detect, ตั้งคำสั่ง verify, smoke tests, guardrails, notes และพิสูจน์ว่า check แดงได้จริง Monorepo ที่ suite เต็มช้าต้องมี `verify-changed` ของ repo เองโดยใช้ dependency graph ของเครื่องมือ native และ fallback ไป full เมื่อไม่แน่ใจ; `/done` ยังรัน `verify-full` เสมอ Hook กลางจะไม่เดาความสัมพันธ์ package จาก path
+
+`/plan` เปลี่ยน requirement เป็น scope/non-goal, contract ที่แตะ และหลักฐานผ่าน/ตกที่สังเกตได้ มันหยุดถามเฉพาะเมื่อความกำกวม ความเสี่ยงสูง การทำลายข้อมูล การเปลี่ยน public contract หรือ scope ต้องการคำตัดสินจากผู้ใช้
 
 `/debug` ขยายกฎ hypothesis สำหรับบั๊กที่มองแวบแรกไม่ออก: reproduce ให้ deterministic ก่อน, ย่อ reproduction, จด hypothesis ledger ให้เห็น ๆ (แต่ละรายการระบุคำสั่งที่จะหักล้างมัน), เปลี่ยนหนึ่งตัวแปรต่อรอบ, revert การแก้ที่ไม่ผ่าน, ปิดงานด้วย regression test ที่แดงก่อนแก้และเขียวหลังแก้ ledger จะ seed ตัวเองจากประสบการณ์ที่บันทึกไว้ก่อน — grep อาการใน `docs/lessons.md` ของ repo และ `luciazero-heuristics.md` ข้าม repo ก่อนคิด hypothesis ใหม่; เจอของเก่าตรง = ขึ้นเป็น H1 แต่ยังต้องพิสูจน์
 
+`/bisect` รันเกณฑ์ regression ใน worktree ชั่วคราวแบบ detached, ทดสอบ endpoint ดี/เสียซ้ำเพื่อจับ flake, รองรับ exit 125 แบบ skip, แยก command หายออกจาก revision เสีย และ cleanup ทุกทางออก ผลคือ first bad commit ซึ่งเป็น hypothesis ให้ `/debug` ไม่ใช่คำตัดสินต้นเหตุ
+
 `/done` คือพิธีปิดงาน: verify ระดับเต็มพร้อมยกบรรทัดชี้ขาด, อ่าน diff สุดท้ายแบบผู้ไม่เชื่อ, review เชิงหักล้างอิสระเมื่อ diff สมควรได้, เช็ค scope โดยระบุชื่อสิ่งที่เว้นไว้ และฟอร์มรายงานตายตัว คำถามความซื่อสัตย์ของ test — *ถ้า revert การแก้ test ใหม่จะแดงไหม?* — มีกลไกให้ใช้จริง: `scripts/revert-probe.sh` ที่แถมมา checkout โค้ดเก่าลง git worktree ชั่วคราว วางเฉพาะไฟล์ test ที่เปลี่ยนทับลงไป รันคำสั่ง verify ของคุณที่นั่น แล้วกลับผล (exit 0/1/2 = กัดจริง/test หลอก/ประเมินไม่ได้)
 
-`/handoff` เขียน state capsule (`HANDOFF.md`) เมื่อ session จบทั้งที่งานยังไม่จบ: เป้าหมาย, สถานะที่ verify แล้ว, คำสั่งถัดไปหนึ่งคำสั่งแบบพิมพ์ตามได้เลย, hypothesis ที่ยังเปิด/หักล้างแล้ว, กับระเบิดที่รู้ตำแหน่ง, และ section `Read first` — ชี้ว่า entry ไหนใน `docs/lessons.md` เกี่ยวกับงานที่ค้าง พร้อม copy heuristics ประจำเครื่องมาทั้งบรรทัด (capsule คือทางเดียวที่ของพวกนี้ข้ามเครื่องได้) session ถัดไป — หรือ harness อีกฝั่ง — อ่าน, ตาม pointer, verify ซ้ำกับ tree จริง, แล้วลบทิ้ง
+`/lucia-relay` ส่งงานค้างข้าม session, agent, คน, เครื่อง และ harness โดยใช้ `LUCIA_RELAY.json` เป็น manifest หลักที่เครื่องอ่านได้ และ generate `LUCIA_RELAY.md` สำหรับคน ภายในมี fingerprint ของ repo, หลักฐาน verify ที่ exact, next action, ไฟล์/บทเรียนที่ต้องอ่าน, hypothesis ที่ถูกหักล้าง และ landmine ผู้รับ inspect drift, verify กับ tree จริง แล้ว consume artifact ชั่วคราวทั้งคู่
 
 `/experiment` คือโปรโตคอลวัดผลสำหรับงาน "ทำให้เร็วขึ้น": นิยาม metric และเกณฑ์ชนะก่อนแตะโค้ด, วัด baseline ซ้ำหลายรอบ, หนึ่งตัวแปรต่อหนึ่งการทดลอง, บันทึกคำตัดสินลง `docs/experiments.md` — ที่ซึ่ง null result มีค่าเท่าชัยชนะ และตัวที่แพ้ถูก revert ทันที
+
+`/discipline-report` (หรือ `npx luciazero discipline`) สรุป stop outcome ในเครื่อง กรองตามเวลา/โปรเจกต์และออก JSON ได้ อ่านทั้ง schema v2 กับ record เก่า ข้ามบรรทัดเสีย และใช้คำว่า `likely` เมื่อ log บอกเพียง outcome ไม่ได้บอกสาเหตุ
 
 `/retro` ปิดลูปของกฎ*ห้ามเดินเข้าทางตันเดิมสองครั้ง*: หลังงานยากมันกรอง session เอาเฉพาะสิ่งที่**อ่านโค้ดแล้ว agent ในอนาคตไม่มีทางรู้** (null result, footgun, ความประหลาดของ environment), route บทเรียนที่จริงสำหรับ repo ลง notes ของโปรเจกต์ ส่วนข้อเท็จจริงเฉพาะเครื่องลง memory ของ harness (ไม่ commit เด็ดขาด), อัปเดต notes เดิมแทนการเขียนซ้ำ และลบ notes ที่ถูกพิสูจน์แล้วว่าผิด คลังเรียนรู้สามชั้นทำให้มันทบต้นข้ามเวลา: บั๊กที่ debug จบแล้วลง `docs/lessons.md` ของ repo ในรูปแบบตายตัวที่ grep ได้ (อาการ → สาเหตุ → proven-by → วิธีแก้) ซึ่ง `/debug` จะอ่านรอบหน้า; บทเรียนที่จริงทุก repository ลง `luciazero-heuristics.md` ใน config dir (บรรทัดละหนึ่งบทเรียน เพดานแข็ง 100 บรรทัด — ไฟล์ heuristics ที่โตไม่หยุดจะกลายเป็นภาษี context ที่ pack นี้เกิดมาเพื่อกันเอง); และ stats log ของ enforcement pack แปลง nudge ที่โดนซ้ำ ๆ เป็นบทเรียนพฤติกรรม การถอนการติดตั้งเก็บทั้งสามไฟล์ไว้ — มันคือข้อมูลที่เรียนรู้มา retro ที่ว่างเปล่าก็เป็น retro ที่ถูกต้อง — และความรู้เลิกระเหยไปตอน session จบ
 
 ## ด่านหักล้าง: agent `reviewer`
 
-exit code จับ *ผ่านเทสต์แต่ผิด* ไม่ได้ diff ที่เสี่ยง doctrine จึงต้องการ review เชิงหักล้างอิสระ: บน Claude Code คำสั่ง `/code-review` ในตัวแรงกว่าและถูกเลือกก่อนเมื่อมี; agent `reviewer` ที่ ship มาคือ fallback แบบพกพา และเป็น reviewer เดียวบน Codex อ่านอย่างเดียว ถูกสั่งให้**หักล้าง**การแก้ รันบนโมเดลเดียวกับ thread หลัก (`model: inherit`) และรายงาน `No findings.` แทนการมโนหาเรื่อง
+exit code จับ *ผ่านเทสต์แต่ผิด* ไม่ได้ `/done` จึง route reviewer แบบอ่านอย่างเดียวไป focus `security`, `contract` หรือ `general` มันอ่าน caller/consumer, ใช้ severity `blocker` / `major` / `minor` แบบเดียวกัน และรายงาน `No findings.` แทนการมโนหาเรื่อง ถ้าแตะทั้ง security กับ contract จะ review แยกสองรอบ
 
 ## บันทึกการออกแบบ
 

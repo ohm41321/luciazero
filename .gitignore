@@ -1,6 +1,9 @@
 .DS_Store
 node_modules/
+__pycache__/
 *.tgz
 .claude/
 HANDOFF.md
+LUCIA_RELAY.json
+LUCIA_RELAY.md
 /*.jsonl

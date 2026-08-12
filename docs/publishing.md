@@ -18,6 +18,11 @@ on it, since third-party processes change.
 Version sync rule: a release bumps `CHANGELOG.md`, `.claude-plugin/plugin.json`,
 and `package.json` together — `test.sh` fails on any mismatch.
 
+**Current release state (2026-08-12):** `v1.5.0` is public. This checkout is
+prepared as `2.0.0`, but it is not live until the version is committed, tagged,
+pushed, and the release workflow succeeds. Do not describe 2.0 as published
+before that pipeline completes.
+
 ## 1. Claude Code plugin (live the moment the repo is public)
 
 Users need no setup from us beyond the push:
@@ -87,5 +92,5 @@ One-time setup, in this order:
 The classic `./install.sh` remains the reference channel — it is the only one
 that carries the statusline and the CLAUDE.md import. The plugin substitutes a
 `SessionStart` doctrine hook (same capped text, silent when a classic install
-exists); `npx skills` carries the six skills only — no doctrine, no reviewer
+exists); `npx skills` carries the 9 skills only — no doctrine, no reviewer
 agent, no hooks. Do not describe the channels as equivalent.

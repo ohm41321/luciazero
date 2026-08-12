@@ -1,0 +1,10 @@
+# Canonical install order. Installers, uninstallers, and tests read this file.
+luciazero-bootstrap
+plan
+debug
+bisect
+done
+lucia-relay
+experiment
+discipline-report
+retro

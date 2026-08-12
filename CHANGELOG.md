@@ -7,13 +7,48 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-12
+
+### Changed
+
+- **Breaking: `/handoff` is now `/lucia-relay`.** The branded name avoids
+  collisions with generic handoff skills. Installs remove an untouched v1.5
+  copy but preserve and warn about customized copies. Relay state is now a
+  validated `LUCIA_RELAY.json` manifest plus a generated human view, with a
+  repository fingerprint, verification evidence, negative knowledge,
+  cross-session/cross-agent routing, drift inspection, and explicit consume.
+- **Risk-routed review.** The single portable reviewer now accepts `general`,
+  `security`, and `contract` focus modes, reads callers/consumers, and uses one
+  blocker/major/minor policy. `/done` requests separate focused passes when a
+  diff crosses both security and contract boundaries.
+- **Smart verification is repo-owned.** Monorepos create `verify-changed` from
+  their native task graph and keep `verify-full` for closeout. The global hook
+  never guesses dependency impact from path prefixes.
+- **Classic and Codex installs track component ownership.** Exact hidden
+  snapshots distinguish Luciazero-managed skills/agents from same-name user or
+  third-party components. Updates back up collisions/customizations, and
+  uninstall removes only an unchanged managed copy.
+
 ### Added
 
-- **`/handoff` capsules carry memory pointers** — a new `Read first`
+- **Central component catalogs** drive classic/Codex install, status,
+  uninstall, and inventory tests, so a new skill or agent cannot silently ship
+  through only one channel.
+- **`/plan`** defines falsifiable acceptance signals and reversible steps,
+  while pausing for approval only on ambiguity, high stakes, destructive work,
+  public-contract choices, or scope changes.
+- **`/bisect` + `safe-bisect.sh`** locate the first bad commit in a detached
+  temporary worktree, repeat endpoints to catch flakes, preserve exit 125
+  skips, distinguish missing commands, and clean every exit path.
+- **`npx luciazero discipline` + `/discipline-report`** analyze schema-v2
+  local JSONL outcomes with day/project filters and JSON output. The hook logs
+  a privacy-preserving project hash and verify mode; legacy records remain
+  readable and recommendations distinguish observations from likely causes.
+- **`/lucia-relay` carries memory pointers** — the `Read first`
   section quotes the `docs/lessons.md` entries relevant to the unfinished
   work (a selection, never a copy — the ledger travels with the repo) and
   copies applicable machine-local `luciazero-heuristics.md` entries
-  verbatim, since the capsule is the only way those cross machines. The
+  verbatim, since the relay is the only way those cross machines. The
   consume protocol tells the reader to follow the pointers before touching
   code and to adopt carried heuristics that earn their keep.
 

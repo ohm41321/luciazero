@@ -2,7 +2,7 @@
 
 Honest positioning against the alternatives a visitor will find in one
 search. Every claim below was checked against the named project's public
-README/source on **2026-08-11**; these projects move fast, so treat the date
+README/source on **2026-08-12**; these projects move fast, so treat the date
 as part of each claim. Corrections welcome — an unfair line here would break
 this repo's own first rule.
 
@@ -15,7 +15,7 @@ trade-offs below.
 
 | | They have, we don't | We have, they don't (verified) |
 |---|---|---|
-| [obra/superpowers](https://github.com/obra/superpowers) (~270k★) | 14 skills, 9 harnesses, a multi-plugin community marketplace + official-directory listing, huge community, a real eval lab | A CI-enforced size ceiling on the always-loaded text; evals whose graders run (and are themselves red/green/anti-cheat tested) in public CI; bootstrap falsification; dual-harness install/uninstall cycles proven in CI |
+| [obra/superpowers](https://github.com/obra/superpowers) (~270k★) | 14 skills across 10+ harness integrations, a multi-plugin community marketplace + official-directory listing, huge community, a real eval lab | A CI-enforced size ceiling on the always-loaded text; evals whose graders run (and are themselves red/green/anti-cheat tested) in public CI; bootstrap falsification; dual-harness install/uninstall cycles proven in CI |
 | [SuperClaude](https://github.com/SuperClaude-Org/SuperClaude_Framework) (~24k★) | Commands, personas, MCP integrations, distribution | A context budget at all (their own issue #286 reports ~8k always-loaded tokens; our doctrine is CI-capped at 420 words), behavioral evals, enforcement hooks, a Codex path from one source tree |
 | [proof-loop](https://github.com/LeoStehlik/proof-loop) (6★, stale) | A **hard** mechanical done-gate with frozen acceptance criteria — stronger "done" enforcement than ours | The doctrine, the lifecycle procedures, evals, installers, statusline; our opt-in strict gate (below) closes most — not all — of this gap |
 | [exiw/proofloop](https://github.com/exiw-ai/proofloop) (37★, frozen), [loopx](https://github.com/huangruiteng/loopx) (3.8k★, active) | A *runtime*: durable state, long-running/overnight orchestration | Nothing comparable — different layer by design. This repo can be installed alongside them |

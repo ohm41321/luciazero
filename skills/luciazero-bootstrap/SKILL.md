@@ -54,7 +54,7 @@ Rules:
 
 Name them by the repo's convention (`make verify` / `make verify-full`, npm scripts, just recipes). A small repo whose whole suite runs in seconds needs only the single tier — do not add ceremony it does not need.
 
-**Monorepos:** detect the workspace layout (`package.json` `workspaces`, `pnpm-workspace.yaml`, turbo/nx config, `go.work`, Cargo `[workspace]`). The fast tier must be scoped to the package being changed (e.g. `pnpm --filter <pkg> test`, `go test ./changed/pkg/...`, `cargo test -p <crate>`); `verify-full` is the root suite. Record in the Phase 5 notes how to derive the scoped command from a file path.
+**Monorepos:** detect the workspace layout (`package.json` `workspaces`, `pnpm-workspace.yaml`, turbo/nx config, `go.work`, Cargo `[workspace]`). Prefer a repo-owned `verify-changed` target backed by the workspace's native dependency graph; `verify-full` remains the root suite. Never make a global hook guess package mappings from path prefixes. Read [references/smart-verification.md](references/smart-verification.md) before creating the target, and record its base-revision/fallback contract in Phase 5 notes.
 
 **Enforcement pack users (Claude Code, ask first):** if the verify-tracking hooks are active — classic install: `~/.claude/hooks/luciazero-verify.sh` exists; plugin install: the `luciazero` plugin is enabled — offer to record the established command in the repo's *personal* settings so the tracker matches it exactly instead of by broad regex — `.claude/settings.local.json` (gitignored, never committed): `{"env": {"LUCIAZERO_VERIFY_CMD": "<the fast-tier command>"}}`. Derive it from CI (the honest source); it is a cache of that truth, so note it must be updated if CI changes. Show the exact JSON before writing anything.
 

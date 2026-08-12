@@ -13,12 +13,14 @@ The latest release only.
 
 ## Design guarantees
 
-This project is bash + markdown with no runtime dependencies. The guarantees
-below are enforced by `test.sh` on every push — a way around any of them is a
-reportable vulnerability, not expected behavior:
+This project installs no third-party packages. It uses Bash for installers and
+hooks, Node.js 18+ for the CLI/report, and Python 3 for hook JSON handling and
+Lucia Relay. The guarantees below are enforced by `test.sh` on every push — a
+way around any of them is a reportable vulnerability, not expected behavior:
 
-- **No network.** Installers, hooks, skills, and eval graders never phone
-  home; everything runs offline.
+- **Core operation is offline.** Installers, hooks, Relay/report helpers, and
+  eval graders never phone home. Real behavioral `eval/run.sh` runs are the
+  explicit exception: they invoke the Claude CLI; `--offline` does not.
 - **Nothing runs at npm install time.** The npm package has zero lifecycle
   scripts (`preinstall`/`install`/`postinstall`/`prepare` are all forbidden
   and checked); `npx luciazero` only launches the same audited bash
@@ -28,10 +30,12 @@ reportable vulnerability, not expected behavior:
   block on an error path or fabricate a RED verdict it did not observe.
 - **Installers stay in the config dir.** Writes land only inside
   `~/.claude/` (or `$CLAUDE_CONFIG_DIR`) and `~/.codex/` (or `$CODEX_HOME`),
-  existing files are backed up before modification, and uninstall restores
-  user content and removes exactly our entries.
+  collisions and customized components are backed up, and uninstall removes
+  only exact Luciazero-managed copies and settings entries.
 - **Hook state stays in `$TMPDIR`**, except the documented, size-capped
-  `luciazero-stats.log` in the config dir.
+  `luciazero-stats.log` in the config dir. Stats are local JSONL and identify
+  a repository by a truncated SHA-256 plus basename, never its absolute path
+  or verify command.
 
 ## Known sharp edge (documented, by design)
 

@@ -17,7 +17,7 @@ Walk back through the work just finished and list candidates:
 - What surprised you: environment quirks, undocumented behavior, a flag or version that mattered?
 - What did you have to re-discover that should already have been written down?
 
-**Also read the discipline stats**, if the enforcement pack is installed: `luciazero-stats.log` in the harness config dir (`~/.claude`), one line per stop outcome. Recurring `nudge` or `strict-block` lines for this project are behavioral lessons — e.g. repeated nudges usually mean the repo has no `LUCIAZERO_VERIFY_CMD` set or the fast verify tier is too slow to run habitually. Treat those patterns as candidates like any other.
+**Also read the discipline report**, if the enforcement pack is installed: run `npx luciazero discipline --project . --json` (or use `/discipline-report`). Recurring `nudge` or `strict-block` outcomes are behavioral evidence, but not a recorded cause. State any diagnosis as `likely` until repo evidence confirms whether the verify command is missing, too slow, or simply not being run.
 
 ## 2. Filter hard
 

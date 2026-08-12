@@ -10,6 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
+catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 
 # The hooks append a stats line to ${CLAUDE_CONFIG_DIR:-~/.claude}; no test is
 # ever allowed to touch the real one, so the whole run gets a sandbox default.
@@ -21,6 +22,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          docs/assets/statusline-demo.sh
          skills/luciazero-bootstrap/scripts/detect.sh
+         skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
          claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh
          eval/run.sh eval/report.sh eval/check-result.sh)
@@ -64,17 +66,21 @@ python3 -m json.tool "${ROOT}/examples/project-settings.example.json" >/dev/null
 echo "ok  example settings JSON"
 
 # 4. skill + agent frontmatter: name + description drive discovery and auto-trigger
-for NAME in luciazero-bootstrap retro debug 'done' handoff experiment; do
+while IFS= read -r NAME; do
   SKILL="${ROOT}/skills/${NAME}/SKILL.md"
   head -1 "${SKILL}" | grep -qx -- '---' || fail "${NAME}/SKILL.md missing frontmatter"
   grep -q "^name: ${NAME}\$" "${SKILL}" || fail "${NAME}/SKILL.md missing 'name: ${NAME}'"
   grep -q '^description: .' "${SKILL}" || fail "${NAME}/SKILL.md missing description"
-done
-AGENT="${ROOT}/claude/agents/reviewer.md"
-head -1 "${AGENT}" | grep -qx -- '---' || fail "reviewer.md missing frontmatter"
-grep -q '^name: reviewer$' "${AGENT}" || fail "reviewer.md missing 'name: reviewer'"
-grep -q '^description: .' "${AGENT}" || fail "reviewer.md missing description"
-grep -q '^model: inherit$' "${AGENT}" || fail "reviewer.md missing 'model: inherit' (reviewer must run on the authoring model)"
+done < <(catalog "${ROOT}/skills/catalog.txt")
+while IFS= read -r AGENT_NAME; do
+  AGENT="${ROOT}/claude/agents/${AGENT_NAME}.md"
+  head -1 "${AGENT}" | grep -qx -- '---' || fail "${AGENT_NAME}.md missing frontmatter"
+  grep -q "^name: ${AGENT_NAME}\$" "${AGENT}" || fail "${AGENT_NAME}.md missing name"
+  grep -q '^description: .' "${AGENT}" || fail "${AGENT_NAME}.md missing description"
+  grep -q '^model: inherit$' "${AGENT}" || fail "${AGENT_NAME}.md must inherit the authoring model"
+done < <(catalog "${ROOT}/claude/agents/catalog.txt")
+python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
+  "${ROOT}/skills/lucia-relay/scripts/relay.py" || fail "relay.py syntax"
 echo "ok  skill + agent frontmatter"
 
 # 4b. doctrine budget — loaded on every turn of every session; this enforces "stays short"
@@ -105,10 +111,10 @@ echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
 RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}"; fail "stop hook missed an edit made right after verify (rc=${RC})"; }
 # a documentation write after a green verify must NOT re-arm the nudge —
-# /done, /retro, /handoff, /experiment all write markdown after the final verify
+# Closeout docs and relay artifacts written after final verify must not re-arm
 echo '{"cwd":"/hook/test/proj","tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}}' \
   | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-echo '{"cwd":"/hook/test/proj","tool_input":{"file_path":"/hook/test/proj/HANDOFF.md"}}' \
+echo '{"cwd":"/hook/test/proj","tool_input":{"file_path":"/hook/test/proj/LUCIA_RELAY.json"}}' \
   | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
 RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop hook nudged on a docs-only write after green verify (rc=${RC})"; }
@@ -182,21 +188,25 @@ RC=0; printf 'not json' | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom;
 rm -rf "${SPJ}"
 echo "ok  strict verify gate"
 
-# 4c3. session subcommand: silent without a capsule, points at one when
+# 4c3. session subcommand: silent without a relay, points at one when
 # present, stale wording past the threshold, fails open on garbage stdin
 SD="$(mktemp -d)"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
-[ -z "${OUT}" ] || { rm -rf "${HT}" "${SD}"; fail "session hook spoke without a capsule: ${OUT}"; }
-echo x > "${SD}/HANDOFF.md"
+[ -z "${OUT}" ] || { rm -rf "${HT}" "${SD}"; fail "session hook spoke without a relay: ${OUT}"; }
+echo '{}' > "${SD}/LUCIA_RELAY.json"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
-echo "${OUT}" | grep -q 'HANDOFF.md exists' || { rm -rf "${HT}" "${SD}"; fail "session hook missed the capsule: ${OUT}"; }
-touch -t 202001010000 "${SD}/HANDOFF.md"
+echo "${OUT}" | grep -q 'LUCIA_RELAY.json exists' || { rm -rf "${HT}" "${SD}"; fail "session hook missed the relay: ${OUT}"; }
+touch -t 202001010000 "${SD}/LUCIA_RELAY.json"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 echo "${OUT}" | grep -q 'stale' || { rm -rf "${HT}" "${SD}"; fail "session hook missed staleness: ${OUT}"; }
+rm -f "${SD}/LUCIA_RELAY.json"
+echo legacy > "${SD}/HANDOFF.md"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+echo "${OUT}" | grep -q 'Legacy HANDOFF.md' || { rm -rf "${HT}" "${SD}"; fail "session hook missed legacy migration: ${OUT}"; }
 RC=0; printf 'not json' | "${ROOT}/claude/hooks/luciazero-verify.sh" session >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SD}"; fail "session hook not fail-open on garbage stdin (rc=${RC})"; }
 rm -rf "${HT}" "${SD}"
-echo "ok  session handoff pointer"
+echo "ok  session relay pointer"
 
 # 4c5. discipline stats: stop outcomes logged to the config dir, capped, and
 # the learning-layer files survive uninstall
@@ -209,7 +219,13 @@ mkdir -p "${SPJ1}" "${SPJ2}" "${SPJ3}"
 printf '{"cwd": "%s"}' "${SPJ1}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" stop \
   || fail "clean stop exited non-zero"
-grep -q ' stop-clean proj$' "${SC}/luciazero-stats.log" || fail "stats missing stop-clean"
+python3 - "${SC}/luciazero-stats.log" <<'PY' || fail "stats missing schema-v2 clean record"
+import json, sys
+row = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+assert row["schema"] == 2 and row["event"] == "stop-clean"
+assert row["project"] == "proj" and len(row["project_id"]) == 12
+assert row["verify_mode"] == "regex" and "/" not in row["project"]
+PY
 # edit then stop -> nudge (rc 2)
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${SPJ1}" "${SPJ1}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" edit
@@ -219,7 +235,8 @@ printf '{"cwd": "%s"}' "${SPJ1}" \
 RC=$?
 set -e
 [ "${RC}" -eq 2 ] || fail "nudge stop: want rc 2, got ${RC}"
-grep -q ' nudge proj$' "${SC}/luciazero-stats.log" || fail "stats missing nudge"
+python3 -c 'import json,sys; assert json.loads(open(sys.argv[1]).read().splitlines()[-1])["event"] == "nudge"' \
+  "${SC}/luciazero-stats.log" || fail "stats missing nudge"
 # strict red -> strict-block (rc 2)
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${SPJ2}" "${SPJ2}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" edit
@@ -229,7 +246,11 @@ printf '{"cwd": "%s"}' "${SPJ2}" \
 RC=$?
 set -e
 [ "${RC}" -eq 2 ] || fail "strict red stop: want rc 2, got ${RC}"
-grep -q ' strict-block boom$' "${SC}/luciazero-stats.log" || fail "stats missing strict-block"
+python3 - "${SC}/luciazero-stats.log" <<'PY' || fail "stats missing strict-mode block"
+import json, sys
+row = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+assert row["event"] == "strict-block" and row["verify_mode"] == "strict"
+PY
 # rotation: >500 lines shrinks to <=301 on the next event
 python3 -c 'import sys; open(sys.argv[1], "w").write("2026-01-01T00:00 stop-clean x\n" * 600)' "${SC}/luciazero-stats.log"
 printf '{"cwd": "%s"}' "${SPJ3}" \
@@ -246,12 +267,177 @@ printf '%s\n' "${UOUT}" | grep -q 'kept luciazero-heuristics.md' || fail "uninst
 rm -rf "${SC}" "${STMP}"
 echo "ok  discipline stats log"
 
+# 4c5b. discipline report: current + legacy schema, malformed input,
+# time/project filters, JSON output, and evidence-qualified recommendations
+if command -v node >/dev/null 2>&1; then
+  DR="$(mktemp -d)"
+  cat > "${DR}/stats.log" <<'EOF'
+{"schema":2,"timestamp":"2026-08-10T10:00:00+00:00","event":"stop-clean","project_id":"alpha1234567","project":"alpha","verify_mode":"exact"}
+{"schema":2,"timestamp":"2026-08-11T23:30:00-05:00","event":"nudge","project_id":"alpha1234567","project":"alpha","verify_mode":"regex"}
+{"schema":2,"timestamp":"2026-08-12T05:00:00+00:00","event":"strict-block","project_id":"beta12345678","project":"beta","verify_mode":"strict"}
+2026-08-09T12:00:00 nudge legacy-repo
+{malformed
+EOF
+  DJSON="$(node "${ROOT}/bin/discipline-report.js" --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z --json)" \
+    || { rm -rf "${DR}"; fail "discipline JSON report exited red"; }
+  printf '%s' "${DJSON}" | python3 -c '
+import json, sys
+d=json.load(sys.stdin)
+assert d["records"] == 4 and d["malformed_records_ignored"] == 1 and d["legacy_records"] == 1
+assert d["outcomes"] == {"stop-clean": 1, "nudge": 2, "strict-block": 1}
+assert d["verify_modes"]["regex"] == 1 and d["verify_modes"]["strict"] == 1
+assert d["recommendations"][0].startswith("Likely:")
+' || { rm -rf "${DR}"; fail "discipline JSON report content wrong"; }
+  DJSON="$(node "${ROOT}/bin/discipline-report.js" --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z --project alpha --json)"
+  printf '%s' "${DJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["records"] == 2 and d["outcomes"]["nudge"] == 1' \
+    || { rm -rf "${DR}"; fail "discipline project filter wrong"; }
+  DOUT="$(node "${ROOT}/bin/luciazero.js" discipline --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z)"
+  echo "${DOUT}" | grep -q 'Luciazero Discipline Report' \
+    || { rm -rf "${DR}"; fail "discipline CLI route missing report"; }
+  # The report is pure Node and must stay usable on native Windows even though
+  # the installer routes still require Bash/WSL.
+  DWIN="$(node - "${ROOT}/bin/luciazero.js" "${DR}/stats.log" <<'JS'
+const [router, log] = process.argv.slice(2);
+Object.defineProperty(process, "platform", {value: "win32"});
+process.argv = [process.execPath, router, "discipline", "--log", log,
+  "--days", "30", "--now", "2026-08-12T12:00:00Z"];
+require(router);
+JS
+)"
+  echo "${DWIN}" | grep -q 'Luciazero Discipline Report' \
+    || { rm -rf "${DR}"; fail "native-Windows discipline route was blocked by Bash guard"; }
+  RC=0; node "${ROOT}/bin/luciazero.js" typo-command >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 64 ] || { rm -rf "${DR}"; fail "unknown CLI command did not fail with usage (rc=${RC})"; }
+  rm -rf "${DR}"
+  echo "ok  discipline report fixtures + CLI"
+else
+  echo "skip discipline report fixtures (node not installed)"
+fi
+
+# 4c5c. Lucia Relay: portable draft, schema validation, human rendering,
+# drift detection, secret rejection, and explicit verified consumption
+RR="$(mktemp -d)"
+git -C "${RR}" init -q
+git -C "${RR}" config user.name test
+git -C "${RR}" config user.email test@example.invalid
+echo base > "${RR}/work.txt"
+git -C "${RR}" add work.txt && git -C "${RR}" commit -qm base
+echo pending > "${RR}/scratch.txt"
+RELAY="${ROOT}/skills/lucia-relay/scripts/relay.py"
+"${RELAY}" draft --root "${RR}" > "${RR}/LUCIA_RELAY.json"
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+d["goal"]="# Transfer the unfinished parser change\n<img src=\"https://attacker.invalid/pixel\">"
+d["state"]["done"]=["Reproduced the parser failure"]
+d["state"]["in_progress"]=["Parser implementation is untouched"]
+d["state"]["next_step"]={"kind":"command","value":"./verify.sh"}
+d["verification"]=[{"command":"./verify.sh","exit_code":1,"decisive_line":"parser case fails","run_at":"2026-08-12T12:00:00+00:00"}]
+d["knowledge"]["hypotheses"]=[{"id":"H1","claim":"encoding","status":"refuted","evidence":"ASCII fails too"}]
+d["knowledge"]["landmines"]=["![beacon](https://attacker.invalid/pixel.png)"]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+"${RELAY}" validate --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "valid relay rejected"; }
+"${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay render failed"; }
+grep -q 'ASCII fails too' "${RR}/LUCIA_RELAY.md" || { rm -rf "${RR}"; fail "relay human view lost negative knowledge"; }
+grep -q '\\# Transfer' "${RR}/LUCIA_RELAY.md" \
+  || { rm -rf "${RR}"; fail "relay renderer did not escape injected Markdown heading"; }
+! grep -q '<img' "${RR}/LUCIA_RELAY.md" \
+  || { rm -rf "${RR}"; fail "relay renderer emitted injected raw HTML"; }
+! grep -q '!\[beacon\](' "${RR}/LUCIA_RELAY.md" \
+  || { rm -rf "${RR}"; fail "relay renderer emitted an injected remote image"; }
+rm -f "${RR}/LUCIA_RELAY.md"
+echo sentinel > "${RR}/outside.txt"
+ln -s "${RR}/outside.txt" "${RR}/LUCIA_RELAY.md"
+RC=0; "${RELAY}" render --root "${RR}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] && grep -qx sentinel "${RR}/outside.txt" \
+  || { rm -rf "${RR}"; fail "relay renderer followed an output symlink"; }
+rm -f "${RR}/LUCIA_RELAY.md"
+rm -f "${RR}/outside.txt"
+"${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay rerender after symlink check failed"; }
+RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
+printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
+  || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
+echo tampered >> "${RR}/LUCIA_RELAY.md"
+RC=0; RJSON="$("${RELAY}" inspect --root "${RR}" --json)" || RC=$?
+[ "${RC}" -eq 1 ] && printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert any("does not match" in e for e in json.load(sys.stdin)["errors"])' \
+  || { rm -rf "${RR}"; fail "relay inspect trusted a tampered human view"; }
+"${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay could not regenerate a tampered human view"; }
+echo revised > "${RR}/scratch.txt"
+RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
+printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["repository_drift"]' \
+  || { rm -rf "${RR}"; fail "relay missed changed content in an untracked file"; }
+echo changed > "${RR}/work.txt"
+RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
+printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["repository_drift"]' \
+  || { rm -rf "${RR}"; fail "relay missed repository drift"; }
+RC=0; "${RELAY}" consume --root "${RR}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 2 ] && [ -f "${RR}/LUCIA_RELAY.json" ] \
+  || { rm -rf "${RR}"; fail "relay consumed without explicit re-verification"; }
+"${RELAY}" consume --root "${RR}" --verified >/dev/null \
+  || { rm -rf "${RR}"; fail "verified relay consumption failed"; }
+[ ! -e "${RR}/LUCIA_RELAY.json" ] && [ ! -e "${RR}/LUCIA_RELAY.md" ] \
+  || { rm -rf "${RR}"; fail "relay artifacts survived consumption"; }
+rm -rf "${RR}"
+RR="$(mktemp -d)"
+git -C "${RR}" init -q
+echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
+"${RELAY}" draft --root "${RR}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["repository"]["head"] is None and d["repository"]["dirty"] and d["files"]["modified"] == ["first.txt"]' \
+  || { rm -rf "${RR}"; fail "relay lost staged files in an unborn repository"; }
+rm -rf "${RR}"
+echo "ok  lucia relay lifecycle"
+
+# 4c5d. Safe bisect: identifies the first bad commit while preserving the
+# caller branch/worktree and distinguishes a missing verify command
+BR="$(mktemp -d)"
+git -C "${BR}" init -q
+git -C "${BR}" config user.name test
+git -C "${BR}" config user.email test@example.invalid
+cat > "${BR}/verify.sh" <<'SH'
+#!/usr/bin/env bash
+[ ! -e .criterion-state ] || exit 9
+touch .criterion-state
+[ ! -e skip.flag ] || exit 125
+grep -qx good value.txt
+SH
+cat > "${BR}/verify-noskip.sh" <<'SH'
+#!/usr/bin/env bash
+grep -qx good value.txt
+SH
+chmod +x "${BR}/verify.sh" "${BR}/verify-noskip.sh"
+echo good > "${BR}/value.txt"
+git -C "${BR}" add . && git -C "${BR}" commit -qm good
+BGOOD="$(git -C "${BR}" rev-parse HEAD)"
+echo neutral > "${BR}/note.txt" && git -C "${BR}" add note.txt && git -C "${BR}" commit -qm neutral
+echo skip > "${BR}/skip.flag" && git -C "${BR}" add skip.flag && git -C "${BR}" commit -qm untestable
+rm -f "${BR}/skip.flag"
+echo bad > "${BR}/value.txt" && git -C "${BR}" add -u && git -C "${BR}" commit -qm regression
+BFIRST="$(git -C "${BR}" rev-parse HEAD)"
+echo later >> "${BR}/note.txt" && git -C "${BR}" commit -qam later
+BBAD="$(git -C "${BR}" rev-parse HEAD)"
+BHEAD="${BBAD}"
+BOUT="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify-noskip.sh)" \
+  || { rm -rf "${BR}"; fail "safe bisect exited red"; }
+echo "${BOUT}" | grep -q "FIRST_BAD ${BFIRST}" || { rm -rf "${BR}"; fail "safe bisect found wrong commit: ${BOUT}"; }
+[ "$(git -C "${BR}" rev-parse HEAD)" = "${BHEAD}" ] && [ "$(git -C "${BR}" status --porcelain)" = "" ] \
+  || { rm -rf "${BR}"; fail "safe bisect mutated caller worktree"; }
+[ "$(git -C "${BR}" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ] \
+  || { rm -rf "${BR}"; fail "safe bisect leaked a temporary worktree"; }
+RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify.sh 2>&1)" || RC=$?
+[ "${RC}" -eq 2 ] && echo "${BERR}" | grep -q 'could not identify a unique first bad commit' \
+  || { rm -rf "${BR}"; fail "safe bisect did not preserve ambiguous exit-125 semantics (rc=${RC}): ${BERR}"; }
+RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./missing-verify 2>&1)" || RC=$?
+[ "${RC}" -eq 66 ] && echo "${BERR}" | grep -q 'could not be evaluated' \
+  || { rm -rf "${BR}"; fail "safe bisect treated missing command as a bad revision (rc=${RC}): ${BERR}"; }
+rm -rf "${BR}"
+echo "ok  safe regression bisect"
+
 # 4c6. learning layer stays wired through the skills that read/write it
 grep -q 'docs/lessons.md' "${ROOT}/skills/debug/SKILL.md" || fail "debug skill lost the lesson-ledger lookup"
 grep -q 'luciazero-heuristics.md' "${ROOT}/skills/debug/SKILL.md" || fail "debug skill lost the heuristics lookup"
 grep -q 'docs/lessons.md' "${ROOT}/skills/retro/SKILL.md" || fail "retro skill lost the lesson-ledger routing"
 grep -q 'luciazero-heuristics.md' "${ROOT}/skills/retro/SKILL.md" || fail "retro skill lost the heuristics routing"
-grep -q 'luciazero-stats.log' "${ROOT}/skills/retro/SKILL.md" || fail "retro skill lost the stats review"
+grep -q 'luciazero discipline' "${ROOT}/skills/retro/SKILL.md" || fail "retro skill lost the discipline-report integration"
 echo "ok  learning-layer skill wiring"
 
 # 4d. eval graders stay honest — auto-discovered, so no task can ship without
@@ -445,6 +631,21 @@ mkdir -p "${RPX}/uni/tests"
 )
 RC=0; OUT="$(cd "${RPX}/uni" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_h*.py')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a non-ASCII test filename: ${OUT}"; }
+# (v) this repository and many small projects keep assertions in root test.sh
+mkdir -p "${RPX}/root-script"
+(
+  cd "${RPX}/root-script"
+  git init -q .
+  printf 'bad\n' > value
+  printf '#!/bin/sh\ngrep -qx bad value\n' > test.sh
+  chmod +x test.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+  printf 'good\n' > value
+  printf '#!/bin/sh\ngrep -qx good value\n' > test.sh
+)
+RC=0; OUT="$(cd "${RPX}/root-script" && "${RP}" './test.sh')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe ignored root test.sh: ${OUT}"; }
 rm -rf "${RPX}"
 echo "ok  revert-probe bites/vacuous/unassessable"
 
@@ -591,10 +792,24 @@ for bad in ("preinstall", "install", "postinstall", "prepare"):
     assert bad not in pkg.get("scripts", {}), f"lifecycle script '{bad}' forbidden (npm v12 blocks them; scanners flag them)"
 files = set(pkg["files"])
 for need in ("bin", "claude", "skills", "install.sh", "uninstall.sh",
-             "install-codex.sh", "uninstall-codex.sh", "CHANGELOG.md"):
+             "install-codex.sh", "uninstall-codex.sh", "migrations", "CHANGELOG.md"):
     assert need in files, f"files allowlist missing {need} — npx install would ship a broken payload"
 with open(os.path.join(root, pkg["bin"]["luciazero"])) as f:
     assert f.readline().startswith("#!/usr/bin/env node"), "bin shebang"
+assert os.access(os.path.join(root, pkg["bin"]["luciazero"]), os.X_OK), "bin must be executable"
+def catalog(rel):
+    return [x.strip() for x in open(os.path.join(root, rel)) if x.strip() and not x.lstrip().startswith("#")]
+skills = catalog("skills/catalog.txt")
+agents = catalog("claude/agents/catalog.txt")
+actual_skills = sorted(name for name in os.listdir(os.path.join(root, "skills"))
+                       if os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")))
+actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.join(root, "claude", "agents"))
+                       if name.endswith(".md"))
+assert sorted(skills) == actual_skills, f"skill catalog drift: {skills} != {actual_skills}"
+assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
+assert len(skills) == 9, f"expected 9 cataloged skills, found {len(skills)}"
+for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
+    assert "9 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 PY
 if command -v node >/dev/null 2>&1; then
   NB="$(mktemp -d)"
@@ -615,23 +830,43 @@ SB="$(mktemp -d)"
 CX="$(mktemp -d)"
 trap 'rm -rf "${SB}" "${CX}"' EXIT
 printf '@RTK.md\n\n# pre-existing user content\n' > "${SB}/CLAUDE.md"
+mkdir -p "${SB}/skills/handoff"
+cp "${ROOT}/migrations/handoff-v1.5.0.SKILL.md" "${SB}/skills/handoff/SKILL.md"
+# Generic names may already belong to the user or another plugin. The install
+# must preserve the collision outside the discoverable skills directory.
+mkdir -p "${SB}/skills/plan"
+printf '%s\n' '---' 'name: plan' '---' '# pre-existing plan owner' > "${SB}/skills/plan/SKILL.md"
 
 CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null
 [ -f "${SB}/luciazero.md" ] || fail "doctrine not installed"
-[ -f "${SB}/skills/luciazero-bootstrap/SKILL.md" ] || fail "bootstrap skill not installed"
+while IFS= read -r NS; do
+  [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
+done < <(catalog "${ROOT}/skills/catalog.txt")
 [ -x "${SB}/skills/luciazero-bootstrap/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
 [ -x "${SB}/skills/done/scripts/revert-probe.sh" ] || fail "revert-probe.sh not installed or not executable"
+[ -x "${SB}/skills/bisect/scripts/safe-bisect.sh" ] || fail "safe-bisect.sh not installed or not executable"
+[ -x "${SB}/skills/lucia-relay/scripts/relay.py" ] || fail "relay.py not installed or not executable"
 [ -f "${SB}/.luciazero-version" ] || fail "version sidecar not written"
-[ -f "${SB}/skills/retro/SKILL.md" ] || fail "retro skill not installed"
-for NS in debug 'done' handoff experiment; do
-  [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
-done
+[ ! -d "${SB}/skills/handoff" ] || fail "managed legacy handoff was not migrated"
 [ -f "${SB}/agents/reviewer.md" ] || fail "reviewer agent not installed"
 [ ! -d "${SB}/hooks" ] || fail "hooks installed without --with-hooks"
 [ "$(grep -cxF '@luciazero.md' "${SB}/CLAUDE.md")" = 1 ] || fail "import line not added"
+grep -q 'pre-existing plan owner' "${SB}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
+  || fail "classic install did not back up a colliding generic skill"
 
+mkdir -p "${SB}/skills/handoff"
+printf '%s\n' '---' 'name: handoff' '---' '# user customization' > "${SB}/skills/handoff/SKILL.md"
+# Customizing a managed copy before an update must also be backed up, then the
+# update may safely restore the shipped version.
+echo '# customized managed plan' >> "${SB}/skills/plan/SKILL.md"
 CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null
 [ "$(grep -cxF '@luciazero.md' "${SB}/CLAUDE.md")" = 1 ] || fail "install is not idempotent"
+grep -q 'user customization' "${SB}/skills/handoff/SKILL.md" || fail "install deleted a customized legacy handoff"
+! grep -q 'customized managed plan' "${SB}/skills/plan/SKILL.md" \
+  || fail "classic reinstall did not restore the shipped plan skill"
+grep -q 'customized managed plan' "${SB}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
+  || fail "classic reinstall did not back up a customized managed skill"
+rm -rf "${SB}/skills/handoff"
 echo "ok  install + idempotent reinstall"
 
 # --status: green on a complete install, red (and specific) once a piece is gone
@@ -644,14 +879,24 @@ echo "${SOUT}" | grep -q 'MISS.*debug' || fail "--status did not name the missin
 CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null   # restore for the uninstall checks
 echo "ok  --status green/red"
 
-CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/uninstall.sh" >/dev/null
+# Uninstall removes only byte-for-byte managed components; edits made after
+# install are user data and must survive.
+echo '# keep customized bisect' >> "${SB}/skills/bisect/SKILL.md"
+echo '# keep customized reviewer' >> "${SB}/agents/reviewer.md"
+UOUT="$(CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/uninstall.sh" 2>&1)"
 [ ! -f "${SB}/luciazero.md" ] || fail "doctrine left behind"
-[ ! -d "${SB}/skills/luciazero-bootstrap" ] || fail "bootstrap skill left behind"
-[ ! -d "${SB}/skills/retro" ] || fail "retro skill left behind"
-for NS in debug 'done' handoff experiment; do
-  [ ! -d "${SB}/skills/${NS}" ] || fail "${NS} skill left behind"
-done
-[ ! -f "${SB}/agents/reviewer.md" ] || fail "reviewer agent left behind"
+while IFS= read -r NS; do
+  if [ "${NS}" = bisect ]; then
+    grep -q 'keep customized bisect' "${SB}/skills/bisect/SKILL.md" \
+      || fail "classic uninstall deleted a customized managed skill"
+  else
+    [ ! -d "${SB}/skills/${NS}" ] || fail "${NS} skill left behind"
+  fi
+done < <(catalog "${ROOT}/skills/catalog.txt")
+grep -q 'keep customized reviewer' "${SB}/agents/reviewer.md" \
+  || fail "classic uninstall deleted a customized managed agent"
+echo "${UOUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
+  || fail "classic uninstall did not explain preserved customizations"
 [ ! -f "${SB}/.luciazero-version" ] || fail "version sidecar left behind"
 grep -qxF '@RTK.md' "${SB}/CLAUDE.md" || fail "pre-existing CLAUDE.md content damaged"
 grep -qxF '# pre-existing user content' "${SB}/CLAUDE.md" || fail "pre-existing CLAUDE.md content damaged"
@@ -774,23 +1019,27 @@ echo "ok  non-ASCII config dir install + status + uninstall"
 
 # 6. sandbox Codex install cycle — never touches the real ~/.codex
 printf '# pre-existing codex rules\n' > "${CX}/AGENTS.md"
+mkdir -p "${CX}/skills/plan"
+printf '%s\n' '---' 'name: plan' '---' '# pre-existing codex plan' > "${CX}/skills/plan/SKILL.md"
 
 CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" >/dev/null
 grep -q '^# Luciazero' "${CX}/AGENTS.md" || fail "doctrine not in AGENTS.md"
 [ "$(grep -cF 'luciazero:start' "${CX}/AGENTS.md")" = 1 ] || fail "marker block not added"
-[ -f "${CX}/skills/luciazero-bootstrap/SKILL.md" ] || fail "codex bootstrap skill not installed"
+while IFS= read -r NS; do
+  [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
+done < <(catalog "${ROOT}/skills/catalog.txt")
 [ -x "${CX}/skills/luciazero-bootstrap/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
 [ -x "${CX}/skills/done/scripts/revert-probe.sh" ] || fail "codex revert-probe.sh not installed or not executable"
+[ -x "${CX}/skills/bisect/scripts/safe-bisect.sh" ] || fail "codex safe-bisect.sh not installed or not executable"
+[ -x "${CX}/skills/lucia-relay/scripts/relay.py" ] || fail "codex relay.py not installed or not executable"
 [ -f "${CX}/.luciazero-version" ] || fail "codex version sidecar not written"
-[ -f "${CX}/skills/retro/SKILL.md" ] || fail "codex retro skill not installed"
-for NS in debug 'done' handoff experiment; do
-  [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
-done
 [ -f "${CX}/skills/reviewer/SKILL.md" ] || fail "codex reviewer skill not installed"
 [ ! -d "${CX}/hooks" ] || fail "Claude-only hooks leaked into codex install"
 grep -q '^name: reviewer$' "${CX}/skills/reviewer/SKILL.md" || fail "reviewer skill lost frontmatter"
 ! grep -q '^tools: ' "${CX}/skills/reviewer/SKILL.md" || fail "Claude-only tools: line leaked into codex skill"
 ! grep -q '^model: ' "${CX}/skills/reviewer/SKILL.md" || fail "Claude-only model: line leaked into codex skill"
+grep -q 'pre-existing codex plan' "${CX}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
+  || fail "codex install did not back up a colliding generic skill"
 
 cp "${CX}/AGENTS.md" "${CX}/AGENTS.md.snap"
 CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" >/dev/null
@@ -799,13 +1048,19 @@ cmp -s "${CX}/AGENTS.md" "${CX}/AGENTS.md.snap" \
   || fail "codex reinstall changed AGENTS.md content (regression: accumulating blank lines)"
 echo "ok  codex install + idempotent reinstall"
 
-CODEX_HOME="${CX}" "${ROOT}/uninstall-codex.sh" >/dev/null
-[ ! -d "${CX}/skills/luciazero-bootstrap" ] || fail "codex bootstrap skill left behind"
-[ ! -d "${CX}/skills/retro" ] || fail "codex retro skill left behind"
-for NS in debug 'done' handoff experiment; do
-  [ ! -d "${CX}/skills/${NS}" ] || fail "codex ${NS} skill left behind"
-done
+echo '# keep customized codex bisect' >> "${CX}/skills/bisect/SKILL.md"
+COUT="$(CODEX_HOME="${CX}" "${ROOT}/uninstall-codex.sh" 2>&1)"
+while IFS= read -r NS; do
+  if [ "${NS}" = bisect ]; then
+    grep -q 'keep customized codex bisect' "${CX}/skills/bisect/SKILL.md" \
+      || fail "codex uninstall deleted a customized managed skill"
+  else
+    [ ! -d "${CX}/skills/${NS}" ] || fail "codex ${NS} skill left behind"
+  fi
+done < <(catalog "${ROOT}/skills/catalog.txt")
 [ ! -d "${CX}/skills/reviewer" ] || fail "codex reviewer skill left behind"
+echo "${COUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
+  || fail "codex uninstall did not explain preserved customizations"
 [ ! -f "${CX}/.luciazero-version" ] || fail "codex version sidecar left behind"
 grep -qxF '# pre-existing codex rules' "${CX}/AGENTS.md" || fail "pre-existing AGENTS.md content damaged"
 ! grep -qF 'luciazero:start' "${CX}/AGENTS.md" || fail "marker block left behind"

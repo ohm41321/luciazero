@@ -14,7 +14,7 @@ Luciazero makes a coding agent run its own `plan → change → verify → fix` 
 
 > Done is proven by a command, not by my judgment. If no verification command exists, that is the first bug.
 
-Everything in this repo — a 9-rule doctrine, six skills, an adversarial reviewer agent, enforcement hooks, an eval harness — exists to make that rule hold without a human in the loop.
+Everything in this repo — a 9-rule doctrine, 9 skills, a risk-routed adversarial reviewer, enforcement hooks, and an eval harness — exists to make that rule hold without a human in the loop.
 
 ## What it looks like
 
@@ -66,7 +66,7 @@ The mechanical rows are exercised by `test.sh` on every push; the procedural row
 
 ## Install
 
-**Claude Code — plugin (recommended).** One install carries the six skills, the `reviewer` agent, the verify-tracking hooks, and the doctrine:
+**Claude Code — plugin (recommended).** One install carries all 9 skills, the `reviewer` agent, the verify-tracking hooks, and the doctrine:
 
 ```
 /plugin marketplace add ohm41321/luciazero
@@ -85,7 +85,7 @@ npx skills add ohm41321/luciazero
 
 ```bash
 npx luciazero               # Claude Code   (--with-hooks for the enforcement pack, --status)
-npx luciazero codex         # Codex CLI     (npx luciazero uninstall to remove)
+npx luciazero codex         # Codex CLI     (npx luciazero uninstall-codex to remove)
 ```
 
 `npx luciazero` is a thin wrapper with zero lifecycle scripts — nothing runs at npm install time (`test.sh` enforces that); it just launches the same audited bash installers you would get from `git clone https://github.com/ohm41321/luciazero.git && ./install.sh`. Pick **one** channel — plugin or classic — so the hooks are never wired twice. Want proof before installing anything? `./demo.sh` scaffolds a planted-bug repo you fix in your own session and score with an offline grader.
@@ -97,37 +97,43 @@ Nothing to memorize — the doctrine and the hooks work by themselves. Skills ar
 | Moment | Skill | What it does |
 |---|---|---|
 | First time in a repository | `/luciazero-bootstrap` | Detects or creates the verify command, adds 3–6 smoke tests and a project notes file, proves the verify can actually go red |
+| Before a risky or multi-step change | `/plan` | Bounds scope and defines observable acceptance evidence; pauses only when a material decision needs the user |
 | A bug survives the first look | `/debug` | Deterministic reproduction, hypothesis ledger seeded from past lessons (`docs/lessons.md` + cross-repo heuristics), closes with a red-before-fix regression test |
+| A regression has known good/bad revisions | `/bisect` | Finds the first bad commit in a detached temporary worktree without touching the caller's tree |
 | About to say "done" | `/done` | Full-tier verify with the decisive line quoted, skeptic pass over the diff, `revert-probe.sh` test-honesty check, fixed report format |
-| Stopping while work is unfinished | `/handoff` | Writes the `HANDOFF.md` capsule: goal, verified state, the one literal next command |
+| Sending unfinished work to another session/agent | `/lucia-relay` | Writes canonical `LUCIA_RELAY.json` + a generated human view, with evidence, repo fingerprint, negative knowledge, inspect/consume protocol |
 | "Make it faster" requests | `/experiment` | Metric and win threshold before any edit, baseline with repetitions, one variable per run, losers reverted |
+| Reviewing local verification habits | `/discipline-report` | Filters schema-versioned stop outcomes by time/project; text or JSON, with evidence-qualified recommendations |
 | After a hard task or a long debug | `/retro` | Routes lessons into the project's notes, the `docs/lessons.md` ledger, and cross-repo heuristics; reads the discipline stats log |
 
-The `reviewer` agent is never invoked by name — `/done` spawns it when a diff is risky enough, or ask for "an adversarial review" at any point.
+`/done` routes risky diffs through the single `reviewer` in `security`, `contract`, or `general` focus. A diff crossing both security and public contracts gets two separate focused passes.
 
 ## What you get
 
-No dependencies, no runtime (python3 only for the opt-in enforcement pack):
+Luciazero declares no third-party package dependencies. The CLI needs Node.js 18+; the enforcement pack and Relay helper use Python 3:
 
 | Piece | Scope | Loaded |
 |---|---|---|
 | `claude/luciazero.md` | Doctrine — 9 rules | Always, every project, every session |
 | `skills/luciazero-bootstrap/` | Procedure — make a repo agent-ready (ships `scripts/detect.sh`) | On demand |
+| `skills/plan/` | Procedure — verification-first design and scope protocol | On demand |
 | `skills/debug/` | Procedure — hypothesis-driven debugging | On demand |
+| `skills/bisect/` | Procedure — safe first-bad-commit search (ships `scripts/safe-bisect.sh`) | On demand |
 | `skills/done/` | Procedure — closeout ritual (ships `scripts/revert-probe.sh`) | On demand |
-| `skills/handoff/` | Procedure — state capsule for the next session/agent | On demand |
+| `skills/lucia-relay/` | Procedure — portable, verifiable knowledge transfer (ships `scripts/relay.py`) | On demand |
 | `skills/experiment/` | Procedure — measured-change protocol for perf work | On demand |
+| `skills/discipline-report/` | Procedure — local stop-outcome analytics | On demand |
 | `skills/retro/` | Procedure — harvest lessons into project notes | On demand |
-| `claude/agents/reviewer.md` | Adversarial reviewer subagent | On demand (before "done") |
+| `claude/agents/reviewer.md` | Risk-routed adversarial reviewer | On demand (before "done") |
 | `claude/hooks/` | Enforcement pack — verify-nudge hooks, opt-in strict gate, statusline | Opt-in |
-| `eval/` | A/B harness — 6 planted-bug tasks, self-proving graders | Manual (costs API money) |
+| `eval/` | A/B harness — 6 planted-bug tasks, self-proving graders | Offline smoke is free; real runs use API credit or subscription quota |
 | `demo.sh` | Two-minute demo — planted bug, your session, objective grader | Manual |
 
 How it stacks up against superpowers, SuperClaude, proof-loop, and the harness built-ins — including what they do better: [docs/comparison.md](docs/comparison.md).
 
 ## Classic install & enforcement pack
 
-`./install.sh` does four things: copies `claude/luciazero.md` → `~/.claude/luciazero.md`, the six skills → `~/.claude/skills/`, the reviewer agent → `~/.claude/agents/reviewer.md` (backing up a customized copy first), and appends `@luciazero.md` to `~/.claude/CLAUDE.md`. It backs up `CLAUDE.md` before touching it, is idempotent, and never writes outside `~/.claude/`. Those four steps are also the whole manual install.
+`./install.sh` does four things: copies `claude/luciazero.md` → `~/.claude/luciazero.md`, the 9 cataloged skills → `~/.claude/skills/`, the cataloged reviewer → `~/.claude/agents/reviewer.md`, and appends `@luciazero.md` to `~/.claude/CLAUDE.md`. It keeps exact ownership snapshots in `.luciazero-managed/`: a colliding or subsequently customized skill/agent is backed up under hidden `.luciazero-backups/` before an update, and uninstall removes only an unchanged Luciazero-managed copy. It also backs up `CLAUDE.md` before touching it, is idempotent, and never writes outside `~/.claude/`. Those four steps are also the whole manual install.
 
 ### Enforcement pack (opt-in)
 
@@ -135,9 +141,9 @@ How it stacks up against superpowers, SuperClaude, proof-loop, and the harness b
 ./install.sh --with-hooks    # requires python3
 ```
 
-Wires two scripts into `~/.claude/settings.json` (backed up; merge is additive and idempotent): a **verify-nudge Stop hook** — if edits were made but no verify-ish command ran since the last edit, ending the session triggers the one-shot nudge above; fires once, never loops, fails open — and the **statusline** (left untouched if you have a custom one). The stop hook also appends one line per stop outcome (`stop-clean` / `nudge` / `strict-block`) to `luciazero-stats.log` in the config dir — local only, capped at ~250 lines, fail-open — which `/retro` reads to turn recurring discipline gaps into recorded lessons.
+Wires two scripts into `~/.claude/settings.json` (backed up; merge is additive and idempotent): a **verify-nudge Stop hook** — if edits were made but no verify-ish command ran since the last edit, ending the session triggers the one-shot nudge above; fires once, never loops, fails open — and the **statusline** (left untouched if you have a custom one). The stop hook appends schema-v2 JSON lines (`stop-clean` / `nudge` / `strict-block`) to `luciazero-stats.log`: local only, capped at ~250 lines, fail-open, project identified by a 12-character hash rather than its path. Run `npx luciazero discipline --project .` for the report.
 
-What counts as a verify run is a broad regex (test.sh, pytest, `npm test`, `cargo test`, …) — override with `LUCIAZERO_VERIFY_REGEX`, or better, set the repo's exact command with `LUCIAZERO_VERIFY_CMD` (e.g. in the repo's `.claude/settings.local.json` `env` block): in exact mode only commands that *are* or *start with* it count, so `cat test.sh` cannot flip the state green. Documentation writes (`*.md` and friends — `LUCIAZERO_DOC_REGEX`) do not re-arm the nudge, because the closeout skills all write notes *after* the final green verify. A `SessionStart` hook prints a one-line pointer when the project has a `HANDOFF.md` capsule (staleness warning past `LUCIAZERO_HANDOFF_STALE_DAYS`, default 7) — the pointer only, never the contents.
+What counts as a verify run is a broad regex (test.sh, pytest, `npm test`, `cargo test`, …) — override with `LUCIAZERO_VERIFY_REGEX`, or better, set the repo's exact command with `LUCIAZERO_VERIFY_CMD` (e.g. in the repo's `.claude/settings.local.json` `env` block): in exact mode only commands that *are* or *start with* it count, so `cat test.sh` cannot flip the state green. Documentation and Relay artifacts do not re-arm the nudge after a final green verify. A `SessionStart` hook prints one pointer when `LUCIA_RELAY.json` exists (staleness warning past `LUCIAZERO_RELAY_STALE_DAYS`, default 7) — never its contents. Legacy `HANDOFF.md` gets a migration warning.
 
 **Strict mode (opt-in on top of opt-in).** Set `LUCIAZERO_STRICT_VERIFY_CMD` to your repo's *fast* verify command — in your **personal** settings, never in anything committed. Honest limitation: the hook reads an environment variable and cannot tell which settings scope set it — a repo's committed `.claude/settings.json` `env` block would reach it too — so treat a repository that ships this variable as hostile and remove it before working there. At session stop the hook actually runs the command (unless the tracked state is already green after the last edit) and **blocks the stop** on red, quoting the failing output. Hard timeout via `LUCIAZERO_STRICT_TIMEOUT` (default 120s); every internal error — timeout, missing command, broken JSON — degrades to the ordinary nudge, never a block. A blocked stop's continuation is never re-blocked (`stop_hook_active`): a speed bump with evidence attached, not a wall.
 
@@ -152,11 +158,11 @@ What counts as a verify run is a broad regex (test.sh, pytest, `npm test`, `carg
 | Piece | Lands in Codex as |
 |---|---|
 | Doctrine | Marker-delimited block in `~/.codex/AGENTS.md` (replaced in place on reinstall) |
-| All six skills | `~/.codex/skills/` — same `SKILL.md` format, copied as-is |
-| `reviewer` agent | `~/.codex/skills/reviewer/` — Codex has no subagents, so it ships as a skill |
+| All 9 skills | `~/.codex/skills/` — same `SKILL.md` format, copied as-is |
+| `reviewer` agent | `~/.codex/skills/reviewer/` — installed as a portable skill in this channel |
 | Enforcement pack | Not installed — Codex has no hooks or statusline |
 
-Honors `CODEX_HOME`, backs up `AGENTS.md`, idempotent, writes nothing outside the Codex dir. The doctrine and skills are written platform-neutrally, so the same text works in both CLIs without translation.
+Honors `CODEX_HOME`, backs up `AGENTS.md`, applies the same managed-snapshot and collision-backup policy as the classic installer, is idempotent, and writes nothing outside the Codex dir. The doctrine and skills are written platform-neutrally, so the same text works in both CLIs without translation.
 
 ## What the doctrine says
 
@@ -174,21 +180,27 @@ It is deliberately short, and `test.sh` enforces a word-count ceiling on it, bec
 
 ## What the skills do
 
-`/luciazero-bootstrap` walks a repository through six phases: **detect** (run the bundled `scripts/detect.sh` evidence scan, then read the CI config — CI is the source of truth; the script surfaces candidates, the agent decides), **establish the verify command** (use the existing one or create the smallest real one: non-zero on failure, unattended, offline, *timed once* — the measurement decides one tier or two; monorepos scope the fast tier), **smoke tests** (3–6 that catch catastrophic breakage — not coverage, and it says so), **guardrails** (only hooks that pay for themselves; on Codex, encoded as `AGENTS.md` instructions), **project notes** (only what reading the code cannot tell you), and **prove it** (run the fast tier twice — a green that does not repeat is a flake; break a covered line, confirm red, restore). Language-agnostic throughout: it detects, it does not assume.
+`/luciazero-bootstrap` walks a repository through six phases: **detect** (run `scripts/detect.sh`, then read CI — the source of truth), **establish the verify command** (non-zero on failure, unattended, offline, timed once), **smoke tests**, **guardrails**, **project notes**, and **prove it** (repeat green, deliberately break a covered line, confirm red, restore). A slow monorepo owns a native-graph `verify-changed` target with conservative full fallback; `/done` always uses `verify-full`. The global hook never guesses package impact from path prefixes.
+
+`/plan` turns requirements into explicit scope, non-goals, affected contracts, and observable pass/fail evidence. It pauses only when ambiguity, high stakes, destructive work, a public-contract choice, or scope expansion requires a user decision; otherwise it plans concisely and proceeds.
 
 `/debug` expands the hypothesis rule for bugs that resist the first look: reproduce deterministically, minimize, keep a visible hypothesis ledger (each entry names the command that would refute it), one variable per iteration, revert failed fixes, close with a regression test that is red before the fix and green after. The ledger seeds itself from recorded experience first — the repo's `docs/lessons.md` and the cross-repo `luciazero-heuristics.md` are grepped for the symptom before new hypotheses are invented; a match starts as H1, still verified.
 
+`/bisect` runs the regression criterion in a detached temporary worktree, samples known-good and known-bad endpoints twice, preserves Git's exit-125 skip semantics, distinguishes a missing executable, and cleans up on every exit. Its output is a first bad commit—a root-cause hypothesis for `/debug`, not a causal verdict.
+
 `/done` is the closeout ritual: full-tier verify with the decisive line quoted, a skeptic pass over the final diff, an independent adversarial review when the diff earns it, an explicit scope check naming anything left out, and a fixed report format. The test-honesty question — *would the new tests fail if the change were reverted?* — has a mechanical form: the bundled `scripts/revert-probe.sh` checks the old code into a throwaway git worktree, overlays only the changed test files, runs your verify command there, and inverts the result (exit 0/1/2 = bites/vacuous/unassessable).
 
-`/handoff` writes a state capsule (`HANDOFF.md`) when a session ends mid-task: goal, verified state, the one literal next command, open and refuted hypotheses, landmines, and a `Read first` section — which `docs/lessons.md` entries touch the unfinished work, plus any machine-local heuristics copied verbatim (the capsule is their only way across machines). The next session — or the other harness — reads it, follows the pointers, re-verifies against the tree, and deletes it.
+`/lucia-relay` transfers unfinished work across sessions, agents, people, machines, and harnesses. `LUCIA_RELAY.json` is the canonical machine-readable manifest; `LUCIA_RELAY.md` is generated from it. The relay carries a repository fingerprint, exact verification evidence, literal next action, relevant files and lessons, refuted hypotheses, and landmines. The receiver inspects for drift, re-verifies against the tree, then explicitly consumes both transient artifacts.
 
 `/experiment` is the measured-change protocol for "make it faster" work: metric and win threshold defined before touching code, baseline with repetitions, one variable per experiment, verdict recorded to `docs/experiments.md` — where a null result is worth as much as a win, and losers are reverted immediately.
+
+`/discipline-report` (or `npx luciazero discipline`) summarizes local stop outcomes with time/project filters and JSON output. It reads both schema-v2 and legacy records, ignores malformed lines, and labels causal advice as `likely` when the log records only an outcome.
 
 `/retro` closes the loop on *never re-derive a dead end twice*: after a hard task it filters the session for what **reading the code cannot tell a future agent** (null results, footguns, environment quirks), routes repo-true lessons into the project's notes and machine-local facts into the harness's memory (never committed), updates instead of duplicating, and deletes notes the session disproved. Three learning stores make this compound over time: debugged failures land in the repo's `docs/lessons.md` in a fixed greppable shape (symptom → cause → proven-by → fix) that `/debug` reads next time; lessons true in every repository go to `luciazero-heuristics.md` in the config dir (one line each, hard 100-line cap — an unbounded heuristics file would become the context tax this pack exists to prevent); and the enforcement pack's stats log turns recurring nudges into recorded behavioral lessons. Uninstall keeps all three — they are learned data. An empty retro is a valid retro — and knowledge stops evaporating when the session ends.
 
 ## The adversarial check: `reviewer` agent
 
-An exit code cannot catch *passes-the-tests-but-wrong*. For risky diffs the doctrine wants an independent adversarial review: on Claude Code the built-in `/code-review` is the stronger tool when available; the shipped `reviewer` agent is the portable fallback and the only reviewer on Codex. Read-only, instructed to **refute** the change, runs on the same model as the main thread (`model: inherit`), and reports `No findings.` rather than inventing some.
+An exit code cannot catch *passes-the-tests-but-wrong*. For risky diffs `/done` routes the single read-only reviewer into `security`, `contract`, or `general` focus. It reads callers and consumers, uses `blocker` / `major` / `minor` consistently, runs on the authoring model (`model: inherit`) in Claude, and reports `No findings.` rather than inventing some. Security and contract risk together get separate focused passes.
 
 ## Design notes
 

@@ -1,8 +1,8 @@
 {
   "name": "luciazero",
   "displayName": "Luciazero",
-  "version": "1.5.0",
-  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, six skills (bootstrap, debug, done, handoff, experiment, retro), an adversarial reviewer agent, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
+  "version": "2.0.0",
+  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 9 skills including Lucia Relay, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "naris", "email": "naris@riverpark.co.th" },
   "license": "MIT",
   "homepage": "https://github.com/ohm41321/luciazero",

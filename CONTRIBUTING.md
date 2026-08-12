@@ -6,14 +6,16 @@
 ./test.sh
 ```
 
-Must pass before any PR. It checks shell syntax, shellcheck, smoke-runs
-`detect.sh`, validates the example settings JSON, the skill and agent
-frontmatter, and the doctrine word-count budget, exercises the
-enforcement-pack hook state machine and the eval graders (offline), then
-runs full install → reinstall → uninstall cycles for both harnesses —
-including `--with-hooks` — in sandbox config dirs. CI runs the same
-script. `eval/run.sh` is the one thing test.sh does not run: it calls the
-real API and stays manual.
+Must pass before any PR. It covers:
+
+- shell syntax, shellcheck, frontmatter, settings JSON, and doctrine size;
+- hook state transitions, Lucia Relay, safe bisect, and regression-test honesty;
+- every eval grader plus the synthetic `eval/run.sh --offline` path; and
+- install → reinstall → uninstall for Claude Code and Codex in sandbox config
+  directories, including the opt-in enforcement pack.
+
+CI runs the same command. Real behavioral eval runs are separate and manual:
+they invoke the Claude CLI and consume API credit or subscription quota.
 
 ## Rules of the repo
 
@@ -29,6 +31,10 @@ declined:
 - **The skill stays language-agnostic.** `/luciazero-bootstrap` detects; it
   never assumes an ecosystem. No "run pytest" without first checking the
   repo is Python.
+- **Component catalogs are authoritative.** When adding or removing a skill
+  or Claude agent, update `skills/catalog.txt` or
+  `claude/agents/catalog.txt`. Install, status, uninstall, and `test.sh` read
+  them; the test rejects inventory drift across both harnesses.
 - **Scripts stay idempotent and contained.** `install.sh`/`uninstall.sh`
   must be safe to run twice, must back up before editing, and must never
   write outside the Claude config dir.

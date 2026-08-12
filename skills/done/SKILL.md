@@ -27,15 +27,17 @@ Re-read the final diff as a hostile reviewer. Tests prove what they cover; hunt 
 
 Fix what you find, re-run step 1, then continue.
 
-## 3. Independent review, if the diff earns it
+## 3. Risk-routed independent review
 
-Get an adversarial second opinion — the harness's built-in review command (Claude Code: `/code-review`) or the `reviewer` agent — when **any** of these hold:
+Classify the diff before requesting an adversarial second opinion:
 
-- Touches a public API, data migration, auth, money, or concurrency
-- Wide diff (many files, or a subsystem you did not previously know)
-- You cannot explain in one sentence why each hunk is safe
+- `security` — auth, permissions, external input, paths, command construction, secrets, or public endpoints
+- `contract` — public API, CLI, serialized data, schema, config keys, migrations, or downstream consumers
+- `general` — money, concurrency, resource ownership, a wide unfamiliar diff, or any hunk whose safety you cannot explain in one sentence
 
-Findings go back through step 1. For small well-understood diffs, step 2 suffices — do not add ceremony the diff does not need.
+Use the harness's built-in review command (Claude Code: `/code-review`) or the single `reviewer` agent with the selected `focus`. If both `security` and `contract` apply, request two independent focused passes; do not blend two threat models into one shallow prompt. The reviewer must read callers and consumers, not only changed lines.
+
+A `blocker` or `major` finding must be fixed and re-verified, or explicitly waived by the user with the remaining risk named. A `minor` may be deferred only when the report names it. For a small, well-understood diff with no routed risk, step 2 suffices.
 
 ## 4. Scope check
 
@@ -43,7 +45,7 @@ Re-read the original request. For each part: delivered, or named as left out wit
 
 ## 5. Lessons
 
-If the session hit a dead end, a footgun, or disproved a tempting approach — run `/retro` now, while the evidence is fresh. If unfinished work remains for a future session, `/handoff` instead.
+If the session hit a dead end, a footgun, or disproved a tempting approach — run `/retro` now, while the evidence is fresh. If unfinished work remains for a future session or another agent, `/lucia-relay` instead.
 
 ## 6. Report
 

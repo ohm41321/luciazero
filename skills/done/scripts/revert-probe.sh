@@ -29,13 +29,14 @@ TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || unassessable "no working t
 cd "${TOP}"
 
 # test-file patterns mirror luciazero-bootstrap's detect.sh: tests-style dirs
-# plus test_*.*, *_test.*, *.test.*, *.spec.* file names
+# plus the common root `test.sh` entrypoint and test_*.*, *_test.*, *.test.*,
+# *.spec.* file names
 is_test_file() {
   case "/$1" in
     */tests/*|*/test/*|*/spec/*|*/__tests__/*) return 0 ;;
   esac
   case "${1##*/}" in
-    test_*.*|*_test.*|*.test.*|*.spec.*) return 0 ;;
+    test.sh|test_*.*|*_test.*|*.test.*|*.spec.*) return 0 ;;
   esac
   return 1
 }

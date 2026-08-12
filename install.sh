@@ -25,6 +25,10 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 DOCTRINE="luciazero.md"
 IMPORT_LINE="@${DOCTRINE}"
+MANAGED_DIR="${CLAUDE_DIR}/.luciazero-managed"
+BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
+
+catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 
 # newest released version in this checkout's CHANGELOG (informational)
 version_of() {
@@ -44,12 +48,16 @@ if [ "${STATUS_ONLY}" = 1 ]; then
     if [ "${OK}" = 1 ]; then echo "  ok    $*"; else echo "  MISS  $*"; STATUS_RC=1; fi
   }
   check -f "${CLAUDE_DIR}/${DOCTRINE}" "doctrine ${DOCTRINE}"
-  for SKILL in luciazero-bootstrap retro debug 'done' handoff experiment; do
+  while IFS= read -r SKILL; do
     check -f "${CLAUDE_DIR}/skills/${SKILL}/SKILL.md" "skill ${SKILL}"
-  done
+  done < <(catalog "${SRC}/skills/catalog.txt")
   check -x "${CLAUDE_DIR}/skills/luciazero-bootstrap/scripts/detect.sh" "detect.sh executable"
   check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.sh" "revert-probe.sh executable"
-  check -f "${CLAUDE_DIR}/agents/reviewer.md" "reviewer agent"
+  check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.sh" "safe-bisect.sh executable"
+  check -x "${CLAUDE_DIR}/skills/lucia-relay/scripts/relay.py" "relay.py executable"
+  while IFS= read -r AGENT_NAME; do
+    check -f "${CLAUDE_DIR}/agents/${AGENT_NAME}.md" "agent ${AGENT_NAME}"
+  done < <(catalog "${SRC}/claude/agents/catalog.txt")
   GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
   N="$(grep -cxF "${IMPORT_LINE}" "${GLOBAL_MD}" 2>/dev/null || true)"
   if [ "${N:-0}" = 1 ]; then
@@ -113,6 +121,64 @@ bakpath() {
   printf '%s' "${B}"
 }
 
+# A catalog entry such as "plan" can already belong to the user or another
+# plugin. Keep an exact snapshot of what Luciazero installed, so reinstalls can
+# distinguish our copy from user data. Collisions/customizations are copied to
+# a hidden backup tree before replacement; hidden directories are not loaded as
+# skills by either harness.
+same_tree() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -d "$2" ] && [ ! -L "$2" ] \
+    && diff -qr "$1" "$2" >/dev/null 2>&1
+}
+
+backup_tree() {
+  BT_SRC="$1"; BT_LABEL="$2"
+  BT_BASE="${BACKUP_DIR}/${BT_LABEL}"
+  mkdir -p "$(dirname "${BT_BASE}")"
+  BT_DST="$(bakpath "${BT_BASE}")"
+  cp -RP "${BT_SRC}" "${BT_DST}"
+  echo "  ok  backed up existing ${BT_LABEL} -> ${BT_DST#"${CLAUDE_DIR}/"}"
+}
+
+install_tree() {
+  IT_SRC="$1"; IT_DST="$2"; IT_SNAPSHOT="$3"; IT_LABEL="$4"
+  if [ -e "${IT_DST}" ] || [ -L "${IT_DST}" ]; then
+    if ! same_tree "${IT_DST}" "${IT_SNAPSHOT}" && ! same_tree "${IT_DST}" "${IT_SRC}"; then
+      backup_tree "${IT_DST}" "${IT_LABEL}"
+    fi
+    rm -rf "${IT_DST}"
+  fi
+  mkdir -p "$(dirname "${IT_DST}")" "$(dirname "${IT_SNAPSHOT}")"
+  cp -R "${IT_SRC}" "${IT_DST}"
+  rm -rf "${IT_SNAPSHOT}"
+  cp -R "${IT_SRC}" "${IT_SNAPSHOT}"
+}
+
+install_file() {
+  IF_SRC="$1"; IF_DST="$2"; IF_SNAPSHOT="$3"; IF_LABEL="$4"
+  if [ -e "${IF_DST}" ] || [ -L "${IF_DST}" ]; then
+    IF_OURS=0
+    if [ -f "${IF_DST}" ] && [ ! -L "${IF_DST}" ]; then
+      if { [ -f "${IF_SNAPSHOT}" ] && cmp -s "${IF_DST}" "${IF_SNAPSHOT}"; } \
+        || cmp -s "${IF_DST}" "${IF_SRC}"; then
+        IF_OURS=1
+      fi
+    fi
+    if [ "${IF_OURS}" = 0 ]; then
+      IF_BASE="${BACKUP_DIR}/${IF_LABEL}"
+      mkdir -p "$(dirname "${IF_BASE}")"
+      IF_BACKUP="$(bakpath "${IF_BASE}")"
+      cp -P "${IF_DST}" "${IF_BACKUP}"
+      echo "  ok  backed up existing ${IF_LABEL} -> ${IF_BACKUP#"${CLAUDE_DIR}/"}"
+    fi
+    rm -f "${IF_DST}"
+  fi
+  mkdir -p "$(dirname "${IF_DST}")" "$(dirname "${IF_SNAPSHOT}")"
+  cp "${IF_SRC}" "${IF_DST}"
+  rm -f "${IF_SNAPSHOT}"
+  cp "${IF_SRC}" "${IF_SNAPSHOT}"
+}
+
 echo "Installing into ${CLAUDE_DIR}"
 mkdir -p "${CLAUDE_DIR}/skills"
 
@@ -120,22 +186,35 @@ mkdir -p "${CLAUDE_DIR}/skills"
 cp "${SRC}/claude/${DOCTRINE}" "${CLAUDE_DIR}/${DOCTRINE}"
 echo "  ok  ${DOCTRINE}"
 
-# 2. skills
-for SKILL in luciazero-bootstrap retro debug 'done' handoff experiment; do
-  rm -rf "${CLAUDE_DIR}/skills/${SKILL}"
-  cp -r "${SRC}/skills/${SKILL}" "${CLAUDE_DIR}/skills/${SKILL}"
+# 2. skills — catalog.txt is the single install/status/uninstall inventory
+while IFS= read -r SKILL; do
+  install_tree "${SRC}/skills/${SKILL}" \
+    "${CLAUDE_DIR}/skills/${SKILL}" \
+    "${MANAGED_DIR}/skills/${SKILL}" \
+    "skills/${SKILL}"
   echo "  ok  skills/${SKILL}"
-done
+done < <(catalog "${SRC}/skills/catalog.txt")
 
-# 3. reviewer agent (back up a pre-existing customized copy before overwriting)
-mkdir -p "${CLAUDE_DIR}/agents"
-AGENT="${CLAUDE_DIR}/agents/reviewer.md"
-if [ -f "${AGENT}" ] && ! cmp -s "${SRC}/claude/agents/reviewer.md" "${AGENT}"; then
-  cp "${AGENT}" "$(bakpath "${AGENT}")"
-  echo "  ok  backed up existing agents/reviewer.md"
+# v1.5 migration: remove only an untouched Luciazero /handoff. A customized
+# skill is user data and stays in place with an explicit warning.
+LEGACY_HANDOFF="${CLAUDE_DIR}/skills/handoff"
+if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then
+  if cmp -s "${SRC}/migrations/handoff-v1.5.0.SKILL.md" "${LEGACY_HANDOFF}/SKILL.md"; then
+    rm -rf "${LEGACY_HANDOFF}"
+    echo "  ok  migrated skill handoff -> lucia-relay"
+  else
+    echo "  !!  skills/handoff is customized; left untouched (Luciazero now uses /lucia-relay)" >&2
+  fi
 fi
-cp "${SRC}/claude/agents/reviewer.md" "${AGENT}"
-echo "  ok  agents/reviewer.md"
+
+# 3. agents (same ownership/snapshot rule as skills)
+mkdir -p "${CLAUDE_DIR}/agents"
+while IFS= read -r AGENT_NAME; do
+  AGENT="${CLAUDE_DIR}/agents/${AGENT_NAME}.md"
+  install_file "${SRC}/claude/agents/${AGENT_NAME}.md" "${AGENT}" \
+    "${MANAGED_DIR}/agents/${AGENT_NAME}.md" "agents/${AGENT_NAME}.md"
+  echo "  ok  agents/${AGENT_NAME}.md"
+done < <(catalog "${SRC}/claude/agents/catalog.txt")
 
 # 4. version sidecar — lets --status and future installs tell what is installed
 V_NEW="$(version_of)"
@@ -240,7 +319,9 @@ echo
 echo "Done. Verify:"
 echo "  ./install.sh --status"
 echo
-echo "Skills: /luciazero-bootstrap, /debug, /done, /handoff, /experiment, /retro. Reviewer agent: 'reviewer'."
+SKILL_SUMMARY="$(catalog "${SRC}/skills/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") "/" $0} END{print s}')"
+AGENT_SUMMARY="$(catalog "${SRC}/claude/agents/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") $0} END{print s}')"
+echo "Skills: ${SKILL_SUMMARY}. Agents: ${AGENT_SUMMARY}."
 if [ "${WITH_HOOKS}" = 1 ]; then
   echo "Enforcement pack installed: verify-tracking hooks + statusline (see settings.json)."
 else

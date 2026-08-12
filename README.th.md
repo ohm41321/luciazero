@@ -112,7 +112,9 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 
 ## หลักฐาน
 
-ผล Claude ที่เผยแพร่ (2026-08-11), อัตราผ่านครบทุกเกณฑ์:
+### ผล Claude ที่เผยแพร่
+
+Snapshot: 2026-08-11 อัตราผ่านครบทุกเกณฑ์:
 
 | Claude model | Luciazero | Bare | ผลต่าง |
 |---|---:|---:|---:|
@@ -123,11 +125,17 @@ Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook
 เพียงอย่างเดียว *ผล Sonnet ยังต่ำกว่าเกณฑ์เผยแพร่ที่ต้องมี valid run อย่างน้อย 5
 ครั้งต่อ arm
 
-Pilot `gpt-5.6-terra`/medium วันที่ 2026-08-12 ได้ 11/12 valid run โดย 1 run
-invalid เพราะ model capacity เต็ม ใน 5 task ที่จับคู่ได้ ทั้งสอง arm ผ่าน 5/5
-run และ 28/28 criteria เท่ากัน นี่คือ **สัญญาณว่า benchmark อาจง่ายเกินไป
-ไม่ใช่หลักฐานว่ามีหรือไม่มี uplift** เพราะ n=1 ยังน้อยเกินกว่าจะเผยแพร่ delta
-ดู [ผลเต็ม](docs/benchmark.md) และ
+### GPT/Codex pilot — ผลสำรวจเบื้องต้น
+
+Snapshot: 2026-08-12
+
+| Model | Valid invocation | Task ที่จับคู่ได้ | Luciazero | Bare | ผลต่างที่พบ |
+|---|---:|---:|---:|---:|---:|
+| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 run, 28/28 criteria | 5/5 run, 28/28 criteria | 0pp† |
+
+*Luciazero 1 run ถูกตัดเป็น invalid เพราะ model capacity เต็ม †นี่คือ
+**สัญญาณว่า benchmark อาจง่ายเกินไป ไม่ใช่หลักฐานว่ามีหรือไม่มี uplift** เพราะ
+pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเต็ม](docs/benchmark.md) และ
 [ข้อมูล pilot ดิบ](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl)
 
 ## Requirement และความปลอดภัย

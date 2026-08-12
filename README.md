@@ -114,7 +114,9 @@ separate passes.
 
 ## Evidence
 
-Published Claude snapshot (2026-08-11), all-criteria pass rate:
+### Published Claude results
+
+Snapshot: 2026-08-11. All-criteria pass rate:
 
 | Claude model | Luciazero | Bare | Difference |
 |---|---:|---:|---:|
@@ -124,11 +126,18 @@ Published Claude snapshot (2026-08-11), all-criteria pass rate:
 The `Luciazero` arm installs the classic pack without hooks; it is not a clean
 doctrine-only ablation. *Sonnet is below the five-valid-runs publication floor.
 
-A 2026-08-12 `gpt-5.6-terra`/medium pilot produced 11/12 valid runs; one was
-invalidated by model capacity. On the five paired tasks, both arms passed 5/5
-runs and 28/28 criteria. That is a **ceiling-effect warning, not evidence of
-uplift or no effect**: n=1 is too small to publish a delta. See the
-[full benchmark](docs/benchmark.md) and [raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
+### GPT/Codex pilot — exploratory
+
+Snapshot: 2026-08-12.
+
+| Model | Valid invocations | Paired tasks | Luciazero | Bare | Observed difference |
+|---|---:|---:|---:|---:|---:|
+| GPT-5.6 Terra, medium | 11/12* | 5 | 5/5 runs, 28/28 criteria | 5/5 runs, 28/28 criteria | 0pp† |
+
+*One Luciazero run was invalidated by model capacity. †This is a
+**ceiling-effect warning, not evidence of uplift or no effect**: the pilot has
+only one run per arm per task. See the [full benchmark](docs/benchmark.md) and
+[raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
 
 ## Requirements and safety
 

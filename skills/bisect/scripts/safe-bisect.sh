@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
   esac
 done
-[ -n "${GOOD}" ] && [ -n "${BAD}" ] && [ "$#" -gt 0 ] || usage
+if [ -z "${GOOD}" ] || [ -z "${BAD}" ] || [ "$#" -eq 0 ]; then usage; fi
 case "${RETRIES}" in ''|*[!0-9]*|0) usage ;; esac
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -71,6 +71,8 @@ WORKTREE_ADDED=1
 {
   printf '%s\n' '#!/usr/bin/env bash' '"$@"' 'rc=$?'
   printf '%s\n' 'git reset --hard -q HEAD >/dev/null 2>&1 || true' 'git clean -ffdqx >/dev/null 2>&1 || true'
+  # shellcheck disable=SC2016
+  # The generated runner, not this parent shell, expands rc.
   printf '%s\n' 'case "${rc}" in 126|127) echo "safe-bisect: verify command is missing or not executable" >&2; exit 128 ;; *) exit "${rc}" ;; esac'
 } > "${RUNNER}"
 chmod +x "${RUNNER}"

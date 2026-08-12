@@ -350,8 +350,9 @@ rm -f "${RR}/LUCIA_RELAY.md"
 echo sentinel > "${RR}/outside.txt"
 ln -s "${RR}/outside.txt" "${RR}/LUCIA_RELAY.md"
 RC=0; "${RELAY}" render --root "${RR}" >/dev/null 2>&1 || RC=$?
-[ "${RC}" -eq 1 ] && grep -qx sentinel "${RR}/outside.txt" \
-  || { rm -rf "${RR}"; fail "relay renderer followed an output symlink"; }
+if ! { [ "${RC}" -eq 1 ] && grep -qx sentinel "${RR}/outside.txt"; }; then
+  rm -rf "${RR}"; fail "relay renderer followed an output symlink"
+fi
 rm -f "${RR}/LUCIA_RELAY.md"
 rm -f "${RR}/outside.txt"
 "${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay rerender after symlink check failed"; }
@@ -360,8 +361,9 @@ printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); as
   || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
 echo tampered >> "${RR}/LUCIA_RELAY.md"
 RC=0; RJSON="$("${RELAY}" inspect --root "${RR}" --json)" || RC=$?
-[ "${RC}" -eq 1 ] && printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert any("does not match" in e for e in json.load(sys.stdin)["errors"])' \
-  || { rm -rf "${RR}"; fail "relay inspect trusted a tampered human view"; }
+if ! { [ "${RC}" -eq 1 ] && printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert any("does not match" in e for e in json.load(sys.stdin)["errors"])'; }; then
+  rm -rf "${RR}"; fail "relay inspect trusted a tampered human view"
+fi
 "${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay could not regenerate a tampered human view"; }
 echo revised > "${RR}/scratch.txt"
 RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
@@ -372,12 +374,14 @@ RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
 printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["repository_drift"]' \
   || { rm -rf "${RR}"; fail "relay missed repository drift"; }
 RC=0; "${RELAY}" consume --root "${RR}" >/dev/null 2>&1 || RC=$?
-[ "${RC}" -eq 2 ] && [ -f "${RR}/LUCIA_RELAY.json" ] \
-  || { rm -rf "${RR}"; fail "relay consumed without explicit re-verification"; }
+if ! { [ "${RC}" -eq 2 ] && [ -f "${RR}/LUCIA_RELAY.json" ]; }; then
+  rm -rf "${RR}"; fail "relay consumed without explicit re-verification"
+fi
 "${RELAY}" consume --root "${RR}" --verified >/dev/null \
   || { rm -rf "${RR}"; fail "verified relay consumption failed"; }
-[ ! -e "${RR}/LUCIA_RELAY.json" ] && [ ! -e "${RR}/LUCIA_RELAY.md" ] \
-  || { rm -rf "${RR}"; fail "relay artifacts survived consumption"; }
+if ! { [ ! -e "${RR}/LUCIA_RELAY.json" ] && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
+  rm -rf "${RR}"; fail "relay artifacts survived consumption"
+fi
 rm -rf "${RR}"
 RR="$(mktemp -d)"
 git -C "${RR}" init -q
@@ -419,16 +423,19 @@ BHEAD="${BBAD}"
 BOUT="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify-noskip.sh)" \
   || { rm -rf "${BR}"; fail "safe bisect exited red"; }
 echo "${BOUT}" | grep -q "FIRST_BAD ${BFIRST}" || { rm -rf "${BR}"; fail "safe bisect found wrong commit: ${BOUT}"; }
-[ "$(git -C "${BR}" rev-parse HEAD)" = "${BHEAD}" ] && [ "$(git -C "${BR}" status --porcelain)" = "" ] \
-  || { rm -rf "${BR}"; fail "safe bisect mutated caller worktree"; }
+if ! { [ "$(git -C "${BR}" rev-parse HEAD)" = "${BHEAD}" ] && [ "$(git -C "${BR}" status --porcelain)" = "" ]; }; then
+  rm -rf "${BR}"; fail "safe bisect mutated caller worktree"
+fi
 [ "$(git -C "${BR}" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ] \
   || { rm -rf "${BR}"; fail "safe bisect leaked a temporary worktree"; }
 RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify.sh 2>&1)" || RC=$?
-[ "${RC}" -eq 2 ] && echo "${BERR}" | grep -q 'could not identify a unique first bad commit' \
-  || { rm -rf "${BR}"; fail "safe bisect did not preserve ambiguous exit-125 semantics (rc=${RC}): ${BERR}"; }
+if ! { [ "${RC}" -eq 2 ] && echo "${BERR}" | grep -q 'could not identify a unique first bad commit'; }; then
+  rm -rf "${BR}"; fail "safe bisect did not preserve ambiguous exit-125 semantics (rc=${RC}): ${BERR}"
+fi
 RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./missing-verify 2>&1)" || RC=$?
-[ "${RC}" -eq 66 ] && echo "${BERR}" | grep -q 'could not be evaluated' \
-  || { rm -rf "${BR}"; fail "safe bisect treated missing command as a bad revision (rc=${RC}): ${BERR}"; }
+if ! { [ "${RC}" -eq 66 ] && echo "${BERR}" | grep -q 'could not be evaluated'; }; then
+  rm -rf "${BR}"; fail "safe bisect treated missing command as a bad revision (rc=${RC}): ${BERR}"
+fi
 rm -rf "${BR}"
 echo "ok  safe regression bisect"
 

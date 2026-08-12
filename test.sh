@@ -496,6 +496,21 @@ printf '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":["ab","c
 if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
   rm -f "${RPT}"; fail "report.sh accepted a non-object criteria field"
 fi
+# Appended rows from unlike run configurations must never become one rate.
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex","model":"model-a","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex","model":"model-b","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different models"
+fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"claude"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"duration_s":1,"provider":"codex"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different providers"
+fi
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
 
@@ -508,6 +523,19 @@ printf '{"subtype":"success","is_error":true,"terminal_reason":"api_error","resu
 printf '{"result":"Not logged in · Please run /login"}' > "${CRF}/sneaky.json"
 printf '{"subtype":"success","is_error":false,"result":"fixed the bug"}' > "${CRF}/good.json"
 printf 'plain text transcript\n' > "${CRF}/text.log"
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"t"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":3,"reasoning_output_tokens":1}}' \
+  > "${CRF}/codex-good.jsonl"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.failed","error":{"message":"rate limit"}}' \
+  > "${CRF}/codex-failed.jsonl"
+printf '{"type":"turn.started"}\n' > "${CRF}/codex-partial.jsonl"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":null,"output_tokens":"3"}}' \
+  > "${CRF}/codex-bad-usage.jsonl"
 RC=0; OUT="$("${CR}" "${CRF}/notlogged.json" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in result"; }
 echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
@@ -515,10 +543,167 @@ RC=0; "${CR}" "${CRF}/sneaky.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a login error without is_error"; }
 "${CR}" "${CRF}/good.json" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected a healthy result"; }
 "${CR}" "${CRF}/text.log" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected plain-text output"; }
+"${CR}" --provider codex "${CRF}/codex-good.jsonl" >/dev/null 2>&1 \
+  || { rm -rf "${CRF}"; fail "check-result rejected a completed Codex run"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-failed.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a failed Codex turn"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-partial.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted an incomplete Codex stream"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-bad-usage.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted malformed Codex usage"; }
 RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
 rm -rf "${CRF}"
 echo "ok  check-result rejects error payloads behind exit 0"
+
+# The non-zero Codex path must preserve the structured error in JSONL, not
+# reduce a useful capacity/auth reason to only "codex exited 1". A fake CLI
+# proves this without inference or credentials.
+CFX="$(mktemp -d)"
+mkdir -p "${CFX}/bin"
+cat > "${CFX}/bin/codex" <<'FAKECODEX'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  echo 'codex-cli test'
+  exit 0
+fi
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"error","message":"Selected model is at capacity."}' \
+  '{"type":"turn.failed","error":{"message":"Selected model is at capacity."}}'
+exit 1
+FAKECODEX
+chmod +x "${CFX}/bin/codex"
+PATH="${CFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium \
+  --out "${CFX}/result.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${CFX}"; fail "run.sh rejected a recorded invalid Codex run"; }
+python3 - "${CFX}/result.jsonl" <<'PY' \
+  || { rm -rf "${CFX}"; fail "Codex invalid reason was not preserved"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all("Selected model is at capacity" in row["invalid_reason"] for row in rows)
+PY
+rm -rf "${CFX}"
+echo "ok  Codex non-zero result preserves structured reason"
+
+# A successful fake Codex run proves the actual adapter boundary: auth is
+# copied into both disposable homes, only doctrine gets the pack, and every
+# safety/model flag reaches the CLI. A malformed usage variant proves paid
+# inference still records INVALID instead of crashing the harness.
+SFX="$(mktemp -d)"
+mkdir -p "${SFX}/bin" "${SFX}/real-home" "${SFX}/audit"
+printf '{"fake":"auth"}\n' > "${SFX}/real-home/auth.json"
+cat > "${SFX}/bin/codex" <<'FAKECODEXOK'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  echo 'codex-cli test-success'
+  exit 0
+fi
+ARM=bare
+PACK=no
+if [ -f "${CODEX_HOME}/AGENTS.md" ] && [ -d "${CODEX_HOME}/skills" ]; then
+  ARM=doctrine
+  PACK=yes
+fi
+AUTH=no
+[ -s "${CODEX_HOME}/auth.json" ] && AUTH=yes
+{
+  printf 'auth=%s\npack=%s\nparent-key=%s\n' \
+    "${AUTH}" "${PACK}" "${CODEX_API_KEY:+present}"
+  for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
+} > "${FAKE_CODEX_AUDIT_DIR}/${ARM}.txt"
+if [ "${FAKE_CODEX_BAD_USAGE:-0}" = 1 ]; then
+  printf '%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.completed","usage":{"input_tokens":null,"output_tokens":"bad"}}'
+elif [ "${FAKE_CODEX_BAD_USAGE:-0}" = 2 ]; then
+  printf '%s\n' '[]'
+else
+  printf '%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":3,"reasoning_output_tokens":1}}'
+fi
+FAKECODEXOK
+chmod +x "${SFX}/bin/codex"
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" PATH="${SFX}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --provider codex --model gpt-5.6-terra \
+  --reasoning-effort medium --use-login --out "${SFX}/ok.jsonl" false-green \
+  >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "successful fake Codex adapter run failed"; }
+for ARM in doctrine bare; do
+  AUDIT="${SFX}/audit/${ARM}.txt"
+  [ -f "${AUDIT}" ] || { rm -rf "${SFX}"; fail "missing ${ARM} Codex audit"; }
+  grep -qx 'auth=yes' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex auth not copied into ${ARM} home"; }
+  grep -qx 'parent-key=present' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "fake Codex parent did not receive auth key"; }
+  grep -Fqx 'arg=--model' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex model flag missing"; }
+  grep -Fqx 'arg=gpt-5.6-terra' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex model value missing"; }
+  grep -Fqx 'arg=model_reasoning_effort="medium"' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex reasoning config missing"; }
+  grep -Fqx 'arg=shell_environment_policy.inherit="core"' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex core environment policy missing"; }
+  grep -Fqx 'arg=shell_environment_policy.ignore_default_excludes=false' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex secret exclusion policy missing"; }
+  for FLAG in --sandbox workspace-write --ephemeral --ignore-user-config \
+    --ignore-rules --skip-git-repo-check --json; do
+    grep -Fqx "arg=${FLAG}" "${AUDIT}" \
+      || { rm -rf "${SFX}"; fail "Codex adapter missing ${FLAG}"; }
+  done
+done
+grep -qx 'pack=yes' "${SFX}/audit/doctrine.txt" \
+  || { rm -rf "${SFX}"; fail "doctrine Codex home lacks installed pack"; }
+grep -qx 'pack=no' "${SFX}/audit/bare.txt" \
+  || { rm -rf "${SFX}"; fail "bare Codex home inherited the pack"; }
+if grep -R -q 'test-key-never-log' "${SFX}/audit" "${SFX}/ok.jsonl"; then
+  rm -rf "${SFX}"; fail "Codex credential value leaked into eval artifacts"
+fi
+python3 - "${SFX}/ok.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "successful fake Codex rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is False for row in rows)
+assert all(row["tokens_in"] == 12 and row["tokens_out"] == 3 for row in rows)
+PY
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=1 \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login \
+  --out "${SFX}/bad.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "malformed Codex usage aborted run.sh"; }
+python3 - "${SFX}/bad.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "malformed Codex usage rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all(row["tokens_in"] is None and row["tokens_out"] is None for row in rows)
+assert all("usage.input_tokens" in row["invalid_reason"] for row in rows)
+PY
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=2 \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login \
+  --out "${SFX}/nonobject.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "non-object Codex event aborted run.sh"; }
+python3 - "${SFX}/nonobject.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "non-object Codex event rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all(row["tokens_in"] is None and row["tokens_out"] is None for row in rows)
+assert all("not an object" in row["invalid_reason"] for row in rows)
+PY
+rm -rf "${SFX}"
+echo "ok  Codex success path isolates auth, config, arms, and usage errors"
 
 # 4d2c. offline smoke mode: full copy -> grade -> JSONL -> report loop with
 # zero API; rows must be branded offline and the report must say SYNTHETIC
@@ -531,17 +716,40 @@ rows = [json.loads(l) for l in open(sys.argv[1])]
 assert len(rows) == 3, f"want 3 arms, got {len(rows)}"
 assert {r["arm"] for r in rows} == {"doctrine", "bare", "lessons"}
 assert all(r["offline"] is True for r in rows), "rows not branded offline"
+assert all(r["provider"] == "claude" for r in rows), "default provider drifted"
 assert all(r["invalid"] is False for r in rows), "offline rows marked invalid"
 by = {r["arm"]: r for r in rows}
 assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
 assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
 PY
+if "${ROOT}/eval/run.sh" --offline --model gpt-5.6-terra false-green \
+  >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted Codex-only flags for Claude"
+fi
 "${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
   || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \
   || { rm -rf "${OFJ}"; fail "report.sh failed on the offline fixture"; }
 cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
   || { rm -rf "${OFJ}"; fail "report.sh output drifted from eval/testdata/sample-report-offline.md"; }
+# Codex adapter takes the same zero-quota route and records its locked model
+# settings even when no Codex CLI is installed in CI.
+mkdir -p "${OFJ}/codex-home"
+printf '{"fake":"codex-auth"}\n' > "${OFJ}/codex-home/auth.json"
+CODEX_HOME="${OFJ}/codex-home" "${ROOT}/eval/run.sh" --offline \
+  --provider codex --model gpt-5.6-terra --reasoning-effort medium \
+  --use-login --out "${OFJ}/codex.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "Codex offline adapter exited non-zero"; }
+python3 - "${OFJ}/codex.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "Codex offline adapter rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["provider"] == "codex" for row in rows)
+assert all(row["model"] == "gpt-5.6-terra" for row in rows)
+assert all(row["reasoning_effort"] == "medium" for row in rows)
+assert all(row["offline"] is True for row in rows)
+PY
 rm -rf "${OFJ}"
 echo "ok  offline smoke mode end to end"
 

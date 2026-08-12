@@ -40,6 +40,8 @@ eval/run.sh                                # all tasks, both arms, one run
 eval/run.sh slugify                        # one task
 eval/run.sh --runs 5 --out results.jsonl   # the honest way: repeat, then
 eval/report.sh results.jsonl               # per-criterion pass-rate table
+eval/run.sh --provider codex --model gpt-5.6-terra \
+  --reasoning-effort medium --use-login --out terra.jsonl
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
 eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
 eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
@@ -55,7 +57,8 @@ SMOKE`. Never quote offline numbers as results.
 
 Arm A (historically labeled `doctrine` in JSON output) installs the full classic
 Luciazero pack without hooks—doctrine, skills, and reviewer—into a sandbox
-`CLAUDE_CONFIG_DIR`; arm B runs with an empty config. This measures the installed
+config home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); arm B runs with an empty
+config. This measures the installed
 bundle, not a doctrine-only ablation. Same prompt, same fixture, same grader. `--with-lessons`
 adds a third arm to every task that ships a `lessons.md`: doctrine install
 *plus* the task's ledger pre-seeded as `docs/lessons.md` in the work copy —
@@ -66,20 +69,20 @@ per-arm resource means whenever that data is present — a discipline that
 lifts pass rates by tripling cost is not a free win, so the cost shows up
 next to the delta.
 
-**Costs real inference** and needs the `claude` CLI plus one of two ways to
-pay: `ANTHROPIC_API_KEY` in the environment (API dollars), or `--use-login`
-(your existing Claude subscription quota). The sandbox `CLAUDE_CONFIG_DIR`
-isolates any credentials stored in your real `~/.claude`, so without either,
-both arms fail identically as "Not logged in". `--use-login` copies this
-machine's login state into each per-run mktemp config dir — `~/.claude.json`,
-plus OAuth tokens from `.credentials.json` (Linux) or exported from the
-Keychain (macOS, may prompt once to allow access); the copy is deleted with
-the sandbox and never leaves the machine. If none of that authenticates on
-your setup, the documented fallback is `claude setup-token` once and
-`export CLAUDE_CODE_OAUTH_TOKEN=...` — env vars pass into the sandbox, no
-flag needed. On subscription runs the CLI reports `cost_usd` as 0, so quote token
-counts, not dollars. If the seed is not enough to authenticate on your OS,
-nothing is spent — the arm is simply marked INVALID (see below). `run.sh` marks an arm whose `claude` invocation exited
+**Costs real inference** and needs the selected provider CLI plus one way to
+pay: `ANTHROPIC_API_KEY`/`CODEX_API_KEY` in the environment, or `--use-login`
+(your existing subscription quota). Each arm uses a fresh sandbox config home.
+For Claude,
+`--use-login` copies `~/.claude.json` plus OAuth tokens from
+`.credentials.json` (Linux) or the Keychain (macOS, which may prompt once).
+For Codex, it copies only `$CODEX_HOME/auth.json`; it does not copy user config,
+plugins, MCP servers, or rules. Every copy is deleted with the sandbox and
+never leaves the machine. If Claude seeding does not authenticate, the
+fallback is `claude setup-token` once and
+`export CLAUDE_CODE_OAUTH_TOKEN=...` — env vars pass into the sandbox, no flag
+needed. On subscription runs, quote token counts rather than dollars. If the
+seed is not enough to authenticate, the arm is simply marked INVALID.
+`run.sh` marks an arm whose provider invocation exited
 non-zero as **INVALID** rather than grading it (and records it as such in the
 JSONL): an agent that never ran is not behavioral data. Exit 0 is not trusted
 either: `check-result.sh` inspects the result payload, because the CLI has
@@ -89,6 +92,28 @@ fixture-proven by `test.sh`). It is deliberately
 not part of `test.sh` or CI — CI only verifies the graders themselves, three
 ways per task, all offline: `reference/` passes, unfixed `project/` fails,
 `gamed/` is rejected.
+
+For Codex, `--provider codex` defaults to `gpt-5.6-terra` at `medium` effort,
+but publication commands should still spell both out. Each run uses
+`workspace-write`, an ephemeral session, no user `config.toml`, no execpolicy
+rules, JSONL output, and a core-only shell environment with automatic secret
+name exclusions. The parent Codex process can authenticate with
+`CODEX_API_KEY`, but agent-launched commands do not inherit it. Only `auth.json`
+is copied when `--use-login` is set; Luciazero is installed into the doctrine
+arm's isolated `CODEX_HOME`. Result
+rows record provider, exact requested model, reasoning effort, CLI version,
+token usage, and invalid-run reason. Codex subscription runs have no reliable
+per-run dollar cost, so `cost_usd` remains null.
+
+`report.sh` refuses to aggregate rows with different providers, known models,
+reasoning efforts, CLI versions, or synthetic/real modes. Use one output file
+per run configuration; appending repeated samples of that configuration is safe.
+
+Checked-in exploratory runs live under `eval/results/`; unlike root-level
+scratch `*.jsonl` files, they are reviewable benchmark evidence. The first is
+the [2026-08-12 Terra/medium pilot](results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
+It is deliberately labeled a pilot because one run per arm is below the
+publication threshold.
 
 ## Honesty box
 

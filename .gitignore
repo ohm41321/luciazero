@@ -3,6 +3,7 @@ node_modules/
 __pycache__/
 *.tgz
 .claude/
+.freebuff/
 HANDOFF.md
 LUCIA_RELAY.json
 LUCIA_RELAY.md

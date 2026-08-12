@@ -24,17 +24,56 @@ with open(path) as f:
             row = json.loads(line)
             if not isinstance(row.get("criteria"), dict):
                 raise ValueError("criteria is not an object")
+            provider = row.get("provider", "claude")
+            metadata = {
+                "provider": provider,
+                "model": row.get("model"),
+                "reasoning_effort": row.get("reasoning_effort"),
+                "cli_version": row.get("cli_version"),
+            }
+            if not isinstance(provider, str) or not provider:
+                raise ValueError("provider is not a non-empty string")
+            if any(v is not None and not isinstance(v, str)
+                   for k, v in metadata.items() if k != "provider"):
+                raise ValueError("run-config metadata is not string or null")
             rows.append({"task": row["task"], "arm": row["arm"],
                          "invalid": bool(row["invalid"]),
                          "criteria": dict(row["criteria"]),
                          "duration_s": row.get("duration_s"),
                          "tokens_out": row.get("tokens_out"),
                          "cost_usd": row.get("cost_usd"),
-                         "offline": bool(row.get("offline", False))})
+                         "offline": bool(row.get("offline", False)),
+                         **metadata,
+                         "has_run_config": any(k in row for k in
+                                               ("provider", "model",
+                                                "reasoning_effort",
+                                                "cli_version"))})
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             sys.exit(f"FAIL: {path}:{i}: malformed result line ({e})")
 if not rows:
     sys.exit(f"FAIL: {path}: no result rows")
+
+# Appending is convenient for repeated samples but dangerous across run
+# configurations: aggregating two providers/models/efforts creates a number
+# that describes neither. Unknown values on old or invalid rows are ignored;
+# conflicting known values and synthetic/real mixtures are rejected.
+def known(field):
+    return {r[field] for r in rows if r[field] not in (None, "")}
+
+for field in ("provider", "model", "reasoning_effort", "cli_version"):
+    values = known(field)
+    if len(values) > 1:
+        sys.exit(f"FAIL: {path}: mixed {field} values: {sorted(values, key=str)}")
+if len({r["offline"] for r in rows}) > 1:
+    sys.exit(f"FAIL: {path}: synthetic and real rows cannot be combined")
+
+run_config = []
+for label, field in (("provider", "provider"), ("model", "model"),
+                     ("reasoning", "reasoning_effort"),
+                     ("CLI", "cli_version")):
+    values = known(field)
+    if values:
+        run_config.append(f"{label}={next(iter(values))}")
 
 # arm columns are discovered from the data, in a fixed preferred order, so a
 # --with-lessons results file grows a third column without a flag here
@@ -51,6 +90,8 @@ def mean(vals):
 
 tasks = sorted({r["task"] for r in rows})
 print("# Eval report")
+if any(r["has_run_config"] for r in rows) and run_config:
+    print("\nRun config: " + "; ".join(run_config))
 if any(r["offline"] for r in rows):
     print("\n**SYNTHETIC OFFLINE SMOKE — these rows exercise the pipeline "
           "with pre-built trees; no agent ran. Never quote them as results.**")

@@ -112,7 +112,7 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 
 ## หลักฐาน
 
-ผล behavioral eval ล่าสุด (2026-08-11), อัตราผ่านครบทุกเกณฑ์:
+ผล Claude ที่เผยแพร่ (2026-08-11), อัตราผ่านครบทุกเกณฑ์:
 
 | Claude model | Luciazero | Bare | ผลต่าง |
 |---|---:|---:|---:|
@@ -120,10 +120,15 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 | Sonnet, valid 4–5/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
 
 Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ doctrine
-เพียงอย่างเดียว *ผล Sonnet ยังเป็นผลเบื้องต้น เพราะบาง arm มี valid run เพียง 4
-ครั้ง ต่ำกว่าเกณฑ์เผยแพร่ของ harness ตัวอย่างทั้งหมดเป็น Claude เท่านั้น จึงยัง
-พิสูจน์ไม่ได้ว่า GPT/Codex จะได้ผลเท่ากัน ดู
-[ผลเต็มและแผนทดสอบ GPT](docs/benchmark.md)
+เพียงอย่างเดียว *ผล Sonnet ยังต่ำกว่าเกณฑ์เผยแพร่ที่ต้องมี valid run อย่างน้อย 5
+ครั้งต่อ arm
+
+Pilot `gpt-5.6-terra`/medium วันที่ 2026-08-12 ได้ 11/12 valid run โดย 1 run
+invalid เพราะ model capacity เต็ม ใน 5 task ที่จับคู่ได้ ทั้งสอง arm ผ่าน 5/5
+run และ 28/28 criteria เท่ากัน นี่คือ **สัญญาณว่า benchmark อาจง่ายเกินไป
+ไม่ใช่หลักฐานว่ามีหรือไม่มี uplift** เพราะ n=1 ยังน้อยเกินกว่าจะเผยแพร่ delta
+ดู [ผลเต็ม](docs/benchmark.md) และ
+[ข้อมูล pilot ดิบ](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl)
 
 ## Requirement และความปลอดภัย
 

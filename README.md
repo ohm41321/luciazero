@@ -114,7 +114,7 @@ separate passes.
 
 ## Evidence
 
-Latest behavioral snapshot (2026-08-11), all-criteria pass rate:
+Published Claude snapshot (2026-08-11), all-criteria pass rate:
 
 | Claude model | Luciazero | Bare | Difference |
 |---|---:|---:|---:|
@@ -122,10 +122,13 @@ Latest behavioral snapshot (2026-08-11), all-criteria pass rate:
 | Sonnet, 4–5 valid/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
 
 The `Luciazero` arm installs the classic pack without hooks; it is not a clean
-doctrine-only ablation. *The Sonnet result is preliminary because several arms
-have only four valid runs, below the harness's publication threshold. These
-samples are Claude-only and do **not** prove the same uplift for GPT/Codex. See
-the [full benchmark and GPT evaluation plan](docs/benchmark.md).
+doctrine-only ablation. *Sonnet is below the five-valid-runs publication floor.
+
+A 2026-08-12 `gpt-5.6-terra`/medium pilot produced 11/12 valid runs; one was
+invalidated by model capacity. On the five paired tasks, both arms passed 5/5
+runs and 28/28 criteria. That is a **ceiling-effect warning, not evidence of
+uplift or no effect**: n=1 is too small to publish a delta. See the
+[full benchmark](docs/benchmark.md) and [raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
 
 ## Requirements and safety
 

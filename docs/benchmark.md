@@ -22,7 +22,7 @@ Runs that never produced a valid agent result are marked invalid and excluded.
 See [eval/README.md](../eval/README.md) for commands, costs, and the full honesty
 box.
 
-## Current results — Claude only
+## Published results — Claude
 
 Snapshot: 2026-08-11. The number shown is the all-criteria pass rate.
 
@@ -61,11 +61,58 @@ These samples are small. Compare rates, never a single run, and do not treat a
 provider difference as a Luciazero effect. The denominators above come directly
 from `eval/report.sh`, which excludes invalid runs.
 
-## GPT/Codex evaluation plan
+## GPT/Codex pilot — exploratory only
 
-GPT results are needed before claiming that the measured uplift generalizes to
-Codex. The test should extend the harness with a provider adapter, not create a
-second set of easier tasks.
+Snapshot: 2026-08-12. The pilot used Codex CLI 0.147.0 with the exact requested
+model `gpt-5.6-terra` at `medium` reasoning. It attempted one run per arm on all
+six tasks: 12 invocations total, 11 valid. One Luciazero `flaky-report` run was
+invalidated after a model-capacity error and is excluded.
+
+| Task | Luciazero | Bare |
+|---|---:|---:|
+| false-green | 1/1 (6/6 criteria) | 1/1 (6/6 criteria) |
+| flaky-report | invalid: capacity | 1/1 (5/5 criteria) |
+| merge-conflict | 1/1 (6/6 criteria) | 1/1 (6/6 criteria) |
+| pipeline | 1/1 (6/6 criteria) | 1/1 (6/6 criteria) |
+| red-suite | 1/1 (5/5 criteria) | 1/1 (5/5 criteria) |
+| slugify | 1/1 (5/5 criteria) | 1/1 (5/5 criteria) |
+
+On the five paired tasks, both arms passed 5/5 runs and 28/28 individual
+criteria: an observed 0pp delta. Every valid run in the pilot passed all of its
+criteria. This is a strong ceiling-effect warning for Terra on the current task
+set, not evidence that Luciazero has zero effect. With n=1, a single different
+sample could change a task rate by 100 percentage points.
+
+The five valid pairs averaged 99 seconds and 3,386 output tokens with Luciazero,
+versus 74 seconds and 2,415 output tokens bare. Those resource differences are
+also exploratory: one run per task cannot separate treatment overhead from
+normal model variance. The capacity-invalid run lasted 642 seconds and emitted
+no completed-turn usage record, so its partial token use is unknown. The
+[raw JSONL](../eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl) preserves
+every row, model setting, duration, token count, CLI version, and invalid reason.
+
+The pilot held the fixture, prompt, grader, model, effort, sandbox, and stopping
+interface constant within each pair. It used `workspace-write`, ephemeral
+sessions, no inherited user config or rules, and only a sandboxed copy of the
+operator's login state. The treatment arm installed the same classic pack used
+by the Claude benchmark; the bare arm received an empty `CODEX_HOME` apart from
+auth.
+
+One historical limitation matters: this first pilot predated the adapter's
+explicit core-only shell environment. No credentials or local paths appear in
+the checked-in rows, but the run does not prove that caller environment values
+were unavailable to agent-launched commands. The adapter now sets a core-only
+shell environment and automatic secret-name exclusions, fixture-proven without
+inference in `test.sh`. Future runs therefore have a stronger credential
+boundary. The remaining automation flags follow the official guidance for
+[non-interactive Codex runs](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+## Next GPT/Codex evaluation steps
+
+Do not spend another 48 invocations taking this unchanged Terra suite directly
+to n=5: the pilot says it may not discriminate at this model capability. First
+add or harden tasks whose offline graders can expose failures without prompt
+hints, prove each grader red/green/anti-gamed in CI, then rerun both arms.
 
 For each selected GPT coding model:
 
@@ -84,4 +131,5 @@ recommends testing representative tasks and comparing quality, required
 evidence, tokens, latency, and cost. It also recommends testing more than one
 reasoning setting instead of assuming the highest setting is the best trade-off.
 
-Until these runs exist, the honest result is: **GPT/Codex not yet measured.**
+Until the task set can discriminate Terra and every arm has at least five valid
+runs, the honest result is: **GPT/Codex uplift not yet measured.**

@@ -7,6 +7,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow uses the runner's GitHub CLI instead of a Node 20-based
+  release action. Re-runs replace the existing zip without recreating the
+  release, and GitHub Actions no longer emits the deprecated-runtime warning.
+
 ## [2.0.0] - 2026-08-13
 
 ### Changed

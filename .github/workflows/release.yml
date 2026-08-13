@@ -20,10 +20,15 @@ jobs:
           git archive --format=zip --prefix="luciazero/" \
             -o "luciazero-${VERSION}.zip" HEAD
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: luciazero-*.zip
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" luciazero-*.zip --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" luciazero-*.zip \
+              --generate-notes --verify-tag
+          fi
 
   # Trusted publishing (OIDC): no NPM_TOKEN anywhere. Requires the one-time
   # npmjs.com side: package Settings -> Trusted Publisher -> GitHub Actions

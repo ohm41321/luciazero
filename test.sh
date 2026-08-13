@@ -1540,8 +1540,11 @@ JS
     node "${ROOT}/bin/luciazero.js" update >/dev/null 2>&1 || RC=$?
   [ "${RC}" -eq 1 ] \
     || { rm -rf "${UU}"; fail "update without an installation must refuse (rc=${RC})"; }
-  [ ! -e "${UU}/empty-claude/.luciazero-version" ] && [ ! -e "${UU}/empty-codex/.luciazero-version" ] \
-    || { rm -rf "${UU}"; fail "update without an installation wrote files"; }
+  if [ -e "${UU}/empty-claude/.luciazero-version" ] \
+    || [ -e "${UU}/empty-codex/.luciazero-version" ]; then
+    rm -rf "${UU}"
+    fail "update without an installation wrote files"
+  fi
   rm -rf "${UU}"
   echo "ok  npm wrapper package + update/check routing"
 else

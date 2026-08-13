@@ -36,7 +36,7 @@ git -C "${WORK}" commit -qm 'fixture: unfinished parser'
 narrate '# Session A verifies the unfinished state — still red'
 (cd "${WORK}" && ./verify.sh) || true
 
-"${RELAY}" draft --root "${WORK}" > "${WORK}/LUCIA_RELAY.json"
+"${RELAY}" draft --root "${WORK}" --recipient same-machine > "${WORK}/LUCIA_RELAY.json"
 python3 - "${WORK}/LUCIA_RELAY.json" <<'PY'
 import json
 import sys

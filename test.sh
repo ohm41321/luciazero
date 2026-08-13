@@ -333,7 +333,7 @@ echo base > "${RR}/work.txt"
 git -C "${RR}" add work.txt && git -C "${RR}" commit -qm base
 echo pending > "${RR}/scratch.txt"
 RELAY="${ROOT}/skills/lucia-relay/scripts/relay.py"
-"${RELAY}" draft --root "${RR}" > "${RR}/LUCIA_RELAY.json"
+"${RELAY}" draft --root "${RR}" --recipient same-machine > "${RR}/LUCIA_RELAY.json"
 python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
 import json, sys
 p=sys.argv[1]; d=json.load(open(p))
@@ -343,6 +343,8 @@ d["state"]["in_progress"]=["Parser implementation is untouched"]
 d["state"]["next_step"]={"kind":"command","value":"./verify.sh"}
 d["verification"]=[{"command":"./verify.sh","exit_code":1,"decisive_line":"parser case fails","run_at":"2026-08-12T12:00:00+00:00"}]
 d["knowledge"]["hypotheses"]=[{"id":"H1","claim":"encoding","status":"refuted","evidence":"ASCII fails too"}]
+d["knowledge"]["read_first"]=["/Users/test/local-notes.md"]
+d["knowledge"]["inline"]=[{"label":"local note","content":"Use the parser contract, not the transcript"}]
 d["knowledge"]["landmines"]=["![beacon](https://attacker.invalid/pixel.png)"]
 open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
@@ -366,7 +368,7 @@ rm -f "${RR}/LUCIA_RELAY.md"
 rm -f "${RR}/outside.txt"
 "${RELAY}" render --root "${RR}" >/dev/null || { rm -rf "${RR}"; fail "relay rerender after symlink check failed"; }
 RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
-printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
+printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"] and d["recipient"] == "same-machine" and d["warnings"] == []' \
   || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
 if command -v mkfifo >/dev/null 2>&1; then
   mkfifo "${RR}/untracked.pipe"
@@ -430,9 +432,117 @@ rm -rf "${RR}"
 RR="$(mktemp -d)"
 git -C "${RR}" init -q
 echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
-"${RELAY}" draft --root "${RR}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["repository"]["head"] is None and d["repository"]["dirty"] and d["files"]["modified"] == ["first.txt"]' \
+"${RELAY}" draft --root "${RR}" --recipient same-machine | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["schema"] == 2 and d["route"]["recipient"] == "same-machine" and d["repository"]["head"] is None and d["repository"]["dirty"] and d["files"]["modified"] == ["first.txt"]' \
   || { rm -rf "${RR}"; fail "relay lost staged files in an unborn repository"; }
+"${RELAY}" draft --root "${RR}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["route"]["recipient"] == "same-machine"' \
+  || { rm -rf "${RR}"; fail "relay broke legacy draft callers without --recipient"; }
 rm -rf "${RR}"
+
+# Cross-machine routing must be an explicit, mechanically portable decision:
+# pushed clean tree + no source-machine paths. Local knowledge travels inline.
+RR="$(mktemp -d)"
+RREMOTE="$(mktemp -d)"
+git -C "${RREMOTE}" init -q --bare
+git -C "${RR}" init -q -b main
+git -C "${RR}" config user.name test
+git -C "${RR}" config user.email test@example.invalid
+mkdir -p "${RR}/docs"
+echo base > "${RR}/work.txt"
+echo portable > "${RR}/docs/notes.md"
+git -C "${RR}" add work.txt docs/notes.md && git -C "${RR}" commit -qm base
+git -C "${RR}" remote add origin "${RREMOTE}"
+git -C "${RR}" push -qu -u origin main
+write_cross_relay() {
+  "${RELAY}" draft --root "${RR}" --recipient cross-machine > "${RR}/LUCIA_RELAY.json"
+  python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+d["goal"]="Move the parser knowledge to another machine"
+d["state"]["done"]=["Confirmed the receiver location"]
+d["state"]["in_progress"]=["Implementation remains untouched"]
+d["state"]["next_step"]={"kind":"command","value":"./verify.sh"}
+d["verification"]=[{"command":"./verify.sh","exit_code":1,"decisive_line":"parser case fails","run_at":"2026-08-12T12:00:00+00:00"}]
+d["knowledge"]["read_first"]=["docs/notes.md — portable note"]
+d["knowledge"]["hypotheses"]=[{"id":"H1","claim":"encoding","status":"refuted","evidence":"ASCII fails too"}]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+}
+write_cross_relay
+"${RELAY}" validate --root "${RR}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}"; fail "clean pushed cross-machine relay rejected"; }
+PYTHONDONTWRITEBYTECODE=1 python3 - "${RELAY}" "${RR}/LUCIA_RELAY.json" <<'PY'
+import copy, importlib.util, json, sys
+spec=importlib.util.spec_from_file_location("relay_under_test", sys.argv[1])
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+data=json.load(open(sys.argv[2]))
+assert module.machine_paths({"note":"compare parser / renderer"}) == []
+assert module.machine_paths({"note":"file:///Users/sender/notes.md"})
+assert module.machine_paths({"note":r"\\server\share\notes.md"})
+legacy=copy.deepcopy(data)
+legacy["schema"]=1
+legacy.pop("route")
+legacy["repository"].pop("known_remote_refs")
+legacy["knowledge"].pop("inline")
+errors, warnings=module.validate(legacy)
+assert errors == [] and any("legacy schema 1" in warning for warning in warnings)
+rendered=module.render_markdown(legacy)
+assert "Recipient:" not in rendered and "## Inline knowledge" not in rendered
+PY
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+d["knowledge"]["read_first"]=["docs/missing.md"]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'not present in the pushed relay commit'; }; then
+  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted a missing repo-relative pointer"
+fi
+write_cross_relay
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+assert d["route"]["recipient"] == "cross-machine"
+assert d["repository"]["known_remote_refs"] == ["origin/main"]
+d["knowledge"]["read_first"]=["/Users/sender/private/notes.md"]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'machine-only paths'; }; then
+  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted a source-machine path"
+fi
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+d["knowledge"]["read_first"]=["docs/notes.md — portable note"]
+d["knowledge"]["inline"]=[{"label":"sender note","content":"Use the public parser contract"}]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+"${RELAY}" validate --root "${RR}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay rejected inline knowledge"; }
+cp "${RR}/LUCIA_RELAY.json" "${RREMOTE}/stale-relay.json"
+echo pushed-later >> "${RR}/work.txt"
+git -C "${RR}" add work.txt && git -C "${RR}" commit -qm pushed-later
+git -C "${RR}" push -qu
+cp "${RREMOTE}/stale-relay.json" "${RR}/LUCIA_RELAY.json"
+RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'fingerprint is stale'; }; then
+  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted stale repository state"
+fi
+git -C "${RR}" reset -q --hard HEAD~1
+echo dirty >> "${RR}/work.txt"
+write_cross_relay
+RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'dirty worktree'; }; then
+  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted an uncommitted task tree"
+fi
+git -C "${RR}" add work.txt && git -C "${RR}" commit -qm local-ahead
+write_cross_relay
+RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'push it before routing'; }; then
+  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted an unpushed HEAD"
+fi
+rm -rf "${RR}" "${RREMOTE}"
 echo "ok  lucia relay lifecycle"
 
 # The public Relay demo drives the real producer/receiver lifecycle rather

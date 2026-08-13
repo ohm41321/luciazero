@@ -36,7 +36,7 @@ and exit zero only on a full score.
 | `archive-security` | ZIP restore permits path and link escapes | security-focused review plus regression-test discipline (rules 3, 4, 7) | traversal variants, link entries, destination symlinks, and all-or-nothing rejection; restored bug must make worked tests red |
 | `schema-migration` | schema upgrade drops extension fields and rewrites in place | preserve scope and contracts; verify failure paths (rules 2, 4, 7) | opaque fields, input immutability, invalid-file preservation, replace-failure injection, idempotence, and restored-bug probe |
 | `paginated-sync` | integration reads one page and can loop on cursors | trace the full contract across files and prove the edge (rules 2, 4, 6) | three-page cursor fidelity, cycle detection before repeated I/O, CLI completeness, immutability, and restored-bug probe |
-| `relay-transfer` | unfinished state must cross a session/agent/harness boundary without transcript dumping | `/lucia-relay` transfer outcome | canonical JSON + matching human view, exact red evidence, one literal next edit, negative knowledge, unchanged task files, and a matching repository fingerprint; generic prose and a stale fingerprint are rejected |
+| `relay-transfer` | unfinished state must cross a session/agent/harness boundary without transcript dumping | `/lucia-relay` transfer outcome | explicit recipient route, canonical JSON + matching human view, exact red evidence, one literal next edit, negative knowledge, unchanged task files, and a matching repository fingerprint; generic prose and a stale fingerprint are rejected |
 
 The suite grades outcomes, not whether a slash command literally appeared in a
 transcript. `false-green` is the `/done` outcome test; `pipeline` and

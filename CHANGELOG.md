@@ -7,6 +7,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-13
+
+### Fixed
+
+- `/lucia-relay` now records whether its recipient is on the same machine or a
+  different one before producing pointers. Schema 2 permits full paths only
+  for same-machine delivery; cross-machine validation requires a clean HEAD
+  reachable from a locally known remote branch, rejects machine-only paths,
+  and provides `knowledge.inline` for otherwise-local context. Schema 1 relays
+  remain readable as same-machine-only legacy artifacts, and legacy `draft`
+  callers without `--recipient` safely default to same-machine delivery.
+
 ## [2.0.1] - 2026-08-13
 
 ### Added

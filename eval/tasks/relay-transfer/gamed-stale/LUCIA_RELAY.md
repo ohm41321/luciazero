@@ -4,6 +4,7 @@
 
 Created: 2026\-08\-13T00:05:00\+00:00
 Source: reference / fixture
+Recipient: same\-machine
 
 ## Goal
 
@@ -15,6 +16,7 @@ Make split\_fields preserve semicolons inside quoted fields while retaining Pyth
 - Branch: <code>main</code>
 - Dirty: <code>False</code>
 - Diff SHA-256: <code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code>
+- Known remote refs: <code>none</code>
 
 ## Done
 
@@ -38,6 +40,10 @@ edit: <code>Edit parser.py to use csv.reader with delimiter=&#x27;;&#x27;, then 
 ## Read first
 
 - docs/lessons\.md — quoted delimiters are parser syntax
+
+## Inline knowledge
+
+None recorded.
 
 ## Hypotheses
 

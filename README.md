@@ -57,6 +57,11 @@ human view; session B checks the Git fingerprint, reads the exact next action
 and refuted hypotheses, re-runs verification, then explicitly consumes the
 relay.
 
+Relay decides where the recipient is before it writes pointers. Same-machine
+receivers may use full local paths. Cross-machine relays require a clean pushed
+commit, reject machine-only paths, and carry otherwise-local knowledge inline
+in the JSON.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
 </p>

@@ -56,6 +56,10 @@ Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พ
 ที่ generate จากไฟล์นั้น ส่วน Session B ตรวจ Git fingerprint, อ่าน next action
 กับสมมติฐานที่ถูกหักล้าง, รัน verification ซ้ำ แล้ว consume relay อย่างชัดเจน
 
+Relay ต้องตัดสินก่อนว่าผู้รับอยู่ที่ไหน: ถ้าอยู่เครื่องเดิมใช้ full local path
+ได้ แต่ถ้าข้ามเครื่องต้องเป็น commit ที่ clean และ push แล้วเท่านั้น ตัวตรวจจะ
+ปฏิเสธ path เฉพาะเครื่อง และให้ใส่ความรู้ที่อยู่นอก repo ลงใน JSON โดยตรง
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
 </p>

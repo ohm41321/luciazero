@@ -15,7 +15,7 @@ This RFC is preserved as the input proposal. The table below is authoritative wh
 | Specialized reviewers | Accepted as focus routing | One portable `reviewer` with `security`, `contract`, and `general` modes; separate focused passes when both risks apply |
 | `/discipline-report` | Accepted | `npx luciazero discipline`, schema-v2 privacy-preserving JSONL, legacy reader, `--days`, `--project`, and `--json` |
 | Smart target verification | Accepted as repo-owned policy | A monorepo owns `verify-changed` via its native task graph and conservative full fallback; the global hook does not guess path mappings |
-| `/handoff` naming/transfer | Superseded by implementation request | `/lucia-relay`: portable JSON manifest + generated Markdown, repository fingerprint, verification evidence, drift inspection, and explicit consume across sessions/agents/harnesses |
+| `/handoff` naming/transfer | Superseded by implementation request | `/lucia-relay`: recipient-first routing; full paths on the same machine, pushed repo-relative or inline knowledge across machines; portable JSON + generated Markdown, fingerprint, evidence, drift inspection, and explicit consume |
 
 Component inventory is now centralized in `skills/catalog.txt` and `claude/agents/catalog.txt`; install, status, uninstall, and tests consume those catalogs.
 

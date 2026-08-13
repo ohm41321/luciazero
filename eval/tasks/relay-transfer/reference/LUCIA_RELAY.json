@@ -1,7 +1,10 @@
 {
-  "schema": 1,
+  "schema": 2,
   "kind": "luciazero-relay",
   "created_at": "2026-08-13T00:05:00+00:00",
+  "route": {
+    "recipient": "same-machine"
+  },
   "source": {
     "harness": "reference",
     "agent": "fixture",
@@ -11,7 +14,8 @@
     "head": "15b6724c5104972123f72d515687507abdcde828",
     "branch": "main",
     "dirty": false,
-    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "known_remote_refs": []
   },
   "goal": "Make split_fields preserve semicolons inside quoted fields while retaining Python 3.8 compatibility.",
   "state": {
@@ -39,6 +43,7 @@
     "read_first": [
       "docs/lessons.md — quoted delimiters are parser syntax"
     ],
+    "inline": [],
     "hypotheses": [
       {
         "id": "H1",

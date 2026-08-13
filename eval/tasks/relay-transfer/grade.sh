@@ -51,7 +51,8 @@ if isinstance(data, dict) and human_path.is_file():
         and result.get("repository_drift") is False
         and result.get("warnings") == []
         and data.get("kind") == "luciazero-relay"
-        and data.get("schema") == 1
+        and data.get("schema") == 2
+        and data.get("route", {}).get("recipient") == "same-machine"
     )
 
 if isinstance(data, dict):

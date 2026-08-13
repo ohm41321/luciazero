@@ -59,9 +59,9 @@ remove_managed_file() {
 
 echo "Removing from ${CLAUDE_DIR}"
 
-rm -f "${CLAUDE_DIR}/${DOCTRINE}"
+remove_managed_file "${CLAUDE_DIR}/${DOCTRINE}" \
+  "${MANAGED_DIR}/${DOCTRINE}" "${SRC}/claude/${DOCTRINE}" "${DOCTRINE}"
 rm -f "${CLAUDE_DIR}/.luciazero-version"
-echo "  ok  ${DOCTRINE}"
 
 while IFS= read -r SKILL; do
   remove_managed_tree "${CLAUDE_DIR}/skills/${SKILL}" \

@@ -104,6 +104,34 @@ npx luciazero uninstall-codex
 เฉพาะ Claude Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
 ยืนยันความเป็นเจ้าของได้
 
+## อัปเดต
+
+Luciazero จะไม่แก้ไฟล์ของ classic หรือ Codex อยู่เบื้องหลัง
+
+```bash
+npx luciazero@latest check-update   # อ่านอย่างเดียว ติดต่อ npm เฉพาะตอนนี้
+npx luciazero@latest update         # อัปเดต classic/Codex ทุกชุดที่ตรวจพบ
+```
+
+`update` รักษาโหมดเดิมว่า Claude classic ใช้ hook หรือไม่ ซ่อมไฟล์ managed ที่
+เก่า จะไม่เริ่มติดตั้งใหม่ถ้าหา installation เดิมไม่พบ และจะหยุดเมื่อพบเวอร์ชัน
+ที่ใหม่กว่าหรือข้อมูลเวอร์ชันเสีย หลังอัปเดตให้เริ่ม agent session ใหม่
+
+ช่องทางอื่นใช้ตัวอัปเดตของช่องทางนั้น:
+
+```bash
+claude plugin update luciazero@luciazero   # แล้วรัน /reload-plugins
+npx skills update                          # ตรวจ scope ใน prompt ก่อนยืนยัน
+```
+
+คำสั่ง skills จะอัปเดต skill ทุกตัวใน scope ที่เลือก ไม่ใช่เฉพาะ Luciazero
+จึงควรตรวจ prompt ก่อนยืนยัน
+
+Claude Code อัปเดต plugin ตอนเริ่มโปรแกรมอัตโนมัติได้: เปิด `/plugin` →
+**Marketplaces** → **luciazero** → **Enable auto-update** โดย marketplace
+ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
+GitHub **Watch → Custom → Releases**
+
 ## Skill ทั้ง 9 ตัว
 
 รัน `/luciazero-bootstrap` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน

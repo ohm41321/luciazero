@@ -106,6 +106,35 @@ Classic installs support `--status`; Codex receives the doctrine and skills but
 not Claude-only hooks/statusline. Installers back up name collisions and remove
 only exact Luciazero-managed copies on uninstall.
 
+## Update
+
+Luciazero never changes classic or Codex files in the background.
+
+```bash
+npx luciazero@latest check-update   # read-only; contacts npm only now
+npx luciazero@latest update         # updates every detected classic/Codex install
+```
+
+`update` preserves whether the Claude classic install uses hooks, repairs stale
+managed files, starts no fresh install when it cannot find one, and stops on a
+known newer version or malformed version metadata. Start a new agent session
+afterward.
+
+Other install channels use their own updater:
+
+```bash
+claude plugin update luciazero@luciazero   # then run /reload-plugins
+npx skills update                          # review the scope prompt
+```
+
+The skills command updates every installed skill in the selected scope, not
+only Luciazero; review its prompt before confirming.
+
+Claude Code can auto-update the plugin at startup: open `/plugin` →
+**Marketplaces** → **luciazero** → **Enable auto-update**. Third-party
+marketplaces leave this off by default. For release-only notifications, use
+GitHub **Watch → Custom → Releases**.
+
 ## The 9 skills
 
 Run `/luciazero-bootstrap` first; the rest activate when their moment arrives.

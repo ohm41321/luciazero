@@ -7,6 +7,8 @@
 //   npx luciazero uninstall                 -> uninstall.sh
 //   npx luciazero uninstall-codex           -> uninstall-codex.sh
 //   npx luciazero discipline [options]       -> local stats report
+//   npx luciazero check-update [--json]       -> explicit npm version check
+//   npx luciazero update                      -> update detected classic installs
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
@@ -16,13 +18,18 @@ const ROUTES = {
   uninstall: { runtime: "bash", script: "uninstall.sh" },
   "uninstall-codex": { runtime: "bash", script: "uninstall-codex.sh" },
   discipline: { runtime: process.execPath, script: "bin/discipline-report.js" },
+  "check-update": { runtime: process.execPath, script: "bin/update.js", args: ["check"] },
+  update: { runtime: process.execPath, script: "bin/update.js", args: ["update"] },
 };
 
 const args = process.argv.slice(2);
 let route = "install";
 if (args[0] && !args[0].startsWith("-")) {
   if (!Object.prototype.hasOwnProperty.call(ROUTES, args[0])) {
-    console.error(`luciazero: unknown command '${args[0]}' (install, codex, discipline, uninstall, uninstall-codex)`);
+    console.error(
+      `luciazero: unknown command '${args[0]}' ` +
+      "(install, codex, discipline, check-update, update, uninstall, uninstall-codex)"
+    );
     process.exit(64);
   }
   route = args.shift();
@@ -37,7 +44,7 @@ if (process.platform === "win32" && selected.runtime === "bash") {
   process.exit(1);
 }
 
-const result = spawnSync(selected.runtime, [script, ...args], { stdio: "inherit" });
+const result = spawnSync(selected.runtime, [script, ...(selected.args || []), ...args], { stdio: "inherit" });
 if (result.error) {
   console.error("luciazero: could not run bash: " + result.error.message);
   process.exit(1);

@@ -1349,7 +1349,201 @@ if command -v node >/dev/null 2>&1; then
   [ "${NRC}" -eq 1 ] || fail "npx wrapper --status on empty config dir: want rc 1, got ${NRC}"
   printf '%s\n' "${NOUT}" | grep -q 'MISS' || fail "npx wrapper --status lost install.sh's MISS output"
   rm -rf "${NB}"
-  echo "ok  npm wrapper package + routing"
+
+  # Explicit update checks are deterministic under an injected registry
+  # response. Merely requiring the module must never perform network or writes.
+  UC="$(mktemp -d)"
+  mkdir -p "${UC}/claude/hooks" "${UC}/codex"
+  printf '1.9.0\n' > "${UC}/claude/.luciazero-version"
+  printf '{"hooks":{"Stop":[{"hooks":[{"command":"%s/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+    "${UC}/claude" > "${UC}/claude/settings.json"
+  printf '2.0.0\n' > "${UC}/codex/.luciazero-version"
+  node - "${ROOT}" "${UC}" <<'JS' \
+    || { rm -rf "${UC}"; fail "update helper unit checks failed"; }
+const assert = require("node:assert");
+const path = require("node:path");
+const [root, fixture] = process.argv.slice(2);
+const updater = require(path.join(root, "bin/update.js"));
+
+assert.strictEqual(updater.compareSemver("1.9.0", "2.0.0"), -1);
+assert.strictEqual(updater.compareSemver("2.0.0", "2.0.0"), 0);
+assert.strictEqual(updater.compareSemver("2.1.0", "2.0.0"), 1);
+assert.strictEqual(updater.compareSemver("2.0.0-beta.2", "2.0.0-beta.10"), -1);
+assert.strictEqual(updater.compareSemver("not-a-version", "2.0.0"), null);
+
+const installations = updater.detectInstallations({
+  claudeDir: path.join(fixture, "claude"),
+  codexDir: path.join(fixture, "codex"),
+});
+assert.strictEqual(installations.length, 2);
+assert.strictEqual(installations[0].channel, "claude-classic");
+assert.strictEqual(installations[0].hooks, true, "dangling hook wiring must preserve hook mode");
+assert.strictEqual(installations[1].channel, "codex");
+
+const out = [];
+const err = [];
+(async () => {
+  let requestedUrl = "";
+  let requestSignal;
+  const fetchedVersion = await updater.fetchLatestVersion({
+    registry: "https://registry.example.test/npm/",
+    fetch: async (url, options) => {
+      requestedUrl = String(url);
+      requestSignal = options.signal;
+      return {ok: true, json: async () => ({version: "2.1.0"})};
+    },
+  });
+  assert.strictEqual(fetchedVersion, "2.1.0");
+  assert.strictEqual(requestedUrl, "https://registry.example.test/npm/luciazero/latest");
+  assert.ok(requestSignal instanceof AbortSignal, "registry request must carry an AbortSignal");
+  await assert.rejects(
+    updater.fetchLatestVersion({
+      timeoutMs: 5,
+      fetch: (_url, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+    }),
+    /timed out/
+  );
+  await assert.rejects(
+    updater.fetchLatestVersion({fetch: async () => ({ok: false, status: 503})}),
+    /HTTP 503/
+  );
+  await assert.rejects(
+    updater.fetchLatestVersion({fetch: async () => ({ok: true, json: async () => ({version: "bad"})})}),
+    /invalid version/
+  );
+
+  const rc = await updater.runCheck(["--json"], {
+    detectInstallations: () => installations,
+    fetchLatestVersion: async () => "2.1.0",
+    stdout: {write: (value) => out.push(String(value))},
+    stderr: {write: (value) => err.push(String(value))},
+  });
+  assert.strictEqual(rc, 0);
+  assert.strictEqual(err.join(""), "");
+  const report = JSON.parse(out.join(""));
+  assert.strictEqual(report.latestVersion, "2.1.0");
+  assert.strictEqual(report.cliUpdateAvailable, true);
+  assert.strictEqual(report.updateAvailable, true);
+  assert.deepStrictEqual(report.installations.map((item) => item.status), [
+    "update-available", "update-available",
+  ]);
+
+  const malformedCheckOut = [];
+  const malformedCheckRc = await updater.runCheck([], {
+    detectInstallations: () => [{
+      channel: "codex", configDir: fixture, installedVersion: "broken", versionFilePresent: true,
+      hooks: false,
+    }],
+    fetchLatestVersion: async () => "2.1.0",
+    stdout: {write: (value) => malformedCheckOut.push(String(value))},
+    stderr: {write: () => {}},
+  });
+  assert.strictEqual(malformedCheckRc, 0);
+  assert.match(malformedCheckOut.join(""), /Cannot update installs with a malformed/);
+  assert.doesNotMatch(malformedCheckOut.join(""), /Update detected classic\/Codex installs/);
+
+  let spawnCount = 0;
+  const downgradeErrors = [];
+  const downgradeRc = updater.runUpdate([], {
+    detectInstallations: () => [{
+      channel: "codex", configDir: fixture, installedVersion: "99.0.0", hooks: false,
+    }],
+    spawnSync: () => { spawnCount += 1; return {status: 0}; },
+    stdout: {write: () => {}},
+    stderr: {write: (value) => downgradeErrors.push(String(value))},
+  });
+  assert.strictEqual(downgradeRc, 1);
+  assert.strictEqual(spawnCount, 0, "an older updater must not overwrite a newer install");
+  assert.match(downgradeErrors.join(""), /Refusing to downgrade Codex/);
+
+  const malformedErrors = [];
+  const malformedRc = updater.runUpdate([], {
+    detectInstallations: () => [{
+      channel: "codex", configDir: fixture, installedVersion: "broken", versionFilePresent: true,
+      hooks: false,
+    }],
+    spawnSync: () => { spawnCount += 1; return {status: 0}; },
+    stdout: {write: () => {}},
+    stderr: {write: (value) => malformedErrors.push(String(value))},
+  });
+  assert.strictEqual(malformedRc, 1);
+  assert.strictEqual(spawnCount, 0, "malformed version metadata must fail before writes");
+  assert.match(malformedErrors.join(""), /version is malformed/);
+
+  let legacySpawnCount = 0;
+  const legacyRc = updater.runUpdate([], {
+    detectInstallations: () => [{
+      channel: "codex", configDir: fixture, installedVersion: null, versionFilePresent: false,
+      hooks: false,
+    }],
+    spawnSync: () => { legacySpawnCount += 1; return {status: 0}; },
+    stdout: {write: () => {}},
+    stderr: {write: () => {}},
+  });
+  assert.strictEqual(legacyRc, 0, "legacy installs without a sidecar must remain updatable");
+  assert.strictEqual(legacySpawnCount, 1);
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+JS
+  node "${ROOT}/bin/luciazero.js" check-update --help | grep -q 'never changes files' \
+    || { rm -rf "${UC}"; fail "check-update CLI route/help missing"; }
+  node "${ROOT}/bin/luciazero.js" update --help | grep -q 'preserves Claude hook mode' \
+    || { rm -rf "${UC}"; fail "update CLI route/help missing"; }
+  rm -rf "${UC}"
+
+  # The updater repairs every detected channel, preserves both possible
+  # classic modes, and refuses to turn "update" into a fresh install.
+  UU="$(mktemp -d)"
+  mkdir -p "${UU}/plain" "${UU}/hooks" "${UU}/codex" "${UU}/empty-claude" "${UU}/empty-codex"
+  CLAUDE_CONFIG_DIR="${UU}/plain" "${ROOT}/install.sh" >/dev/null
+  printf '1.0.0\n' > "${UU}/plain/.luciazero-version"
+  printf '# customized doctrine\n' >> "${UU}/plain/luciazero.md"
+  CLAUDE_CONFIG_DIR="${UU}/plain" CODEX_HOME="${UU}/empty-codex" \
+    node "${ROOT}/bin/luciazero.js" update >/dev/null \
+    || { rm -rf "${UU}"; fail "update failed for classic-without-hooks"; }
+  [ ! -d "${UU}/plain/hooks" ] \
+    || { rm -rf "${UU}"; fail "update enabled hooks for a no-hooks install"; }
+  cmp -s "${UU}/plain/luciazero.md" "${ROOT}/claude/luciazero.md" \
+    || { rm -rf "${UU}"; fail "update did not refresh the doctrine"; }
+  grep -q 'customized doctrine' "${UU}/plain/.luciazero-backups"/luciazero.md.bak.* \
+    || { rm -rf "${UU}"; fail "update overwrote a customized doctrine without backup"; }
+
+  CLAUDE_CONFIG_DIR="${UU}/hooks" "${ROOT}/install.sh" --with-hooks >/dev/null
+  CODEX_HOME="${UU}/codex" "${ROOT}/install-codex.sh" >/dev/null
+  printf '1.0.0\n' > "${UU}/hooks/.luciazero-version"
+  printf '1.0.0\n' > "${UU}/codex/.luciazero-version"
+  printf '# stale hook\n' >> "${UU}/hooks/hooks/luciazero-verify.sh"
+  UOUT="$(CLAUDE_CONFIG_DIR="${UU}/hooks" CODEX_HOME="${UU}/codex" \
+    node "${ROOT}/bin/luciazero.js" update)" \
+    || { rm -rf "${UU}"; fail "multi-channel update failed"; }
+  cmp -s "${UU}/hooks/hooks/luciazero-verify.sh" "${ROOT}/claude/hooks/luciazero-verify.sh" \
+    || { rm -rf "${UU}"; fail "update did not refresh a stale hook"; }
+  PV="$(node -p "require('${ROOT}/package.json').version")"
+  [ "$(cat "${UU}/hooks/.luciazero-version")" = "${PV}" ] \
+    || { rm -rf "${UU}"; fail "Claude update did not refresh version sidecar"; }
+  [ "$(cat "${UU}/codex/.luciazero-version")" = "${PV}" ] \
+    || { rm -rf "${UU}"; fail "Codex update did not refresh version sidecar"; }
+  printf '%s\n' "${UOUT}" | grep -q 'Claude classic + hooks' \
+    || { rm -rf "${UU}"; fail "update output omitted detected hook mode"; }
+  printf '%s\n' "${UOUT}" | grep -q 'Codex' \
+    || { rm -rf "${UU}"; fail "update output omitted detected Codex install"; }
+  RC=0
+  CLAUDE_CONFIG_DIR="${UU}/empty-claude" CODEX_HOME="${UU}/empty-codex" \
+    node "${ROOT}/bin/luciazero.js" update >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] \
+    || { rm -rf "${UU}"; fail "update without an installation must refuse (rc=${RC})"; }
+  [ ! -e "${UU}/empty-claude/.luciazero-version" ] && [ ! -e "${UU}/empty-codex/.luciazero-version" ] \
+    || { rm -rf "${UU}"; fail "update without an installation wrote files"; }
+  rm -rf "${UU}"
+  echo "ok  npm wrapper package + update/check routing"
 else
   echo "ok  npm wrapper package (routing skipped: node not installed)"
 fi
@@ -1412,8 +1606,10 @@ echo "ok  --status green/red"
 # install are user data and must survive.
 echo '# keep customized bisect' >> "${SB}/skills/bisect/SKILL.md"
 echo '# keep customized reviewer' >> "${SB}/agents/reviewer.md"
+echo '# keep customized doctrine' >> "${SB}/luciazero.md"
 UOUT="$(CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/uninstall.sh" 2>&1)"
-[ ! -f "${SB}/luciazero.md" ] || fail "doctrine left behind"
+grep -q 'keep customized doctrine' "${SB}/luciazero.md" \
+  || fail "classic uninstall deleted a customized doctrine"
 while IFS= read -r NS; do
   if [ "${NS}" = bisect ]; then
     grep -q 'keep customized bisect' "${SB}/skills/bisect/SKILL.md" \

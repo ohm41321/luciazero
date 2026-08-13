@@ -183,7 +183,8 @@ echo "Installing into ${CLAUDE_DIR}"
 mkdir -p "${CLAUDE_DIR}/skills"
 
 # 1. doctrine
-cp "${SRC}/claude/${DOCTRINE}" "${CLAUDE_DIR}/${DOCTRINE}"
+install_file "${SRC}/claude/${DOCTRINE}" "${CLAUDE_DIR}/${DOCTRINE}" \
+  "${MANAGED_DIR}/${DOCTRINE}" "${DOCTRINE}"
 echo "  ok  ${DOCTRINE}"
 
 # 2. skills — catalog.txt is the single install/status/uninstall inventory

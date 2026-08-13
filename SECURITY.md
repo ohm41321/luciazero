@@ -19,13 +19,21 @@ Lucia Relay. The guarantees below are enforced by `test.sh` on every push — a
 way around any of them is a reportable vulnerability, not expected behavior:
 
 - **Core operation is offline.** Installers, hooks, Relay/report helpers, and
-  eval graders never phone home. Real behavioral `eval/run.sh` runs are the
-  explicit exception: they invoke the selected Claude or Codex CLI;
-  `--offline` does not.
+  eval graders never phone home. `npx luciazero check-update` is an explicit,
+  read-only exception that queries the configured npm registry with a five-
+  second timeout; `update` itself uses the already-downloaded package. Real
+  behavioral `eval/run.sh` runs are the other explicit exception: they invoke
+  the selected Claude or Codex CLI; `--offline` does not.
 - **Nothing runs at npm install time.** The npm package has zero lifecycle
   scripts (`preinstall`/`install`/`postinstall`/`prepare` are all forbidden
   and checked); `npx luciazero` only launches the same audited bash
   installers a git clone would.
+- **Nothing auto-updates classic/Codex installs.** Update checks and writes
+  happen only after the user runs `check-update` or `update`. `update` refuses
+  to create a fresh install, overwrite a recognized newer version, or proceed
+  with a malformed version sidecar. Legacy installs without a sidecar remain
+  updatable. It preserves the detected hook mode and writes only through the
+  same audited installers.
 - **Hooks fail open.** Every internal error — timeout, missing command,
   unparseable stdin — degrades to the one-shot nudge. A hook must never
   block on an error path or fabricate a RED verdict it did not observe.

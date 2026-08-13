@@ -32,6 +32,12 @@ Users need no setup from us beyond the push:
 /plugin install luciazero@luciazero
 ```
 
+Third-party marketplace auto-update is off by default. Users can enable it for
+`luciazero` in `/plugin` → Marketplaces, or update explicitly with
+`claude plugin update luciazero@luciazero` and `/reload-plugins`. Because
+`plugin.json` supplies an explicit version, every plugin release must bump it;
+new commits at the same version are not delivered as updates.
+
 To get listed in Anthropic's catalogs (†):
 
 - Community/official directory submission form: <https://platform.claude.com/plugins/submit>
@@ -75,6 +81,12 @@ One-time setup, in this order:
 - [x] npmjs.com does not resolve relative image paths in READMEs — README image
       tags use absolute `raw.githubusercontent.com` URLs (GitHub renders them
       too).
+
+Users check and apply classic/Codex updates explicitly with
+`npx luciazero@latest check-update` and `npx luciazero@latest update`.
+`check-update` is the only installer-path command that contacts the npm
+registry; `update` preserves the detected classic hook mode and runs the
+already-downloaded installers. No lifecycle or background updater is allowed.
 
 ## 4. Directories, once live
 

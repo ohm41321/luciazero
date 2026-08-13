@@ -7,6 +7,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-13
+
+### Added
+
+- **Explicit, channel-aware updates.** `npx luciazero@latest check-update`
+  performs a read-only, five-second npm registry check only when invoked;
+  `npx luciazero@latest update` detects classic Claude, its hook mode, and
+  Codex, then refreshes every detected install through the existing audited
+  installers. It refuses to create a fresh install, downgrade a recognized
+  newer one, or trust a malformed version sidecar. Legacy installs without the
+  sidecar remain updatable. Classic doctrine customization now receives the
+  same managed-snapshot backup protection as skills and agents.
+  Plugin and skills-only update commands, Claude plugin auto-update, and GitHub
+  release notifications are documented separately in both READMEs.
+
 ### Changed
 
 - The release workflow uses the runner's GitHub CLI instead of a Node 20-based

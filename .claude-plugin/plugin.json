@@ -1,7 +1,7 @@
 {
   "name": "luciazero",
   "displayName": "Luciazero",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 9 skills including Lucia Relay, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "naris", "email": "naris@riverpark.co.th" },
   "license": "MIT",
@@ -9,6 +9,5 @@
   "repository": "https://github.com/ohm41321/luciazero",
   "keywords": ["verification", "discipline", "doctrine", "skills", "hooks", "agentic-engineering", "testing"],
   "skills": "./skills",
-  "agents": ["./claude/agents/reviewer.md"],
   "hooks": "./claude/hooks/hooks.json"
 }

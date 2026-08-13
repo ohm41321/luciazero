@@ -7,6 +7,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-08-13
+
+### Fixed
+
+- The Claude plugin now exposes its reviewer from the default root `agents/`
+  directory. Claude Code 2.1.227 validated the former custom manifest path but
+  reported and loaded zero agents; the default layout reports one. CI requires
+  the plugin mirror to match the classic install source byte-for-byte and
+  prevents the custom path from returning.
+
 ## [2.0.2] - 2026-08-13
 
 ### Fixed

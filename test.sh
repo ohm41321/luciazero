@@ -84,6 +84,8 @@ while IFS= read -r AGENT_NAME; do
   grep -q '^description: .' "${AGENT}" || fail "${AGENT_NAME}.md missing description"
   grep -q '^model: inherit$' "${AGENT}" || fail "${AGENT_NAME}.md must inherit the authoring model"
 done < <(catalog "${ROOT}/claude/agents/catalog.txt")
+cmp -s "${ROOT}/agents/reviewer.md" "${ROOT}/claude/agents/reviewer.md" \
+  || fail "plugin agents/reviewer.md drifted from the classic reviewer source"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/skills/lucia-relay/scripts/relay.py" || fail "relay.py syntax"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
@@ -1336,8 +1338,10 @@ for line in open(os.path.join(root, "CHANGELOG.md")):
 plug = json.load(open(os.path.join(root, ".claude-plugin", "plugin.json")))
 assert plug["name"] == "luciazero", "plugin.json name"
 assert plug["version"] == ver, f"plugin.json version {plug['version']} != CHANGELOG {ver}"
-for p in [plug["skills"], plug["hooks"]] + plug["agents"]:
+assert "agents" not in plug, "plugin must use default root agents/ discovery"
+for p in [plug["skills"], plug["hooks"]]:
     assert os.path.exists(os.path.join(root, p)), f"plugin.json path missing: {p}"
+assert os.path.isfile(os.path.join(root, "agents", "reviewer.md")), "default plugin reviewer missing"
 mkt = json.load(open(os.path.join(root, ".claude-plugin", "marketplace.json")))
 assert mkt["name"] == "luciazero" and mkt["owner"]["name"], "marketplace name/owner"
 assert mkt["plugins"][0]["name"] == "luciazero", "marketplace plugin entry"
@@ -1425,10 +1429,10 @@ assert pkg["version"] == ver, f"package.json version {pkg['version']} != CHANGEL
 for bad in ("preinstall", "install", "postinstall", "prepare"):
     assert bad not in pkg.get("scripts", {}), f"lifecycle script '{bad}' forbidden (npm v12 blocks them; scanners flag them)"
 files = set(pkg["files"])
-for need in ("bin", "claude", "skills", "install.sh", "uninstall.sh",
+for need in ("bin", "agents", "claude", "skills", "install.sh", "uninstall.sh",
              "install-codex.sh", "uninstall-codex.sh", "migrations", "CHANGELOG.md"):
     assert need in files, f"files allowlist missing {need} — npx install would ship a broken payload"
-for base in ("bin", "claude", "skills", "migrations"):
+for base in ("bin", "agents", "claude", "skills", "migrations"):
     for directory, subdirs, names in os.walk(os.path.join(root, base)):
         assert "__pycache__" not in subdirs, f"npm payload contains Python cache dir: {directory}"
         assert not any(name.endswith((".pyc", ".pyo")) for name in names), \

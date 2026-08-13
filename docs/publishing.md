@@ -18,10 +18,10 @@ on it, since third-party processes change.
 Version sync rule: a release bumps `CHANGELOG.md`, `.claude-plugin/plugin.json`,
 and `package.json` together — `test.sh` fails on any mismatch.
 
-**Current release state (2026-08-12):** `v1.5.0` is public. This checkout is
-prepared as `2.0.0`, but it is not live until the version is committed, tagged,
-pushed, and the release workflow succeeds. Do not describe 2.0 as published
-before that pipeline completes.
+**Release-state rule:** the source manifest, Git tag, GitHub Release, and npm
+registry must agree before a version is described as public. Check the registry
+with `npm view luciazero version` and inspect `dist.attestations`; a prepared
+manifest or pushed tag alone is not a completed release.
 
 ## 1. Claude Code plugin (live the moment the repo is public)
 

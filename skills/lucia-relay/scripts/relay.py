@@ -69,10 +69,16 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
         try:
             if candidate.is_symlink():
                 digest.update(b"symlink\0" + os.readlink(candidate).encode("utf-8", errors="surrogateescape"))
-            else:
+            elif candidate.is_file():
                 with candidate.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
+            else:
+                # FIFOs, sockets, and devices must affect the fingerprint but
+                # must never be opened: reading a FIFO can block forever and a
+                # device can have side effects or an unbounded stream.
+                mode = candidate.lstat().st_mode
+                digest.update(f"special:{mode}".encode())
         except OSError as exc:
             digest.update(f"unreadable:{exc.errno}".encode())
     fingerprint = digest.hexdigest()

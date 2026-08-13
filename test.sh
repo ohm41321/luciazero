@@ -21,6 +21,7 @@ export CLAUDE_CONFIG_DIR
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          docs/assets/statusline-demo.sh
+         docs/assets/relay-demo.sh
          skills/luciazero-bootstrap/scripts/detect.sh
          skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
@@ -28,6 +29,10 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          eval/run.sh eval/report.sh eval/check-result.sh)
 # every task grader, auto-discovered — a new task cannot skip the lint net
 for G in "${ROOT}"/eval/tasks/*/grade.sh; do SCRIPTS+=("${G#"${ROOT}"/}"); done
+# optional deterministic task setup runs in both real and offline evaluation
+for S in "${ROOT}"/eval/tasks/*/setup.sh; do
+  [ -f "${S}" ] && SCRIPTS+=("${S#"${ROOT}"/}")
+done
 
 # 1. shell syntax
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
@@ -363,6 +368,41 @@ rm -f "${RR}/outside.txt"
 RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
 printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
   || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
+if command -v mkfifo >/dev/null 2>&1; then
+  mkfifo "${RR}/untracked.pipe"
+  python3 - "${RELAY}" "${RR}" <<'PY' \
+    || { rm -rf "${RR}"; fail "relay opened or lost an untracked FIFO"; }
+import os
+import subprocess
+import sys
+
+code = r'''
+import importlib.util
+from pathlib import Path
+import sys
+
+spec = importlib.util.spec_from_file_location("relay_under_test", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+real_git = module.git
+def git_with_fifo(root, *args):
+    rc, output = real_git(root, *args)
+    if args == ("ls-files", "--others", "--exclude-standard", "-z"):
+        output += ("" if output.endswith("\0") or not output else "\0") + "untracked.pipe\0"
+    return rc, output
+module.git = git_with_fifo
+snapshot = module.repository_snapshot(Path(sys.argv[2]))
+assert "untracked.pipe" in snapshot["files"]["untracked"]
+'''
+subprocess.run(
+    [sys.executable, "-c", code, sys.argv[1], sys.argv[2]],
+    check=True,
+    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    timeout=3,
+)
+PY
+  rm -f "${RR}/untracked.pipe"
+fi
 echo tampered >> "${RR}/LUCIA_RELAY.md"
 RC=0; RJSON="$("${RELAY}" inspect --root "${RR}" --json)" || RC=$?
 if ! { [ "${RC}" -eq 1 ] && printf '%s' "${RJSON}" | python3 -c 'import json,sys; assert any("does not match" in e for e in json.load(sys.stdin)["errors"])'; }; then
@@ -394,6 +434,18 @@ echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
   || { rm -rf "${RR}"; fail "relay lost staged files in an unborn repository"; }
 rm -rf "${RR}"
 echo "ok  lucia relay lifecycle"
+
+# The public Relay demo drives the real producer/receiver lifecycle rather
+# than printing a canned transcript.
+RDEMO="$(DEMO_PAUSE=0 "${ROOT}/docs/assets/relay-demo.sh")" \
+  || fail "relay demo exited red"
+echo "${RDEMO}" | grep -q 'Repository drift: no' \
+  || fail "relay demo never showed a matching fingerprint"
+echo "${RDEMO}" | grep -q 'Repository drift: yes' \
+  || fail "relay demo never detected drift"
+echo "${RDEMO}" | grep -q 'consumed LUCIA_RELAY.json' \
+  || fail "relay demo did not explicitly consume the verified artifact"
+echo "ok  lucia relay real demo"
 
 # 4c5d. Safe bisect: identifies the first bad commit while preserving the
 # caller branch/worktree and distinguishes a missing verify command
@@ -530,21 +582,53 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   TN="$(basename "${TDIR}")"
   [ -f "${TDIR}PROMPT.md" ] || fail "eval task ${TN}: missing PROMPT.md"
   [ -x "${TDIR}grade.sh" ] || fail "eval task ${TN}: grade.sh missing or not executable"
+  if [ -f "${TDIR}setup.sh" ] && [ ! -x "${TDIR}setup.sh" ]; then
+    fail "eval task ${TN}: setup.sh is not executable"
+  fi
   [ -d "${TDIR}reference" ] || fail "eval task ${TN}: missing reference/"
   [ -d "${TDIR}project" ] || fail "eval task ${TN}: missing project/"
-  OUT="$("${TDIR}grade.sh" "${TDIR}reference" 2>&1)" \
-    || fail "eval grader ${TN} rejects its own reference solution: ${OUT}"
+  # Mirror run.sh: project is the base tree, optional setup creates dynamic
+  # local state, and reference/gamed directories are solution overlays.
+  EWORK="$(mktemp -d)"
+  cp -R "${TDIR}project/." "${EWORK}/"
+  if [ -x "${TDIR}setup.sh" ]; then
+    "${TDIR}setup.sh" "${EWORK}"
+    "${TDIR}setup.sh" "${EWORK}"
+  fi
+  cp -R "${TDIR}reference/." "${EWORK}/"
+  OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" \
+    || { rm -rf "${EWORK}"; fail "eval grader ${TN} rejects its own reference solution: ${OUT}"; }
+  rm -rf "${EWORK}"
   echo "${OUT}" | grep -q '^SCORE ' || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
-  ! "${TDIR}grade.sh" "${TDIR}project" >/dev/null 2>&1 \
-    || fail "eval grader ${TN} passes the unfixed project (grader cannot go red)"
+  EWORK="$(mktemp -d)"
+  cp -R "${TDIR}project/." "${EWORK}/"
+  if [ -x "${TDIR}setup.sh" ]; then
+    "${TDIR}setup.sh" "${EWORK}"
+    "${TDIR}setup.sh" "${EWORK}"
+  fi
+  if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
+    rm -rf "${EWORK}"
+    fail "eval grader ${TN} passes the unfixed project (grader cannot go red)"
+  fi
+  rm -rf "${EWORK}"
   # every gamed*/ cheat variant must be rejected, and at least one must exist —
   # an untested "cannot be gamed" grader may not ship
   GAMED_SEEN=0
   for GD in "${TDIR}"gamed*/; do
     [ -d "${GD}" ] || continue
     GAMED_SEEN=1
-    ! "${TDIR}grade.sh" "${GD}" >/dev/null 2>&1 \
-      || fail "eval grader ${TN} passes its checked-in cheat tree ($(basename "${GD}")/)"
+    EWORK="$(mktemp -d)"
+    cp -R "${TDIR}project/." "${EWORK}/"
+    if [ -x "${TDIR}setup.sh" ]; then
+      "${TDIR}setup.sh" "${EWORK}"
+      "${TDIR}setup.sh" "${EWORK}"
+    fi
+    cp -R "${GD}." "${EWORK}/"
+    if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
+      rm -rf "${EWORK}"
+      fail "eval grader ${TN} passes its checked-in cheat tree ($(basename "${GD}")/)"
+    fi
+    rm -rf "${EWORK}"
   done
   [ "${GAMED_SEEN}" = 1 ] || fail "eval task ${TN}: missing gamed/ cheat tree"
   echo "ok  eval grader ${TN} red/green/anti-gamed"
@@ -837,6 +921,20 @@ assert len({r["invocation_id"] for r in rows}) == 3
 by = {r["arm"]: r for r in rows}
 assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
 assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
+PY
+"${ROOT}/eval/run.sh" --offline --seed relay-fixture-seed \
+  --campaign-id relay-fixture-campaign --out "${OFJ}/relay.jsonl" \
+  relay-transfer >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh skipped or broke task setup"; }
+python3 - "${OFJ}/relay.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "relay offline setup/overlay rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+by = {row["arm"]: row for row in rows}
+assert by["doctrine"]["score"] == "6/6"
+assert by["bare"]["score"] == "1/6"
+assert all(row["invalid"] is False and row["offline"] is True for row in rows)
 PY
 if "${ROOT}/eval/run.sh" --offline --model gpt-5.6-terra false-green \
   >/dev/null 2>&1; then
@@ -1220,6 +1318,11 @@ files = set(pkg["files"])
 for need in ("bin", "claude", "skills", "install.sh", "uninstall.sh",
              "install-codex.sh", "uninstall-codex.sh", "migrations", "CHANGELOG.md"):
     assert need in files, f"files allowlist missing {need} — npx install would ship a broken payload"
+for base in ("bin", "claude", "skills", "migrations"):
+    for directory, subdirs, names in os.walk(os.path.join(root, base)):
+        assert "__pycache__" not in subdirs, f"npm payload contains Python cache dir: {directory}"
+        assert not any(name.endswith((".pyc", ".pyo")) for name in names), \
+            f"npm payload contains Python bytecode: {directory}"
 with open(os.path.join(root, pkg["bin"]["luciazero"])) as f:
     assert f.readline().startswith("#!/usr/bin/env node"), "bin shebang"
 assert os.access(os.path.join(root, pkg["bin"]["luciazero"]), os.X_OK), "bin must be executable"

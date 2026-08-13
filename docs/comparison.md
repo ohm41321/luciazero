@@ -62,11 +62,12 @@ trade-offs below.
 
 - The published campaigns cover six small Python tasks. Haiku has n=10 per arm;
   Sonnet is preliminary at n=4–5 because eight invalid rows could not be
-  replaced from auditable raw data. Three harder candidate tasks now pass
-  offline grader validation but have no model results yet. Larger, multi-language
-  campaigns and independent replications are still needed.
+  replaced from auditable raw data. Three harder coding candidates and one
+  transfer-protocol task now pass offline grader validation but have no model
+  results yet. Larger, multi-language campaigns and independent replications
+  are still needed.
 - No runtime, no orchestration, no durable state — by design, but it means
   this repo alone does not give you overnight autonomy.
-- Ecosystem listing: published on npm (`luciazero` v1.5.0) and the Claude
+- Ecosystem listing: published on npm (`luciazero`) and the Claude
   Code plugin marketplace (`ohm41321/luciazero`), but not yet listed in
   [awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code).

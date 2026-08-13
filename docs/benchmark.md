@@ -11,12 +11,16 @@ JSON label) receives the classic Luciazero install without hooks: doctrine,
 skills, and reviewer. The bare arm receives none of them. Both receive the same
 prompt and are graded from the final tree by an offline deterministic grader.
 This is a treatment-bundle comparison, not a doctrine-only ablation.
+Tasks may run an offline deterministic `setup.sh` before either arm when the
+scenario needs local state that cannot live in a fixture, such as a Git
+repository. Provider transcripts stay outside the worked tree and are never
+part of grading or repository fingerprints.
 
 Every grader is tested three ways in CI:
 
-- the solved `reference/` tree passes;
+- the solved `project/` + `reference/` overlay passes;
 - the unfixed `project/` tree fails; and
-- one or more `gamed*/` trees are rejected.
+- one or more `project/` + `gamed*/` overlays are rejected.
 
 Runs that never produced a valid agent result are marked invalid and excluded.
 See [eval/README.md](../eval/README.md) for commands, costs, and the full honesty
@@ -153,3 +157,18 @@ reasoning setting instead of assuming the highest setting is the best trade-off.
 
 Until the task set can discriminate Terra and every arm has at least five valid
 runs, the honest result is: **GPT/Codex uplift not yet measured.**
+
+## Skill protocol evidence
+
+The `relay-transfer` task adds a direct outcome test for `/lucia-relay`: its
+reference scores 6/6, the empty project and generic Markdown handoff score 1/6,
+and a content-complete relay with a stale commit fingerprint scores 5/6. CI
+recomputes all four results offline on every push. The public demo also drives
+the shipped `draft → render → inspect → consume` implementation in a temporary
+Git repository.
+
+This proves that Relay has a falsifiable transfer contract and that the grader
+can reject two realistic shortcuts. It is **not behavioral model evidence**:
+no Claude or GPT rows exist for this task yet. Existing `false-green`,
+`pipeline`, and `flaky-report` tasks measure `/done` and `/debug` outcomes, but
+final-tree grading cannot prove that a named skill was literally invoked.

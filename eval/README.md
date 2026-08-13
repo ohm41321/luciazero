@@ -13,8 +13,9 @@ Each task under `tasks/<name>/` is a self-contained fixture:
 | `project/` | the starting state the agent works on (contains a planted bug) |
 | `PROMPT.md` | the task, phrased as a normal user request — never hinting at tests or the doctrine |
 | `grade.sh <workdir>` | **offline, deterministic** grader of the worked copy |
-| `reference/` | a solved copy — proves `grade.sh` can pass (used by `test.sh`) |
-| `gamed*/` | hand-built **cheat** trees (one or more: `gamed/`, `gamed-hardcode/`, …) that fool a naive tests-green grader — proves `grade.sh` rejects each (required; enforced by `test.sh`) |
+| `setup.sh <workdir>` | optional offline/idempotent setup for dynamic local state such as a deterministic Git repository; runs before every arm |
+| `reference/` | a solved overlay — proves `grade.sh` can pass when applied to `project/` (used by `test.sh`) |
+| `gamed*/` | hand-built **cheat** overlays (one or more: `gamed/`, `gamed-hardcode/`, …) that fool a naive grader — proves `grade.sh` rejects each (required; enforced by `test.sh`) |
 | `lessons.md` | optional: a pre-seeded `docs/lessons.md` ledger for the `--with-lessons` arm — measures whether the learning layer lifts pass rates over the doctrine alone |
 
 Grading is behavioral, from the final tree only — no transcript parsing.
@@ -35,6 +36,14 @@ and exit zero only on a full score.
 | `archive-security` | ZIP restore permits path and link escapes | security-focused review plus regression-test discipline (rules 3, 4, 7) | traversal variants, link entries, destination symlinks, and all-or-nothing rejection; restored bug must make worked tests red |
 | `schema-migration` | schema upgrade drops extension fields and rewrites in place | preserve scope and contracts; verify failure paths (rules 2, 4, 7) | opaque fields, input immutability, invalid-file preservation, replace-failure injection, idempotence, and restored-bug probe |
 | `paginated-sync` | integration reads one page and can loop on cursors | trace the full contract across files and prove the edge (rules 2, 4, 6) | three-page cursor fidelity, cycle detection before repeated I/O, CLI completeness, immutability, and restored-bug probe |
+| `relay-transfer` | unfinished state must cross a session/agent/harness boundary without transcript dumping | `/lucia-relay` transfer outcome | canonical JSON + matching human view, exact red evidence, one literal next edit, negative knowledge, unchanged task files, and a matching repository fingerprint; generic prose and a stale fingerprint are rejected |
+
+The suite grades outcomes, not whether a slash command literally appeared in a
+transcript. `false-green` is the `/done` outcome test; `pipeline` and
+`flaky-report` probe `/debug` outcomes; `relay-transfer` probes
+`/lucia-relay`. Only Relay produces a durable artifact whose protocol can be
+graded directly. The other tasks cannot prove that a specific skill was
+invoked, and the documentation does not claim that they do.
 
 ## Running
 
@@ -54,9 +63,9 @@ eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
                                            # subscription quota, no API key
 ```
 
-`--offline` needs no `claude` CLI and no API key: doctrine-style arms get the
-task's `reference/` tree, bare keeps the planted bug, and the full
-copy → grade → JSONL → report loop runs in seconds. It exists so anyone can
+`--offline` needs no `claude` CLI and no API key: after optional `setup.sh`,
+doctrine-style arms get the task's `reference/` overlay, bare keeps the planted
+bug, and the full copy → grade → JSONL → report loop runs in seconds. It exists so anyone can
 try the harness before spending money — and it is **synthetic**: rows carry
 `"offline": true` and `report.sh` brands the output `SYNTHETIC OFFLINE
 SMOKE`. Never quote offline numbers as results.
@@ -96,8 +105,8 @@ reported subtype `"success"` around a `Not logged in` error — that arm is
 INVALID too, with the reason quoted (each accept/reject path is
 fixture-proven by `test.sh`). It is deliberately
 not part of `test.sh` or CI — CI only verifies the graders themselves, three
-ways per task, all offline: `reference/` passes, unfixed `project/` fails,
-`gamed/` is rejected.
+ways per task, all offline: the `project/` + `reference/` overlay passes, the
+unfixed `project/` fails, and every `project/` + `gamed*/` overlay is rejected.
 
 For Codex, `--provider codex` defaults to `gpt-5.6-terra` at `medium` effort,
 but publication commands should still spell both out. Each run uses

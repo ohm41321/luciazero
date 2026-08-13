@@ -49,11 +49,24 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 กลไกที่ตรวจด้วยเครื่องรันใน `test.sh`; ข้ออ้างด้านพฤติกรรมวัดด้วย
 [eval harness](eval/README.md)
 
-## ติดตั้ง
+## ส่งงานที่ยังไม่เสร็จข้าม agent
 
-> badge npm แสดง package ที่ publish ล่าสุด จนกว่าจะ tag และ publish `2.0.0`
-> คำสั่ง `npx luciazero` ยังติดตั้ง npm release รุ่นเก่า ส่วนช่องทาง GitHub/plugin
-> ใช้ source ปัจจุบันของ repository นี้
+`/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต
+Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พร้อม human view
+ที่ generate จากไฟล์นั้น ส่วน Session B ตรวจ Git fingerprint, อ่าน next action
+กับสมมติฐานที่ถูกหักล้าง, รัน verification ซ้ำ แล้ว consume relay อย่างชัดเจน
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
+</p>
+
+GIF นี้รัน [implementation ที่ ship จริง](docs/assets/relay-demo.sh) ใน Git
+repository ชั่วคราว Fixture `relay-transfer` ใน CI ให้ reference ที่สมบูรณ์
+6/6 และปฏิเสธ handoff Markdown ทั่วไป (1/6) กับ relay ที่เนื้อหาครบแต่
+fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป็นการตรวจ protocol ด้วยเครื่อง
+**ไม่ใช่ผล uplift ของโมเดล** อ่าน [วิธีวัดและข้อจำกัด](docs/benchmark.md#skill-protocol-evidence)
+
+## ติดตั้ง
 
 ### Claude Code plugin — แนะนำ
 

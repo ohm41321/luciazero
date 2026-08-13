@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "kind": "luciazero-relay",
+  "created_at": "2026-08-13T00:05:00+00:00",
+  "source": {
+    "harness": "reference",
+    "agent": "fixture",
+    "session": "relay-transfer"
+  },
+  "repository": {
+    "head": "0000000000000000000000000000000000000000",
+    "branch": "main",
+    "dirty": false,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "goal": "Make split_fields preserve semicolons inside quoted fields while retaining Python 3.8 compatibility.",
+  "state": {
+    "done": [
+      "Reproduced the quoted-separator failure",
+      "Added a regression test for the failing ASCII input"
+    ],
+    "in_progress": [
+      "The parser implementation is intentionally untouched"
+    ],
+    "next_step": {
+      "kind": "edit",
+      "value": "Edit parser.py to use csv.reader with delimiter=';', then run ./verify.sh"
+    }
+  },
+  "verification": [
+    {
+      "command": "./verify.sh",
+      "exit_code": 1,
+      "decisive_line": "FAIL quoted separator: expected ['alpha', 'bravo;charlie', 'delta']",
+      "run_at": "2026-08-13T00:04:00+00:00"
+    }
+  ],
+  "knowledge": {
+    "read_first": [
+      "docs/lessons.md — quoted delimiters are parser syntax"
+    ],
+    "hypotheses": [
+      {
+        "id": "H1",
+        "claim": "Input encoding corrupts the separator",
+        "status": "refuted",
+        "evidence": "The ASCII fixture fails too"
+      }
+    ],
+    "landmines": [
+      "Keep Python 3.8 compatibility; do not introduce newer syntax"
+    ]
+  },
+  "files": {
+    "modified": [],
+    "untracked": []
+  }
+}

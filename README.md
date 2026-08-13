@@ -49,11 +49,25 @@ This GIF is driven by the shipped hooks, not a mockup:
 Mechanical guarantees run in `test.sh`; behavioral claims are measured by the
 [eval harness](eval/README.md).
 
-## Install
+## Carry unfinished work across agents
 
-> The npm badge shows the latest published package. Until `2.0.0` is tagged and
-> published, `npx luciazero` still installs the older npm release; GitHub/plugin
-> channels use this repository's current source.
+`/lucia-relay` transfers decisions and evidence instead of dumping a chat
+transcript. Session A writes canonical `LUCIA_RELAY.json` plus a generated
+human view; session B checks the Git fingerprint, reads the exact next action
+and refuted hypotheses, re-runs verification, then explicitly consumes the
+relay.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
+</p>
+
+The GIF runs the [shipped implementation](docs/assets/relay-demo.sh) in a
+temporary Git repository. CI's `relay-transfer` fixture scores the complete
+reference 6/6 and rejects a generic Markdown handoff (1/6) plus a
+content-complete but stale fingerprint (5/6). Those are mechanical protocol
+checks—not model-uplift results. See the [method and limits](docs/benchmark.md#skill-protocol-evidence).
+
+## Install
 
 ### Claude Code plugin — recommended
 

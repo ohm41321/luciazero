@@ -7,20 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- Auditable benchmark evidence: canonical Claude raw JSONL, a SHA-256 campaign
-  registry, generated README/benchmark tables, and a CI drift check.
-- Result schema 2 records campaign, pair, invocation, repository, fixture,
-  prompt, platform, and arm-order metadata. Seeded arm randomization reduces
-  fixed-order bias without making campaigns irreproducible.
-- Strict shared result validation rejects unsupported schemas and mistyped
-  booleans, criteria, metrics, timestamps, platform, and campaign metadata.
-  Output-aware `--resume` fills interrupted pairs without rerunning completed
-  invocation IDs; `--run-offset` extends completed batches.
-- Three zero-quota candidate eval tasks cover archive extraction security,
-  lossless atomic schema migration, and multi-page cursor integration. Each
-  grader proves reference/project/anti-gamed behavior offline.
+## [2.0.0] - 2026-08-13
 
 ### Changed
 
@@ -31,11 +18,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hashes, duplicate invocation IDs, and inconsistent pair order. Published
   evidence also enforces registered task/arm/row/invalid/model expectations,
   and discloses Haiku's incomplete per-row model provenance.
-
-## [2.0.0] - 2026-08-12
-
-### Changed
-
+- Eval tasks may provide deterministic offline setup before either arm. Provider
+  transcripts now live outside worked trees so they cannot alter Git status,
+  repository fingerprints, or final-tree grading.
+- Relay fingerprints encode untracked special files without opening them, so a
+  FIFO, socket, or device cannot block inspection or trigger device I/O.
+- GitHub workflows use the Node 24-based `actions/checkout@v5` and
+  `actions/setup-node@v5` runtimes.
 - **Breaking: `/handoff` is now `/lucia-relay`.** The branded name avoids
   collisions with generic handoff skills. Installs remove an untouched v1.5
   copy but preserve and warn about customized copies. Relay state is now a
@@ -56,6 +45,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Auditable benchmark evidence: canonical Claude raw JSONL, a SHA-256 campaign
+  registry, generated README/benchmark tables, and a CI drift check.
+- Result schema 2 records campaign, pair, invocation, repository, fixture,
+  prompt, platform, and arm-order metadata. Seeded arm randomization reduces
+  fixed-order bias without making campaigns irreproducible.
+- Strict shared result validation rejects unsupported schemas and mistyped
+  booleans, criteria, metrics, timestamps, platform, and campaign metadata.
+  Output-aware `--resume` fills interrupted pairs without rerunning completed
+  invocation IDs; `--run-offset` extends completed batches.
+- Three zero-quota candidate eval tasks cover archive extraction security,
+  lossless atomic schema migration, and multi-page cursor integration. Each
+  grader proves reference/project/anti-gamed behavior offline.
+- **`relay-transfer` protocol eval** grades portable state, an exact next edit,
+  verification evidence, negative knowledge, scope preservation, and a current
+  repository fingerprint. CI proves its 6/6 reference and rejects generic
+  prose plus a content-complete stale relay without spending model quota.
+- **Lucia Relay demo** drives the shipped producer/receiver implementation in
+  a temporary Git repository: render, validate, detect drift, re-run evidence,
+  and explicitly consume. The checked-in GIF is generated from the same script
+  exercised by CI.
 - **Central component catalogs** drive classic/Codex install, status,
   uninstall, and inventory tests, so a new skill or agent cannot silently ship
   through only one channel.

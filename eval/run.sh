@@ -45,9 +45,10 @@
 #                 CLI login state, so runs use subscription quota instead of
 #                 an API key. Copies are deleted with the config dir.
 # --offline       synthetic smoke mode, zero API, no agent CLI needed:
-#                 doctrine-style arms get the task's reference/ tree, bare
-#                 keeps the planted bug. Exercises copy -> grade -> JSONL ->
-#                 report end to end. NOT agent behavior: rows are marked
+#                 after optional task setup, doctrine-style arms get the
+#                 task's reference/ overlay; bare keeps the planted bug.
+#                 Exercises copy -> grade -> JSONL -> report end to end.
+#                 NOT agent behavior: rows are marked
 #                 "offline": true and report.sh brands the output SYNTHETIC.
 set -euo pipefail
 
@@ -55,7 +56,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVAL="${ROOT}/eval"
 
 # --output-format json makes the CLI print one result object (usage, cost,
-# turn count) to claude.log; the usage parse below fails open to nulls if an
+# turn count) to the provider log; the usage parse below fails open to nulls if an
 # EVAL_CLAUDE_ARGS override drops it.
 CLAUDE_ARGS=${EVAL_CLAUDE_ARGS:-"--permission-mode bypassPermissions --max-turns 40 --output-format json"}
 
@@ -416,7 +417,16 @@ for TASK in "${TASKS[@]}"; do
       fi
       CFG="$(mktemp -d)"
       WORK="$(mktemp -d)"
+      TRACE="$(mktemp -d)"
       cp -R "${TDIR}/project/." "${WORK}/"
+
+      # A task may need deterministic local state that cannot be stored in the
+      # fixture tree itself (for example, a Git repository). Run setup before
+      # inference and before the offline reference overlay so every arm starts
+      # from the same state. Setup must be offline and idempotent.
+      if [ -x "${TDIR}/setup.sh" ]; then
+        "${TDIR}/setup.sh" "${WORK}"
+      fi
 
       if [ "${USE_LOGIN}" = 1 ]; then
         if [ "${PROVIDER}" = codex ]; then
@@ -440,8 +450,11 @@ for TASK in "${TASKS[@]}"; do
       echo "== ${TASK} / ${ARM} (run ${R}; batch $((R - RUN_OFFSET))/${RUNS}) =="
       RC=0
       T0="$(date +%s)"
-      LOG="${WORK}/agent.log"
-      ERR_LOG="${WORK}/agent.stderr"
+      # Provider transcripts are evidence about the invocation, not task
+      # files. Keeping them outside WORK prevents them from contaminating Git
+      # status, repository fingerprints, or final-tree grading.
+      LOG="${TRACE}/agent.log"
+      ERR_LOG="${TRACE}/agent.stderr"
       if [ "${OFFLINE}" = 1 ]; then
         if [ "${ARM}" != bare ]; then cp -R "${TDIR}/reference/." "${WORK}/"; fi
         printf 'offline smoke — no agent was run\n' > "${LOG}"
@@ -613,6 +626,7 @@ print(json.dumps({"result_schema": 2,
           "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" >> "${OUT_FILE}"
       fi
       echo "   workdir kept for inspection: ${WORK}"
+      echo "   provider logs kept separately: ${TRACE}"
       rm -rf "${CFG}"
       echo
     done

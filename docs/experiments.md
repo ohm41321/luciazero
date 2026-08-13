@@ -17,3 +17,19 @@ Terra screen (one run per arm per new task).
 decision: kept as candidate fixtures because their graders falsify unfixed and
 test-free solutions offline; return to task design if the screen again reaches
 the ceiling.
+
+## 2026-08-13 — Relay transfer has a falsifiable offline contract
+
+change: added `relay-transfer`, a six-criterion protocol task with deterministic
+Git setup, canonical JSON plus generated Markdown, and generic-prose and
+stale-fingerprint cheat overlays.
+
+baseline: no transfer task; Relay's command lifecycle had unit coverage but no
+eval-shaped artifact grader. | result: reference 6/6, untouched project 1/6,
+generic Markdown 1/6, stale fingerprint 5/6.
+
+verdict: WIN — the grader separates a complete current relay from missing and
+stale transfers without model inference.
+
+decision: kept as a candidate behavioral task. These offline scores validate
+the harness only; do not quote them as model uplift.

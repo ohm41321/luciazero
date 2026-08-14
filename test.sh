@@ -1456,10 +1456,13 @@ actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.
 assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
-assert len(skills) == 9, f"expected 9 cataloged skills, found {len(skills)}"
+assert len(skills) == 10, f"expected 10 cataloged skills, found {len(skills)}"
 assert aliases == ["luciazero-bootstrap"], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
-    assert "9 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+    assert "10 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+show = open(os.path.join(root, "skills/show/SKILL.md")).read()
+for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
+    assert contract in show, f"show skill missing output contract: {contract}"
 PY
 if command -v node >/dev/null 2>&1; then
   NB="$(mktemp -d)"

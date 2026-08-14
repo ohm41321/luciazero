@@ -17,7 +17,7 @@ Luciazero ทำให้ coding agent รันลูป `วางแผน �
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
 
 ภายในมี [doctrine 9 ข้อ](claude/luciazero.md) ที่สั้น, skill แบบเรียกเมื่อจำเป็น
-9 ตัว, hook ติดตามการ verify, reviewer ที่ route ตามความเสี่ยง และ eval harness
+10 ตัว, hook ติดตามการ verify, reviewer ที่ route ตามความเสี่ยง และ eval harness
 นี่คือชั้นวินัย ไม่ใช่ agent runtime หรือระบบ orchestration สำหรับรันงานข้ามคืน
 
 ## ดูการทำงานใน 15 วินาที
@@ -90,7 +90,7 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 9 ตัว พร้อม alias `/luciazero-bootstrap`
+ช่องทางนี้ติดตั้งเฉพาะ skill 10 ตัว พร้อม alias `/luciazero-bootstrap`
 ชั่วคราว ไม่มี doctrine, reviewer หรือ hook
 
 ### Classic Claude Code และ Codex
@@ -137,13 +137,14 @@ Claude Code อัปเดต plugin ตอนเริ่มโปรแกร
 ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
 GitHub **Watch → Custom → Releases**
 
-## Skill ทั้ง 9 ตัว
+## Skill ทั้ง 10 ตัว
 
 รัน `/ready` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน
 
 | จังหวะ | Skill | ผลลัพธ์ |
 |---|---|---|
 | เข้า repository | `/ready` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
+| โครงสร้างหรือหลักฐานไล่อ่านยาก | `/show` | แสดงความเชื่อมโยง สิ่งที่เปลี่ยน และหลักฐานด้วยภาพที่เล็กที่สุด |
 | ก่อนงานเสี่ยงหรือหลายขั้น | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
 | บั๊กที่มองรอบแรกไม่ออก | `/debug` | Reproduction, hypothesis ledger, regression test |
 | รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |

@@ -1,5 +1,6 @@
 # Canonical install order. Installers, uninstallers, and tests read this file.
 ready
+show
 plan
 debug
 bisect

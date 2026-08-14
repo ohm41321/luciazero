@@ -1,0 +1,4 @@
+interface:
+  display_name: "Show"
+  short_description: "Map code changes and proof visually"
+  default_prompt: "Use $show to map what connects, what changed, and what proves it."

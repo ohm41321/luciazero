@@ -16,7 +16,7 @@ of handing back work they merely believe is finished.
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
 
-It ships a compact [9-rule doctrine](claude/luciazero.md), 9 on-demand skills,
+It ships a compact [9-rule doctrine](claude/luciazero.md), 10 on-demand skills,
 verification hooks, a risk-routed reviewer, and an eval harness. It is a
 discipline layer, not an agent runtime or overnight orchestrator.
 
@@ -93,7 +93,7 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 9 skills plus the temporary `/luciazero-bootstrap`
+This installs the 10 skills plus the temporary `/luciazero-bootstrap`
 compatibility alias: no doctrine, reviewer, or hooks.
 
 ### Classic Claude Code and Codex
@@ -141,13 +141,14 @@ Claude Code can auto-update the plugin at startup: open `/plugin` →
 marketplaces leave this off by default. For release-only notifications, use
 GitHub **Watch → Custom → Releases**.
 
-## The 9 skills
+## The 10 skills
 
 Run `/ready` first; the rest activate when their moment arrives.
 
 | Moment | Skill | Result |
 |---|---|---|
 | Entering a repository | `/ready` | Finds or creates a verify command and proves it can fail |
+| Structure or evidence is hard to scan | `/show` | Maps connections, changes, and proof into the smallest useful visual |
 | Before risky or multi-step work | `/plan` | Fixes scope and observable acceptance evidence |
 | A bug survives the first look | `/debug` | Reproduction, hypothesis ledger, regression test |
 | Good and bad revisions are known | `/bisect` | Finds the first bad commit in a temporary worktree |

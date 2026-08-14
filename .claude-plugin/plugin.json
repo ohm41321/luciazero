@@ -2,7 +2,7 @@
   "name": "luciazero",
   "displayName": "Luciazero",
   "version": "2.0.3",
-  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 9 skills plus a temporary command alias, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
+  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 10 skills plus a temporary command alias, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "naris", "email": "naris@riverpark.co.th" },
   "license": "MIT",
   "homepage": "https://github.com/ohm41321/luciazero",

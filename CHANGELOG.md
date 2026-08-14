@@ -7,6 +7,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `/show` turns code relationships, structural changes, and verification
+  evidence into the smallest useful traceable visual.
+
 ### Changed
 
 - `/luciazero-bootstrap` is now `/ready`. The old command remains as a

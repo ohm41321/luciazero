@@ -14,6 +14,10 @@ END='<!-- luciazero:end -->'
 MANAGED_DIR="${CODEX_DIR}/.luciazero-managed"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
+skill_inventory() {
+  catalog "${SRC}/skills/catalog.txt"
+  catalog "${SRC}/skills/aliases.txt"
+}
 
 # collision-proof backup path for $1 (two runs in the same second must not overwrite)
 bakpath() {
@@ -48,7 +52,7 @@ rm -f "${CODEX_DIR}/.luciazero-version"
 while IFS= read -r SKILL; do
   remove_managed_tree "${CODEX_DIR}/skills/${SKILL}" \
     "${MANAGED_DIR}/skills/${SKILL}" "${SRC}/skills/${SKILL}" "skills/${SKILL}"
-done < <(catalog "${SRC}/skills/catalog.txt")
+done < <(skill_inventory)
 
 AGENT_STAGE_ROOT="$(mktemp -d)"
 trap 'rm -rf "${AGENT_STAGE_ROOT}"' EXIT

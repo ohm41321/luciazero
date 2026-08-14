@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only evidence scan for luciazero-bootstrap Phase 1.
+# Read-only evidence scan for ready Phase 1.
 # Prints what exists in a repo — docs, manifests, script/target names, CI run
 # lines, test dirs, workspace markers. It surfaces candidates only; it never
 # picks the verify command. Judgment stays with the agent.

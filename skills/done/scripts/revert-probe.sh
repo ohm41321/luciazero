@@ -28,7 +28,7 @@ git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null 2>&1 \
 TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || unassessable "no working tree (bare repo?)"
 cd "${TOP}"
 
-# test-file patterns mirror luciazero-bootstrap's detect.sh: tests-style dirs
+# test-file patterns mirror ready's detect.sh: tests-style dirs
 # plus the common root `test.sh` entrypoint and test_*.*, *_test.*, *.test.*,
 # *.spec.* file names
 is_test_file() {

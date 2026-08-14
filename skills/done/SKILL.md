@@ -12,7 +12,7 @@ The doctrine says: *done is proven by a command, not by my judgment.* This is th
 Run the **full** tier (`verify-full` if the repo has two tiers, else the verify command). Quote the shortest decisive line of real output.
 
 - Red → you are not here yet. Go back to the loop; do not continue this ritual.
-- No verify command exists → that is the first bug (`/luciazero-bootstrap`). Say so instead of declaring done.
+- No verify command exists → that is the first bug (`/ready`). Say so instead of declaring done.
 - The command must actually have run **now**, in this session — a green from an hour ago proves the past, not the present.
 
 ## 2. Skeptic diff pass

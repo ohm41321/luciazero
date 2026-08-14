@@ -24,7 +24,7 @@ Current source files: [`/plan`](../skills/plan/SKILL.md),
 [`/discipline-report`](../skills/discipline-report/SKILL.md),
 [`/lucia-relay`](../skills/lucia-relay/SKILL.md), the
 [`reviewer`](../claude/agents/reviewer.md), and the
-[smart-verification policy](../skills/luciazero-bootstrap/references/smart-verification.md).
+[smart-verification policy](../skills/ready/references/smart-verification.md).
 
 ---
 

@@ -32,7 +32,7 @@ trade-offs below.
    `reference/`, fail its unfixed `project/`, and reject a checked-in
    `gamed/` cheat tree — offline, on every CI push. superpowers' eval lab is
    real but (per its own README) cannot run in public CI.
-3. **Bootstrap ends in falsification.** `/luciazero-bootstrap` finishes by
+3. **Readiness ends in falsification.** `/ready` finishes by
    breaking a covered line to prove verify goes red, and running it twice to
    catch flakes. A verify command that cannot fail is not a verify command.
 4. **Enforcement is instrumented, not prose.** The opt-in pack tracks

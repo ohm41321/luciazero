@@ -83,7 +83,7 @@ Carries the doctrine, all skills, reviewer, and verify-tracking hooks:
 /plugin install luciazero@luciazero
 ```
 
-Start a repository with `/luciazero:luciazero-bootstrap`. Plugin skills use the
+Start a repository with `/luciazero:ready`. Plugin skills use the
 `/luciazero:` prefix. The plugin has no statusline because Claude Code plugins
 cannot set one.
 
@@ -93,7 +93,8 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 9 skills only: no doctrine, reviewer, or hooks.
+This installs the 9 skills plus the temporary `/luciazero-bootstrap`
+compatibility alias: no doctrine, reviewer, or hooks.
 
 ### Classic Claude Code and Codex
 
@@ -142,11 +143,11 @@ GitHub **Watch → Custom → Releases**.
 
 ## The 9 skills
 
-Run `/luciazero-bootstrap` first; the rest activate when their moment arrives.
+Run `/ready` first; the rest activate when their moment arrives.
 
 | Moment | Skill | Result |
 |---|---|---|
-| Entering a repository | `/luciazero-bootstrap` | Finds or creates a verify command and proves it can fail |
+| Entering a repository | `/ready` | Finds or creates a verify command and proves it can fail |
 | Before risky or multi-step work | `/plan` | Fixes scope and observable acceptance evidence |
 | A bug survives the first look | `/debug` | Reproduction, hypothesis ledger, regression test |
 | Good and bad revisions are known | `/bisect` | Finds the first bad commit in a temporary worktree |

@@ -1,5 +1,5 @@
 # Canonical install order. Installers, uninstallers, and tests read this file.
-luciazero-bootstrap
+ready
 plan
 debug
 bisect

@@ -11,6 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
+skill_inventory() {
+  catalog "${ROOT}/skills/catalog.txt"
+  catalog "${ROOT}/skills/aliases.txt"
+}
 
 # The hooks append a stats line to ${CLAUDE_CONFIG_DIR:-~/.claude}; no test is
 # ever allowed to touch the real one, so the whole run gets a sandbox default.
@@ -22,7 +26,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
-         skills/luciazero-bootstrap/scripts/detect.sh
+         skills/ready/scripts/detect.sh
          skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
          claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh
@@ -47,7 +51,7 @@ else
 fi
 
 # 2b. detect.sh runs green against this repo and finds the CI verify command
-OUT="$("${ROOT}/skills/luciazero-bootstrap/scripts/detect.sh" "${ROOT}")" \
+OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${ROOT}")" \
   || fail "detect.sh exited non-zero"
 echo "${OUT}" | grep -q 'test.sh' || fail "detect.sh did not surface test.sh from CI config"
 echo "ok  detect.sh smoke run"
@@ -58,7 +62,7 @@ FX="$(mktemp -d)"
 mkdir -p "${FX}/.github/workflows"
 printf 'jobs:\n  t:\n    steps:\n      - run: npm run canary-cmd\n' > "${FX}/.github/workflows/ci.yml"
 # capture, then grep: grep -q on a pipe would SIGPIPE detect.sh under pipefail
-OUT="$("${ROOT}/skills/luciazero-bootstrap/scripts/detect.sh" "${FX}")" \
+OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${FX}")" \
   || { rm -rf "${FX}"; fail "detect.sh exited non-zero on the fixture"; }
 echo "${OUT}" | grep -q 'canary-cmd' \
   || { rm -rf "${FX}"; fail "detect.sh missed the '- run:' CI form"; }
@@ -76,7 +80,7 @@ while IFS= read -r NAME; do
   head -1 "${SKILL}" | grep -qx -- '---' || fail "${NAME}/SKILL.md missing frontmatter"
   grep -q "^name: ${NAME}\$" "${SKILL}" || fail "${NAME}/SKILL.md missing 'name: ${NAME}'"
   grep -q '^description: .' "${SKILL}" || fail "${NAME}/SKILL.md missing description"
-done < <(catalog "${ROOT}/skills/catalog.txt")
+done < <(skill_inventory)
 while IFS= read -r AGENT_NAME; do
   AGENT="${ROOT}/claude/agents/${AGENT_NAME}.md"
   head -1 "${AGENT}" | grep -qx -- '---' || fail "${AGENT_NAME}.md missing frontmatter"
@@ -1443,14 +1447,17 @@ assert os.access(os.path.join(root, pkg["bin"]["luciazero"]), os.X_OK), "bin mus
 def catalog(rel):
     return [x.strip() for x in open(os.path.join(root, rel)) if x.strip() and not x.lstrip().startswith("#")]
 skills = catalog("skills/catalog.txt")
+aliases = catalog("skills/aliases.txt")
 agents = catalog("claude/agents/catalog.txt")
 actual_skills = sorted(name for name in os.listdir(os.path.join(root, "skills"))
                        if os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")))
 actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.join(root, "claude", "agents"))
                        if name.endswith(".md"))
-assert sorted(skills) == actual_skills, f"skill catalog drift: {skills} != {actual_skills}"
+assert sorted(skills + aliases) == actual_skills, \
+    f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
 assert len(skills) == 9, f"expected 9 cataloged skills, found {len(skills)}"
+assert aliases == ["luciazero-bootstrap"], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
     assert "9 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 PY
@@ -1681,8 +1688,10 @@ CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null
 [ -f "${SB}/luciazero.md" ] || fail "doctrine not installed"
 while IFS= read -r NS; do
   [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
-done < <(catalog "${ROOT}/skills/catalog.txt")
-[ -x "${SB}/skills/luciazero-bootstrap/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
+done < <(skill_inventory)
+[ -x "${SB}/skills/ready/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
+grep -q 'renamed to `/ready`' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
+  || fail "classic compatibility alias missing rename guidance"
 [ -x "${SB}/skills/done/scripts/revert-probe.sh" ] || fail "revert-probe.sh not installed or not executable"
 [ -x "${SB}/skills/bisect/scripts/safe-bisect.sh" ] || fail "safe-bisect.sh not installed or not executable"
 [ -x "${SB}/skills/lucia-relay/scripts/relay.py" ] || fail "relay.py not installed or not executable"
@@ -1734,7 +1743,7 @@ while IFS= read -r NS; do
   else
     [ ! -d "${SB}/skills/${NS}" ] || fail "${NS} skill left behind"
   fi
-done < <(catalog "${ROOT}/skills/catalog.txt")
+done < <(skill_inventory)
 grep -q 'keep customized reviewer' "${SB}/agents/reviewer.md" \
   || fail "classic uninstall deleted a customized managed agent"
 echo "${UOUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
@@ -1869,8 +1878,10 @@ grep -q '^# Luciazero' "${CX}/AGENTS.md" || fail "doctrine not in AGENTS.md"
 [ "$(grep -cF 'luciazero:start' "${CX}/AGENTS.md")" = 1 ] || fail "marker block not added"
 while IFS= read -r NS; do
   [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
-done < <(catalog "${ROOT}/skills/catalog.txt")
-[ -x "${CX}/skills/luciazero-bootstrap/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
+done < <(skill_inventory)
+[ -x "${CX}/skills/ready/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
+grep -q 'renamed to `/ready`' "${CX}/skills/luciazero-bootstrap/SKILL.md" \
+  || fail "codex compatibility alias missing rename guidance"
 [ -x "${CX}/skills/done/scripts/revert-probe.sh" ] || fail "codex revert-probe.sh not installed or not executable"
 [ -x "${CX}/skills/bisect/scripts/safe-bisect.sh" ] || fail "codex safe-bisect.sh not installed or not executable"
 [ -x "${CX}/skills/lucia-relay/scripts/relay.py" ] || fail "codex relay.py not installed or not executable"
@@ -1899,7 +1910,7 @@ while IFS= read -r NS; do
   else
     [ ! -d "${CX}/skills/${NS}" ] || fail "codex ${NS} skill left behind"
   fi
-done < <(catalog "${ROOT}/skills/catalog.txt")
+done < <(skill_inventory)
 [ ! -d "${CX}/skills/reviewer" ] || fail "codex reviewer skill left behind"
 echo "${COUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
   || fail "codex uninstall did not explain preserved customizations"

@@ -29,11 +29,12 @@ declined:
   growth into a red build: cut a word to add a word. The doctrine's text
   also stays platform-neutral (no Claude-only vocabulary) because it ships
   verbatim to Codex.
-- **The skill stays language-agnostic.** `/luciazero-bootstrap` detects; it
+- **The skill stays language-agnostic.** `/ready` detects; it
   never assumes an ecosystem. No "run pytest" without first checking the
   repo is Python.
-- **Component catalogs are authoritative.** When adding or removing a skill
-  or Claude agent, update `skills/catalog.txt` or
+- **Component catalogs are authoritative.** When adding or removing a skill,
+  compatibility alias, or Claude agent, update `skills/catalog.txt`,
+  `skills/aliases.txt`, or
   `claude/agents/catalog.txt`. Install, status, uninstall, and `test.sh` read
   them; the test rejects inventory drift across both harnesses.
 - **Scripts stay idempotent and contained.** `install.sh`/`uninstall.sh`

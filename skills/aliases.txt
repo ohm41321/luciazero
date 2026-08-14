@@ -1,0 +1,2 @@
+# Temporary compatibility aliases. Remove luciazero-bootstrap after one release.
+luciazero-bootstrap

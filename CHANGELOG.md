@@ -7,6 +7,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `/luciazero-bootstrap` is now `/ready`. The old command remains as a
+  deprecated compatibility alias for one release.
+
 ## [2.0.3] - 2026-08-13
 
 ### Fixed

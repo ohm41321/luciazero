@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove the Luciazero doctrine + bootstrap skill from ~/.claude/
+# Remove the Luciazero doctrine + skills from ~/.claude/
 set -euo pipefail
 
 for ARG in "$@"; do
@@ -14,6 +14,10 @@ GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
 MANAGED_DIR="${CLAUDE_DIR}/.luciazero-managed"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
+skill_inventory() {
+  catalog "${SRC}/skills/catalog.txt"
+  catalog "${SRC}/skills/aliases.txt"
+}
 
 # collision-proof backup path for $1 (two runs in the same second must not overwrite)
 bakpath() {
@@ -66,7 +70,7 @@ rm -f "${CLAUDE_DIR}/.luciazero-version"
 while IFS= read -r SKILL; do
   remove_managed_tree "${CLAUDE_DIR}/skills/${SKILL}" \
     "${MANAGED_DIR}/skills/${SKILL}" "${SRC}/skills/${SKILL}" "skills/${SKILL}"
-done < <(catalog "${SRC}/skills/catalog.txt")
+done < <(skill_inventory)
 
 while IFS= read -r AGENT_NAME; do
   remove_managed_file "${CLAUDE_DIR}/agents/${AGENT_NAME}.md" \

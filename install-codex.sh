@@ -4,7 +4,7 @@
 #
 # Mapping (single source of truth stays in claude/):
 #   claude/luciazero.md        -> marker block in ~/.codex/AGENTS.md
-#   skills/catalog.txt entries           -> ~/.codex/skills/<each>/
+#   skills/catalog.txt + aliases.txt     -> ~/.codex/skills/<each>/
 #   claude/agents/catalog.txt entries     -> ~/.codex/skills/<agent>/SKILL.md
 #                                           (Claude-only `tools:`/`model:` lines dropped)
 #   claude/hooks/ (enforcement pack)     -> NOT installed: Codex has no hooks/statusline
@@ -23,6 +23,10 @@ MANAGED_DIR="${CODEX_DIR}/.luciazero-managed"
 BACKUP_DIR="${CODEX_DIR}/.luciazero-backups"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
+skill_inventory() {
+  catalog "${SRC}/skills/catalog.txt"
+  catalog "${SRC}/skills/aliases.txt"
+}
 
 # collision-proof backup path for $1 (two runs in the same second must not overwrite)
 bakpath() {
@@ -93,7 +97,7 @@ while IFS= read -r SKILL; do
     "${MANAGED_DIR}/skills/${SKILL}" \
     "skills/${SKILL}"
   echo "  ok  skills/${SKILL}"
-done < <(catalog "${SRC}/skills/catalog.txt")
+done < <(skill_inventory)
 
 LEGACY_HANDOFF="${CODEX_DIR}/skills/handoff"
 if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then

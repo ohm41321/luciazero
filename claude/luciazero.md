@@ -5,7 +5,7 @@ Applies to every repo, every session. The loop is plan → change → verify →
 ## Ground truth
 
 1. **Done is proven by a command, not by my judgment.** Before saying a change works, run something that returns an exit code — test, lint, type-check, build, or a real invocation — and quote the shortest decisive line of its output. A run that did not happen is reported as exactly that. (closeout procedure: `/done`)
-2. **If no verification command exists, that is the first bug.** Say so and offer to create the smallest one that covers the change (procedure: `/luciazero-bootstrap`). Do not silently proceed on vibes.
+2. **If no verification command exists, that is the first bug.** Say so and offer to create the smallest one that covers the change (procedure: `/ready`). Do not silently proceed on vibes.
 3. **Failing test/lint means not done.** Fix the cause. Never delete, skip, weaken, or suppress a check to reach green — if a check is genuinely wrong, say why and ask.
 
 ## Loop

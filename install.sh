@@ -29,6 +29,10 @@ MANAGED_DIR="${CLAUDE_DIR}/.luciazero-managed"
 BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
+skill_inventory() {
+  catalog "${SRC}/skills/catalog.txt"
+  catalog "${SRC}/skills/aliases.txt"
+}
 
 # newest released version in this checkout's CHANGELOG (informational)
 version_of() {
@@ -50,8 +54,8 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   check -f "${CLAUDE_DIR}/${DOCTRINE}" "doctrine ${DOCTRINE}"
   while IFS= read -r SKILL; do
     check -f "${CLAUDE_DIR}/skills/${SKILL}/SKILL.md" "skill ${SKILL}"
-  done < <(catalog "${SRC}/skills/catalog.txt")
-  check -x "${CLAUDE_DIR}/skills/luciazero-bootstrap/scripts/detect.sh" "detect.sh executable"
+  done < <(skill_inventory)
+  check -x "${CLAUDE_DIR}/skills/ready/scripts/detect.sh" "detect.sh executable"
   check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.sh" "revert-probe.sh executable"
   check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.sh" "safe-bisect.sh executable"
   check -x "${CLAUDE_DIR}/skills/lucia-relay/scripts/relay.py" "relay.py executable"
@@ -187,14 +191,14 @@ install_file "${SRC}/claude/${DOCTRINE}" "${CLAUDE_DIR}/${DOCTRINE}" \
   "${MANAGED_DIR}/${DOCTRINE}" "${DOCTRINE}"
 echo "  ok  ${DOCTRINE}"
 
-# 2. skills — catalog.txt is the single install/status/uninstall inventory
+# 2. canonical skills plus temporary compatibility aliases
 while IFS= read -r SKILL; do
   install_tree "${SRC}/skills/${SKILL}" \
     "${CLAUDE_DIR}/skills/${SKILL}" \
     "${MANAGED_DIR}/skills/${SKILL}" \
     "skills/${SKILL}"
   echo "  ok  skills/${SKILL}"
-done < <(catalog "${SRC}/skills/catalog.txt")
+done < <(skill_inventory)
 
 # v1.5 migration: remove only an untouched Luciazero /handoff. A customized
 # skill is user data and stays in place with an explicit warning.
@@ -323,6 +327,7 @@ echo
 SKILL_SUMMARY="$(catalog "${SRC}/skills/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") "/" $0} END{print s}')"
 AGENT_SUMMARY="$(catalog "${SRC}/claude/agents/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") $0} END{print s}')"
 echo "Skills: ${SKILL_SUMMARY}. Agents: ${AGENT_SUMMARY}."
+echo "Compatibility alias for one release: /luciazero-bootstrap -> /ready."
 if [ "${WITH_HOOKS}" = 1 ]; then
   echo "Enforcement pack installed: verify-tracking hooks + statusline (see settings.json)."
 else

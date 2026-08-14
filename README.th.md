@@ -81,7 +81,7 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 /plugin install luciazero@luciazero
 ```
 
-เริ่ม repo ด้วย `/luciazero:luciazero-bootstrap` ชื่อ skill แบบ plugin มี prefix
+เริ่ม repo ด้วย `/luciazero:ready` ชื่อ skill แบบ plugin มี prefix
 `/luciazero:` และไม่มี statusline เพราะ Claude Code plugin ตั้งค่านี้ไม่ได้
 
 ### เฉพาะ skill — agent ที่รองรับ
@@ -90,7 +90,8 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 9 ตัว ไม่มี doctrine, reviewer หรือ hook
+ช่องทางนี้ติดตั้งเฉพาะ skill 9 ตัว พร้อม alias `/luciazero-bootstrap`
+ชั่วคราว ไม่มี doctrine, reviewer หรือ hook
 
 ### Classic Claude Code และ Codex
 
@@ -138,11 +139,11 @@ GitHub **Watch → Custom → Releases**
 
 ## Skill ทั้ง 9 ตัว
 
-รัน `/luciazero-bootstrap` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน
+รัน `/ready` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน
 
 | จังหวะ | Skill | ผลลัพธ์ |
 |---|---|---|
-| เข้า repository | `/luciazero-bootstrap` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
+| เข้า repository | `/ready` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
 | ก่อนงานเสี่ยงหรือหลายขั้น | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
 | บั๊กที่มองรอบแรกไม่ออก | `/debug` | Reproduction, hypothesis ledger, regression test |
 | รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |

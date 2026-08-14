@@ -1693,7 +1693,7 @@ while IFS= read -r NS; do
   [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${SB}/skills/ready/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
-grep -q 'renamed to `/ready`' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
+grep -Fq "renamed to \`/ready\`" "${SB}/skills/luciazero-bootstrap/SKILL.md" \
   || fail "classic compatibility alias missing rename guidance"
 [ -x "${SB}/skills/done/scripts/revert-probe.sh" ] || fail "revert-probe.sh not installed or not executable"
 [ -x "${SB}/skills/bisect/scripts/safe-bisect.sh" ] || fail "safe-bisect.sh not installed or not executable"
@@ -1883,7 +1883,7 @@ while IFS= read -r NS; do
   [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${CX}/skills/ready/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
-grep -q 'renamed to `/ready`' "${CX}/skills/luciazero-bootstrap/SKILL.md" \
+grep -Fq "renamed to \`/ready\`" "${CX}/skills/luciazero-bootstrap/SKILL.md" \
   || fail "codex compatibility alias missing rename guidance"
 [ -x "${CX}/skills/done/scripts/revert-probe.sh" ] || fail "codex revert-probe.sh not installed or not executable"
 [ -x "${CX}/skills/bisect/scripts/safe-bisect.sh" ] || fail "codex safe-bisect.sh not installed or not executable"

@@ -12,6 +12,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Validate release versions
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const tag = process.env.RELEASE_TAG.replace(/^v/, "");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const plugin = JSON.parse(
+            fs.readFileSync(".claude-plugin/plugin.json", "utf8")
+          ).version;
+          const changelog = fs
+            .readFileSync("CHANGELOG.md", "utf8")
+            .match(/^## \[(\d+\.\d+\.\d+(?:-[^\]]+)?)\]/m)?.[1];
+          for (const [source, version] of Object.entries({pkg, plugin, changelog})) {
+            if (version !== tag) {
+              throw new Error(`${source} version ${version} != tag ${tag}`);
+            }
+          }
+          console.log(`release versions agree: ${tag}`);
+          NODE
       - name: Run verify
         run: ./test.sh
       - name: Build zip

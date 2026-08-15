@@ -1550,6 +1550,20 @@ assert len(skills) == 11, f"expected 11 cataloged skills, found {len(skills)}"
 assert aliases == ["luciazero-bootstrap"], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
     assert "11 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+publishing = open(os.path.join(root, "docs/publishing.md")).read()
+assert "carries the 11 skills" in publishing, "publishing channel skill count drift"
+release_workflow = open(os.path.join(root, ".github/workflows/release.yml")).read()
+gate = release_workflow.find("- name: Validate release versions")
+publish = release_workflow.find("- name: Publish GitHub Release")
+assert 0 <= gate < publish, "release version gate must run before GitHub publishing"
+gate_end = release_workflow.find("\n      - name:", gate + 1)
+assert gate_end > gate, "release version gate boundary missing"
+gate_block = release_workflow[gate:gate_end]
+for token in ("RELEASE_TAG: ${{ github.ref_name }}", "package.json",
+              ".claude-plugin/plugin.json", "CHANGELOG.md"):
+    assert token in gate_block, f"release version gate missing {token}"
+assert "\\d+\\.\\d+\\.\\d+" in gate_block, \
+    "release version gate must skip the Unreleased changelog heading"
 show = open(os.path.join(root, "skills/show/SKILL.md")).read()
 for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
     assert contract in show, f"show skill missing output contract: {contract}"

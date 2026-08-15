@@ -49,8 +49,9 @@ To get listed in Anthropic's catalogs (†):
   is the long-term target.
 - Review criteria they state: valid manifest, no file access outside the
   plugin dir, clear skill instructions, adequate README. Note for the
-  submission: our hooks keep verify-state under `$TMPDIR/luciazero-verify-state`
-  (never the repo), and the strict gate only runs a command the *user* set via
+  submission: our hooks keep verify-state under a user-owned
+  `$TMPDIR/luciazero-verify-state-<uid>` directory (never the repo), and the
+  strict gate only runs a command the *user* set via
   `LUCIAZERO_STRICT_VERIFY_CMD`.
 
 ## 2. `npx skills add ohm41321/luciazero` (live the moment the repo is public)

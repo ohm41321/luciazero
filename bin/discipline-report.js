@@ -56,12 +56,20 @@ function parseLine(line) {
     if (Number.isNaN(timestamp.valueOf()) || typeof row.project_id !== "string" || typeof row.project !== "string") {
       return { malformed: true };
     }
+    let telemetry = null;
+    if (row.telemetry && typeof row.telemetry === "object") {
+      const keys = ["turn_ms", "bash_ms", "bash_count", "verify_count", "skill_count"];
+      if (keys.every((key) => Number.isSafeInteger(row.telemetry[key]) && row.telemetry[key] >= 0)) {
+        telemetry = Object.fromEntries(keys.map((key) => [key, row.telemetry[key]]));
+      }
+    }
     return {
       timestamp,
       event: row.event,
       project: row.project,
       projectId: row.project_id,
       verifyMode: ["regex", "exact", "strict"].includes(row.verify_mode) ? row.verify_mode : "unknown",
+      telemetry,
       legacy: false,
     };
   }
@@ -75,6 +83,7 @@ function parseLine(line) {
     project: match[3],
     projectId: `legacy-${crypto.createHash("sha256").update(match[3]).digest("hex").slice(0, 12)}`,
     verifyMode: "unknown",
+    telemetry: null,
     legacy: true,
   };
 }
@@ -111,10 +120,23 @@ if (options.project) {
 
 const counts = { "stop-clean": 0, nudge: 0, "strict-block": 0 };
 const modes = { regex: 0, exact: 0, strict: 0, unknown: 0 };
+const telemetry = {
+  measured_turns: 0, turn_ms: 0, bash_ms: 0, non_bash_ms: 0,
+  bash_count: 0, verify_count: 0, skill_count: 0,
+};
 const projects = new Map();
 for (const row of rows) {
   counts[row.event] += 1;
   modes[row.verifyMode] = (modes[row.verifyMode] || 0) + 1;
+  if (row.telemetry) {
+    telemetry.measured_turns += 1;
+    telemetry.turn_ms += row.telemetry.turn_ms;
+    telemetry.bash_ms += row.telemetry.bash_ms;
+    telemetry.non_bash_ms += Math.max(0, row.telemetry.turn_ms - row.telemetry.bash_ms);
+    telemetry.bash_count += row.telemetry.bash_count;
+    telemetry.verify_count += row.telemetry.verify_count;
+    telemetry.skill_count += row.telemetry.skill_count;
+  }
   const current = projects.get(row.projectId) || {
     project: row.project,
     project_id: row.projectId,
@@ -160,6 +182,7 @@ const report = {
   legacy_records: legacyRecords,
   outcomes: counts,
   verify_modes: modes,
+  telemetry,
   top_nudged_projects: topNudged,
   recommendations,
 };
@@ -181,6 +204,18 @@ console.log("Stop Outcomes:");
 console.log(`  Clean stops:   ${String(counts["stop-clean"]).padStart(5)} (${percent(counts["stop-clean"])})`);
 console.log(`  Nudges:        ${String(counts.nudge).padStart(5)} (${percent(counts.nudge)})`);
 console.log(`  Strict blocks: ${String(counts["strict-block"]).padStart(5)} (${percent(counts["strict-block"])})`);
+console.log("");
+console.log("Latency Telemetry:");
+if (telemetry.measured_turns === 0) {
+  console.log("  No measured turns (new hooks collect this locally).");
+} else {
+  const average = (value) => Math.round(value / telemetry.measured_turns);
+  console.log(`  Measured turns:    ${telemetry.measured_turns}`);
+  console.log(`  Average turn:      ${average(telemetry.turn_ms)} ms`);
+  console.log(`  Average Bash time: ${average(telemetry.bash_ms)} ms`);
+  console.log(`  Average non-Bash:  ${average(telemetry.non_bash_ms)} ms`);
+  console.log(`  Bash / verify / skill calls: ${telemetry.bash_count} / ${telemetry.verify_count} / ${telemetry.skill_count}`);
+}
 console.log("");
 console.log("Top Nudged Repositories:");
 if (topNudged.length === 0) console.log("  None in the selected period.");

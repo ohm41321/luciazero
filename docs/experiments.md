@@ -1,5 +1,24 @@
 # Experiment log
 
+## 2026-08-15 — a core fast tier cuts intermediate verification latency
+
+change: added `./test.sh --fast`, stopping after doctrine, hook/report,
+Relay, bisect, learning-layer, and benchmark-integrity checks; the default and
+`--full` continue through eval, packaging, and install-cycle coverage.
+
+baseline: pre-change full 29.02s, 26.97s, 27.12s (mean 27.70s) | result:
+final fast 13.02s, 12.83s, 13.04s (mean 12.96s).
+
+verdict: WIN 53.2% — the improvement exceeds the predeclared 50% threshold
+and the measured ranges do not overlap.
+
+cost note: 10 instrumented Bash pre/post hook pairs took 2.00s on the same
+machine (~200ms per Bash call). Telemetry is therefore opt-in and its own hook
+time remains part of the report's non-Bash remainder.
+
+decision: kept — use fast or a narrower relevant check during iteration and
+reserve full verification for CI and closeout.
+
 ## 2026-08-12 — harder tasks may discriminate capable coding agents
 
 change: added `archive-security`, `schema-migration`, and `paginated-sync`, each

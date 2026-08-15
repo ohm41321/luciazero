@@ -7,15 +7,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-15
+
 ### Added
 
 - `/show` turns code relationships, structural changes, and verification
   evidence into the smallest useful traceable visual.
+- `./test.sh --fast` provides a measured intermediate tier while the default
+  and `--full` preserve complete CI/closeout coverage.
+- Opt-in Claude hooks use private per-session scratch state to record
+  privacy-preserving aggregate turn/merged-Bash wall time and Bash, failed or
+  successful verify, and model/user skill counts; `luciazero discipline`
+  summarizes them.
 
 ### Changed
 
 - `/luciazero-bootstrap` is now `/ready`. The old command remains as a
   deprecated compatibility alias for one release.
+- The doctrine reserves full verification for closeout, and `/plan` plus
+  `/debug` no longer auto-trigger for routine edits or first obvious failures.
 
 ## [2.0.3] - 2026-08-13
 

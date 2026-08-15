@@ -145,7 +145,7 @@ GitHub **Watch → Custom → Releases**
 |---|---|---|
 | เข้า repository | `/ready` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
 | โครงสร้างหรือหลักฐานไล่อ่านยาก | `/show` | แสดงความเชื่อมโยง สิ่งที่เปลี่ยน และหลักฐานด้วยภาพที่เล็กที่สุด |
-| ก่อนงานเสี่ยงหรือหลายขั้น | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
+| ก่อนงานเสี่ยง กำกวม หรือแตะหลาย module | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
 | บั๊กที่มองรอบแรกไม่ออก | `/debug` | Reproduction, hypothesis ledger, regression test |
 | รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |
 | ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
@@ -202,6 +202,9 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 - Installer, hook, helper และ grader หลักรัน offline ส่วน behavioral eval จริง
   เรียก model CLI และใช้เครดิต API หรือโควตา subscription
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
+- Telemetry ของ hook อยู่ใน private state แยกตาม session ภายในเครื่อง เก็บเวลา
+  wall time ของ turn/Bash และจำนวน Bash, verify, skill ที่ model/user เรียก
+  โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
@@ -211,12 +214,15 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 ## พัฒนา repo นี้
 
 ```bash
-./test.sh
+./test.sh --fast   # loop ระหว่างทำ: ตรวจ doctrine/hook/report/Relay ส่วนหลัก
+./test.sh          # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
 ```
 
-ชุดทดสอบครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ plugin/npm,
-eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall แบบ sandbox
-ทั้ง Claude Code และ Codex
+fast tier เป็นคำสั่งระหว่างทำงานของ repo นี้; ถ้าแก้ส่วนที่ fast tier ไม่ครอบคลุม
+ให้ใช้คำสั่ง targeted ของส่วนนั้น ส่วน full tier (`./test.sh` หรือ
+`./test.sh --full`) ครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ
+plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
+แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier
 
 อ่านต่อ:
 

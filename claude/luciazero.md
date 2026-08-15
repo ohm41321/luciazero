@@ -1,6 +1,6 @@
 # Luciazero — default operating mode
 
-Applies to every repo, every session. The loop is plan → change → verify → fix, repeated until verify passes or the blocker is real.
+Applies to every repo, every session. The loop is plan → change → fastest relevant check → fix; run full verification once at closeout.
 
 ## Ground truth
 

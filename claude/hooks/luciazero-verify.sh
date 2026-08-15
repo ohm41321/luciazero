@@ -5,8 +5,13 @@
 # ("done is proven by a command") at the exact moment it is most violated.
 #
 # Subcommands (wired in settings.json):
+#   prompt  — UserPromptSubmit: start privacy-preserving turn telemetry
+#   bash-start — PreToolUse on Bash: start shell-command timing
 #   edit    — PostToolUse on Edit|Write|NotebookEdit : record "an edit happened"
-#   bash    — PostToolUse on Bash                    : record verify runs + status
+#   bash    — PostToolUse on Bash: record duration, verify runs, and status
+#   bash-failure — PostToolUseFailure on Bash: record failed commands
+#   skill   — PostToolUse on Skill: count model-invoked skills
+#   skill-prompt — UserPromptExpansion: count user-invoked slash skills
 #   stop    — Stop                                   : warn once if edits are unverified
 #   session — SessionStart                           : point at an existing Lucia Relay
 #   doctrine— SessionStart (plugin installs only)    : emit the doctrine as context
@@ -29,8 +34,8 @@
 # stop hook appends one schema-versioned JSON line per stop outcome
 # (stop-clean / nudge / strict-block) to luciazero-stats.log in the harness
 # config dir — local only, capped at ~250 lines, fail-open. It records a
-# privacy-preserving project hash and verify mode, never the project path or
-# command. Uninstall keeps it (it is learned data).
+# privacy-preserving project hash, verify mode, and aggregate latency/counts;
+# never the project path, command, or skill name. Uninstall keeps it.
 set -u
 
 MODE="${1:-}"
@@ -79,8 +84,54 @@ CWD="$(pyfield "d.get('cwd')")"
 [ -n "${CWD}" ] || CWD="${PWD}"
 KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)" || exit 0
 [ -n "${KEY}" ] || exit 0
-STATE="${TMPDIR:-/tmp}/luciazero-verify-state/${KEY}"
+BASE="${TMPDIR:-/tmp}/luciazero-verify-state-$(id -u 2>/dev/null || echo unknown)"
+# The base name is predictable, so validate ownership/type before touching it.
+# A hostile pre-created symlink or directory makes the hook fail open.
+python3 - "${BASE}" <<'PY' 2>/dev/null || exit 0
+import os, stat, sys
+path = sys.argv[1]
+try:
+    info = os.lstat(path)
+except FileNotFoundError:
+    os.mkdir(path, 0o700)
+    info = os.lstat(path)
+if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+    raise SystemExit(1)
+if hasattr(os, "getuid") and info.st_uid != os.getuid():
+    raise SystemExit(1)
+os.chmod(path, 0o700)
+PY
+STATE="${BASE}/${KEY}"
 mkdir -p "${STATE}" 2>/dev/null || exit 0
+chmod 700 "${STATE}" 2>/dev/null || exit 0
+SESSION_RAW="$(pyfield "d.get('session_id')")"
+[ -n "${SESSION_RAW}" ] || SESSION_RAW="parent-${PPID}"
+SESSION_KEY="$(printf '%s' "${SESSION_RAW}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])' 2>/dev/null)" || exit 0
+TELEMETRY="${STATE}/telemetry/${SESSION_KEY}"
+
+tool_key() { # stable opaque key; raw tool input never leaves temporary state
+  RAW="$(pyfield "d.get('tool_use_id') or d.get('tool_input', {}).get('command') or d.get('tool_input', {}).get('skill') or d.get('command_name') or d.get('prompt') or d.get('command')")"
+  [ -n "${RAW}" ] || RAW=unknown
+  printf '%s' "${RAW}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])' 2>/dev/null
+}
+
+now_ms() {
+  python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null
+}
+
+record_strict_telemetry() { # record_strict_telemetry <start-ms>
+  STRICT_END_MS="$(now_ms || true)"
+  case "${1:-}:${STRICT_END_MS}" in
+    *[!0-9:]*|:|*:|*::* ) return ;;
+  esac
+  [ "${STRICT_END_MS}" -ge "$1" ] 2>/dev/null || return
+  mkdir -p "${TELEMETRY}/bash_count" "${TELEMETRY}/bash_intervals" \
+    "${TELEMETRY}/verify_count" 2>/dev/null || return
+  : > "${TELEMETRY}/bash_count/strict-gate" 2>/dev/null || true
+  : > "${TELEMETRY}/verify_count/strict-gate" 2>/dev/null || true
+  printf '%s %s\n' "$1" "${STRICT_END_MS}" \
+    > "${TELEMETRY}/bash_intervals/strict-gate" 2>/dev/null || true
+}
 
 stat_log() { # stat_log <event> — discipline stats; fail-open, capped
   SDIR="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
@@ -88,9 +139,9 @@ stat_log() { # stat_log <event> — discipline stats; fail-open, capped
   VMODE=regex
   [ -n "${VERIFY_CMD:-}" ] && VMODE=exact
   [ -n "${LUCIAZERO_STRICT_VERIFY_CMD:-}" ] && VMODE=strict
-  python3 - "${SFILE}" "${CWD}" "$1" "${VMODE}" <<'PY' 2>/dev/null || true
+  python3 - "${SFILE}" "${CWD}" "$1" "${VMODE}" "${TELEMETRY}" <<'PY' 2>/dev/null || true
 import datetime, hashlib, json, os, sys
-path, cwd, event, mode = sys.argv[1:]
+path, cwd, event, mode, telemetry_dir = sys.argv[1:]
 os.makedirs(os.path.dirname(path), exist_ok=True)
 real = os.path.realpath(cwd)
 row = {
@@ -101,6 +152,47 @@ row = {
     "project": os.path.basename(real) or "(root)",
     "verify_mode": mode,
 }
+def read_int(path):
+    try:
+        value = int(open(path, encoding="utf-8").read().strip())
+        return value if value >= 0 else None
+    except (OSError, ValueError):
+        return None
+def count_files(name):
+    try:
+        return sum(os.path.isfile(os.path.join(telemetry_dir, name, item))
+                   for item in os.listdir(os.path.join(telemetry_dir, name)))
+    except OSError:
+        return 0
+start = read_int(os.path.join(telemetry_dir, "turn_start_ms"))
+if start is not None:
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+    intervals = []
+    try:
+        interval_dir = os.path.join(telemetry_dir, "bash_intervals")
+        for item in os.listdir(interval_dir):
+            try:
+                a, b = map(int, open(os.path.join(interval_dir, item), encoding="utf-8").read().split())
+            except (OSError, ValueError):
+                continue
+            if 0 <= a <= b:
+                intervals.append((max(start, a), min(now, b)))
+    except OSError:
+        pass
+    merged = []
+    for a, b in sorted((a, b) for a, b in intervals if a <= b):
+        if not merged or a > merged[-1][1]:
+            merged.append([a, b])
+        else:
+            merged[-1][1] = max(merged[-1][1], b)
+    bash_ms = sum(b - a for a, b in merged)
+    row["telemetry"] = {
+        "turn_ms": max(0, now - start),
+        "bash_ms": bash_ms,
+        "bash_count": count_files("bash_count"),
+        "verify_count": count_files("verify_count"),
+        "skill_count": count_files("skill_count"),
+    }
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(row, separators=(",", ":")) + "\n")
 with open(path, encoding="utf-8", errors="replace") as handle:
@@ -123,6 +215,18 @@ VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-verify|test\.sh|pytest|npm (run )?test|pnpm
 VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
 
 case "${MODE}" in
+  prompt)
+    # Per-turn scratch data is ephemeral. Persistent rows keep aggregates only.
+    rm -rf "${TELEMETRY}" 2>/dev/null || exit 0
+    mkdir -p "${TELEMETRY}" 2>/dev/null || exit 0
+    now_ms > "${TELEMETRY}/turn_start_ms" 2>/dev/null || true
+    ;;
+  bash-start)
+    TK="$(tool_key)" || exit 0
+    mkdir -p "${TELEMETRY}/bash_start_ms" "${TELEMETRY}/bash_count" 2>/dev/null || exit 0
+    now_ms > "${TELEMETRY}/bash_start_ms/${TK}" 2>/dev/null || true
+    : > "${TELEMETRY}/bash_count/${TK}" 2>/dev/null || true
+    ;;
   edit)
     # Documentation writes do not re-arm the nudge: the closeout skills
     # Closeout skills write docs AFTER the final green verify. Relay's JSON is
@@ -141,7 +245,20 @@ case "${MODE}" in
         ;;
     esac
     ;;
-  bash)
+  bash|bash-failure)
+    TK="$(tool_key)" || TK=unknown
+    mkdir -p "${TELEMETRY}/bash_count" "${TELEMETRY}/bash_intervals" 2>/dev/null || true
+    : > "${TELEMETRY}/bash_count/${TK}" 2>/dev/null || true
+    START_MS="$(cat "${TELEMETRY}/bash_start_ms/${TK}" 2>/dev/null || true)"
+    END_MS="$(now_ms || true)"
+    case "${START_MS}:${END_MS}" in
+      *[!0-9:]*|:|*:|*::* ) : ;;
+      *)
+        if [ "${END_MS}" -ge "${START_MS}" ] 2>/dev/null; then
+          printf '%s %s\n' "${START_MS}" "${END_MS}" > "${TELEMETRY}/bash_intervals/${TK}" 2>/dev/null || true
+        fi
+        ;;
+    esac
     CMD="$(pyfield "d.get('tool_input', {}).get('command')")"
     IS_VERIFY=no
     if [ -n "${CMD}" ]; then
@@ -155,14 +272,30 @@ case "${MODE}" in
       fi
     fi
     if [ "${IS_VERIFY}" = yes ]; then
-      # Best-effort red/green from the tool response; unknown shape -> "ran"
-      STATUS="$(pyfield "(lambda r, c=None: (lambda c: 'ok' if c == 0 else ('fail' if isinstance(c, int) else ('fail' if r.get('is_error') is True else 'ran')))(r.get('exit_code', r.get('exitCode'))))(d.get('tool_response') or {})")"
+      mkdir -p "${TELEMETRY}/verify_count" 2>/dev/null || true
+      : > "${TELEMETRY}/verify_count/${TK}" 2>/dev/null || true
+      # Best-effort red/green from the tool response; failure hooks are red.
+      if [ "${MODE}" = bash-failure ]; then
+        STATUS=fail
+      else
+        STATUS="$(pyfield "(lambda r, c=None: (lambda c: 'ok' if c == 0 else ('fail' if isinstance(c, int) else ('fail' if r.get('is_error') is True else 'ran')))(r.get('exit_code', r.get('exitCode'))))(d.get('tool_response') or {})")"
+      fi
       printf '%s\n' "${STATUS:-ran}" > "${STATE}/last_verify"
-      # remember WHICH command produced the state — the strict gate's fast
-      # path trusts a green only when this matches its own command
-      printf '%s\n' "${CMD}" > "${STATE}/last_verify_cmd" 2>/dev/null || true
+      # Keep only an opaque digest for strict-gate equality; raw commands may
+      # contain paths or secrets and must never persist in shared state.
+      printf '%s' "${CMD}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' \
+        > "${STATE}/last_verify_cmd_hash" 2>/dev/null || true
       rm -f "${STATE}/nudged"
     fi
+    ;;
+  skill|skill-prompt)
+    if [ "${MODE}" = skill-prompt ]; then
+      EXPANSION_TYPE="$(pyfield "d.get('expansion_type')")"
+      [ "${EXPANSION_TYPE}" = slash_command ] || exit 0
+    fi
+    TK="$(tool_key)" || TK=unknown
+    mkdir -p "${TELEMETRY}/skill_count" 2>/dev/null || true
+    : > "${TELEMETRY}/skill_count/${TK}" 2>/dev/null || true
     ;;
   stop)
     # Never re-block a continuation that a stop hook itself caused
@@ -178,6 +311,7 @@ case "${MODE}" in
     # break both the fail-open and the never-re-block guarantees.
     JSON_OK="$(printf '%s' "${IN}" | python3 -c 'import json,sys; json.load(sys.stdin); print("yes")' 2>/dev/null || echo no)"
     if [ -n "${STRICT_CMD}" ] && [ "${JSON_OK}" = yes ]; then
+      STRICT_START_MS="$(now_ms || true)"
       OUT="$(python3 -c '
 import os, subprocess, sys
 state, cwd, cmd, timeout = sys.argv[1:5]
@@ -192,13 +326,14 @@ def read(name):
     except OSError:
         return ""
 e, v = m("last_edit"), m("last_verify")
-# Fast path only for a green that THIS command (or a longer invocation of
-# it) produced — a broad-regex green from a mere read of the test file must
+# Fast path only for a green whose command digest exactly matches. A
+# broad-regex green from a mere read of the test file must
 # not disarm a gate whose promise is "actually runs the command".
-vcmd = read("last_verify_cmd")
+vcmd = read("last_verify_cmd_hash")
+cmd_hash = __import__("hashlib").sha256(cmd.encode()).hexdigest()
 if (v is not None and read("last_verify") == "ok"
         and (e is None or e <= v)
-        and (vcmd == cmd or vcmd.startswith(cmd + " "))):
+        and vcmd == cmd_hash):
     print("green"); sys.exit(0)
 try:
     r = subprocess.run(cmd, shell=True, cwd=cwd or None, timeout=float(timeout),
@@ -218,14 +353,18 @@ else:
       case "${OUT%%$'\n'*}" in
         green) stat_log stop-clean; exit 0 ;;
         ok)
+          record_strict_telemetry "${STRICT_START_MS}"
           printf 'ok\n' > "${STATE}/last_verify" 2>/dev/null || true
-          printf '%s\n' "${STRICT_CMD}" > "${STATE}/last_verify_cmd" 2>/dev/null || true
+          printf '%s' "${STRICT_CMD}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' \
+            > "${STATE}/last_verify_cmd_hash" 2>/dev/null || true
           rm -f "${STATE}/nudged"
           stat_log stop-clean
           exit 0 ;;
         red)
+          record_strict_telemetry "${STRICT_START_MS}"
           printf 'fail\n' > "${STATE}/last_verify" 2>/dev/null || true
-          printf '%s\n' "${STRICT_CMD}" > "${STATE}/last_verify_cmd" 2>/dev/null || true
+          printf '%s' "${STRICT_CMD}" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' \
+            > "${STATE}/last_verify_cmd_hash" 2>/dev/null || true
           stat_log strict-block
           echo "Strict verify gate: '${STRICT_CMD}' is RED. Fix it before finishing — or say plainly that you are handing back a red state. Failing output:" >&2
           echo "${OUT#red}" >&2

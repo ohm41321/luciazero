@@ -91,12 +91,12 @@ if [ "${STATUS_ONLY}" = 1 ]; then
       fi
     done
     WIRE_MISS=""
-    for SUB in edit bash stop session; do
-      grep -qF "${CLAUDE_DIR}/hooks/luciazero-verify.sh ${SUB}" "${CLAUDE_DIR}/settings.json" 2>/dev/null \
+    for SUB in prompt skill-prompt bash-start edit bash bash-failure skill stop session; do
+      grep -qF "${CLAUDE_DIR}/hooks/luciazero-verify.sh ${SUB}\"" "${CLAUDE_DIR}/settings.json" 2>/dev/null \
         || WIRE_MISS="${WIRE_MISS} ${SUB}"
     done
     if [ -z "${WIRE_MISS}" ]; then
-      echo "  ok    hooks wired in settings.json (edit/bash/stop/session)"
+      echo "  ok    hooks wired in settings.json (prompt/skill-prompt/bash-start/edit/bash/bash-failure/skill/stop/session)"
     else
       echo "  MISS  settings.json missing hook entries:${WIRE_MISS} (re-run ./install.sh --with-hooks)"; STATUS_RC=1
     fi
@@ -294,6 +294,11 @@ def ensure(event, matcher, command):
 
 ensure("PostToolUse", "Edit|Write|NotebookEdit", verify_cmd + " edit")
 ensure("PostToolUse", "Bash", verify_cmd + " bash")
+ensure("PostToolUse", "Skill", verify_cmd + " skill")
+ensure("PostToolUseFailure", "Bash", verify_cmd + " bash-failure")
+ensure("PreToolUse", "Bash", verify_cmd + " bash-start")
+ensure("UserPromptSubmit", None, verify_cmd + " prompt")
+ensure("UserPromptExpansion", None, verify_cmd + " skill-prompt")
 ensure("Stop", None, verify_cmd + " stop")
 ensure("SessionStart", None, verify_cmd + " session")
 

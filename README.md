@@ -149,7 +149,7 @@ Run `/ready` first; the rest activate when their moment arrives.
 |---|---|---|
 | Entering a repository | `/ready` | Finds or creates a verify command and proves it can fail |
 | Structure or evidence is hard to scan | `/show` | Maps connections, changes, and proof into the smallest useful visual |
-| Before risky or multi-step work | `/plan` | Fixes scope and observable acceptance evidence |
+| Before risky, ambiguous, or multi-module work | `/plan` | Fixes scope and observable acceptance evidence |
 | A bug survives the first look | `/debug` | Reproduction, hypothesis ledger, regression test |
 | Good and bad revisions are known | `/bisect` | Finds the first bad commit in a temporary worktree |
 | Before claiming completion | `/done` | Full verify, skeptic review, scope report |
@@ -207,6 +207,9 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 - Core installers, hooks, helpers, and graders are offline. Real behavioral
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.
+- Hook telemetry stays local in private per-session state and records aggregate
+  turn/Bash wall time plus Bash, verify, and model/user skill counts—never raw
+  commands, skill names, or paths.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
   committed repository config. Strict mode fails open on internal errors.
@@ -216,12 +219,16 @@ See [SECURITY.md](SECURITY.md) for the complete trust boundary.
 ## Development
 
 ```bash
-./test.sh
+./test.sh --fast   # intermediate loop: core doctrine/hooks/report/Relay checks
+./test.sh          # closeout/CI: full eval, packaging, and install coverage
 ```
 
-The suite covers scripts, hook state, Relay, bisect, plugin/npm manifests,
-self-proving eval graders, and sandboxed install → reinstall → uninstall for
-Claude Code and Codex.
+The fast tier is the default intermediate check for this repository; use a
+more targeted command when changing a component it does not cover. The default
+full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
+plugin/npm manifests, self-proving eval graders, and sandboxed install →
+reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full
+tier.
 
 More detail:
 

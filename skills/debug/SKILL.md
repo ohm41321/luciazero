@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Hypothesis-driven debugging procedure. Use when a bug is not yet reliably reproduced, when a fix attempt just failed, when debugging has gone two or more iterations without progress, or when the user asks "why is this failing", "debug this properly", "ไล่บั๊ก". Not for trivial errors whose cause is already visible in the message.
+description: Hypothesis-driven debugging procedure. Use when a bug is not yet reliably reproduced, a fix attempt failed, debugging has gone two or more iterations without progress, or the user asks "debug this properly" or "ไล่บั๊ก". Not for a first obvious failure whose cause is already visible; reproduce and fix it directly.
 ---
 
 # Debug — hypothesis before edit

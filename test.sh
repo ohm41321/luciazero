@@ -2,13 +2,23 @@
 # Verify command for this repo. The doctrine says a missing verify command is
 # the first bug — this file is how the repo passes its own rule.
 #
-# Checks: shell syntax, shellcheck (when available), detect.sh smoke runs,
-# example-settings JSON, skill + agent frontmatter, the doctrine word-count
-# budget, then full install -> reinstall -> uninstall cycles for both
-# harnesses in sandbox config dirs. Exits non-zero on the first failure.
+# `--fast` covers core doctrine, hooks/report, Relay, bisect, and evidence
+# integrity for intermediate loops. The default/`--full` continues through
+# eval, packaging, and sandboxed install cycles for both harnesses.
+# Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TIER=full
+if [ "$#" -gt 1 ]; then
+  echo "usage: ./test.sh [--fast|--full]" >&2
+  exit 64
+fi
+case "${1:-}" in
+  ""|--full) ;;
+  --fast) TIER=fast ;;
+  *) echo "usage: ./test.sh [--fast|--full]" >&2; exit 64 ;;
+esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 skill_inventory() {
@@ -21,6 +31,7 @@ skill_inventory() {
 # Tests that set their own CLAUDE_CONFIG_DIR still override per invocation.
 CLAUDE_CONFIG_DIR="$(mktemp -d)"
 export CLAUDE_CONFIG_DIR
+trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
@@ -98,11 +109,23 @@ python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __
   "${ROOT}/eval/result_schema.py" || fail "result_schema.py syntax"
 echo "ok  skill + agent frontmatter"
 
+# Routine edits with obvious scope/proof must not pay for planning/debugging
+# ceremony. The descriptions are the auto-trigger contract exposed to agents.
+grep -q 'Not for routine edits whose scope and proof are already clear' \
+  "${ROOT}/skills/plan/SKILL.md" || fail "plan skill still auto-triggers on routine edits"
+grep -q 'Not for a first obvious failure' "${ROOT}/skills/debug/SKILL.md" \
+  || fail "debug skill still auto-triggers on a first obvious failure"
+echo "ok  routine-task skill trigger boundaries"
+
 # 4b. doctrine budget — loaded on every turn of every session; this enforces "stays short"
 DOCTRINE_FILE="${ROOT}/claude/luciazero.md"
 W="$(wc -w < "${DOCTRINE_FILE}" | tr -d ' ')"
 [ "${W}" -le 420 ] || fail "doctrine is ${W} words (limit 420) — every line costs context on every turn; cut a word to add a word"
 ! grep -qi 'subagent' "${DOCTRINE_FILE}" || fail "doctrine uses Claude-only 'subagent' vocabulary; phrase platform-neutrally"
+grep -q 'fastest relevant check' "${DOCTRINE_FILE}" \
+  || fail "doctrine does not prefer targeted intermediate verification"
+grep -q 'full verification once at closeout' "${DOCTRINE_FILE}" \
+  || fail "doctrine does not reserve full verification for closeout"
 echo "ok  doctrine budget (${W}/420 words)"
 
 # 4c. enforcement-pack hook state machine (isolated TMPDIR; fails open by design)
@@ -135,7 +158,7 @@ RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" s
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop hook nudged on a docs-only write after green verify (rc=${RC})"; }
 SL="$(echo '{"model":{"display_name":"M"},"workspace":{"current_dir":"/hook/test/proj"}}' \
   | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-statusline.sh")"
-printf '%s' "${SL}" | grep -q 'verify' || { rm -rf "${HT}"; fail "statusline missing verify status: ${SL}"; }
+printf '%s' "${SL}" | grep -q '✅ verify' || { rm -rf "${HT}"; fail "statusline missed green verify state: ${SL}"; }
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'
@@ -228,8 +251,8 @@ echo "ok  session relay pointer"
 SC="$(mktemp -d)"
 STMP="$(mktemp -d)"
 SHK="${ROOT}/claude/hooks/luciazero-verify.sh"
-SPJ1="${STMP}/proj"; SPJ2="${STMP}/boom"; SPJ3="${STMP}/third"
-mkdir -p "${SPJ1}" "${SPJ2}" "${SPJ3}"
+SPJ1="${STMP}/proj"; SPJ2="${STMP}/boom"; SPJ3="${STMP}/third"; SPJ4="${STMP}/timed"
+mkdir -p "${SPJ1}" "${SPJ2}" "${SPJ3}" "${SPJ4}"
 # clean stop (no edits) -> stop-clean
 printf '{"cwd": "%s"}' "${SPJ1}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" stop \
@@ -253,10 +276,12 @@ set -e
 python3 -c 'import json,sys; assert json.loads(open(sys.argv[1]).read().splitlines()[-1])["event"] == "nudge"' \
   "${SC}/luciazero-stats.log" || fail "stats missing nudge"
 # strict red -> strict-block (rc 2)
+printf '{"cwd": "%s", "session_id":"strict-session"}' "${SPJ2}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" prompt
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${SPJ2}" "${SPJ2}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" edit
 set +e
-printf '{"cwd": "%s"}' "${SPJ2}" \
+printf '{"cwd": "%s", "session_id":"strict-session"}' "${SPJ2}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" LUCIAZERO_STRICT_VERIFY_CMD="exit 3" "${SHK}" stop 2>/dev/null
 RC=$?
 set -e
@@ -265,7 +290,60 @@ python3 - "${SC}/luciazero-stats.log" <<'PY' || fail "stats missing strict-mode 
 import json, sys
 row = json.loads(open(sys.argv[1]).read().splitlines()[-1])
 assert row["event"] == "strict-block" and row["verify_mode"] == "strict"
+assert row["telemetry"]["bash_count"] == 1
+assert row["telemetry"]["verify_count"] == 1
 PY
+# prompt/tool/skill timing is local-only and records counts/durations, never
+# raw commands, skill names, or project paths in the persistent log
+printf '{"cwd":"%s","session_id":"telemetry-a"}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" prompt
+TJ='{"cwd":"'"${SPJ4}"'","session_id":"telemetry-a","tool_use_id":"bash-1","tool_input":{"command":"./test.sh --fast"},"tool_response":{"exit_code":0}}'
+printf '%s' "${TJ}" | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" bash-start
+sleep 0.02
+printf '%s' "${TJ}" | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" bash
+# Failed Bash events count and mark a failed verify without persisting its raw command.
+TF='{"cwd":"'"${SPJ4}"'","session_id":"telemetry-a","tool_use_id":"bash-2","tool_input":{"command":"./test.sh --fast secret-marker"},"error":"exit 1"}'
+printf '%s' "${TF}" | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" bash-start
+sleep 0.02
+printf '%s' "${TF}" | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" bash-failure
+printf '{"cwd":"%s","session_id":"telemetry-a","tool_use_id":"skill-1","tool_input":{"skill":"done"}}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" skill
+# User-invoked slash skills and a concurrent session have separate state.
+printf '{"cwd":"%s","session_id":"telemetry-a","expansion_type":"slash_command","command_name":"debug"}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" skill-prompt
+printf '{"cwd":"%s","session_id":"telemetry-a","expansion_type":"mcp_prompt","command_name":"remote"}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" skill-prompt
+printf '{"cwd":"%s","session_id":"telemetry-b"}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" prompt
+printf '{"cwd":"%s","session_id":"telemetry-a"}' "${SPJ4}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" stop >/dev/null
+python3 - "${SC}/luciazero-stats.log" <<'PY' || fail "stats missing latency telemetry"
+import json, sys
+row = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+t = row["telemetry"]
+assert row["event"] == "stop-clean"
+assert t["turn_ms"] >= 20 and t["bash_ms"] >= 15
+assert t["bash_ms"] <= t["turn_ms"]
+assert t["bash_count"] == 2 and t["verify_count"] == 2 and t["skill_count"] == 2
+assert "command" not in json.dumps(t) and "done" not in json.dumps(t)
+PY
+! grep -R -q 'secret-marker' "${STMP}/luciazero-verify-state-$(id -u)" \
+  || fail "raw verify command leaked into hook state"
+# A hostile pre-created state symlink must fail open without touching its target.
+EVILTMP="$(mktemp -d)"; EVILTARGET="$(mktemp -d)"
+echo sentinel > "${EVILTARGET}/keep"
+ln -s "${EVILTARGET}" "${EVILTMP}/luciazero-verify-state-$(id -u)"
+EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])')"
+mkdir -p "${EVILTARGET}/${EVILKEY}"
+echo ok > "${EVILTARGET}/${EVILKEY}/last_verify"
+printf '{"cwd":"%s","session_id":"evil"}' "${SPJ4}" \
+  | env TMPDIR="${EVILTMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" prompt
+grep -qx sentinel "${EVILTARGET}/keep" || fail "hook followed hostile state symlink"
+ESL="$(printf '{"workspace":{"current_dir":"%s"}}' "${SPJ4}" \
+  | env TMPDIR="${EVILTMP}" "${ROOT}/claude/hooks/luciazero-statusline.sh")"
+printf '%s' "${ESL}" | grep -q 'no verify yet' \
+  || fail "statusline trusted forged state through hostile symlink: ${ESL}"
+rm -rf "${EVILTMP}" "${EVILTARGET}"
 # rotation: >500 lines shrinks to <=301 on the next event
 python3 -c 'import sys; open(sys.argv[1], "w").write("2026-01-01T00:00 stop-clean x\n" * 600)' "${SC}/luciazero-stats.log"
 printf '{"cwd": "%s"}' "${SPJ3}" \
@@ -287,8 +365,8 @@ echo "ok  discipline stats log"
 if command -v node >/dev/null 2>&1; then
   DR="$(mktemp -d)"
   cat > "${DR}/stats.log" <<'EOF'
-{"schema":2,"timestamp":"2026-08-10T10:00:00+00:00","event":"stop-clean","project_id":"alpha1234567","project":"alpha","verify_mode":"exact"}
-{"schema":2,"timestamp":"2026-08-11T23:30:00-05:00","event":"nudge","project_id":"alpha1234567","project":"alpha","verify_mode":"regex"}
+{"schema":2,"timestamp":"2026-08-10T10:00:00+00:00","event":"stop-clean","project_id":"alpha1234567","project":"alpha","verify_mode":"exact","telemetry":{"turn_ms":1000,"bash_ms":300,"bash_count":1,"verify_count":1,"skill_count":0}}
+{"schema":2,"timestamp":"2026-08-11T23:30:00-05:00","event":"nudge","project_id":"alpha1234567","project":"alpha","verify_mode":"regex","telemetry":{"turn_ms":2000,"bash_ms":500,"bash_count":2,"verify_count":1,"skill_count":1}}
 {"schema":2,"timestamp":"2026-08-12T05:00:00+00:00","event":"strict-block","project_id":"beta12345678","project":"beta","verify_mode":"strict"}
 2026-08-09T12:00:00 nudge legacy-repo
 {malformed
@@ -301,6 +379,9 @@ d=json.load(sys.stdin)
 assert d["records"] == 4 and d["malformed_records_ignored"] == 1 and d["legacy_records"] == 1
 assert d["outcomes"] == {"stop-clean": 1, "nudge": 2, "strict-block": 1}
 assert d["verify_modes"]["regex"] == 1 and d["verify_modes"]["strict"] == 1
+assert d["telemetry"] == {"measured_turns": 2, "turn_ms": 3000, "bash_ms": 800,
+                           "non_bash_ms": 2200, "bash_count": 3,
+                           "verify_count": 2, "skill_count": 1}
 assert d["recommendations"][0].startswith("Likely:")
 ' || { rm -rf "${DR}"; fail "discipline JSON report content wrong"; }
   DJSON="$(node "${ROOT}/bin/discipline-report.js" --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z --project alpha --json)"
@@ -309,6 +390,8 @@ assert d["recommendations"][0].startswith("Likely:")
   DOUT="$(node "${ROOT}/bin/luciazero.js" discipline --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z)"
   echo "${DOUT}" | grep -q 'Luciazero Discipline Report' \
     || { rm -rf "${DR}"; fail "discipline CLI route missing report"; }
+  echo "${DOUT}" | grep -q 'Latency Telemetry' \
+    || { rm -rf "${DR}"; fail "discipline text report missing telemetry"; }
   # The report is pure Node and must stay usable on native Windows even though
   # the installer routes still require Bash/WSL.
   DWIN="$(node - "${ROOT}/bin/luciazero.js" "${DR}/stats.log" <<'JS'
@@ -689,6 +772,12 @@ else:
     raise AssertionError("tampered deterministic arm order was accepted")
 PY
 echo "ok  benchmark evidence digests + generated docs"
+
+if [ "${TIER}" = fast ]; then
+  echo
+  echo "PASS  fast checks green"
+  exit 0
+fi
 
 # 4d. eval graders stay honest — auto-discovered, so no task can ship without
 # its proofs: PROMPT.md present, grader executable and following the output
@@ -1354,7 +1443,8 @@ hooks = json.load(open(os.path.join(root, "claude", "hooks", "hooks.json")))
 cmds = [h["command"]
         for entries in hooks["hooks"].values()
         for e in entries for h in e["hooks"]]
-for sub in ("edit", "bash", "stop", "session", "doctrine"):
+for sub in ("prompt", "skill-prompt", "bash-start", "edit", "bash",
+            "bash-failure", "skill", "stop", "session", "doctrine"):
     assert any(c.endswith("luciazero-verify.sh " + sub) for c in cmds), f"hooks.json missing {sub} wiring"
 for c in cmds:
     assert c.startswith("LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/"), \
@@ -1488,6 +1578,8 @@ const assert = require("node:assert");
 const path = require("node:path");
 const [root, fixture] = process.argv.slice(2);
 const updater = require(path.join(root, "bin/update.js"));
+const currentVersion = require(path.join(root, "package.json")).version;
+const futureVersion = `${Number(currentVersion.split(".")[0]) + 1}.0.0`;
 
 assert.strictEqual(updater.compareSemver("1.9.0", "2.0.0"), -1);
 assert.strictEqual(updater.compareSemver("2.0.0", "2.0.0"), 0);
@@ -1514,10 +1606,10 @@ const err = [];
     fetch: async (url, options) => {
       requestedUrl = String(url);
       requestSignal = options.signal;
-      return {ok: true, json: async () => ({version: "2.1.0"})};
+      return {ok: true, json: async () => ({version: futureVersion})};
     },
   });
-  assert.strictEqual(fetchedVersion, "2.1.0");
+  assert.strictEqual(fetchedVersion, futureVersion);
   assert.strictEqual(requestedUrl, "https://registry.example.test/npm/luciazero/latest");
   assert.ok(requestSignal instanceof AbortSignal, "registry request must carry an AbortSignal");
   await assert.rejects(
@@ -1544,14 +1636,14 @@ const err = [];
 
   const rc = await updater.runCheck(["--json"], {
     detectInstallations: () => installations,
-    fetchLatestVersion: async () => "2.1.0",
+    fetchLatestVersion: async () => futureVersion,
     stdout: {write: (value) => out.push(String(value))},
     stderr: {write: (value) => err.push(String(value))},
   });
   assert.strictEqual(rc, 0);
   assert.strictEqual(err.join(""), "");
   const report = JSON.parse(out.join(""));
-  assert.strictEqual(report.latestVersion, "2.1.0");
+  assert.strictEqual(report.latestVersion, futureVersion);
   assert.strictEqual(report.cliUpdateAvailable, true);
   assert.strictEqual(report.updateAvailable, true);
   assert.deepStrictEqual(report.installations.map((item) => item.status), [
@@ -1564,7 +1656,7 @@ const err = [];
       channel: "codex", configDir: fixture, installedVersion: "broken", versionFilePresent: true,
       hooks: false,
     }],
-    fetchLatestVersion: async () => "2.1.0",
+    fetchLatestVersion: async () => futureVersion,
     stdout: {write: (value) => malformedCheckOut.push(String(value))},
     stderr: {write: () => {}},
   });
@@ -1678,7 +1770,7 @@ fi
 # 5. sandbox install cycle — never touches the real ~/.claude
 SB="$(mktemp -d)"
 CX="$(mktemp -d)"
-trap 'rm -rf "${SB}" "${CX}"' EXIT
+trap 'rm -rf "${CLAUDE_CONFIG_DIR}" "${SB}" "${CX}"' EXIT
 printf '@RTK.md\n\n# pre-existing user content\n' > "${SB}/CLAUDE.md"
 mkdir -p "${SB}/skills/handoff"
 cp "${ROOT}/migrations/handoff-v1.5.0.SKILL.md" "${SB}/skills/handoff/SKILL.md"
@@ -1800,9 +1892,12 @@ assert s["permissions"]["allow"] == ["Bash(ls:*)"], "user permissions lost"
 assert s["statusLine"]["command"] == "/my/custom.sh", "custom statusLine clobbered"
 assert s["env"] == {"SENTINEL": "1"} and s["model"] == "opusplan", "sentinel keys lost"
 assert s["feedbackSurveyState"] == {"x": 1}, "nested unknown key lost"
-assert len(s["hooks"]["PostToolUse"]) == 2 and len(s["hooks"]["Stop"]) == 1
+assert len(s["hooks"]["PostToolUse"]) == 3 and len(s["hooks"]["Stop"]) == 1
+assert len(s["hooks"]["PostToolUseFailure"]) == 1, "failed Bash hook not wired"
 assert len(s["hooks"]["SessionStart"]) == 1, "session hook not wired"
-assert len(s["hooks"]["PreToolUse"]) == 1, "user's own hook disturbed by install"
+assert len(s["hooks"]["UserPromptSubmit"]) == 1, "prompt timing hook not wired"
+assert len(s["hooks"]["UserPromptExpansion"]) == 1, "slash-skill hook not wired"
+assert len(s["hooks"]["PreToolUse"]) == 2, "bash timing hook or user's hook missing"
 PY
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status >/dev/null \
   || { rm -rf "${SB3}"; fail "--status red on a complete --with-hooks install"; }
@@ -1828,8 +1923,8 @@ assert ours not in json.dumps(s), "our entries left behind"
 assert s["permissions"]["allow"] == ["Bash(ls:*)"], "user permissions lost on uninstall"
 assert s["statusLine"]["command"] == "/my/custom.sh", "custom statusLine removed"
 assert s["env"] == {"SENTINEL": "1"} and s["model"] == "opusplan", "sentinel keys lost on uninstall"
-pre = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-assert pre == "/Users/someone/dotfiles/hooks/luciazero-verify.sh precheck", \
+pre = [h["command"] for e in s["hooks"]["PreToolUse"] for h in e["hooks"]]
+assert pre == ["/Users/someone/dotfiles/hooks/luciazero-verify.sh precheck"], \
     "user's lookalike hook was deleted: " + json.dumps(s["hooks"])
 PY
 rm -rf "${SB3}"

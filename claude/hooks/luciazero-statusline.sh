@@ -16,7 +16,7 @@ set -u
 IN="$(cat 2>/dev/null || true)"
 
 LINE="$(printf '%s' "${IN}" | python3 -c '
-import json, os, sys, time, hashlib
+import json, os, sys, time, hashlib, stat
 
 try:
     d = json.load(sys.stdin)
@@ -27,9 +27,24 @@ model = ((d.get("model") or {}).get("display_name")) or "claude"
 cwd = ((d.get("workspace") or {}).get("current_dir")) or d.get("cwd") or os.getcwd()
 
 key = hashlib.md5(cwd.encode()).hexdigest()[:12]
-state = os.path.join(os.environ.get("TMPDIR", "/tmp"), "luciazero-verify-state", key)
+uid = os.getuid() if hasattr(os, "getuid") else "unknown"
+base = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"luciazero-verify-state-{uid}")
+try:
+    info = os.lstat(base)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError("unsafe state base")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise OSError("wrong state owner")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise OSError("state base is not private")
+except OSError:
+    state = None
+else:
+    state = os.path.join(base, key)
 
 def mtime(name):
+    if state is None:
+        return None
     try:
         return os.path.getmtime(os.path.join(state, name))
     except OSError:

@@ -1,5 +1,27 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh prompt" }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh skill-prompt" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash-start" }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|NotebookEdit",
@@ -11,6 +33,20 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash" }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh skill" }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash-failure" }
         ]
       }
     ],

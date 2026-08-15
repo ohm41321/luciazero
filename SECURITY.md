@@ -44,7 +44,10 @@ way around any of them is a reportable vulnerability, not expected behavior:
 - **Hook state stays in `$TMPDIR`**, except the documented, size-capped
   `luciazero-stats.log` in the config dir. Stats are local JSONL and identify
   a repository by a truncated SHA-256 plus basename, never its absolute path
-  or verify command.
+  or verify command. Hook scratch state uses a user-owned `0700` base and
+  per-session telemetry directories. Optional rows store only aggregate turn
+  and merged Bash wall-clock milliseconds plus Bash/verify/skill counts; raw
+  commands, tool IDs, skill names, and paths are never written to state or log.
 
 ## Known sharp edge (documented, by design)
 

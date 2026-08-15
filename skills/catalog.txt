@@ -1,6 +1,7 @@
 # Canonical install order. Installers, uninstallers, and tests read this file.
 ready
 show
+imouto-mode
 plan
 debug
 bisect

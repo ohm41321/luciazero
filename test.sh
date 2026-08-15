@@ -1546,13 +1546,20 @@ actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.
 assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
-assert len(skills) == 10, f"expected 10 cataloged skills, found {len(skills)}"
+assert len(skills) == 11, f"expected 11 cataloged skills, found {len(skills)}"
 assert aliases == ["luciazero-bootstrap"], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
-    assert "10 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+    assert "11 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 show = open(os.path.join(root, "skills/show/SKILL.md")).read()
 for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
     assert contract in show, f"show skill missing output contract: {contract}"
+imouto = open(os.path.join(root, "skills/imouto-mode/SKILL.md")).read()
+for contract in ("Default: off", "on", "focus", "off", "work first", "non-romantic", "Never auto-trigger",
+                 "tsundere", "care through useful action", "Never insult", "Never withhold"):
+    assert contract in imouto, f"imouto-mode missing contract: {contract}"
+assert "disable-model-invocation: true" in imouto, "imouto-mode must disable Claude model invocation"
+imouto_meta = open(os.path.join(root, "skills/imouto-mode/agents/openai.yaml")).read()
+assert "allow_implicit_invocation: false" in imouto_meta, "imouto-mode must be explicit-only"
 PY
 if command -v node >/dev/null 2>&1; then
   NB="$(mktemp -d)"

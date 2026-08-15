@@ -7,6 +7,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `/imouto-mode` adds Lucia's optional warm, lightly tsundere younger-sister
+  coding voice. It is explicit-only, off by default, invocation-scoped, and
+  keeps technical work, safety, and verification ahead of persona.
+
 ## [2.1.0] - 2026-08-15
 
 ### Added

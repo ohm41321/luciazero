@@ -1,0 +1,6 @@
+interface:
+  display_name: "Imouto Mode"
+  short_description: "Switch Lucia’s focused tsundere coding voice"
+  default_prompt: "Use $imouto-mode focus for Lucia’s warm, lightly tsundere, work-first coding voice."
+policy:
+  allow_implicit_invocation: false

@@ -49,11 +49,53 @@ way around any of them is a reportable vulnerability, not expected behavior:
   and merged Bash wall-clock milliseconds plus Bash/verify/skill counts; raw
   commands, tool IDs, skill names, and paths are never written to state or log.
 
-## Known sharp edge (documented, by design)
+## Hostile-repository configuration
 
-`LUCIAZERO_STRICT_VERIFY_CMD` is read from the environment, and the hook
-cannot tell which settings scope set it — a repository that commits it in a
-settings `env` block reaches the hook. The README says to treat such a
-repository as hostile and remove the variable before working there. A report
-showing how to *escalate* beyond running the configured command (or to defeat
-the fail-open guarantees above) is very welcome.
+Every knob this hook reads comes from the environment, and a repository that
+commits keys in a settings `env` block reaches the hook. Each one is a way to
+disable enforcement while the statusline stays green:
+
+- `LUCIAZERO_VERIFY_REGEX` widened (or `LUCIAZERO_VERIFY_CMD` pointed at
+  `echo`) makes any command count as a verify run;
+- `LUCIAZERO_DOC_REGEX='.*'` makes every edit look like documentation, so
+  nothing is ever unverified and the stop hook never nudges;
+- `LUCIAZERO_STRICT_VERIFY_CMD` is a command the stop hook would run.
+
+**No `LUCIAZERO_*` key — and no `CLAUDE_CONFIG_DIR` — is accepted from a
+repository's committed `.claude/settings.json`.** Each declared key is dropped,
+the hook falls back to its own defaults, and `SessionStart` prints one line
+naming the keys. Refusal never blocks, and a parse error leaves the configured
+values untouched (fail open).
+
+The search is **project scope only**. It covers the session directory and its
+ancestors, because Claude Code merges project settings from the repository root
+and a session's cwd is often a subdirectory — but it stops at the repository
+root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. A global
+`~/.claude/settings.json` and the gitignored `.claude/settings.local.json` are
+the user's scope and keep configuring the hook.
+
+Only the **default** `~/.claude` counts as that user scope. Honouring
+`CLAUDE_CONFIG_DIR` here would be self-defeating: pointed at `<repo>/.claude`,
+it would mark the repository's own settings file as "the user's config", skip
+the very file declaring the key, and leave the dedupe trusting a classic
+install that lives inside the repository.
+
+Channel dedupe is decided from the running copy's own path, not from
+`LUCIAZERO_CHANNEL`, and it runs after the refusal above. Both orderings were
+exploitable: an env-driven dedupe let a committed `env` block hand the classic
+hook a plugin label so it stood itself down, and a committed
+`CLAUDE_CONFIG_DIR` could point at a repository-controlled directory holding a
+"wired classic install" so every copy stood down.
+
+Limits, stated plainly:
+
+- The personal, gitignored `.claude/settings.local.json` is deliberately not
+  inspected — that scope is the user's own.
+- Env exported by the shell, a parent process, or a global settings file is
+  indistinguishable from a legitimate personal setting and is still honored.
+- A repository that hides configuration outside a committed
+  `.claude/settings.json` — for example in a `.envrc` the user's shell
+  sources — is outside what this hook can see.
+
+A report showing how to *escalate* beyond running the configured command (or
+to defeat the fail-open guarantees above) is very welcome.

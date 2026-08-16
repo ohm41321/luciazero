@@ -7,6 +7,42 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `test.sh` clears ambient `LUCIAZERO_*` variables before running. An exported
+  `LUCIAZERO_VERIFY_CMD` flipped the hook fixtures into exact-match mode, so
+  the suite went red on exactly the machines that dogfood the pack
+  (`FAIL: stop hook nudged despite verify after edit`) while CI stayed green.
+  A new self-test re-runs the fast tier in a child poisoned with every knob the
+  hooks read, and quotes the child's own failing line.
+- Both hooks call `hashlib.md5(..., usedforsecurity=False)` for their state
+  directory name. On a FIPS-enforcing python3 the bare call raised and the
+  tracker failed open — silently doing nothing. The digest is unchanged, so
+  existing state keys still resolve.
+
+### Security
+
+- A repository's **committed** `.claude/settings.json` can no longer
+  reconfigure the hook. A `LUCIAZERO_VERIFY_REGEX` declared there (widened
+  until every command counts as a verify run) falls back to the built-in
+  default, a `LUCIAZERO_STRICT_VERIFY_CMD` declared there is never executed,
+  and `SessionStart` names the keys once. The personal, gitignored
+  `.claude/settings.local.json` is untouched, and a parse error leaves the
+  configured values alone (still fail-open). The lookup runs only in the modes
+  that consume those knobs, skips a non-regular file (a planted fifo would hang
+  the hook), and refuses both keys outright on an absurdly large settings file
+  instead of parsing it.
+- CI runs with `permissions: contents: read`, and both workflows pin every
+  action to a commit SHA.
+
+### Changed
+
+- `shellcheck` is required, not silently skipped, when `CI` or
+  `LZ_REQUIRE_LINT` is set — a local green must not disagree with the CI that
+  gates the release.
+- README and README.th document the committed-settings refusal and the
+  Windows/WSL requirement.
+
 ## [2.2.0] - 2026-08-15
 
 ### Added

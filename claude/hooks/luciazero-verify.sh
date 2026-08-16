@@ -82,7 +82,10 @@ except Exception:
 
 CWD="$(pyfield "d.get('cwd')")"
 [ -n "${CWD}" ] || CWD="${PWD}"
-KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)" || exit 0
+# md5 here names a state directory; it is never a security decision. Saying so
+# explicitly keeps the hook alive on a FIPS-enforcing python3, where a bare
+# md5() call raises and the tracker would fail open (silently doing nothing).
+KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(sys.stdin.buffer.read(), usedforsecurity=False).hexdigest()[:12])' 2>/dev/null)" || exit 0
 [ -n "${KEY}" ] || exit 0
 BASE="${TMPDIR:-/tmp}/luciazero-verify-state-$(id -u 2>/dev/null || echo unknown)"
 # The base name is predictable, so validate ownership/type before touching it.
@@ -211,8 +214,64 @@ PY
 # "./test.sh"), only commands that ARE it or START with it count — the broad
 # regex also marks `cat test.sh` or `grep pytest README` as a verify run,
 # flipping the state green without any test having run.
-VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-verify|test\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)}"
+VERIFY_RE_DEFAULT='verify|test\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)'
+VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-${VERIFY_RE_DEFAULT}}"
 VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
+
+# A repository's COMMITTED .claude/settings.json can put anything in its `env`
+# block, and that env reaches this hook. Two knobs are dangerous from that
+# scope: LUCIAZERO_VERIFY_REGEX can be widened until every command counts as a
+# verify run (enforcement dies with the statusline still green), and
+# LUCIAZERO_STRICT_VERIFY_CMD is a command this hook would then RUN at stop.
+# Both are refused when the shared file declares them; the personal, gitignored
+# .claude/settings.local.json is never inspected and keeps working, and a
+# committed LUCIAZERO_VERIFY_CMD stays honored (documented team practice).
+# Refusal falls back to the safe default (built-in regex / no strict gate),
+# never to a block, and any parse error leaves the configured value untouched.
+# Only the modes that consume these knobs pay for the lookup — prompt, edit,
+# skill, and bash-start run on the hot path and must stay cheap.
+REFUSED_ENV_KEYS=""
+case "${MODE}" in
+  bash|bash-failure|stop|session)
+    REFUSED_ENV_KEYS="$(python3 - "${CWD}/.claude/settings.json" <<'PY' 2>/dev/null || true
+import json, os, stat, sys
+REFUSED = ("LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_STRICT_VERIFY_CMD")
+LIMIT = 1_000_000  # a settings file is kilobytes; this runs on every Bash call
+path = sys.argv[1]
+try:
+    info = os.stat(path)
+except OSError:
+    raise SystemExit(0)
+# never read a fifo or device the repository planted here: that would hang the
+# hook instead of failing open
+if not stat.S_ISREG(info.st_mode):
+    raise SystemExit(0)
+if info.st_size > LIMIT:
+    # absurd for a settings file — refuse both knobs rather than parse it
+    print("\n".join(REFUSED))
+    raise SystemExit(0)
+try:
+    with open(path, encoding="utf-8") as handle:
+        env = json.loads(handle.read(LIMIT)).get("env")
+except Exception:
+    raise SystemExit(0)
+if isinstance(env, dict):
+    for key in REFUSED:
+        if key in env:
+            print(key)
+PY
+)"
+    ;;
+esac
+project_env_declares() { printf '%s\n' "${REFUSED_ENV_KEYS}" | grep -qx "$1"; }
+if [ -n "${REFUSED_ENV_KEYS}" ]; then
+  if project_env_declares LUCIAZERO_VERIFY_REGEX; then
+    VERIFY_RE="${VERIFY_RE_DEFAULT}"
+  fi
+  if project_env_declares LUCIAZERO_STRICT_VERIFY_CMD; then
+    LUCIAZERO_STRICT_VERIFY_CMD=""
+  fi
+fi
 
 case "${MODE}" in
   prompt)
@@ -396,6 +455,12 @@ print("yes" if e is not None and (v is None or e > v) else "no")' "${STATE}" 2>/
     [ "${NUDGE}" = no ] && stat_log stop-clean
     ;;
   session)
+    # A committed settings env block that reconfigures this hook is worth one
+    # loud line: the refusal above is silent, and a repository that ships these
+    # keys is either mistaken or hostile. Names the keys, never their values.
+    if [ -n "${REFUSED_ENV_KEYS}" ]; then
+      echo "This repository's committed .claude/settings.json sets $(printf '%s' "${REFUSED_ENV_KEYS}" | tr '\n' ' ')— Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo."
+    fi
     # SessionStart emits ONE pointer, never the relay contents. A legacy
     # HANDOFF.md gets a migration warning but is not silently rewritten.
     CAP="${CWD}/LUCIA_RELAY.json"

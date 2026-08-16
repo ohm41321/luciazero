@@ -33,6 +33,16 @@ CLAUDE_CONFIG_DIR="$(mktemp -d)"
 export CLAUDE_CONFIG_DIR
 trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 
+# Ambient LUCIAZERO_* configuration belongs to the developer's own install and
+# would silently change what the hooks under test do — an exported
+# LUCIAZERO_VERIFY_CMD flips the tracker into exact-match mode, so fixture
+# commands stop counting as verify runs and this suite goes red on exactly the
+# machines that dogfood the pack. Every test sets what it needs per invocation.
+while IFS= read -r LZ_VAR; do
+  if [ -n "${LZ_VAR}" ]; then unset "${LZ_VAR}"; fi
+done < <(env | sed -n 's/^\(LUCIAZERO_[A-Za-z0-9_]*\)=.*/\1/p')
+unset LZ_VAR
+
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          docs/assets/statusline-demo.sh
@@ -53,12 +63,34 @@ done
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
 echo "ok  shell syntax"
 
-# 2. shellcheck when available (CI always has it)
+# 2. shellcheck: required where it must run (CI, or LZ_REQUIRE_LINT=1), because
+# a silent skip lets a local green disagree with the CI that gates the release.
 if command -v shellcheck >/dev/null 2>&1; then
   (cd "${ROOT}" && shellcheck "${SCRIPTS[@]}")
   echo "ok  shellcheck"
+elif [ -n "${CI:-}" ] || [ -n "${LZ_REQUIRE_LINT:-}" ]; then
+  fail "shellcheck is required here (CI or LZ_REQUIRE_LINT=1) but is not installed"
 else
-  echo "skip shellcheck (not installed)"
+  echo "skip shellcheck (not installed — local only; CI fails without it)"
+fi
+
+# 2a. ambient LUCIAZERO_* must not change this suite's outcome. Re-runs the fast
+# tier in a child poisoned with every knob the hooks read; the sanitation above
+# is what keeps it green (regression: an exported LUCIAZERO_VERIFY_CMD turned
+# the hook state-machine tests red for anyone running the pack on themselves).
+if [ -z "${LZ_SELFTEST_CHILD:-}" ]; then
+  CHILD_RC=0
+  CHILD_OUT="$(LZ_SELFTEST_CHILD=1 \
+    LUCIAZERO_VERIFY_CMD='never-the-fixture-command' \
+    LUCIAZERO_VERIFY_REGEX='^zzz-never-matches$' \
+    LUCIAZERO_STRICT_VERIFY_CMD='false' \
+    LUCIAZERO_DOC_REGEX='.' \
+    LUCIAZERO_CHANNEL='plugin' \
+    bash "${ROOT}/test.sh" --fast 2>&1)" || CHILD_RC=$?
+  # The child re-runs every fast check, so a plain failure here is ambiguous:
+  # quote its own decisive line instead of blaming sanitation for a real bug.
+  [ "${CHILD_RC}" = 0 ] || fail "fast tier is not immune to ambient LUCIAZERO_*: $(printf '%s' "${CHILD_OUT}" | grep -m1 '^FAIL' || printf 'child exited %s' "${CHILD_RC}")"
+  echo "ok  ambient LUCIAZERO_* sanitation"
 fi
 
 # 2b. detect.sh runs green against this repo and finds the CI verify command
@@ -172,6 +204,80 @@ echo '{"cwd":"/hook/test/exact","tool_input":{"command":"./test.sh -q"},"tool_re
 RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "exact-match mode missed the real verify command (rc=${RC})"; }
 echo "ok  enforcement-pack hook state machine"
+
+# 4c1. a repository cannot reconfigure the hook from its committed settings:
+# a widened regex must not count an arbitrary command as a verify run, a
+# committed strict command must not be executed at stop, and the personal
+# settings.local.json must keep working.
+PEJ_DIR="$(mktemp -d)"
+mkdir -p "${PEJ_DIR}/.claude"
+cat > "${PEJ_DIR}/.claude/settings.json" <<'JSON'
+{"env": {"LUCIAZERO_VERIFY_REGEX": ".", "LUCIAZERO_STRICT_VERIFY_CMD": "touch strict-ran"}}
+JSON
+PEJ="$(printf '{"cwd":"%s"}' "${PEJ_DIR}")"
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+RC=0; PERR="$(echo "${PEJ}" | TMPDIR="${HT}" \
+  LUCIAZERO_VERIFY_REGEX='.' LUCIAZERO_STRICT_VERIFY_CMD="touch ${PEJ_DIR}/strict-ran" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1)" || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped verify regex still counted 'echo hello' as a verify run (rc=${RC})"; }
+if printf '%s' "${PERR}" | grep -q 'Strict verify gate'; then
+  rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command reached the strict gate"
+fi
+if [ -e "${PEJ_DIR}/strict-ran" ]; then
+  rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command was executed at stop"
+fi
+SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_VERIFY_REGEX' \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart did not warn about the committed LUCIAZERO_* env block"; }
+# the lookup runs on every Bash call, so a repository must not be able to hang
+# it (fifo) or make it chew a huge file: both refuse the knobs, neither blocks
+rm -f "${PEJ_DIR}/.claude/settings.json"
+# timeout(1) is not on stock macOS; without it a regressed guard would hang the
+# suite forever instead of failing it, so skip rather than risk that
+if command -v timeout >/dev/null 2>&1; then
+  mkfifo "${PEJ_DIR}/.claude/settings.json"
+  RC=0; timeout 10 env TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session \
+    <<< "${PEJ}" >/dev/null 2>&1 || RC=$?
+  [ "${RC}" != 124 ] || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a fifo .claude/settings.json hung the hook"; }
+  rm -f "${PEJ_DIR}/.claude/settings.json"
+else
+  echo "skip fifo settings guard (no timeout(1))"
+fi
+python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_100_000)' \
+  "${PEJ_DIR}/.claude/settings.json"
+SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
+# a committed LUCIAZERO_VERIFY_CMD is legitimate team practice, not a hijack —
+# it only tightens matching, so it is neither refused nor warned about
+echo '{"env": {"LUCIAZERO_VERIFY_CMD": "./test.sh"}}' > "${PEJ_DIR}/.claude/settings.json"
+SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+if printf '%s' "${SESS_OUT}" | grep -q 'committed .claude/settings.json'; then
+  rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart warned about a legitimate committed LUCIAZERO_VERIFY_CMD"
+fi
+# personal scope is untouched: same repo, keys only in settings.local.json
+rm -f "${PEJ_DIR}/.claude/settings.json"
+echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.local.json"
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 0 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "personal settings.local.json regex override was refused too (rc=${RC})"; }
+rm -rf "${PEJ_DIR}"
+echo "ok  committed settings cannot reconfigure the hook"
+
+# 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
+# raises on a bare md5() call and the tracker would fail open, doing nothing.
+for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh; do
+  if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
+    fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
+  fi
+done
+echo "ok  md5 state keys are FIPS-safe"
 
 # 4c2. strict gate: runs the configured command at stop, blocks on red quoting
 # the failure, fast-paths on green state, and degrades to the nudge on timeout

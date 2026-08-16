@@ -49,11 +49,29 @@ way around any of them is a reportable vulnerability, not expected behavior:
   and merged Bash wall-clock milliseconds plus Bash/verify/skill counts; raw
   commands, tool IDs, skill names, and paths are never written to state or log.
 
-## Known sharp edge (documented, by design)
+## Hostile-repository configuration (partly closed)
 
-`LUCIAZERO_STRICT_VERIFY_CMD` is read from the environment, and the hook
-cannot tell which settings scope set it — a repository that commits it in a
-settings `env` block reaches the hook. The README says to treat such a
-repository as hostile and remove the variable before working there. A report
-showing how to *escalate* beyond running the configured command (or to defeat
-the fail-open guarantees above) is very welcome.
+`LUCIAZERO_STRICT_VERIFY_CMD` and `LUCIAZERO_VERIFY_REGEX` are read from the
+environment, and a repository that commits them in a settings `env` block
+reaches the hook: the first is a command the stop hook would run, the second
+can be widened until every Bash command counts as a verify run — enforcement
+dies while the statusline stays green.
+
+The hook now reads the working directory's **committed**
+`.claude/settings.json` and refuses both keys when that file declares them:
+the regex falls back to the built-in default, the strict gate is skipped, and
+`SessionStart` prints one line naming the keys. Refusal never blocks, and a
+parse error leaves the configured values untouched (fail open).
+
+Limits, stated plainly:
+
+- The personal, gitignored `.claude/settings.local.json` is deliberately not
+  inspected — that scope is the user's own.
+- Env exported by the shell, a parent process, or a global settings file is
+  indistinguishable from a legitimate personal setting and is still honored.
+- `LUCIAZERO_VERIFY_CMD` is honored from any scope. It normally *tightens*
+  matching, but a committed `env` block can still point it at a trivial
+  command, so a repository shipping any `LUCIAZERO_*` key deserves a read.
+
+A report showing how to *escalate* beyond running the configured command (or
+to defeat the fail-open guarantees above) is very welcome.

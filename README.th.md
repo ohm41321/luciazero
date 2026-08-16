@@ -214,6 +214,12 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
+- `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า hook ใหม่ไม่ได้:
+  ถ้าประกาศ `LUCIAZERO_VERIFY_REGEX` หรือ `LUCIAZERO_STRICT_VERIFY_CMD` ไว้ที่นั่น
+  hook จะปฏิเสธและแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน
+  `.claude/settings.local.json` ส่วนตัวของคุณยังทำงานปกติ
+- Windows: installer และ hook เป็นสคริปต์ Bash ให้รันใน WSL;
+  `npx luciazero discipline` ใช้ได้บน Node ปกติ
 
 อ่าน trust boundary ฉบับเต็มใน [SECURITY.md](SECURITY.md)
 

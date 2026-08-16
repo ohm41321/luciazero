@@ -219,6 +219,12 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
   committed repository config. Strict mode fails open on internal errors.
+- A repository's committed `.claude/settings.json` cannot reconfigure the hook:
+  a `LUCIAZERO_VERIFY_REGEX` or `LUCIAZERO_STRICT_VERIFY_CMD` declared there is
+  refused and named once at `SessionStart`. Your own gitignored
+  `.claude/settings.local.json` keeps working.
+- Windows: the installers and hooks are Bash scripts — run them under WSL.
+  `npx luciazero discipline` works in native Node.
 
 See [SECURITY.md](SECURITY.md) for the complete trust boundary.
 

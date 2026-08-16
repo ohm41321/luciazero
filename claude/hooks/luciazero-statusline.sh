@@ -26,7 +26,9 @@ except Exception:
 model = ((d.get("model") or {}).get("display_name")) or "claude"
 cwd = ((d.get("workspace") or {}).get("current_dir")) or d.get("cwd") or os.getcwd()
 
-key = hashlib.md5(cwd.encode()).hexdigest()[:12]
+# state-directory name, not a security decision — explicit so a FIPS python3
+# does not raise here and drop the statusline to its minimal fallback line
+key = hashlib.md5(cwd.encode(), usedforsecurity=False).hexdigest()[:12]
 uid = os.getuid() if hasattr(os, "getuid") else "unknown"
 base = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"luciazero-verify-state-{uid}")
 try:

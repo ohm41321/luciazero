@@ -53,17 +53,11 @@ if [ "${MODE}" = "doctrine" ]; then
   exit 0
 fi
 
-# Plugin-channel dedupe (the plugin's hooks.json invokes every mode with
-# LUCIAZERO_CHANNEL=plugin): when `install.sh --with-hooks` wiring is ALSO
-# present, the classic copy wins and the plugin copy stands down — otherwise
-# the stop nudge double-fires and a strict verify runs twice concurrently.
-if [ "${LUCIAZERO_CHANNEL:-}" = "plugin" ]; then
-  CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
-  if [ -x "${CFG}/hooks/luciazero-verify.sh" ] \
-     && grep -qF "${CFG}/hooks/luciazero-verify.sh" "${CFG}/settings.json" 2>/dev/null; then
-    exit 0
-  fi
-fi
+hook_path() { # canonical path of $1; empty when its directory does not exist
+  HP_DIR="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || return 0
+  [ -n "${HP_DIR}" ] || return 0
+  printf '%s/%s' "${HP_DIR}" "$(basename "$1")"
+}
 
 # Hook stdin is always a pipe; when run by hand from a terminal for debugging,
 # do not hang waiting for EOF that never comes.
@@ -82,7 +76,146 @@ except Exception:
 
 CWD="$(pyfield "d.get('cwd')")"
 [ -n "${CWD}" ] || CWD="${PWD}"
-KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])' 2>/dev/null)" || exit 0
+
+# A repository's COMMITTED .claude/settings.json can put anything in its `env`
+# block, and that env reaches this hook — so NO LUCIAZERO_* knob is accepted
+# from that scope. Each one is a way to disable enforcement while the
+# statusline stays green: a widened LUCIAZERO_VERIFY_REGEX (or a
+# LUCIAZERO_VERIFY_CMD pointing at `echo`) makes any command count as a verify
+# run, LUCIAZERO_DOC_REGEX='.*' makes every edit look like documentation so
+# nothing is ever unverified, and LUCIAZERO_STRICT_VERIFY_CMD is a command this
+# hook would RUN at stop. CLAUDE_CONFIG_DIR is refused from that scope too: it
+# moves the config directory the dedupe below trusts.
+#
+# PROJECT scope only. The walk covers the session directory and its ancestors —
+# Claude Code merges project settings from the repository root and a session's
+# cwd is often a subdirectory — but it stops at the repository root, at
+# CLAUDE_PROJECT_DIR, and at $HOME, and it never reads the user's own config
+# directory. Personal settings (global `~/.claude/settings.json`, gitignored
+# `.claude/settings.local.json`) are the user's scope and keep working.
+#
+# Refusal only ever falls back to this file's own defaults, never to a block,
+# and a parse error leaves the configured values untouched. Only the modes that
+# consume a knob pay for the lookup.
+# The scanner program lives in a variable, not a here-document inside
+# $( ): bash 3.2 (still the /bin/bash on macOS) cannot parse that
+# combination and fails the whole file at load time.
+REFUSED_SCAN_PY='import json, os, stat, sys
+LIMIT = 1000000    # a settings file is kilobytes; this runs on every tool call
+MAX_DEPTH = 40     # ancestor walk is bounded, never unbounded I/O
+
+def refused(key):
+    return isinstance(key, str) and (key.startswith("LUCIAZERO_")
+                                     or key == "CLAUDE_CONFIG_DIR")
+
+def keys_in(path):
+    try:
+        info = os.stat(path)
+    except OSError:
+        return ()
+    # never read a fifo or device planted here: that would hang the hook
+    # instead of failing open
+    if not stat.S_ISREG(info.st_mode):
+        return ()
+    if info.st_size > LIMIT:
+        # absurd for a settings file: refuse everything rather than parse it
+        return ("LUCIAZERO_*",)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            env = json.loads(handle.read(LIMIT)).get("env")
+    except Exception:
+        return ()
+    if not isinstance(env, dict):
+        return ()
+    return tuple(k for k in env if refused(k))
+
+def real(path):
+    try:
+        return os.path.realpath(path)
+    except OSError:
+        return path
+
+home = real(os.path.expanduser("~"))
+# Only the DEFAULT config directory counts as user scope. CLAUDE_CONFIG_DIR is
+# attacker-reachable: pointed at the project itself, it would mark the
+# repository settings file as user scope and skip the very file that declares
+# it, and the dedupe below would then trust a classic install inside the repo.
+user_config = real(os.path.join(home, ".claude"))
+project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+project_dir = real(project_dir) if project_dir else None
+
+found, seen = [], set()
+directory = real(sys.argv[1] or ".")
+for _ in range(MAX_DEPTH):
+    claude_dir = os.path.join(directory, ".claude")
+    if directory != home and real(claude_dir) != user_config:
+        for key in keys_in(os.path.join(claude_dir, "settings.json")):
+            if key not in seen:
+                seen.add(key)
+                found.append(key)
+    if directory == home:
+        break
+    if os.path.exists(os.path.join(directory, ".git")):
+        break  # repository root: project scope ends here
+    if project_dir is not None and directory == project_dir:
+        break
+    parent = os.path.dirname(directory)
+    if parent == directory:
+        break
+    directory = parent
+print("\n".join(found))
+'
+REFUSED_ENV_KEYS=""
+case "${MODE}" in
+  edit|bash|bash-failure|stop|session)
+    REFUSED_ENV_KEYS="$(printf '%s' "${REFUSED_SCAN_PY}" \
+      | python3 - "${CWD}" 2>/dev/null || true)"
+    ;;
+esac
+if [ -n "${REFUSED_ENV_KEYS}" ]; then
+  # `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
+  case "${REFUSED_ENV_KEYS}" in
+    *'LUCIAZERO_*'*)
+      REFUSED_ENV_KEYS='LUCIAZERO_VERIFY_CMD
+LUCIAZERO_VERIFY_REGEX
+LUCIAZERO_DOC_REGEX
+LUCIAZERO_STRICT_VERIFY_CMD
+LUCIAZERO_STRICT_TIMEOUT
+LUCIAZERO_RELAY_STALE_DAYS
+LUCIAZERO_HANDOFF_STALE_DAYS
+CLAUDE_CONFIG_DIR' ;;
+  esac
+  while IFS= read -r RK; do
+    case "${RK}" in
+      LUCIAZERO_[A-Z_]*|CLAUDE_CONFIG_DIR) unset "${RK}" 2>/dev/null || true ;;
+    esac
+  done <<EOF
+${REFUSED_ENV_KEYS}
+EOF
+fi
+
+# Channel dedupe: when `install.sh --with-hooks` wiring is ALSO present, the
+# classic copy wins and every other copy (the plugin's) stands down — otherwise
+# the stop nudge double-fires and a strict verify runs twice concurrently.
+#
+# Decided from this script's own path, never from LUCIAZERO_CHANNEL: an
+# env-driven dedupe let a repository hand the CLASSIC hook a plugin label so it
+# stood itself down. It runs after the refusal above for the same reason — a
+# committed CLAUDE_CONFIG_DIR could otherwise point at a repository-controlled
+# directory holding a "wired classic install", and every copy would stand down.
+CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+CLASSIC_HOOK="$(hook_path "${CFG}/hooks/luciazero-verify.sh")"
+SELF_HOOK="$(hook_path "$0")"
+if [ -n "${CLASSIC_HOOK}" ] && [ "${SELF_HOOK}" != "${CLASSIC_HOOK}" ] \
+   && [ -x "${CLASSIC_HOOK}" ] \
+   && grep -qF "${CFG}/hooks/luciazero-verify.sh" "${CFG}/settings.json" 2>/dev/null; then
+  exit 0
+fi
+
+# md5 here names a state directory; it is never a security decision. Saying so
+# explicitly keeps the hook alive on a FIPS-enforcing python3, where a bare
+# md5() call raises and the tracker would fail open (silently doing nothing).
+KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(sys.stdin.buffer.read(), usedforsecurity=False).hexdigest()[:12])' 2>/dev/null)" || exit 0
 [ -n "${KEY}" ] || exit 0
 BASE="${TMPDIR:-/tmp}/luciazero-verify-state-$(id -u 2>/dev/null || echo unknown)"
 # The base name is predictable, so validate ownership/type before touching it.
@@ -396,6 +529,12 @@ print("yes" if e is not None and (v is None or e > v) else "no")' "${STATE}" 2>/
     [ "${NUDGE}" = no ] && stat_log stop-clean
     ;;
   session)
+    # A committed settings env block that reconfigures this hook is worth one
+    # loud line: the refusal above is silent, and a repository that ships these
+    # keys is either mistaken or hostile. Names the keys, never their values.
+    if [ -n "${REFUSED_ENV_KEYS}" ]; then
+      echo "This repository's committed .claude/settings.json sets $(printf '%s' "${REFUSED_ENV_KEYS}" | tr '\n' ' ')— Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo."
+    fi
     # SessionStart emits ONE pointer, never the relay contents. A legacy
     # HANDOFF.md gets a migration warning but is not silently rewritten.
     CAP="${CWD}/LUCIA_RELAY.json"

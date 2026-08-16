@@ -1,26 +1,32 @@
-**English** | [ภาษาไทย](README.th.md)
+<div align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="220" alt="Lucia — Luciazero's mascot">
+  <h1>Luciazero</h1>
+  <p>
+    <strong>Evidence-first discipline for coding agents.</strong><br>
+    <code>plan → change → verify → fix</code>
+  </p>
+  <p>
+    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
+    <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
+  </p>
+</div>
 
-# Luciazero for Claude Code & Codex CLI
+**English** · [ภาษาไทย](README.th.md)
 
-[![npm](https://img.shields.io/npm/v/luciazero)](https://www.npmjs.com/package/luciazero)
-[![CI](https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg)](https://github.com/ohm41321/luciazero/actions/workflows/ci.yml)
-[![license](https://img.shields.io/github/license/ohm41321/luciazero)](LICENSE)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="280" alt="Lucia — Luciazero's mascot">
-</p>
-
-Luciazero makes coding agents run a `plan → change → verify → fix` loop instead
-of handing back work they merely believe is finished.
+Luciazero is a lightweight discipline layer for coding agents. It works with
+Claude Code, Codex CLI, and compatible skill runtimes through plugin, CLI, or
+skills-only installs.
 
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
 
 It ships a compact [9-rule doctrine](claude/luciazero.md), 11 on-demand skills,
-verification hooks, a risk-routed reviewer, and an eval harness. It is a
-discipline layer, not an agent runtime or overnight orchestrator.
+verification hooks, a risk-routed reviewer, and an eval harness. It is designed
+to make completion claims auditable—not to replace an agent runtime or become an
+overnight orchestrator.
 
-## See it in 15 seconds
+## See the loop
 
 This GIF is driven by the shipped hooks, not a mockup:
 
@@ -34,7 +40,7 @@ This GIF is driven by the shipped hooks, not a mockup:
 ✅ verify 3m   → the latest check passed three minutes ago
 ```
 
-## What it prevents
+## What it protects
 
 | Failure mode | Mechanism |
 |---|---|
@@ -49,7 +55,7 @@ This GIF is driven by the shipped hooks, not a mockup:
 Mechanical guarantees run in `test.sh`; behavioral claims are measured by the
 [eval harness](eval/README.md).
 
-## Carry unfinished work across agents
+## Keep work portable
 
 `/lucia-relay` transfers decisions and evidence instead of dumping a chat
 transcript. Session A writes canonical `LUCIA_RELAY.json` plus a generated
@@ -74,7 +80,11 @@ checks—not model-uplift results. See the [method and limits](docs/benchmark.md
 
 ## Install
 
-### Claude Code plugin — recommended
+Luciazero supports Claude Code, Codex CLI, and compatible agents. Choose the
+installation path that matches your workflow.
+
+<details>
+<summary><strong>Recommended · Claude Code plugin</strong></summary>
 
 Carries the doctrine, all skills, reviewer, and verify-tracking hooks:
 
@@ -87,7 +97,10 @@ Start a repository with `/luciazero:ready`. Plugin skills use the
 `/luciazero:` prefix. The plugin has no statusline because Claude Code plugins
 cannot set one.
 
-### Skills only — any compatible agent
+</details>
+
+<details>
+<summary><strong>Skills only · any compatible agent</strong></summary>
 
 ```bash
 npx skills add ohm41321/luciazero
@@ -95,7 +108,10 @@ npx skills add ohm41321/luciazero
 
 This installs the 11 skills: no doctrine, reviewer, or hooks.
 
-### Classic Claude Code and Codex
+</details>
+
+<details>
+<summary><strong>Classic install · Claude Code or Codex CLI</strong></summary>
 
 ```bash
 npx luciazero                 # Claude Code
@@ -111,7 +127,9 @@ Classic installs support `--status`; Codex receives the doctrine and skills but
 not Claude-only hooks/statusline. Installers back up name collisions and remove
 only exact Luciazero-managed copies on uninstall.
 
-## Update
+</details>
+
+## Update safely
 
 Luciazero never changes classic or Codex files in the background.
 
@@ -140,7 +158,7 @@ Claude Code can auto-update the plugin at startup: open `/plugin` →
 marketplaces leave this off by default. For release-only notifications, use
 GitHub **Watch → Custom → Releases**.
 
-## The 11 skills
+## Skills at a glance
 
 Run `/ready` first; the rest activate when their moment arrives.
 
@@ -167,7 +185,7 @@ Risky diffs also pass through one read-only `reviewer` with `security`,
 `contract`, or `general` focus. Security and contract risk together receive two
 separate passes.
 
-## Evidence
+## Evidence & limitations
 
 <!-- BEGIN GENERATED: benchmark-evidence -->
 
@@ -205,7 +223,7 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 
 <!-- END GENERATED: benchmark-evidence -->
 
-## Requirements and safety
+## Security & requirements
 
 - Node.js 18+ for the CLI and discipline report.
 - Bash for classic installers; Python 3.9+ for hooks and Lucia Relay
@@ -230,7 +248,7 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 
 See [SECURITY.md](SECURITY.md) for the complete trust boundary.
 
-## Development
+## Developing Luciazero
 
 ```bash
 ./test.sh --fast   # intermediate loop: core doctrine/hooks/report/Relay checks
@@ -255,7 +273,7 @@ More detail:
 - [Publishing](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 
-## Lucia family & support
+## Support the project
 
 Luciazero shares its mascot with [Lucia](https://lucia-discord-bot.vercel.app),
 a Thai-language Discord bot. If Luciazero saves you review cycles, you can

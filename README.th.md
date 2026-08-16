@@ -1,26 +1,32 @@
-[English](README.md) | **ภาษาไทย**
+<div align="center">
+  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="220" alt="Lucia — มาสคอตของ Luciazero">
+  <h1>Luciazero</h1>
+  <p>
+    <strong>ชั้นวินัยที่พิสูจน์ได้ด้วยหลักฐานสำหรับ coding agent</strong><br>
+    <code>วางแผน → แก้ → ตรวจ → แก้ซ้ำ</code>
+  </p>
+  <p>
+    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
+    <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
+  </p>
+</div>
 
-# Luciazero สำหรับ Claude Code และ Codex CLI
+[English](README.md) · **ภาษาไทย**
 
-[![npm](https://img.shields.io/npm/v/luciazero)](https://www.npmjs.com/package/luciazero)
-[![CI](https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg)](https://github.com/ohm41321/luciazero/actions/workflows/ci.yml)
-[![license](https://img.shields.io/github/license/ohm41321/luciazero)](LICENSE)
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="280" alt="Lucia — มาสคอตของ Luciazero">
-</p>
-
-Luciazero ทำให้ coding agent รันลูป `วางแผน → แก้ → ตรวจ → แก้ซ้ำ`
-แทนการส่งงานกลับมาเพราะคิดเองว่าน่าจะเสร็จแล้ว
+Luciazero เป็นชั้นวินัยขนาดเล็กสำหรับ coding agent รองรับ Claude Code,
+Codex CLI และ runtime ที่ใช้ skill ได้ ผ่านการติดตั้งแบบ plugin, CLI
+หรือเฉพาะ skill
 
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
 
 ภายในมี [doctrine 9 ข้อ](claude/luciazero.md) ที่สั้น, skill แบบเรียกเมื่อจำเป็น
 11 ตัว, hook ติดตามการ verify, reviewer ที่ route ตามความเสี่ยง และ eval harness
-นี่คือชั้นวินัย ไม่ใช่ agent runtime หรือระบบ orchestration สำหรับรันงานข้ามคืน
+นี่คือชั้นวินัยที่ทำให้คำกล่าวว่าเสร็จตรวจสอบได้ ไม่ใช่ agent runtime หรือระบบ
+orchestration สำหรับรันงานข้ามคืน
 
-## ดูการทำงานใน 15 วินาที
+## ดูลูปการทำงาน
 
 GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใช่ mockup:
 
@@ -34,7 +40,7 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 ✅ verify 3m   → การตรวจผ่านเมื่อสามนาทีก่อน
 ```
 
-## ป้องกันอะไร
+## ปกป้องอะไร
 
 | ความพัง | กลไกที่จับ |
 |---|---|
@@ -49,7 +55,7 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 กลไกที่ตรวจด้วยเครื่องรันใน `test.sh`; ข้ออ้างด้านพฤติกรรมวัดด้วย
 [eval harness](eval/README.md)
 
-## ส่งงานที่ยังไม่เสร็จข้าม agent
+## ส่งต่องานข้าม agent
 
 `/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต
 Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พร้อม human view
@@ -72,7 +78,11 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 
 ## ติดตั้ง
 
-### Claude Code plugin — แนะนำ
+Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใช้ skill ได้ เลือกช่องทาง
+ที่เหมาะกับ workflow ของคุณ
+
+<details>
+<summary><strong>แนะนำ · Claude Code plugin</strong></summary>
 
 ได้ doctrine, skill ทั้งหมด, reviewer และ hook ติดตาม verify:
 
@@ -84,7 +94,10 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 เริ่ม repo ด้วย `/luciazero:ready` ชื่อ skill แบบ plugin มี prefix
 `/luciazero:` และไม่มี statusline เพราะ Claude Code plugin ตั้งค่านี้ไม่ได้
 
-### เฉพาะ skill — agent ที่รองรับ
+</details>
+
+<details>
+<summary><strong>เฉพาะ skill · agent ที่รองรับ</strong></summary>
 
 ```bash
 npx skills add ohm41321/luciazero
@@ -92,7 +105,10 @@ npx skills add ohm41321/luciazero
 
 ช่องทางนี้ติดตั้งเฉพาะ skill 11 ตัว ไม่มี doctrine, reviewer หรือ hook
 
-### Classic Claude Code และ Codex
+</details>
+
+<details>
+<summary><strong>Classic install · Claude Code หรือ Codex CLI</strong></summary>
 
 ```bash
 npx luciazero                 # Claude Code
@@ -108,7 +124,9 @@ npx luciazero uninstall-codex
 เฉพาะ Claude Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
 ยืนยันความเป็นเจ้าของได้
 
-## อัปเดต
+</details>
+
+## อัปเดตอย่างปลอดภัย
 
 Luciazero จะไม่แก้ไฟล์ของ classic หรือ Codex อยู่เบื้องหลัง
 
@@ -136,7 +154,7 @@ Claude Code อัปเดต plugin ตอนเริ่มโปรแกร
 ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
 GitHub **Watch → Custom → Releases**
 
-## Skill ทั้ง 11 ตัว
+## ภาพรวม skill ทั้ง 11 ตัว
 
 รัน `/ready` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน
 
@@ -162,7 +180,7 @@ GitHub **Watch → Custom → Releases**
 Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
 หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจแยกสองรอบ
 
-## หลักฐาน
+## หลักฐานและข้อจำกัด
 
 <!-- BEGIN GENERATED: benchmark-evidence -->
 
@@ -200,7 +218,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 
 <!-- END GENERATED: benchmark-evidence -->
 
-## Requirement และความปลอดภัย
+## ความปลอดภัยและ requirement
 
 - Node.js 18+ สำหรับ CLI และ discipline report
 - Bash สำหรับ classic installer; Python 3.9+ สำหรับ hook และ Lucia Relay (`install.sh --with-hooks` ปฏิเสธเวอร์ชันเก่ากว่านี้)
@@ -224,7 +242,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 
 อ่าน trust boundary ฉบับเต็มใน [SECURITY.md](SECURITY.md)
 
-## พัฒนา repo นี้
+## พัฒนา Luciazero
 
 ```bash
 ./test.sh --fast   # loop ระหว่างทำ: ตรวจ doctrine/hook/report/Relay ส่วนหลัก
@@ -248,7 +266,7 @@ plugin/npm, eval grader ที่พิสูจน์ตัวเองได�
 - [การ publish](docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 
-## ผลิตภัณฑ์ในเครือและสนับสนุน
+## สนับสนุนโปรเจกต์
 
 Luciazero ใช้มาสคอตร่วมกับ [Lucia](https://lucia-discord-bot.vercel.app)
 Discord bot ภาษาไทย ถ้า Luciazero ช่วยลดรอบ review ได้

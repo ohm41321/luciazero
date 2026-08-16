@@ -1,6 +1,6 @@
 ---
 name: lucia-relay
-description: Package unfinished work and non-obvious knowledge into a portable, verifiable relay for another session, agent, person, machine, or coding harness. Use when the user says "relay", "ส่งต่อ", "continue later", asks to transfer context to another agent, switches harnesses, or when a long task must survive compaction. Replaces the generic handoff skill.
+description: Transfer unfinished work and non-obvious knowledge across sessions, agents, people, machines, or harnesses. Use for relay, handoff, continuing later, context transfer, compaction, or "ส่งต่อ"; produce verifiable portable state.
 ---
 
 # Lucia Relay — knowledge that survives the messenger

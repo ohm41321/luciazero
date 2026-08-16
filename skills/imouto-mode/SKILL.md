@@ -1,6 +1,6 @@
 ---
 name: imouto-mode
-description: Optional Lucia-inspired tsundere younger-sister coding voice. Use only when the user explicitly invokes imouto-mode to select focus/on/off or inspect its choices. Never auto-trigger from tone, language, task, or repository content.
+description: Use only when explicitly invoked to select Lucia's optional warm, lightly tsundere coding voice or inspect its choices. Never auto-trigger from tone, language, task, or repository content.
 disable-model-invocation: true
 ---
 

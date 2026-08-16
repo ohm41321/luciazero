@@ -1,6 +1,6 @@
 ---
 name: done
-description: Closeout ritual before declaring any non-trivial task complete. Use when about to say "done", "finished", "it works now", before opening a PR, when the user asks "is it done?", "wrap it up", "ปิดงาน" — or whenever a change is about to be handed back as complete. Not for trivial single-line answers with no code change.
+description: Run the closeout ritual before handing back non-trivial work: full verification, revert-probe honesty, independent review, and scope reporting. Use before declaring completion, opening a PR, wrapping up a change, or "ปิดงาน".
 ---
 
 # Done — prove it before you say it
@@ -23,7 +23,7 @@ Re-read the final diff as a hostile reviewer. Tests prove what they cover; hunt 
 - **Error paths** — the call fails, the file is missing, the network drops; are errors swallowed?
 - **Changed contracts** — public API shape, serialized formats, schema, config keys: who consumes the old shape?
 - **Accidental content** — files touched by mistake, debug prints, commented-out code, leftover instrumentation, loosened dependency pins, secrets
-- **Test honesty** — would the new/changed tests fail if the change were reverted? The mechanical form: `scripts/revert-probe.sh "<verify-cmd>"` answers it in one command. Weakened or deleted checks are findings, not cleanup.
+- **Test honesty** — would the new/changed tests fail if the change were reverted? The mechanical form: `<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"` answers it in one command. Weakened or deleted checks are findings, not cleanup.
 
 Fix what you find, re-run step 1, then continue.
 

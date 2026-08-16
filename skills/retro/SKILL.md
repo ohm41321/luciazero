@@ -1,6 +1,6 @@
 ---
 name: retro
-description: Harvest lessons from the session into the project's permanent notes. Use after finishing a hard task, a long debugging session, or any work that hit dead ends — when the user says "run a retro", "record what we learned", "จดบทเรียน", or when a task ends having disproven an approach that looked right.
+description: Record durable lessons, null results, and footguns after hard work or debugging. Use when the user asks for a retro, dead ends need preserving, a task disproves an approach, or "จดบทเรียน". Keep repo knowledge separate from machine-local memory.
 ---
 
 # Retro — turn experience into recorded knowledge
@@ -17,7 +17,7 @@ Walk back through the work just finished and list candidates:
 - What surprised you: environment quirks, undocumented behavior, a flag or version that mattered?
 - What did you have to re-discover that should already have been written down?
 
-**Also read the discipline report**, if the enforcement pack is installed: run `npx luciazero discipline --project . --json` (or use `/discipline-report`). Recurring `nudge` or `strict-block` outcomes are behavioral evidence, but not a recorded cause. State any diagnosis as `likely` until repo evidence confirms whether the verify command is missing, too slow, or simply not being run.
+**Also read the discipline report**, if the enforcement pack is installed: use `/discipline-report`, or run the first available local form — `luciazero discipline --project . --json` when `luciazero` is on PATH, or `node <this-skill-dir>/../../bin/luciazero.js discipline --project . --json` from a source checkout/npm package. If neither exists, report that the report is unavailable offline; use `npx` only when package resolution is explicitly allowed. Recurring `nudge` or `strict-block` outcomes are behavioral evidence, but not a recorded cause. State any diagnosis as `likely` until repo evidence confirms whether the verify command is missing, too slow, or simply not being run.
 
 ## 2. Filter hard
 
@@ -44,7 +44,7 @@ A null result is worth exactly as much as a success. If the session proved nothi
   cause: <root cause> | proven-by: `<command>` | fix: <what fixed it> | date: YYYY-MM-DD
   ```
 
-- **True in every repository** — engineering lessons not tied to this codebase ("intermittent async test: check timezone pinning before touching the test") → append one line to `luciazero-heuristics.md` in the harness config dir (`~/.claude` / `~/.codex`). Hard rules: one line per lesson, same update-in-place/dedup discipline, **cap the file at 100 lines** — when full, drop the weakest entry rather than growing (an unbounded heuristics file becomes context tax, the exact failure this pack exists to prevent). Never personal paths or secrets, even here.
+- **True in every repository** — engineering lessons not tied to this codebase ("intermittent async test: check timezone pinning before touching the test") → append one line to `luciazero-heuristics.md` in the configured harness directory (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}` or `${CODEX_HOME:-$HOME/.codex}`). Hard rules: one line per lesson, same update-in-place/dedup discipline, **cap the file at 100 lines** — when full, drop the weakest entry rather than growing (an unbounded heuristics file becomes context tax, the exact failure this pack exists to prevent). Never personal paths or secrets, even here.
 - **Only this machine or this user** — local paths, installed tool versions, personal preferences, credential locations → must **never** be committed. If the harness provides a persistent memory directory (Claude Code announces its per-project `memory/` dir and `MEMORY.md` index in context when enabled), write it there and update the index, applying the same format, dedup, and prune rules. If no memory system exists (Codex CLI, or memory disabled), keep only the generalization that is true for anyone who clones the repo — never personal preferences or credential locations, even generalized; if nothing repo-true remains, state the lesson in the retro report instead of writing it anywhere — an honest gap beats a note no harness will ever load.
 
 Format, one entry per lesson:

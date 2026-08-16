@@ -1,6 +1,6 @@
 ---
 name: ready
-description: Make a repository agentic-ready so an agent can run its own plan→change→verify→fix loop without a human checking each step. Use when entering an unfamiliar repo, when the user asks to "set up agentic engineering", "make this repo agent-friendly", "add a verify command", "add smoke tests so you can check your own work", "set up hooks/CLAUDE.md/allowlist" — or when a change was requested but no automated way exists to prove it works.
+description: Make an unfamiliar repository agent-ready with a verify command, smoke tests, guardrails, and project notes. Use for repository setup, agentic engineering, verify commands, hooks, or allowlists; skip when verification and scope are already clear.
 ---
 
 # Ready
@@ -56,7 +56,7 @@ Name them by the repo's convention (`make verify` / `make verify-full`, npm scri
 
 **Monorepos:** detect the workspace layout (`package.json` `workspaces`, `pnpm-workspace.yaml`, turbo/nx config, `go.work`, Cargo `[workspace]`). Prefer a repo-owned `verify-changed` target backed by the workspace's native dependency graph; `verify-full` remains the root suite. Never make a global hook guess package mappings from path prefixes. Read [references/smart-verification.md](references/smart-verification.md) before creating the target, and record its base-revision/fallback contract in Phase 5 notes.
 
-**Enforcement pack users (Claude Code, ask first):** if the verify-tracking hooks are active — classic install: `~/.claude/hooks/luciazero-verify.sh` exists; plugin install: the `luciazero` plugin is enabled — offer to record the established command in the repo's *personal* settings so the tracker matches it exactly instead of by broad regex — `.claude/settings.local.json` (gitignored, never committed): `{"env": {"LUCIAZERO_VERIFY_CMD": "<the fast-tier command>"}}`. Derive it from CI (the honest source); it is a cache of that truth, so note it must be updated if CI changes. Show the exact JSON before writing anything.
+**Enforcement pack users (Claude Code, ask first):** if the verify-tracking hooks are active — classic install: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/luciazero-verify.sh` exists; plugin install: the `luciazero` plugin is enabled — offer to record the established command in the repo's *personal* settings so the tracker matches it exactly instead of by broad regex — `.claude/settings.local.json` (gitignored, never committed): `{"env": {"LUCIAZERO_VERIFY_CMD": "<the fast-tier command>"}}`. Derive it from CI (the honest source); it is a cache of that truth, so note it must be updated if CI changes. Never put this variable in committed `.claude/settings.json`: the hook cannot distinguish settings scopes, so a repository can control it; treat a repository that ships it as hostile. Show the exact JSON before writing anything.
 
 ## Phase 3 — Smoke tests, if there are none
 

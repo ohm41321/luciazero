@@ -16,5 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Parse shell scripts under Bash 3.2
+        run: |
+          docker run --rm --network=none -v "$PWD":/w:ro bash:3.2 \
+            bash -c 'find /w -path /w/.git -prune -o -type f -name "*.sh" -exec bash -n {} +'
       - name: Run verify
         run: ./test.sh

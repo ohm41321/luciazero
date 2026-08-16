@@ -32,12 +32,18 @@ same_tree() {
     && diff -qr "$1" "$2" >/dev/null 2>&1
 }
 
+tree_parents_safe() {
+  [ ! -L "$(dirname "$1")" ] && [ ! -L "$(dirname "$2")" ]
+}
+
 remove_managed_tree() {
-  RT_DST="$1"; RT_SNAPSHOT="$2"; RT_SHIPPED="$3"; RT_LABEL="$4"
+  RT_DST="$1"; RT_SNAPSHOT="$2"; RT_SHIPPED="$3"; RT_LABEL="$4"; RT_ALLOW_SHIPPED="${5:-1}"
   if [ ! -e "${RT_DST}" ] && [ ! -L "${RT_DST}" ]; then
     echo "  ok  ${RT_LABEL} (already absent)"
+  elif ! tree_parents_safe "${RT_DST}" "${RT_SNAPSHOT}"; then
+    echo "  !!  ${RT_LABEL} has a symlinked parent; left untouched" >&2
   elif same_tree "${RT_DST}" "${RT_SNAPSHOT}" \
-    || { [ ! -e "${RT_SNAPSHOT}" ] && same_tree "${RT_DST}" "${RT_SHIPPED}"; }; then
+    || { [ "${RT_ALLOW_SHIPPED}" = 1 ] && [ ! -e "${RT_SNAPSHOT}" ] && same_tree "${RT_DST}" "${RT_SHIPPED}"; }; then
     rm -rf "${RT_DST}"
     echo "  ok  ${RT_LABEL}"
   else
@@ -71,6 +77,12 @@ while IFS= read -r SKILL; do
   remove_managed_tree "${CLAUDE_DIR}/skills/${SKILL}" \
     "${MANAGED_DIR}/skills/${SKILL}" "${SRC}/skills/${SKILL}" "skills/${SKILL}"
 done < <(skill_inventory)
+
+# v2.3 migration: also remove an untouched alias left by older installs.
+remove_managed_tree "${CLAUDE_DIR}/skills/luciazero-bootstrap" \
+  "${MANAGED_DIR}/skills/luciazero-bootstrap" \
+  "${SRC}/migrations/luciazero-bootstrap-v2.2.0" \
+  "skills/luciazero-bootstrap (retired alias)" 0
 
 while IFS= read -r AGENT_NAME; do
   remove_managed_file "${CLAUDE_DIR}/agents/${AGENT_NAME}.md" \

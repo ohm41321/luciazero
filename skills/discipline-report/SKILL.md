@@ -1,15 +1,18 @@
 ---
 name: discipline-report
-description: Analyze Luciazero's local stop-outcome log for evidence-backed verification habits. Use when the user asks for discipline stats, recurring nudge or strict-block patterns, a local behavior report, or runs `npx luciazero discipline`; supports time/project filters and machine-readable JSON.
+description: Analyze Luciazero stop-outcome logs for evidence-backed verification habits. Use for discipline stats, recurring nudge or strict-block patterns, local behavior reports, or machine-readable JSON.
 ---
 
 # Discipline report — turn local outcomes into evidence
 
-Run:
+Resolve the first available local CLI:
 
 ```bash
-npx luciazero discipline [--days N] [--project PATH_OR_ID] [--json]
+luciazero discipline [--days N] [--project PATH_OR_ID] [--json]
+node <this-skill-dir>/../../bin/luciazero.js discipline [--days N] [--project PATH_OR_ID] [--json]
 ```
+
+Use the first command only when `luciazero` is on PATH; use the second from a source checkout or npm package. If neither local form exists, report that the discipline report is unavailable offline instead of silently invoking `npx`. Use `npx` only when package resolution is explicitly allowed.
 
 The report reads `luciazero-stats.log` from the Claude config directory by default. It accepts current schema-versioned JSON lines and legacy space-delimited records, ignores malformed lines without failing, and never sends data over the network. New enforcement-pack installs also summarize measured turn/Bash wall-clock milliseconds and Bash, verify, and model/user skill invocation counts. Parallel Bash intervals are merged before subtraction. These are aggregates: raw commands and skill names are never persisted.
 

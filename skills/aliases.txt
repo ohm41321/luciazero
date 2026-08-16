@@ -1,2 +1,1 @@
-# Temporary compatibility aliases. Remove luciazero-bootstrap after one release.
-luciazero-bootstrap
+# Compatibility aliases are retired. Keep this file as the empty alias catalog.

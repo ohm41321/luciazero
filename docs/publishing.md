@@ -103,6 +103,5 @@ already-downloaded installers. No lifecycle or background updater is allowed.
 The classic `./install.sh` remains the reference channel — it is the only one
 that carries the statusline and the CLAUDE.md import. The plugin substitutes a
 `SessionStart` doctrine hook (same capped text, silent when a classic install
-exists); `npx skills` carries the 11 skills plus the temporary
-`/luciazero-bootstrap` compatibility alias — no doctrine, no reviewer
-agent, no hooks. Do not describe the channels as equivalent.
+exists); `npx skills` carries the 11 skills — no doctrine, no reviewer agent,
+no hooks. Do not describe the channels as equivalent.

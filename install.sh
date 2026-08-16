@@ -161,6 +161,28 @@ install_tree() {
   cp -R "${IT_SRC}" "${IT_SNAPSHOT}"
 }
 
+# Remove a retired Luciazero skill only when its managed snapshot proves
+# ownership. A customized or colliding directory is user data and must survive
+# the migration with an explicit warning. Symlinked skill parents are refused
+# so the deletion cannot escape the configured directory.
+remove_legacy_tree() {
+  LT_DST="$1"; LT_SNAPSHOT="$2"; LT_LABEL="$3"
+  if [ ! -e "${LT_DST}" ] && [ ! -L "${LT_DST}" ]; then
+    if [ ! -L "$(dirname "${LT_SNAPSHOT}")" ]; then
+      rm -rf "${LT_SNAPSHOT}"
+    fi
+    return
+  fi
+  if [ -L "$(dirname "${LT_DST}")" ] || [ -L "$(dirname "${LT_SNAPSHOT}")" ]; then
+    echo "  !!  ${LT_LABEL} has a symlinked parent; left untouched" >&2
+  elif same_tree "${LT_DST}" "${LT_SNAPSHOT}"; then
+    rm -rf "${LT_DST}" "${LT_SNAPSHOT}"
+    echo "  ok  migrated ${LT_LABEL}"
+  else
+    echo "  !!  ${LT_LABEL} is customized or not Luciazero-owned; left untouched" >&2
+  fi
+}
+
 install_file() {
   IF_SRC="$1"; IF_DST="$2"; IF_SNAPSHOT="$3"; IF_LABEL="$4"
   if [ -e "${IF_DST}" ] || [ -L "${IF_DST}" ]; then
@@ -194,7 +216,7 @@ install_file "${SRC}/claude/${DOCTRINE}" "${CLAUDE_DIR}/${DOCTRINE}" \
   "${MANAGED_DIR}/${DOCTRINE}" "${DOCTRINE}"
 echo "  ok  ${DOCTRINE}"
 
-# 2. canonical skills plus temporary compatibility aliases
+# 2. canonical skills
 while IFS= read -r SKILL; do
   install_tree "${SRC}/skills/${SKILL}" \
     "${CLAUDE_DIR}/skills/${SKILL}" \
@@ -202,6 +224,12 @@ while IFS= read -r SKILL; do
     "skills/${SKILL}"
   echo "  ok  skills/${SKILL}"
 done < <(skill_inventory)
+
+# v2.3 migration: remove only the untouched /luciazero-bootstrap compatibility
+# alias from older installs. Customized copies remain user data.
+remove_legacy_tree "${CLAUDE_DIR}/skills/luciazero-bootstrap" \
+  "${MANAGED_DIR}/skills/luciazero-bootstrap" \
+  "skills/luciazero-bootstrap"
 
 # v1.5 migration: remove only an untouched Luciazero /handoff. A customized
 # skill is user data and stays in place with an explicit warning.
@@ -339,7 +367,6 @@ echo
 SKILL_SUMMARY="$(catalog "${SRC}/skills/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") "/" $0} END{print s}')"
 AGENT_SUMMARY="$(catalog "${SRC}/claude/agents/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") $0} END{print s}')"
 echo "Skills: ${SKILL_SUMMARY}. Agents: ${AGENT_SUMMARY}."
-echo "Compatibility alias for one release: /luciazero-bootstrap -> /ready."
 if [ "${WITH_HOOKS}" = 1 ]; then
   echo "Enforcement pack installed: verify-tracking hooks + statusline (see settings.json)."
 else

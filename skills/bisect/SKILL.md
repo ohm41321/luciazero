@@ -1,6 +1,6 @@
 ---
 name: bisect
-description: Pinpoint the first bad commit for a reproducible regression without disturbing the caller's working tree. Use when HEAD is bad, a known revision is good, and one unattended command distinguishes them; supports flaky-endpoint detection and git-bisect skip exit 125.
+description: Pinpoint the first bad commit for a reproducible regression in a safe temporary worktree. Use when HEAD is bad, a known revision is good, and one unattended command distinguishes them; handles flaky endpoints and git-bisect skip exit 125.
 ---
 
 # Bisect — isolate the first bad commit safely

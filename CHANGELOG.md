@@ -26,6 +26,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directory name. On a FIPS-enforcing python3 the bare call raised and the
   tracker failed open — silently doing nothing. The digest is unchanged, so
   existing state keys still resolve.
+- CI now parses every repository shell script with Bash 3.2.
 
 ### Security
 
@@ -69,6 +70,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gates the release.
 - README and README.th document the committed-settings refusal and the
   Windows/WSL requirement.
+- Retired the `/luciazero-bootstrap` compatibility alias after the `/ready`
+  migration window. Installers remove only untouched Luciazero-owned copies and
+  preserve customized user directories.
+- Capped skill discovery descriptions at 40 words and tightened path/offline
+  guidance for the closeout, debug, ready, retro, and discipline skills.
 
 ## [2.2.0] - 2026-08-15
 

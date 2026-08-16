@@ -1,6 +1,6 @@
 ---
 name: experiment
-description: Measured-change protocol for performance and tuning work. Use when the task is "make it faster", "optimize", "reduce memory", "ทดลอง", when comparing two approaches, or whenever a claim like "this should be faster" is about to be made without a number. Not for correctness bugs — that is /debug.
+description: Measure performance or tuning changes with a baseline, controlled comparison, correctness check, and recorded verdict. Use for speed, memory, latency, size, "ทดลอง", or any claim that one approach is better. Not for correctness bugs.
 ---
 
 # Experiment — no claim without a measurement

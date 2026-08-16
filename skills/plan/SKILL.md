@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Build a verification-first implementation plan for new features, major refactors, ambiguous work, or risky multi-module changes whose acceptance criteria are not yet falsifiable. Use when the user asks for a plan or material choices remain. Not for routine edits whose scope and proof are already clear.
+description: Build a falsifiable implementation plan for new features, major refactors, ambiguous work, or risky multi-module changes. Use when the user asks for a plan or material choices remain; skip routine edits with clear scope and proof.
 ---
 
 # Plan — make the change falsifiable

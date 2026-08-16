@@ -64,6 +64,28 @@ install_tree() {
   cp -R "${IT_SRC}" "${IT_SNAPSHOT}"
 }
 
+# Remove a retired Luciazero skill only when its managed snapshot proves
+# ownership. A customized or colliding directory is user data and must survive
+# the migration with an explicit warning. Symlinked skill parents are refused
+# so the deletion cannot escape the configured directory.
+remove_legacy_tree() {
+  LT_DST="$1"; LT_SNAPSHOT="$2"; LT_LABEL="$3"
+  if [ ! -e "${LT_DST}" ] && [ ! -L "${LT_DST}" ]; then
+    if [ ! -L "$(dirname "${LT_SNAPSHOT}")" ]; then
+      rm -rf "${LT_SNAPSHOT}"
+    fi
+    return
+  fi
+  if [ -L "$(dirname "${LT_DST}")" ] || [ -L "$(dirname "${LT_SNAPSHOT}")" ]; then
+    echo "  !!  ${LT_LABEL} has a symlinked parent; left untouched" >&2
+  elif same_tree "${LT_DST}" "${LT_SNAPSHOT}"; then
+    rm -rf "${LT_DST}" "${LT_SNAPSHOT}"
+    echo "  ok  migrated ${LT_LABEL}"
+  else
+    echo "  !!  ${LT_LABEL} is customized or not Luciazero-owned; left untouched" >&2
+  fi
+}
+
 echo "Installing into ${CODEX_DIR}"
 mkdir -p "${CODEX_DIR}/skills"
 
@@ -98,6 +120,12 @@ while IFS= read -r SKILL; do
     "skills/${SKILL}"
   echo "  ok  skills/${SKILL}"
 done < <(skill_inventory)
+
+# v2.3 migration: remove only the untouched /luciazero-bootstrap compatibility
+# alias from older installs. Customized copies remain user data.
+remove_legacy_tree "${CODEX_DIR}/skills/luciazero-bootstrap" \
+  "${MANAGED_DIR}/skills/luciazero-bootstrap" \
+  "skills/luciazero-bootstrap"
 
 LEGACY_HANDOFF="${CODEX_DIR}/skills/handoff"
 if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then

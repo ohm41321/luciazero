@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Hypothesis-driven debugging procedure. Use when a bug is not yet reliably reproduced, a fix attempt failed, debugging has gone two or more iterations without progress, or the user asks "debug this properly" or "ไล่บั๊ก". Not for a first obvious failure whose cause is already visible; reproduce and fix it directly.
+description: Debug a stubborn bug with a deterministic reproduction, hypothesis ledger, one-variable fixes, and a regression test. Use after the first obvious look fails, reproduction is unclear, or a fix attempt failed. Not for routine obvious failures; use for "ไล่บั๊ก".
 ---
 
 # Debug — hypothesis before edit
@@ -23,7 +23,7 @@ Shrink the reproduction — smaller input, fewer flags, one test instead of the 
 **Seed it from recorded experience first.** Before inventing hypotheses, grep the symptom's keywords (error strings, subsystem names) against two files, if they exist:
 
 - the repo's lesson ledger `docs/lessons.md` — this project's previously debugged failures;
-- the global heuristics file `luciazero-heuristics.md` in the harness config dir (`~/.claude` / `~/.codex`) — cross-repo lessons.
+- the global heuristics file `luciazero-heuristics.md` in the configured harness directory (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}` or `${CODEX_HOME:-$HOME/.codex}`) — cross-repo lessons. Use the configured path instead of assuming `~/.claude` or `~/.codex`.
 
 A match becomes **H1** — still verify it with its `proven-by` command; a ledger match is a hypothesis with a head start, not a conclusion. No match, or no files: proceed normally.
 
@@ -45,7 +45,7 @@ H<N>: <suspected cause> — refutable by: <command / observation> → <result: r
 
 ## 5. Close out
 
-- The reproduction becomes a committed regression test: **red before the fix, green after** — run it both ways and quote both results. This proves the fix touched the actual cause. The mechanical form lives in the done skill's `scripts/` dir — run its `scripts/revert-probe.sh "<verify-cmd>"` from wherever that skill is installed (classic: `~/.claude/skills/done/`; plugin and `npx skills` installs keep it next to the done SKILL.md).
+- The reproduction becomes a committed regression test: **red before the fix, green after** — run it both ways and quote both results. This proves the fix touched the actual cause. The mechanical form lives in the done skill's `scripts/` dir — locate that installed skill and run `<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"`.
 - Remove all instrumentation (prints, sleeps, debug flags) — check the diff for it explicitly.
 - Run the full verify tier, not just the one test.
 - If the session surfaced something reading the code cannot teach (a footgun, an environment quirk, a disproven approach), run `/retro` so the next session does not pay for this one's dead ends — for a debugged failure specifically, `/retro` records it in `docs/lessons.md` (symptom → cause → proven-by → fix), which is exactly what step 3 reads next time.

@@ -140,11 +140,16 @@ python3 -m json.tool "${ROOT}/examples/project-settings.example.json" >/dev/null
 echo "ok  example settings JSON"
 
 # 4. skill + agent frontmatter: name + description drive discovery and auto-trigger
+SKILL_DESC_WORDS=0
 while IFS= read -r NAME; do
   SKILL="${ROOT}/skills/${NAME}/SKILL.md"
   head -1 "${SKILL}" | grep -qx -- '---' || fail "${NAME}/SKILL.md missing frontmatter"
   grep -q "^name: ${NAME}\$" "${SKILL}" || fail "${NAME}/SKILL.md missing 'name: ${NAME}'"
   grep -q '^description: .' "${SKILL}" || fail "${NAME}/SKILL.md missing description"
+  DESC_WORDS="$(sed -n 's/^description:[[:space:]]*//p' "${SKILL}" | wc -w | tr -d '[:space:]')"
+  [ "${DESC_WORDS}" -le 40 ] \
+    || fail "${NAME}/SKILL.md description is ${DESC_WORDS} words (limit 40)"
+  SKILL_DESC_WORDS=$((SKILL_DESC_WORDS + DESC_WORDS))
 done < <(skill_inventory)
 while IFS= read -r AGENT_NAME; do
   AGENT="${ROOT}/claude/agents/${AGENT_NAME}.md"
@@ -161,13 +166,13 @@ python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __
   "${ROOT}/eval/evidence.py" || fail "evidence.py syntax"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/eval/result_schema.py" || fail "result_schema.py syntax"
-echo "ok  skill + agent frontmatter"
+echo "ok  skill + agent frontmatter (descriptions ${SKILL_DESC_WORDS} words; max 40 each)"
 
 # Routine edits with obvious scope/proof must not pay for planning/debugging
 # ceremony. The descriptions are the auto-trigger contract exposed to agents.
-grep -q 'Not for routine edits whose scope and proof are already clear' \
+grep -q 'skip routine edits with clear scope and proof' \
   "${ROOT}/skills/plan/SKILL.md" || fail "plan skill still auto-triggers on routine edits"
-grep -q 'Not for a first obvious failure' "${ROOT}/skills/debug/SKILL.md" \
+grep -q 'Not for routine obvious failures' "${ROOT}/skills/debug/SKILL.md" \
   || fail "debug skill still auto-triggers on a first obvious failure"
 echo "ok  routine-task skill trigger boundaries"
 
@@ -1781,7 +1786,7 @@ assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
 assert len(skills) == 11, f"expected 11 cataloged skills, found {len(skills)}"
-assert aliases == ["luciazero-bootstrap"], f"unexpected compatibility aliases: {aliases}"
+assert aliases == [], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
     assert "11 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 publishing = open(os.path.join(root, "docs/publishing.md")).read()
@@ -2029,6 +2034,14 @@ trap 'rm -rf "${CLAUDE_CONFIG_DIR}" "${SB}" "${CX}"' EXIT
 printf '@RTK.md\n\n# pre-existing user content\n' > "${SB}/CLAUDE.md"
 mkdir -p "${SB}/skills/handoff"
 cp "${ROOT}/migrations/handoff-v1.5.0.SKILL.md" "${SB}/skills/handoff/SKILL.md"
+# A v2.2 install may still have the untouched compatibility alias. The v2.3
+# installer must remove it, while preserving a customized copy.
+mkdir -p "${SB}/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${SB}/skills/luciazero-bootstrap/SKILL.md"
+mkdir -p "${SB}/.luciazero-managed/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${SB}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
 # Generic names may already belong to the user or another plugin. The install
 # must preserve the collision outside the discoverable skills directory.
 mkdir -p "${SB}/skills/plan"
@@ -2040,8 +2053,8 @@ while IFS= read -r NS; do
   [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${SB}/skills/ready/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
-grep -Fq "renamed to \`/ready\`" "${SB}/skills/luciazero-bootstrap/SKILL.md" \
-  || fail "classic compatibility alias missing rename guidance"
+[ ! -e "${SB}/skills/luciazero-bootstrap" ] \
+  || fail "classic install did not migrate the retired compatibility alias"
 [ -x "${SB}/skills/done/scripts/revert-probe.sh" ] || fail "revert-probe.sh not installed or not executable"
 [ -x "${SB}/skills/bisect/scripts/safe-bisect.sh" ] || fail "safe-bisect.sh not installed or not executable"
 [ -x "${SB}/skills/lucia-relay/scripts/relay.py" ] || fail "relay.py not installed or not executable"
@@ -2058,6 +2071,9 @@ printf '%s\n' '---' 'name: handoff' '---' '# user customization' > "${SB}/skills
 # Customizing a managed copy before an update must also be backed up, then the
 # update may safely restore the shipped version.
 echo '# customized managed plan' >> "${SB}/skills/plan/SKILL.md"
+mkdir -p "${SB}/skills/luciazero-bootstrap"
+printf '%s\n' '---' 'name: luciazero-bootstrap' '---' '# user-owned alias' \
+  > "${SB}/skills/luciazero-bootstrap/SKILL.md"
 CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null
 [ "$(grep -cxF '@luciazero.md' "${SB}/CLAUDE.md")" = 1 ] || fail "install is not idempotent"
 grep -q 'user customization' "${SB}/skills/handoff/SKILL.md" || fail "install deleted a customized legacy handoff"
@@ -2065,6 +2081,8 @@ grep -q 'user customization' "${SB}/skills/handoff/SKILL.md" || fail "install de
   || fail "classic reinstall did not restore the shipped plan skill"
 grep -q 'customized managed plan' "${SB}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
   || fail "classic reinstall did not back up a customized managed skill"
+grep -q 'user-owned alias' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
+  || fail "classic migration deleted a customized retired alias"
 rm -rf "${SB}/skills/handoff"
 echo "ok  install + idempotent reinstall"
 
@@ -2094,6 +2112,8 @@ while IFS= read -r NS; do
     [ ! -d "${SB}/skills/${NS}" ] || fail "${NS} skill left behind"
   fi
 done < <(skill_inventory)
+grep -q 'user-owned alias' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
+  || fail "classic uninstall deleted a customized retired alias"
 grep -q 'keep customized reviewer' "${SB}/agents/reviewer.md" \
   || fail "classic uninstall deleted a customized managed agent"
 echo "${UOUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
@@ -2239,6 +2259,12 @@ echo "ok  non-ASCII config dir install + status + uninstall"
 printf '# pre-existing codex rules\n' > "${CX}/AGENTS.md"
 mkdir -p "${CX}/skills/plan"
 printf '%s\n' '---' 'name: plan' '---' '# pre-existing codex plan' > "${CX}/skills/plan/SKILL.md"
+mkdir -p "${CX}/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${CX}/skills/luciazero-bootstrap/SKILL.md"
+mkdir -p "${CX}/.luciazero-managed/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${CX}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
 
 CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" >/dev/null
 grep -q '^# Luciazero' "${CX}/AGENTS.md" || fail "doctrine not in AGENTS.md"
@@ -2247,8 +2273,8 @@ while IFS= read -r NS; do
   [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${CX}/skills/ready/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
-grep -Fq "renamed to \`/ready\`" "${CX}/skills/luciazero-bootstrap/SKILL.md" \
-  || fail "codex compatibility alias missing rename guidance"
+[ ! -e "${CX}/skills/luciazero-bootstrap" ] \
+  || fail "codex install did not migrate the retired compatibility alias"
 [ -x "${CX}/skills/done/scripts/revert-probe.sh" ] || fail "codex revert-probe.sh not installed or not executable"
 [ -x "${CX}/skills/bisect/scripts/safe-bisect.sh" ] || fail "codex safe-bisect.sh not installed or not executable"
 [ -x "${CX}/skills/lucia-relay/scripts/relay.py" ] || fail "codex relay.py not installed or not executable"
@@ -2269,6 +2295,14 @@ cmp -s "${CX}/AGENTS.md" "${CX}/AGENTS.md.snap" \
 echo "ok  codex install + idempotent reinstall"
 
 echo '# keep customized codex bisect' >> "${CX}/skills/bisect/SKILL.md"
+# Simulate an older managed install and ensure uninstall removes the alias by
+# comparing with its ownership snapshot.
+mkdir -p "${CX}/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${CX}/skills/luciazero-bootstrap/SKILL.md"
+mkdir -p "${CX}/.luciazero-managed/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${CX}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
 COUT="$(CODEX_HOME="${CX}" "${ROOT}/uninstall-codex.sh" 2>&1)"
 while IFS= read -r NS; do
   if [ "${NS}" = bisect ]; then
@@ -2278,6 +2312,8 @@ while IFS= read -r NS; do
     [ ! -d "${CX}/skills/${NS}" ] || fail "codex ${NS} skill left behind"
   fi
 done < <(skill_inventory)
+[ ! -e "${CX}/skills/luciazero-bootstrap" ] \
+  || fail "codex uninstall left the retired compatibility alias"
 [ ! -d "${CX}/skills/reviewer" ] || fail "codex reviewer skill left behind"
 echo "${COUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
   || fail "codex uninstall did not explain preserved customizations"
@@ -2285,6 +2321,33 @@ echo "${COUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' 
 grep -qxF '# pre-existing codex rules' "${CX}/AGENTS.md" || fail "pre-existing AGENTS.md content damaged"
 ! grep -qF 'luciazero:start' "${CX}/AGENTS.md" || fail "marker block left behind"
 echo "ok  codex uninstall restores AGENTS.md"
+
+# Retired-alias migration must not delete an exact-looking collision without a
+# managed ownership snapshot, and must refuse symlinked skill parents.
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills/luciazero-bootstrap"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${SM}/skills/luciazero-bootstrap/SKILL.md"
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/install.sh" >/dev/null 2>&1
+[ -f "${SM}/skills/luciazero-bootstrap/SKILL.md" ] \
+  || { rm -rf "${SM}"; fail "install deleted an exact-looking alias collision without ownership snapshot"; }
+rm -rf "${SM}"
+
+SM="$(mktemp -d)"
+mkdir -p "${SM}/outside/luciazero-bootstrap" "${SM}/.luciazero-managed/skills/luciazero-bootstrap"
+ln -s "${SM}/outside" "${SM}/skills"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${SM}/outside/luciazero-bootstrap/SKILL.md"
+cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
+  "${SM}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/install.sh" >/dev/null 2>&1
+[ -f "${SM}/outside/luciazero-bootstrap/SKILL.md" ] \
+  || { rm -rf "${SM}"; fail "install followed a symlinked skill parent during alias migration"; }
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+[ -f "${SM}/outside/luciazero-bootstrap/SKILL.md" ] \
+  || { rm -rf "${SM}"; fail "uninstall followed a symlinked skill parent during alias migration"; }
+rm -rf "${SM}"
+echo "ok  retired alias ownership + symlink safety"
 
 echo
 echo "PASS  all checks green"

@@ -1,6 +1,6 @@
 ---
 name: show
-description: Turn code structure, changes, and verification evidence into the smallest useful visual. Use when the user invokes /show, asks what connects to what, what changed, how a flow works, or what proves a result; use for compact pseudocode, call or component trees, file maps, structural diffs, Mermaid diagrams, and evidence maps, with focused HTML only when simpler forms cannot carry the information.
+description: Visualize code structure, changes, and verification evidence in the smallest useful view. Use for connections, flows, diffs, file maps, Mermaid diagrams, evidence maps, or focused HTML; show facts and label unknowns.
 ---
 
 # Show — make the evidence visible

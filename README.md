@@ -93,8 +93,7 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 11 skills plus the temporary `/luciazero-bootstrap`
-compatibility alias: no doctrine, reviewer, or hooks.
+This installs the 11 skills: no doctrine, reviewer, or hooks.
 
 ### Classic Claude Code and Codex
 

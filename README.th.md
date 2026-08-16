@@ -90,8 +90,7 @@ fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป�
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 11 ตัว พร้อม alias `/luciazero-bootstrap`
-ชั่วคราว ไม่มี doctrine, reviewer หรือ hook
+ช่องทางนี้ติดตั้งเฉพาะ skill 11 ตัว ไม่มี doctrine, reviewer หรือ hook
 
 ### Classic Claude Code และ Codex
 

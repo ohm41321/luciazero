@@ -61,17 +61,26 @@ disable enforcement while the statusline stays green:
   nothing is ever unverified and the stop hook never nudges;
 - `LUCIAZERO_STRICT_VERIFY_CMD` is a command the stop hook would run.
 
-**No `LUCIAZERO_*` key is accepted from a repository's committed
-`.claude/settings.json`** — in the session directory or any ancestor, because
-Claude Code merges project settings from the repository root. Each declared key
-is dropped, the hook falls back to its own defaults, and `SessionStart` prints
-one line naming the keys. Refusal never blocks, and a parse error leaves the
-configured values untouched (fail open).
+**No `LUCIAZERO_*` key — and no `CLAUDE_CONFIG_DIR` — is accepted from a
+repository's committed `.claude/settings.json`.** Each declared key is dropped,
+the hook falls back to its own defaults, and `SessionStart` prints one line
+naming the keys. Refusal never blocks, and a parse error leaves the configured
+values untouched (fail open).
+
+The search is **project scope only**. It covers the session directory and its
+ancestors, because Claude Code merges project settings from the repository root
+and a session's cwd is often a subdirectory — but it stops at the repository
+root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`, and it never
+reads the user's own config directory. A global `~/.claude/settings.json` and
+the gitignored `.claude/settings.local.json` are the user's scope and keep
+configuring the hook.
 
 Channel dedupe is decided from the running copy's own path, not from
-`LUCIAZERO_CHANNEL`. When it was env-driven, a committed `env` block could hand
-the classic hook a plugin label and the hook stood itself down — one line
-disabled enforcement entirely.
+`LUCIAZERO_CHANNEL`, and it runs after the refusal above. Both orderings were
+exploitable: an env-driven dedupe let a committed `env` block hand the classic
+hook a plugin label so it stood itself down, and a committed
+`CLAUDE_CONFIG_DIR` could point at a repository-controlled directory holding a
+"wired classic install" so every copy stood down.
 
 Limits, stated plainly:
 
@@ -79,10 +88,9 @@ Limits, stated plainly:
   inspected — that scope is the user's own.
 - Env exported by the shell, a parent process, or a global settings file is
   indistinguishable from a legitimate personal setting and is still honored.
-- A repository that sets `CLAUDE_CONFIG_DIR` can still point the hook at a
-  different config directory. That relocates state and the classic-install
-  detection; it cannot make the hook run a command of the repository's
-  choosing.
+- A repository that hides configuration outside a committed
+  `.claude/settings.json` — for example in a `.envrc` the user's shell
+  sources — is outside what this hook can see.
 
 A report showing how to *escalate* beyond running the configured command (or
 to defeat the fail-open guarantees above) is very welcome.

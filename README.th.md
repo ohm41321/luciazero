@@ -215,10 +215,11 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
-  คีย์ `LUCIAZERO_*` ทุกตัวที่ประกาศไว้ที่นั่น — ทั้งในไดเรกทอรีที่เปิด session และ
-  ทุกไดเรกทอรีแม่ เพราะ project settings อยู่ที่ root ของ repo — จะถูกปฏิเสธ
-  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน `.claude/settings.local.json`
-  ส่วนตัวของคุณยังทำงานปกติ
+  คีย์ `LUCIAZERO_*` ทุกตัว (รวม `CLAUDE_CONFIG_DIR`) ที่ประกาศไว้ที่นั่น — ทั้งใน
+  ไดเรกทอรีที่เปิด session และไดเรกทอรีแม่จนถึง root ของ repo — จะถูกปฏิเสธ
+  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
+  การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
+  หรือ `.claude/settings.local.json` ของคุณ
 - Windows: installer และ hook เป็นสคริปต์ Bash ให้รันใน WSL;
   `npx luciazero discipline` ใช้ได้บน Node ปกติ
 

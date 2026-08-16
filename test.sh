@@ -248,7 +248,11 @@ else
 fi
 python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_100_000)' \
   "${PEJ_DIR}/.claude/settings.json"
-SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+# the oversized case also drops CLAUDE_CONFIG_DIR, so this invocation falls back
+# to $HOME/.claude — point HOME somewhere empty instead of the developer's own
+# install, whose wired classic hook would make this copy stand down
+SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" HOME="${PEJ_DIR}/no-home" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
 # LUCIAZERO_VERIFY_CMD normally tightens matching, but from committed scope it
@@ -312,9 +316,50 @@ RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
   "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a non-classic copy did not stand down beside a wired classic install (rc=${RC})"; }
+# a repository that points CLAUDE_CONFIG_DIR at its own "wired classic install"
+# must not make every copy stand down — the refusal drops that key first
+mkdir -p "${CHD}/evil-cfg/hooks" "${CHD}/repo/.claude" "${CHD}/home"
+cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
+chmod +x "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/evil-cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+  "${CHD}" > "${CHD}/evil-cfg/settings.json"
+printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/evil-cfg"}}\n' "${CHD}" > "${CHD}/repo/.claude/settings.json"
+EVJ="$(printf '{"cwd":"%s/repo"}' "${CHD}")"
+echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+RC=0; echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a committed CLAUDE_CONFIG_DIR made the hook stand down (rc=${RC})"; }
 rm -rf "${CHD}"
 rm -rf "${PEJ_DIR}"
 echo "ok  committed settings cannot reconfigure the hook"
+
+# 4c1a. PROJECT scope only: the walk must stop before the user's own settings.
+# A global ~/.claude/settings.json and anything above the repository root belong
+# to the user; refusing them would break the documented way to configure this.
+GS="$(mktemp -d)"
+mkdir -p "${GS}/home/.claude" "${GS}/home/proj" \
+         "${GS}/outer/.claude" "${GS}/outer/repo/.git" "${GS}/outer/repo/sub"
+echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/home/.claude/settings.json"
+echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/outer/.claude/settings.json"
+scope_keeps_regex() { # scope_keeps_regex <failure message> <home> <cwd>
+  SK_J="$(printf '{"cwd":"%s"}' "$3")"
+  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "$3" \
+    | TMPDIR="${HT}" HOME="$2" LUCIAZERO_VERIFY_REGEX='.' \
+      "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+  SK_RC=0
+  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" stop \
+    >/dev/null 2>&1 || SK_RC=$?
+  [ "${SK_RC}" = 0 ] || { rm -rf "${HT}" "${GS}"; fail "$1 (rc=${SK_RC})"; }
+}
+scope_keeps_regex "the user's global ~/.claude/settings.json was refused as project scope" \
+  "${GS}/home" "${GS}/home/proj"
+scope_keeps_regex "a settings file above the repository root was refused" \
+  "${GS}/nonexistent-home" "${GS}/outer/repo/sub"
+rm -rf "${GS}"
+echo "ok  refusal stays inside project scope"
 
 # 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
 # raises on a bare md5() call and the tracker would fail open, doing nothing.

@@ -28,9 +28,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `LUCIAZERO_VERIFY_CMD` could make any command count as a verify run,
   `LUCIAZERO_DOC_REGEX='.*'` made every edit look like documentation so nothing
   was ever unverified, and `LUCIAZERO_STRICT_VERIFY_CMD` was a command the stop
-  hook would run. Every ancestor of the session directory is inspected, because
-  Claude Code merges project settings from the repository root and a session's
-  cwd is often a subdirectory. `SessionStart` names the refused keys once. The
+  hook would run. A committed `CLAUDE_CONFIG_DIR` is refused for the same
+  reason: it could point at a repository-controlled "wired classic install" and
+  make every hook copy stand down. The search covers the session directory and
+  its ancestors — Claude Code merges project settings from the repository root
+  and a session's cwd is often a subdirectory — but it is **project scope
+  only**: it stops at the repository root, at `CLAUDE_PROJECT_DIR`, and at
+  `$HOME`, and never reads the user's own config directory, so a global
+  `~/.claude/settings.json` keeps configuring the hook.
+  `SessionStart` names the refused keys once. The
   personal, gitignored `.claude/settings.local.json` is untouched, a parse error
   leaves values alone (still fail-open), the lookup runs only in the modes that
   consume a knob, skips a non-regular file (a planted fifo would hang the hook),

@@ -63,6 +63,28 @@ done
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
 echo "ok  shell syntax"
 
+# 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
+# macOS. Verified against a real 3.2: a here-document inside a command
+# substitution whose command also carries a quoted expansion and a trailing
+# redirection breaks its parser, and it fails the WHOLE file at load time with
+# an error pointing at some unrelated later line. A modern `bash -n` accepts
+# it, so the hooks simply must not contain the construct at all.
+for S in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh; do
+  if grep -qE '\$\([^)]*<<' "${ROOT}/${S}"; then
+    fail "${S} has a here-document inside \$( ) — bash 3.2 fails to parse the file"
+  fi
+done
+# and when a real bash 3.2 is available (LZ_BASH32=/path/to/bash-3.2), parse
+# every script with it instead of trusting the textual rule
+if [ -n "${LZ_BASH32:-}" ] && [ -x "${LZ_BASH32}" ]; then
+  for S in "${SCRIPTS[@]}"; do
+    "${LZ_BASH32}" -n "${ROOT}/${S}" || fail "${S} does not parse under ${LZ_BASH32}"
+  done
+  echo "ok  bash 3.2 parse (${LZ_BASH32})"
+else
+  echo "ok  hooks free of here-documents inside \$( ) (bash 3.2; set LZ_BASH32 to parse for real)"
+fi
+
 # 2. shellcheck: required where it must run (CI, or LZ_REQUIRE_LINT=1), because
 # a silent skip lets a local green disagree with the CI that gates the release.
 if command -v shellcheck >/dev/null 2>&1; then
@@ -331,6 +353,21 @@ RC=0; echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD
   "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a committed CLAUDE_CONFIG_DIR made the hook stand down (rc=${RC})"; }
+# the nastier shape of the same trick: CLAUDE_CONFIG_DIR points at the
+# repository's OWN .claude, so a scanner that skips "the config directory"
+# skips the very file declaring the key, and the classic install is in-repo
+mkdir -p "${CHD}/self/.claude/hooks" "${CHD}/self-home"
+cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/self/.claude/hooks/luciazero-verify.sh"
+chmod +x "${CHD}/self/.claude/hooks/luciazero-verify.sh"
+printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/self/.claude"}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/self/.claude/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+  "${CHD}" "${CHD}" > "${CHD}/self/.claude/settings.json"
+SELFJ="$(printf '{"cwd":"%s/self"}' "${CHD}")"
+echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+RC=0; echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "CLAUDE_CONFIG_DIR pointed at the repo's own .claude disabled the hook (rc=${RC})"; }
 rm -rf "${CHD}"
 rm -rf "${PEJ_DIR}"
 echo "ok  committed settings cannot reconfigure the hook"

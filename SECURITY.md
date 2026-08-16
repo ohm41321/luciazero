@@ -70,10 +70,15 @@ values untouched (fail open).
 The search is **project scope only**. It covers the session directory and its
 ancestors, because Claude Code merges project settings from the repository root
 and a session's cwd is often a subdirectory — but it stops at the repository
-root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`, and it never
-reads the user's own config directory. A global `~/.claude/settings.json` and
-the gitignored `.claude/settings.local.json` are the user's scope and keep
-configuring the hook.
+root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. A global
+`~/.claude/settings.json` and the gitignored `.claude/settings.local.json` are
+the user's scope and keep configuring the hook.
+
+Only the **default** `~/.claude` counts as that user scope. Honouring
+`CLAUDE_CONFIG_DIR` here would be self-defeating: pointed at `<repo>/.claude`,
+it would mark the repository's own settings file as "the user's config", skip
+the very file declaring the key, and leave the dedupe trusting a classic
+install that lives inside the repository.
 
 Channel dedupe is decided from the running copy's own path, not from
 `LUCIAZERO_CHANNEL`, and it runs after the refusal above. Both orderings were

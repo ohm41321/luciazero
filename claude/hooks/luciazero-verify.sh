@@ -97,12 +97,11 @@ CWD="$(pyfield "d.get('cwd')")"
 # Refusal only ever falls back to this file's own defaults, never to a block,
 # and a parse error leaves the configured values untouched. Only the modes that
 # consume a knob pay for the lookup.
-REFUSED_ENV_KEYS=""
-case "${MODE}" in
-  edit|bash|bash-failure|stop|session)
-    REFUSED_ENV_KEYS="$(python3 - "${CWD}" <<'PY' 2>/dev/null || true
-import json, os, stat, sys
-LIMIT = 1_000_000  # a settings file is kilobytes; this runs on every tool call
+# The scanner program lives in a variable, not a here-document inside
+# $( ): bash 3.2 (still the /bin/bash on macOS) cannot parse that
+# combination and fails the whole file at load time.
+REFUSED_SCAN_PY='import json, os, stat, sys
+LIMIT = 1000000    # a settings file is kilobytes; this runs on every tool call
 MAX_DEPTH = 40     # ancestor walk is bounded, never unbounded I/O
 
 def refused(key):
@@ -119,7 +118,7 @@ def keys_in(path):
     if not stat.S_ISREG(info.st_mode):
         return ()
     if info.st_size > LIMIT:
-        # absurd for a settings file — refuse everything rather than parse it
+        # absurd for a settings file: refuse everything rather than parse it
         return ("LUCIAZERO_*",)
     try:
         with open(path, encoding="utf-8") as handle:
@@ -137,11 +136,11 @@ def real(path):
         return path
 
 home = real(os.path.expanduser("~"))
-# both the configured and the default config dir: a poisoned CLAUDE_CONFIG_DIR
-# must not turn the user's real settings into a "project" file
-user_config = {real(os.path.join(home, ".claude"))}
-if os.environ.get("CLAUDE_CONFIG_DIR"):
-    user_config.add(real(os.environ["CLAUDE_CONFIG_DIR"]))
+# Only the DEFAULT config directory counts as user scope. CLAUDE_CONFIG_DIR is
+# attacker-reachable: pointed at the project itself, it would mark the
+# repository settings file as user scope and skip the very file that declares
+# it, and the dedupe below would then trust a classic install inside the repo.
+user_config = real(os.path.join(home, ".claude"))
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
 project_dir = real(project_dir) if project_dir else None
 
@@ -149,7 +148,7 @@ found, seen = [], set()
 directory = real(sys.argv[1] or ".")
 for _ in range(MAX_DEPTH):
     claude_dir = os.path.join(directory, ".claude")
-    if directory != home and real(claude_dir) not in user_config:
+    if directory != home and real(claude_dir) != user_config:
         for key in keys_in(os.path.join(claude_dir, "settings.json")):
             if key not in seen:
                 seen.add(key)
@@ -157,7 +156,7 @@ for _ in range(MAX_DEPTH):
     if directory == home:
         break
     if os.path.exists(os.path.join(directory, ".git")):
-        break  # repository root — project scope ends here
+        break  # repository root: project scope ends here
     if project_dir is not None and directory == project_dir:
         break
     parent = os.path.dirname(directory)
@@ -165,8 +164,12 @@ for _ in range(MAX_DEPTH):
         break
     directory = parent
 print("\n".join(found))
-PY
-)"
+'
+REFUSED_ENV_KEYS=""
+case "${MODE}" in
+  edit|bash|bash-failure|stop|session)
+    REFUSED_ENV_KEYS="$(printf '%s' "${REFUSED_SCAN_PY}" \
+      | python3 - "${CWD}" 2>/dev/null || true)"
     ;;
 esac
 if [ -n "${REFUSED_ENV_KEYS}" ]; then

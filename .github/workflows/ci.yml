@@ -5,16 +5,10 @@ on:
     branches: [main]
   pull_request:
 
-# This workflow gates a package that writes into contributors' ~/.claude, so it
-# takes the narrowest token and pins every action to a commit — a moved tag must
-# not be able to change what runs here.
-permissions:
-  contents: read
-
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@v5
       - name: Run verify
         run: ./test.sh

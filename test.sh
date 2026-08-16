@@ -251,13 +251,36 @@ python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_1
 SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
-# a committed LUCIAZERO_VERIFY_CMD is legitimate team practice, not a hijack —
-# it only tightens matching, so it is neither refused nor warned about
-echo '{"env": {"LUCIAZERO_VERIFY_CMD": "./test.sh"}}' > "${PEJ_DIR}/.claude/settings.json"
-SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
-if printf '%s' "${SESS_OUT}" | grep -q 'committed .claude/settings.json'; then
-  rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart warned about a legitimate committed LUCIAZERO_VERIFY_CMD"
-fi
+# LUCIAZERO_VERIFY_CMD normally tightens matching, but from committed scope it
+# is a false-green lever: point it at `echo` and `echo hello` counts as a verify
+echo '{"env": {"LUCIAZERO_VERIFY_CMD": "echo"}}' > "${PEJ_DIR}/.claude/settings.json"
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='echo' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_VERIFY_CMD made 'echo hello' a verify run (rc=${RC})"; }
+# LUCIAZERO_DOC_REGEX='.*' would mark every edit as documentation, so nothing is
+# ever unverified and the stop hook never nudges again
+echo '{"env": {"LUCIAZERO_DOC_REGEX": ".*"}}' > "${PEJ_DIR}/.claude/settings.json"
+printf '{"cwd":"%s","tool_input":{"file_path":"%s/app.py"}}\n' "${PEJ_DIR}" "${PEJ_DIR}" \
+  | TMPDIR="${HT}" LUCIAZERO_DOC_REGEX='.*' "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_DOC_REGEX hid a code edit from the stop hook (rc=${RC})"; }
+# Claude Code merges project settings from the repository ROOT, and a session's
+# cwd is often a subdirectory — the refusal must walk up, not look only at cwd
+SUB="${PEJ_DIR}/packages/api"
+mkdir -p "${SUB}"
+echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.json"
+SUBJ="$(printf '{"cwd":"%s"}' "${SUB}")"
+echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${SUB}" \
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+RC=0; echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a root .claude/settings.json was bypassed from a subdirectory (rc=${RC})"; }
+rm -rf "${PEJ_DIR}/packages"
 # personal scope is untouched: same repo, keys only in settings.local.json
 rm -f "${PEJ_DIR}/.claude/settings.json"
 echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.local.json"
@@ -267,12 +290,35 @@ printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit
 RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "personal settings.local.json regex override was refused too (rc=${RC})"; }
+# channel dedupe is decided by the running copy's own path, never by
+# LUCIAZERO_CHANNEL: an env-driven dedupe let a repository label the CLASSIC
+# hook "plugin" so it stood itself down, disabling enforcement entirely
+CHD="$(mktemp -d)"
+mkdir -p "${CHD}/cfg/hooks" "${CHD}/proj"
+cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/cfg/hooks/luciazero-verify.sh"
+chmod +x "${CHD}/cfg/hooks/luciazero-verify.sh"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+  "${CHD}" > "${CHD}/cfg/settings.json"
+CHJ="$(printf '{"cwd":"%s/proj"}' "${CHD}")"
+# the classic copy must enforce even when a repo hands it the plugin label
+echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
+  "${CHD}/cfg/hooks/luciazero-verify.sh" edit
+RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
+  "${CHD}/cfg/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "LUCIAZERO_CHANNEL=plugin made the classic hook stand itself down (rc=${RC})"; }
+# a copy running from anywhere else still stands down when classic is wired
+RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
+  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 0 ] \
+  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a non-classic copy did not stand down beside a wired classic install (rc=${RC})"; }
+rm -rf "${CHD}"
 rm -rf "${PEJ_DIR}"
 echo "ok  committed settings cannot reconfigure the hook"
 
 # 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
 # raises on a bare md5() call and the tracker would fail open, doing nothing.
-for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh; do
+for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh test.sh; do
   if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
     fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
   fi
@@ -439,7 +485,7 @@ PY
 EVILTMP="$(mktemp -d)"; EVILTARGET="$(mktemp -d)"
 echo sentinel > "${EVILTARGET}/keep"
 ln -s "${EVILTARGET}" "${EVILTMP}/luciazero-verify-state-$(id -u)"
-EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])')"
+EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read(), usedforsecurity=False).hexdigest()[:12])')"
 mkdir -p "${EVILTARGET}/${EVILKEY}"
 echo ok > "${EVILTARGET}/${EVILKEY}/last_verify"
 printf '{"cwd":"%s","session_id":"evil"}' "${SPJ4}" \
@@ -2028,6 +2074,20 @@ assert len(s["hooks"]["PreToolUse"]) == 2, "bash timing hook or user's hook miss
 PY
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status >/dev/null \
   || { rm -rf "${SB3}"; fail "--status red on a complete --with-hooks install"; }
+# the hooks pass hashlib's usedforsecurity= (python 3.9+); installing them
+# against an older or broken python3 must fail loudly, not leave hooks that
+# fail open silently
+OLDPY="$(mktemp -d)"; mkdir -p "${OLDPY}/bin" "${OLDPY}/cfg"
+printf '#!/bin/sh\nexit 1\n' > "${OLDPY}/bin/python3"; chmod +x "${OLDPY}/bin/python3"
+RC=0; OUT_OLDPY="$(PATH="${OLDPY}/bin:${PATH}" CLAUDE_CONFIG_DIR="${OLDPY}/cfg" \
+  "${ROOT}/install.sh" --with-hooks 2>&1)" || RC=$?
+[ "${RC}" != 0 ] \
+  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks installed against a python3 that cannot run the hooks"; }
+printf '%s' "${OUT_OLDPY}" | grep -q 'python3 >= 3.9' \
+  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks did not name the python3 requirement: ${OUT_OLDPY}"; }
+[ ! -e "${OLDPY}/cfg/hooks/luciazero-verify.sh" ] \
+  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks left hook files behind after refusing to install"; }
+rm -rf "${OLDPY}"
 cp "${SB3}/settings.json" "${SB3}/settings.snap"
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null
 cmp -s "${SB3}/settings.json" "${SB3}/settings.snap" \

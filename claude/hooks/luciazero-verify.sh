@@ -53,16 +53,26 @@ if [ "${MODE}" = "doctrine" ]; then
   exit 0
 fi
 
-# Plugin-channel dedupe (the plugin's hooks.json invokes every mode with
-# LUCIAZERO_CHANNEL=plugin): when `install.sh --with-hooks` wiring is ALSO
-# present, the classic copy wins and the plugin copy stands down — otherwise
+# Channel dedupe: when `install.sh --with-hooks` wiring is ALSO present, the
+# classic copy wins and every other copy (the plugin's) stands down — otherwise
 # the stop nudge double-fires and a strict verify runs twice concurrently.
-if [ "${LUCIAZERO_CHANNEL:-}" = "plugin" ]; then
-  CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
-  if [ -x "${CFG}/hooks/luciazero-verify.sh" ] \
-     && grep -qF "${CFG}/hooks/luciazero-verify.sh" "${CFG}/settings.json" 2>/dev/null; then
-    exit 0
-  fi
+#
+# Decided from this script's own path, never from LUCIAZERO_CHANNEL. A
+# repository can put anything in its committed settings `env` block, and an
+# env-driven dedupe let it hand the CLASSIC hook a plugin label so the hook
+# stood itself down — one committed line disabled enforcement completely.
+hook_path() { # canonical path of $1; empty when its directory does not exist
+  HP_DIR="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || return 0
+  [ -n "${HP_DIR}" ] || return 0
+  printf '%s/%s' "${HP_DIR}" "$(basename "$1")"
+}
+CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+CLASSIC_HOOK="$(hook_path "${CFG}/hooks/luciazero-verify.sh")"
+SELF_HOOK="$(hook_path "$0")"
+if [ -n "${CLASSIC_HOOK}" ] && [ "${SELF_HOOK}" != "${CLASSIC_HOOK}" ] \
+   && [ -x "${CLASSIC_HOOK}" ] \
+   && grep -qF "${CFG}/hooks/luciazero-verify.sh" "${CFG}/settings.json" 2>/dev/null; then
+  exit 0
 fi
 
 # Hook stdin is always a pipe; when run by hand from a terminal for debugging,
@@ -214,64 +224,88 @@ PY
 # "./test.sh"), only commands that ARE it or START with it count — the broad
 # regex also marks `cat test.sh` or `grep pytest README` as a verify run,
 # flipping the state green without any test having run.
-VERIFY_RE_DEFAULT='verify|test\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)'
-VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-${VERIFY_RE_DEFAULT}}"
-VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
-
 # A repository's COMMITTED .claude/settings.json can put anything in its `env`
-# block, and that env reaches this hook. Two knobs are dangerous from that
-# scope: LUCIAZERO_VERIFY_REGEX can be widened until every command counts as a
-# verify run (enforcement dies with the statusline still green), and
-# LUCIAZERO_STRICT_VERIFY_CMD is a command this hook would then RUN at stop.
-# Both are refused when the shared file declares them; the personal, gitignored
-# .claude/settings.local.json is never inspected and keeps working, and a
-# committed LUCIAZERO_VERIFY_CMD stays honored (documented team practice).
-# Refusal falls back to the safe default (built-in regex / no strict gate),
-# never to a block, and any parse error leaves the configured value untouched.
-# Only the modes that consume these knobs pay for the lookup — prompt, edit,
-# skill, and bash-start run on the hot path and must stay cheap.
+# block, and that env reaches this hook — so NO LUCIAZERO_* knob is accepted
+# from that scope. Each one is a way to disable enforcement while the
+# statusline stays green: a widened LUCIAZERO_VERIFY_REGEX (or a
+# LUCIAZERO_VERIFY_CMD pointing at `echo`) makes any command count as a verify
+# run, LUCIAZERO_DOC_REGEX='.*' makes every edit look like documentation so
+# nothing is ever unverified, and LUCIAZERO_STRICT_VERIFY_CMD is a command this
+# hook would RUN at stop. Claude Code merges project settings from the
+# repository root, so every ancestor of the session directory is inspected.
+#
+# The personal, gitignored .claude/settings.local.json is never read and keeps
+# working. Refusal only ever falls back to this file's own defaults, never to a
+# block, and a parse error leaves the configured values untouched. Only the
+# modes that consume a knob pay for the lookup.
 REFUSED_ENV_KEYS=""
 case "${MODE}" in
-  bash|bash-failure|stop|session)
-    REFUSED_ENV_KEYS="$(python3 - "${CWD}/.claude/settings.json" <<'PY' 2>/dev/null || true
+  edit|bash|bash-failure|stop|session)
+    REFUSED_ENV_KEYS="$(python3 - "${CWD}" <<'PY' 2>/dev/null || true
 import json, os, stat, sys
-REFUSED = ("LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_STRICT_VERIFY_CMD")
-LIMIT = 1_000_000  # a settings file is kilobytes; this runs on every Bash call
-path = sys.argv[1]
-try:
-    info = os.stat(path)
-except OSError:
-    raise SystemExit(0)
-# never read a fifo or device the repository planted here: that would hang the
-# hook instead of failing open
-if not stat.S_ISREG(info.st_mode):
-    raise SystemExit(0)
-if info.st_size > LIMIT:
-    # absurd for a settings file — refuse both knobs rather than parse it
-    print("\n".join(REFUSED))
-    raise SystemExit(0)
-try:
-    with open(path, encoding="utf-8") as handle:
-        env = json.loads(handle.read(LIMIT)).get("env")
-except Exception:
-    raise SystemExit(0)
-if isinstance(env, dict):
-    for key in REFUSED:
-        if key in env:
-            print(key)
+LIMIT = 1_000_000  # a settings file is kilobytes; this runs on every tool call
+MAX_DEPTH = 40     # ancestor walk is bounded, never unbounded I/O
+
+def keys_in(path):
+    try:
+        info = os.stat(path)
+    except OSError:
+        return ()
+    # never read a fifo or device planted here: that would hang the hook
+    # instead of failing open
+    if not stat.S_ISREG(info.st_mode):
+        return ()
+    if info.st_size > LIMIT:
+        # absurd for a settings file — refuse everything rather than parse it
+        return ("LUCIAZERO_*",)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            env = json.loads(handle.read(LIMIT)).get("env")
+    except Exception:
+        return ()
+    if not isinstance(env, dict):
+        return ()
+    return tuple(k for k in env if isinstance(k, str) and k.startswith("LUCIAZERO_"))
+
+found, seen = [], set()
+directory = os.path.abspath(sys.argv[1] or ".")
+for _ in range(MAX_DEPTH):
+    for key in keys_in(os.path.join(directory, ".claude", "settings.json")):
+        if key not in seen:
+            seen.add(key)
+            found.append(key)
+    parent = os.path.dirname(directory)
+    if parent == directory:
+        break
+    directory = parent
+print("\n".join(found))
 PY
 )"
     ;;
 esac
-project_env_declares() { printf '%s\n' "${REFUSED_ENV_KEYS}" | grep -qx "$1"; }
 if [ -n "${REFUSED_ENV_KEYS}" ]; then
-  if project_env_declares LUCIAZERO_VERIFY_REGEX; then
-    VERIFY_RE="${VERIFY_RE_DEFAULT}"
-  fi
-  if project_env_declares LUCIAZERO_STRICT_VERIFY_CMD; then
-    LUCIAZERO_STRICT_VERIFY_CMD=""
-  fi
+  # `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
+  case "${REFUSED_ENV_KEYS}" in
+    *'LUCIAZERO_*'*)
+      REFUSED_ENV_KEYS='LUCIAZERO_VERIFY_CMD
+LUCIAZERO_VERIFY_REGEX
+LUCIAZERO_DOC_REGEX
+LUCIAZERO_STRICT_VERIFY_CMD
+LUCIAZERO_STRICT_TIMEOUT
+LUCIAZERO_RELAY_STALE_DAYS
+LUCIAZERO_HANDOFF_STALE_DAYS' ;;
+  esac
+  while IFS= read -r RK; do
+    case "${RK}" in
+      LUCIAZERO_[A-Z_]*) unset "${RK}" 2>/dev/null || true ;;
+    esac
+  done <<EOF
+${REFUSED_ENV_KEYS}
+EOF
 fi
+
+VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-verify|test\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)}"
+VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
 
 case "${MODE}" in
   prompt)

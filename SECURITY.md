@@ -49,19 +49,29 @@ way around any of them is a reportable vulnerability, not expected behavior:
   and merged Bash wall-clock milliseconds plus Bash/verify/skill counts; raw
   commands, tool IDs, skill names, and paths are never written to state or log.
 
-## Hostile-repository configuration (partly closed)
+## Hostile-repository configuration
 
-`LUCIAZERO_STRICT_VERIFY_CMD` and `LUCIAZERO_VERIFY_REGEX` are read from the
-environment, and a repository that commits them in a settings `env` block
-reaches the hook: the first is a command the stop hook would run, the second
-can be widened until every Bash command counts as a verify run — enforcement
-dies while the statusline stays green.
+Every knob this hook reads comes from the environment, and a repository that
+commits keys in a settings `env` block reaches the hook. Each one is a way to
+disable enforcement while the statusline stays green:
 
-The hook now reads the working directory's **committed**
-`.claude/settings.json` and refuses both keys when that file declares them:
-the regex falls back to the built-in default, the strict gate is skipped, and
-`SessionStart` prints one line naming the keys. Refusal never blocks, and a
-parse error leaves the configured values untouched (fail open).
+- `LUCIAZERO_VERIFY_REGEX` widened (or `LUCIAZERO_VERIFY_CMD` pointed at
+  `echo`) makes any command count as a verify run;
+- `LUCIAZERO_DOC_REGEX='.*'` makes every edit look like documentation, so
+  nothing is ever unverified and the stop hook never nudges;
+- `LUCIAZERO_STRICT_VERIFY_CMD` is a command the stop hook would run.
+
+**No `LUCIAZERO_*` key is accepted from a repository's committed
+`.claude/settings.json`** — in the session directory or any ancestor, because
+Claude Code merges project settings from the repository root. Each declared key
+is dropped, the hook falls back to its own defaults, and `SessionStart` prints
+one line naming the keys. Refusal never blocks, and a parse error leaves the
+configured values untouched (fail open).
+
+Channel dedupe is decided from the running copy's own path, not from
+`LUCIAZERO_CHANNEL`. When it was env-driven, a committed `env` block could hand
+the classic hook a plugin label and the hook stood itself down — one line
+disabled enforcement entirely.
 
 Limits, stated plainly:
 
@@ -69,9 +79,10 @@ Limits, stated plainly:
   inspected — that scope is the user's own.
 - Env exported by the shell, a parent process, or a global settings file is
   indistinguishable from a legitimate personal setting and is still honored.
-- `LUCIAZERO_VERIFY_CMD` is honored from any scope. It normally *tightens*
-  matching, but a committed `env` block can still point it at a trivial
-  command, so a repository shipping any `LUCIAZERO_*` key deserves a read.
+- A repository that sets `CLAUDE_CONFIG_DIR` can still point the hook at a
+  different config directory. That relocates state and the classic-install
+  detection; it cannot make the hook run a command of the repository's
+  choosing.
 
 A report showing how to *escalate* beyond running the configured command (or
 to defeat the fail-open guarantees above) is very welcome.

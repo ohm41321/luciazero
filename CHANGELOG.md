@@ -22,16 +22,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
-- A repository's **committed** `.claude/settings.json` can no longer
-  reconfigure the hook. A `LUCIAZERO_VERIFY_REGEX` declared there (widened
-  until every command counts as a verify run) falls back to the built-in
-  default, a `LUCIAZERO_STRICT_VERIFY_CMD` declared there is never executed,
-  and `SessionStart` names the keys once. The personal, gitignored
-  `.claude/settings.local.json` is untouched, and a parse error leaves the
-  configured values alone (still fail-open). The lookup runs only in the modes
-  that consume those knobs, skips a non-regular file (a planted fifo would hang
-  the hook), and refuses both keys outright on an absurdly large settings file
-  instead of parsing it.
+- A repository's **committed** `.claude/settings.json` can no longer configure
+  Luciazero at all: every `LUCIAZERO_*` key declared there is dropped and the
+  hook falls back to its own defaults. `LUCIAZERO_VERIFY_REGEX` and
+  `LUCIAZERO_VERIFY_CMD` could make any command count as a verify run,
+  `LUCIAZERO_DOC_REGEX='.*'` made every edit look like documentation so nothing
+  was ever unverified, and `LUCIAZERO_STRICT_VERIFY_CMD` was a command the stop
+  hook would run. Every ancestor of the session directory is inspected, because
+  Claude Code merges project settings from the repository root and a session's
+  cwd is often a subdirectory. `SessionStart` names the refused keys once. The
+  personal, gitignored `.claude/settings.local.json` is untouched, a parse error
+  leaves values alone (still fail-open), the lookup runs only in the modes that
+  consume a knob, skips a non-regular file (a planted fifo would hang the hook),
+  and refuses everything outright on an absurdly large settings file instead of
+  parsing it.
+- Channel dedupe is decided from the running copy's own path instead of
+  `LUCIAZERO_CHANNEL`. A committed `env` block could set that variable, hand the
+  **classic** hook a plugin label, and make it stand itself down — disabling
+  enforcement with one line.
+- `install.sh --with-hooks` refuses a python3 older than 3.9 (where hashlib
+  gained `usedforsecurity=`) instead of installing hooks that fail open, and
+  `--status` reports the version. README states the requirement.
 - CI runs with `permissions: contents: read`, and both workflows pin every
   action to a commit SHA.
 

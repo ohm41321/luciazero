@@ -42,12 +42,6 @@ declined:
   write outside the Claude config dir.
 - **Example hooks ship inert.** Nothing in `examples/` may execute
   anything as shipped.
-- **The hooks must parse under bash 3.2** — the `/bin/bash` on stock macOS.
-  Never put a here-document inside a command substitution there: 3.2 rejects
-  the whole file at load time and blames an unrelated later line, so the pack
-  fails silently instead of loudly. `test.sh` blocks the construct in the
-  hooks, and `LZ_BASH32=/path/to/bash-3.2 ./test.sh` parses every script with
-  the real interpreter.
 - **Real hooks are opt-in and fail open.** The enforcement pack installs
   only via an explicit `--with-hooks`, must never block work when broken,
   and its settings.json edits must be additive, idempotent, and fully

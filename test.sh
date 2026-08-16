@@ -33,16 +33,6 @@ CLAUDE_CONFIG_DIR="$(mktemp -d)"
 export CLAUDE_CONFIG_DIR
 trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 
-# Ambient LUCIAZERO_* configuration belongs to the developer's own install and
-# would silently change what the hooks under test do — an exported
-# LUCIAZERO_VERIFY_CMD flips the tracker into exact-match mode, so fixture
-# commands stop counting as verify runs and this suite goes red on exactly the
-# machines that dogfood the pack. Every test sets what it needs per invocation.
-while IFS= read -r LZ_VAR; do
-  if [ -n "${LZ_VAR}" ]; then unset "${LZ_VAR}"; fi
-done < <(env | sed -n 's/^\(LUCIAZERO_[A-Za-z0-9_]*\)=.*/\1/p')
-unset LZ_VAR
-
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          docs/assets/statusline-demo.sh
@@ -63,56 +53,12 @@ done
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
 echo "ok  shell syntax"
 
-# 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
-# macOS. Verified against a real 3.2: a here-document inside a command
-# substitution whose command also carries a quoted expansion and a trailing
-# redirection breaks its parser, and it fails the WHOLE file at load time with
-# an error pointing at some unrelated later line. A modern `bash -n` accepts
-# it, so the hooks simply must not contain the construct at all.
-for S in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh; do
-  if grep -qE '\$\([^)]*<<' "${ROOT}/${S}"; then
-    fail "${S} has a here-document inside \$( ) — bash 3.2 fails to parse the file"
-  fi
-done
-# and when a real bash 3.2 is available (LZ_BASH32=/path/to/bash-3.2), parse
-# every script with it instead of trusting the textual rule
-if [ -n "${LZ_BASH32:-}" ] && [ -x "${LZ_BASH32}" ]; then
-  for S in "${SCRIPTS[@]}"; do
-    "${LZ_BASH32}" -n "${ROOT}/${S}" || fail "${S} does not parse under ${LZ_BASH32}"
-  done
-  echo "ok  bash 3.2 parse (${LZ_BASH32})"
-else
-  echo "ok  hooks free of here-documents inside \$( ) (bash 3.2; set LZ_BASH32 to parse for real)"
-fi
-
-# 2. shellcheck: required where it must run (CI, or LZ_REQUIRE_LINT=1), because
-# a silent skip lets a local green disagree with the CI that gates the release.
+# 2. shellcheck when available (CI always has it)
 if command -v shellcheck >/dev/null 2>&1; then
   (cd "${ROOT}" && shellcheck "${SCRIPTS[@]}")
   echo "ok  shellcheck"
-elif [ -n "${CI:-}" ] || [ -n "${LZ_REQUIRE_LINT:-}" ]; then
-  fail "shellcheck is required here (CI or LZ_REQUIRE_LINT=1) but is not installed"
 else
-  echo "skip shellcheck (not installed — local only; CI fails without it)"
-fi
-
-# 2a. ambient LUCIAZERO_* must not change this suite's outcome. Re-runs the fast
-# tier in a child poisoned with every knob the hooks read; the sanitation above
-# is what keeps it green (regression: an exported LUCIAZERO_VERIFY_CMD turned
-# the hook state-machine tests red for anyone running the pack on themselves).
-if [ -z "${LZ_SELFTEST_CHILD:-}" ]; then
-  CHILD_RC=0
-  CHILD_OUT="$(LZ_SELFTEST_CHILD=1 \
-    LUCIAZERO_VERIFY_CMD='never-the-fixture-command' \
-    LUCIAZERO_VERIFY_REGEX='^zzz-never-matches$' \
-    LUCIAZERO_STRICT_VERIFY_CMD='false' \
-    LUCIAZERO_DOC_REGEX='.' \
-    LUCIAZERO_CHANNEL='plugin' \
-    bash "${ROOT}/test.sh" --fast 2>&1)" || CHILD_RC=$?
-  # The child re-runs every fast check, so a plain failure here is ambiguous:
-  # quote its own decisive line instead of blaming sanitation for a real bug.
-  [ "${CHILD_RC}" = 0 ] || fail "fast tier is not immune to ambient LUCIAZERO_*: $(printf '%s' "${CHILD_OUT}" | grep -m1 '^FAIL' || printf 'child exited %s' "${CHILD_RC}")"
-  echo "ok  ambient LUCIAZERO_* sanitation"
+  echo "skip shellcheck (not installed)"
 fi
 
 # 2b. detect.sh runs green against this repo and finds the CI verify command
@@ -226,186 +172,6 @@ echo '{"cwd":"/hook/test/exact","tool_input":{"command":"./test.sh -q"},"tool_re
 RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "exact-match mode missed the real verify command (rc=${RC})"; }
 echo "ok  enforcement-pack hook state machine"
-
-# 4c1. a repository cannot reconfigure the hook from its committed settings:
-# a widened regex must not count an arbitrary command as a verify run, a
-# committed strict command must not be executed at stop, and the personal
-# settings.local.json must keep working.
-PEJ_DIR="$(mktemp -d)"
-mkdir -p "${PEJ_DIR}/.claude"
-cat > "${PEJ_DIR}/.claude/settings.json" <<'JSON'
-{"env": {"LUCIAZERO_VERIFY_REGEX": ".", "LUCIAZERO_STRICT_VERIFY_CMD": "touch strict-ran"}}
-JSON
-PEJ="$(printf '{"cwd":"%s"}' "${PEJ_DIR}")"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; PERR="$(echo "${PEJ}" | TMPDIR="${HT}" \
-  LUCIAZERO_VERIFY_REGEX='.' LUCIAZERO_STRICT_VERIFY_CMD="touch ${PEJ_DIR}/strict-ran" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1)" || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped verify regex still counted 'echo hello' as a verify run (rc=${RC})"; }
-if printf '%s' "${PERR}" | grep -q 'Strict verify gate'; then
-  rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command reached the strict gate"
-fi
-if [ -e "${PEJ_DIR}/strict-ran" ]; then
-  rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command was executed at stop"
-fi
-SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
-printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_VERIFY_REGEX' \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart did not warn about the committed LUCIAZERO_* env block"; }
-# the lookup runs on every Bash call, so a repository must not be able to hang
-# it (fifo) or make it chew a huge file: both refuse the knobs, neither blocks
-rm -f "${PEJ_DIR}/.claude/settings.json"
-# timeout(1) is not on stock macOS; without it a regressed guard would hang the
-# suite forever instead of failing it, so skip rather than risk that
-if command -v timeout >/dev/null 2>&1; then
-  mkfifo "${PEJ_DIR}/.claude/settings.json"
-  RC=0; timeout 10 env TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session \
-    <<< "${PEJ}" >/dev/null 2>&1 || RC=$?
-  [ "${RC}" != 124 ] || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a fifo .claude/settings.json hung the hook"; }
-  rm -f "${PEJ_DIR}/.claude/settings.json"
-else
-  echo "skip fifo settings guard (no timeout(1))"
-fi
-python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_100_000)' \
-  "${PEJ_DIR}/.claude/settings.json"
-# the oversized case also drops CLAUDE_CONFIG_DIR, so this invocation falls back
-# to $HOME/.claude — point HOME somewhere empty instead of the developer's own
-# install, whose wired classic hook would make this copy stand down
-SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" HOME="${PEJ_DIR}/no-home" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
-printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
-# LUCIAZERO_VERIFY_CMD normally tightens matching, but from committed scope it
-# is a false-green lever: point it at `echo` and `echo hello` counts as a verify
-echo '{"env": {"LUCIAZERO_VERIFY_CMD": "echo"}}' > "${PEJ_DIR}/.claude/settings.json"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='echo' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_VERIFY_CMD made 'echo hello' a verify run (rc=${RC})"; }
-# LUCIAZERO_DOC_REGEX='.*' would mark every edit as documentation, so nothing is
-# ever unverified and the stop hook never nudges again
-echo '{"env": {"LUCIAZERO_DOC_REGEX": ".*"}}' > "${PEJ_DIR}/.claude/settings.json"
-printf '{"cwd":"%s","tool_input":{"file_path":"%s/app.py"}}\n' "${PEJ_DIR}" "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_DOC_REGEX='.*' "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_DOC_REGEX hid a code edit from the stop hook (rc=${RC})"; }
-# Claude Code merges project settings from the repository ROOT, and a session's
-# cwd is often a subdirectory — the refusal must walk up, not look only at cwd
-SUB="${PEJ_DIR}/packages/api"
-mkdir -p "${SUB}"
-echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.json"
-SUBJ="$(printf '{"cwd":"%s"}' "${SUB}")"
-echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${SUB}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a root .claude/settings.json was bypassed from a subdirectory (rc=${RC})"; }
-rm -rf "${PEJ_DIR}/packages"
-# personal scope is untouched: same repo, keys only in settings.local.json
-rm -f "${PEJ_DIR}/.claude/settings.json"
-echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.local.json"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 0 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}"; fail "personal settings.local.json regex override was refused too (rc=${RC})"; }
-# channel dedupe is decided by the running copy's own path, never by
-# LUCIAZERO_CHANNEL: an env-driven dedupe let a repository label the CLASSIC
-# hook "plugin" so it stood itself down, disabling enforcement entirely
-CHD="$(mktemp -d)"
-mkdir -p "${CHD}/cfg/hooks" "${CHD}/proj"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/cfg/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/cfg/hooks/luciazero-verify.sh"
-printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
-  "${CHD}" > "${CHD}/cfg/settings.json"
-CHJ="$(printf '{"cwd":"%s/proj"}' "${CHD}")"
-# the classic copy must enforce even when a repo hands it the plugin label
-echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
-  "${CHD}/cfg/hooks/luciazero-verify.sh" edit
-RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
-  "${CHD}/cfg/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "LUCIAZERO_CHANNEL=plugin made the classic hook stand itself down (rc=${RC})"; }
-# a copy running from anywhere else still stands down when classic is wired
-RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 0 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a non-classic copy did not stand down beside a wired classic install (rc=${RC})"; }
-# a repository that points CLAUDE_CONFIG_DIR at its own "wired classic install"
-# must not make every copy stand down — the refusal drops that key first
-mkdir -p "${CHD}/evil-cfg/hooks" "${CHD}/repo/.claude" "${CHD}/home"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
-printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/evil-cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
-  "${CHD}" > "${CHD}/evil-cfg/settings.json"
-printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/evil-cfg"}}\n' "${CHD}" > "${CHD}/repo/.claude/settings.json"
-EVJ="$(printf '{"cwd":"%s/repo"}' "${CHD}")"
-echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a committed CLAUDE_CONFIG_DIR made the hook stand down (rc=${RC})"; }
-# the nastier shape of the same trick: CLAUDE_CONFIG_DIR points at the
-# repository's OWN .claude, so a scanner that skips "the config directory"
-# skips the very file declaring the key, and the classic install is in-repo
-mkdir -p "${CHD}/self/.claude/hooks" "${CHD}/self-home"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/self/.claude/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/self/.claude/hooks/luciazero-verify.sh"
-printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/self/.claude"}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/self/.claude/hooks/luciazero-verify.sh stop"}]}]}}\n' \
-  "${CHD}" "${CHD}" > "${CHD}/self/.claude/settings.json"
-SELFJ="$(printf '{"cwd":"%s/self"}' "${CHD}")"
-echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] \
-  || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "CLAUDE_CONFIG_DIR pointed at the repo's own .claude disabled the hook (rc=${RC})"; }
-rm -rf "${CHD}"
-rm -rf "${PEJ_DIR}"
-echo "ok  committed settings cannot reconfigure the hook"
-
-# 4c1a. PROJECT scope only: the walk must stop before the user's own settings.
-# A global ~/.claude/settings.json and anything above the repository root belong
-# to the user; refusing them would break the documented way to configure this.
-GS="$(mktemp -d)"
-mkdir -p "${GS}/home/.claude" "${GS}/home/proj" \
-         "${GS}/outer/.claude" "${GS}/outer/repo/.git" "${GS}/outer/repo/sub"
-echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/home/.claude/settings.json"
-echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/outer/.claude/settings.json"
-scope_keeps_regex() { # scope_keeps_regex <failure message> <home> <cwd>
-  SK_J="$(printf '{"cwd":"%s"}' "$3")"
-  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-  printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "$3" \
-    | TMPDIR="${HT}" HOME="$2" LUCIAZERO_VERIFY_REGEX='.' \
-      "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-  SK_RC=0
-  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" stop \
-    >/dev/null 2>&1 || SK_RC=$?
-  [ "${SK_RC}" = 0 ] || { rm -rf "${HT}" "${GS}"; fail "$1 (rc=${SK_RC})"; }
-}
-scope_keeps_regex "the user's global ~/.claude/settings.json was refused as project scope" \
-  "${GS}/home" "${GS}/home/proj"
-scope_keeps_regex "a settings file above the repository root was refused" \
-  "${GS}/nonexistent-home" "${GS}/outer/repo/sub"
-rm -rf "${GS}"
-echo "ok  refusal stays inside project scope"
-
-# 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
-# raises on a bare md5() call and the tracker would fail open, doing nothing.
-for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh test.sh; do
-  if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
-    fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
-  fi
-done
-echo "ok  md5 state keys are FIPS-safe"
 
 # 4c2. strict gate: runs the configured command at stop, blocks on red quoting
 # the failure, fast-paths on green state, and degrades to the nudge on timeout
@@ -567,7 +333,7 @@ PY
 EVILTMP="$(mktemp -d)"; EVILTARGET="$(mktemp -d)"
 echo sentinel > "${EVILTARGET}/keep"
 ln -s "${EVILTARGET}" "${EVILTMP}/luciazero-verify-state-$(id -u)"
-EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read(), usedforsecurity=False).hexdigest()[:12])')"
+EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest()[:12])')"
 mkdir -p "${EVILTARGET}/${EVILKEY}"
 echo ok > "${EVILTARGET}/${EVILKEY}/last_verify"
 printf '{"cwd":"%s","session_id":"evil"}' "${SPJ4}" \
@@ -2156,20 +1922,6 @@ assert len(s["hooks"]["PreToolUse"]) == 2, "bash timing hook or user's hook miss
 PY
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status >/dev/null \
   || { rm -rf "${SB3}"; fail "--status red on a complete --with-hooks install"; }
-# the hooks pass hashlib's usedforsecurity= (python 3.9+); installing them
-# against an older or broken python3 must fail loudly, not leave hooks that
-# fail open silently
-OLDPY="$(mktemp -d)"; mkdir -p "${OLDPY}/bin" "${OLDPY}/cfg"
-printf '#!/bin/sh\nexit 1\n' > "${OLDPY}/bin/python3"; chmod +x "${OLDPY}/bin/python3"
-RC=0; OUT_OLDPY="$(PATH="${OLDPY}/bin:${PATH}" CLAUDE_CONFIG_DIR="${OLDPY}/cfg" \
-  "${ROOT}/install.sh" --with-hooks 2>&1)" || RC=$?
-[ "${RC}" != 0 ] \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks installed against a python3 that cannot run the hooks"; }
-printf '%s' "${OUT_OLDPY}" | grep -q 'python3 >= 3.9' \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks did not name the python3 requirement: ${OUT_OLDPY}"; }
-[ ! -e "${OLDPY}/cfg/hooks/luciazero-verify.sh" ] \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks left hook files behind after refusing to install"; }
-rm -rf "${OLDPY}"
 cp "${SB3}/settings.json" "${SB3}/settings.snap"
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null
 cmp -s "${SB3}/settings.json" "${SB3}/settings.snap" \

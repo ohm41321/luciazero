@@ -97,7 +97,7 @@ npx skills add ohm41321/luciazero
 
 ```bash
 npx luciazero                 # Claude Code
-npx luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Python 3.9+
+npx luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Python 3
 npx luciazero codex           # Codex CLI
 
 npx luciazero uninstall
@@ -204,7 +204,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 ## Requirement และความปลอดภัย
 
 - Node.js 18+ สำหรับ CLI และ discipline report
-- Bash สำหรับ classic installer; Python 3.9+ สำหรับ hook และ Lucia Relay (`install.sh --with-hooks` ปฏิเสธเวอร์ชันเก่ากว่านี้)
+- Bash สำหรับ classic installer; Python 3 สำหรับ hook และ Lucia Relay
 - Installer, hook, helper และ grader หลักรัน offline ส่วน behavioral eval จริง
   เรียก model CLI และใช้เครดิต API หรือโควตา subscription
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
@@ -214,14 +214,6 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
-- `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
-  คีย์ `LUCIAZERO_*` ทุกตัว (รวม `CLAUDE_CONFIG_DIR`) ที่ประกาศไว้ที่นั่น — ทั้งใน
-  ไดเรกทอรีที่เปิด session และไดเรกทอรีแม่จนถึง root ของ repo — จะถูกปฏิเสธ
-  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
-  การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
-  หรือ `.claude/settings.local.json` ของคุณ
-- Windows: installer และ hook เป็นสคริปต์ Bash ให้รันใน WSL;
-  `npx luciazero discipline` ใช้ได้บน Node ปกติ
 
 อ่าน trust boundary ฉบับเต็มใน [SECURITY.md](SECURITY.md)
 

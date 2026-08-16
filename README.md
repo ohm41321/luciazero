@@ -100,7 +100,7 @@ compatibility alias: no doctrine, reviewer, or hooks.
 
 ```bash
 npx luciazero                 # Claude Code
-npx luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3.9+
+npx luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3
 npx luciazero codex           # Codex CLI
 
 npx luciazero uninstall
@@ -209,8 +209,7 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 ## Requirements and safety
 
 - Node.js 18+ for the CLI and discipline report.
-- Bash for classic installers; Python 3.9+ for hooks and Lucia Relay
-  (`install.sh --with-hooks` refuses anything older).
+- Bash for classic installers; Python 3 for hooks and Lucia Relay.
 - Core installers, hooks, helpers, and graders are offline. Real behavioral
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.
@@ -220,14 +219,6 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
   committed repository config. Strict mode fails open on internal errors.
-- A repository's committed `.claude/settings.json` cannot configure Luciazero
-  at all: every `LUCIAZERO_*` key (and `CLAUDE_CONFIG_DIR`) declared there — in
-  the session directory or any ancestor up to the repository root — is refused
-  and named once at `SessionStart`. Your own settings still configure it: the
-  search stops at the repo root and at `$HOME`, and never reads your global
-  `~/.claude/settings.json` or gitignored `.claude/settings.local.json`.
-- Windows: the installers and hooks are Bash scripts — run them under WSL.
-  `npx luciazero discipline` works in native Node.
 
 See [SECURITY.md](SECURITY.md) for the complete trust boundary.
 

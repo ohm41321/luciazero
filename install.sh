@@ -100,8 +100,11 @@ if [ "${STATUS_ONLY}" = 1 ]; then
     else
       echo "  MISS  settings.json missing hook entries:${WIRE_MISS} (re-run ./install.sh --with-hooks)"; STATUS_RC=1
     fi
-    if command -v python3 >/dev/null 2>&1; then
-      echo "  ok    python3 available (the hooks need it)"
+    if command -v python3 >/dev/null 2>&1 \
+      && python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+      echo "  ok    python3 >= 3.9 available (the hooks need it)"
+    elif command -v python3 >/dev/null 2>&1; then
+      echo "  MISS  python3 is older than 3.9 — the hooks fail open (doing nothing)"; STATUS_RC=1
     else
       # fail-open means a missing python3 breaks the hooks SILENTLY — surface it here
       echo "  MISS  python3 not found — the installed hooks are failing open (doing nothing)"; STATUS_RC=1
@@ -250,6 +253,10 @@ fi
 # 6. enforcement pack (opt-in): hooks + statusline wired into settings.json
 if [ "${WITH_HOOKS}" = 1 ]; then
   command -v python3 >/dev/null 2>&1 || { echo "FAIL: --with-hooks requires python3" >&2; exit 1; }
+  # 3.9 is where hashlib gained usedforsecurity=, which the hooks pass so their
+  # md5 state key does not raise under FIPS and silently disable tracking
+  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null \
+    || { echo "FAIL: --with-hooks requires a working python3 >= 3.9" >&2; exit 1; }
   mkdir -p "${CLAUDE_DIR}/hooks"
   for H in luciazero-verify.sh luciazero-statusline.sh; do
     DST="${CLAUDE_DIR}/hooks/${H}"

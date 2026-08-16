@@ -7,6 +7,69 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `test.sh` clears ambient `LUCIAZERO_*` variables before running. An exported
+  `LUCIAZERO_VERIFY_CMD` flipped the hook fixtures into exact-match mode, so
+  the suite went red on exactly the machines that dogfood the pack
+  (`FAIL: stop hook nudged despite verify after edit`) while CI stayed green.
+  A new self-test re-runs the fast tier in a child poisoned with every knob the
+  hooks read, and quotes the child's own failing line.
+- The verify hook parses under bash 3.2 again — the `/bin/bash` on stock macOS.
+  A here-document inside a command substitution (with a quoted expansion and a
+  trailing redirection on the same line) breaks that parser, and it rejects the
+  **whole file** at load time while pointing at an unrelated later line, so the
+  enforcement pack silently did nothing there. The scanner program now lives in
+  a variable. `test.sh` rejects the construct in the hooks and, with
+  `LZ_BASH32=/path/to/bash-3.2`, parses every script with the real thing.
+- Both hooks call `hashlib.md5(..., usedforsecurity=False)` for their state
+  directory name. On a FIPS-enforcing python3 the bare call raised and the
+  tracker failed open — silently doing nothing. The digest is unchanged, so
+  existing state keys still resolve.
+
+### Security
+
+- A repository's **committed** `.claude/settings.json` can no longer configure
+  Luciazero at all: every `LUCIAZERO_*` key declared there is dropped and the
+  hook falls back to its own defaults. `LUCIAZERO_VERIFY_REGEX` and
+  `LUCIAZERO_VERIFY_CMD` could make any command count as a verify run,
+  `LUCIAZERO_DOC_REGEX='.*'` made every edit look like documentation so nothing
+  was ever unverified, and `LUCIAZERO_STRICT_VERIFY_CMD` was a command the stop
+  hook would run. A committed `CLAUDE_CONFIG_DIR` is refused for the same
+  reason: it could point at a repository-controlled "wired classic install" and
+  make every hook copy stand down. Only the default `~/.claude` is treated as
+  the user's config directory during the search — honouring `CLAUDE_CONFIG_DIR`
+  there let a repository point it at its own `.claude` so the scanner skipped
+  the file declaring the key. The search covers the session directory and
+  its ancestors — Claude Code merges project settings from the repository root
+  and a session's cwd is often a subdirectory — but it is **project scope
+  only**: it stops at the repository root, at `CLAUDE_PROJECT_DIR`, and at
+  `$HOME`, and never reads the user's own config directory, so a global
+  `~/.claude/settings.json` keeps configuring the hook.
+  `SessionStart` names the refused keys once. The
+  personal, gitignored `.claude/settings.local.json` is untouched, a parse error
+  leaves values alone (still fail-open), the lookup runs only in the modes that
+  consume a knob, skips a non-regular file (a planted fifo would hang the hook),
+  and refuses everything outright on an absurdly large settings file instead of
+  parsing it.
+- Channel dedupe is decided from the running copy's own path instead of
+  `LUCIAZERO_CHANNEL`. A committed `env` block could set that variable, hand the
+  **classic** hook a plugin label, and make it stand itself down — disabling
+  enforcement with one line.
+- `install.sh --with-hooks` refuses a python3 older than 3.9 (where hashlib
+  gained `usedforsecurity=`) instead of installing hooks that fail open, and
+  `--status` reports the version. README states the requirement.
+- CI runs with `permissions: contents: read`, and both workflows pin every
+  action to a commit SHA.
+
+### Changed
+
+- `shellcheck` is required, not silently skipped, when `CI` or
+  `LZ_REQUIRE_LINT` is set — a local green must not disagree with the CI that
+  gates the release.
+- README and README.th document the committed-settings refusal and the
+  Windows/WSL requirement.
+
 ## [2.2.0] - 2026-08-15
 
 ### Added

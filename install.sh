@@ -34,9 +34,10 @@ skill_inventory() {
   catalog "${SRC}/skills/aliases.txt"
 }
 
-# newest released version in this checkout's CHANGELOG (informational)
+# Package metadata is present in git checkouts and npm payloads alike.
 version_of() {
-  grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "${SRC}/CHANGELOG.md" 2>/dev/null | tr -d '#[] ' || true
+  awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' \
+    "${SRC}/package.json" 2>/dev/null || true
 }
 
 if [ "${STATUS_ONLY}" = 1 ]; then

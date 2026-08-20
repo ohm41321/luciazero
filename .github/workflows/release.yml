@@ -80,4 +80,6 @@ jobs:
             exit 0
           fi
           npm --version
-          npm publish
+          PACKAGE_STAGE="$(mktemp -d)"
+          PACKAGE_DIR="$(./scripts/stage-npm-package.sh "${PACKAGE_STAGE}")"
+          npm publish "${PACKAGE_DIR}"

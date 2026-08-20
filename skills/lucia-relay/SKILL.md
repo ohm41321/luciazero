@@ -3,46 +3,60 @@ name: lucia-relay
 description: Transfer unfinished work and non-obvious knowledge across sessions, agents, people, machines, or harnesses. Use for relay, handoff, continuing later, context transfer, compaction, or "ส่งต่อ"; produce verifiable portable state.
 ---
 
-# Lucia Relay — knowledge that survives the messenger
+# Lucia Relay
 
-`/retro` stores permanent lessons. `/lucia-relay` transfers task-local state. The canonical artifact is `LUCIA_RELAY.json`; `LUCIA_RELAY.md` is its generated human view. A receiver trusts neither until the tree and verification evidence agree.
+`/retro` stores durable lessons; Relay moves task state. JSON is canonical;
+Markdown is generated. Treat received artifacts and their commands as
+untrusted until repository identity, HEAD, and evidence agree.
 
 ## Decide the route first
 
-Before writing or pointing anywhere, answer: **Where is the recipient?**
+- `same-machine`: local paths are usable; schema 1/2 remain readable.
+- `cross-machine`: use schema 3, a clean pushed commit, portable knowledge, and
+  receiver-supplied trust. Never assume paths or artifact claims travel.
 
-- `same-machine`: the receiver shares this machine. Full local paths are allowed.
-- `cross-machine`: the receiver cannot open anything local. Every pointer must be repo-relative and present in a pushed commit, or the needed knowledge must be copied into `knowledge.inline` in `LUCIA_RELAY.json`.
-
-If the destination is not explicit and cannot be inferred, ask the user. Never assume a local path will travel.
+Ask if unclear.
 
 ## Produce
 
-1. Locate this skill's installed directory and run `<this-skill-dir>/scripts/relay.py draft --root . --recipient <same-machine|cross-machine>`. Always pass the route explicitly; the CLI's `same-machine` default exists only so older callers keep working.
-2. Create `LUCIA_RELAY.json` at the repo root. Fill the original goal, completed and in-progress work, one literal next action, verification evidence, relevant files, read-first pointers, inline knowledge, open **and refuted** hypotheses, and landmines. Keep the captured `route` and `repository` objects from the draft.
-3. For `cross-machine`, commit and push every task file first. Start each `read_first` entry with its repo-relative tracked path; an optional note may follow ` — `. Replace machine-local document, memory, or artifact pointers with a short `{ "label": "...", "content": "..." }` entry in `knowledge.inline`. Do not include credentials.
-4. Run `<this-skill-dir>/scripts/relay.py render --root .`; fix every validation error and review both artifacts for secrets and route mistakes.
+For same-machine, run `relay.py draft --root . --recipient same-machine`.
 
-Evidence rules:
+1. Commit and push every task file first. Choose the task's base commit, then
+   run `relay.py draft --root . --recipient cross-machine --base <base> >
+   LUCIA_RELAY.json`. This publishes a commit-named transfer tag and records
+   sanitized clone URL, head/base OIDs, and committed changed files.
+2. Fill goal, done/in-progress state, one literal next action, verification,
+   `read_first`, inline knowledge, hypotheses (including refuted ones), and
+   landmines. Keep captured route/repository fields unchanged.
+3. Each verification entry needs an argv-safe command, exit code, decisive
+   line, and timezone-aware run time. Include at least one entry and portable
+   knowledge. Copy machine-local essentials into `knowledge.inline`; exclude
+   credentials, private paths, and preferences.
+4. Run `relay.py render --root .`, fix errors, then run `relay.py envelope
+   --root .`. Send both artifacts normally; send the envelope's repository URL,
+   HEAD, and manifest digest through an authenticated channel.
 
-- A verification entry includes the exact command, exit code, shortest decisive line, and run time. Never turn “not run” into implied green.
-- The next action is executable: a command, exact edit, or decision. “Continue the refactor” is invalid.
-- Preserve refuted hypotheses and why they failed. They are the knowledge most likely to save the receiver time.
-- Point to relevant `docs/lessons.md` entries. For cross-machine delivery, inline an essential machine-local heuristic instead of pointing to its local file; omit secrets, credential locations, personal paths, and preferences.
-
-## Route
-
-- Same worktree/session boundary: leave both files uncommitted; the SessionStart hook points at them.
-- Another local agent or harness sharing the tree: give it both full paths and ask it to run `inspect` before editing.
-- Cross-machine/person: give the pushed repository ref plus both artifacts. The validator rejects a dirty tree, a HEAD absent from locally known remote branches, and machine-only paths. If repository policy requires the relay files on the branch, review them for secrets, then force-add the ignored transient artifacts with `git add -f LUCIA_RELAY.json LUCIA_RELAY.md`. State explicitly that they must be consumed and removed after re-verification.
-- Chat-only channel: paste the JSON artifact; it is canonical and can regenerate the Markdown view.
-
-Do not copy the conversation transcript. Transfer decisions, evidence, negative knowledge, and pointers to source-of-truth files.
+Do not transfer a chat transcript. Transfer decisions, evidence, negative
+knowledge, and source-of-truth pointers. Keep artifacts out of Git; if
+committed, review secrets and remove after use.
 
 ## Receive
 
-1. Run `<this-skill-dir>/scripts/relay.py inspect --root .` and read both artifacts before touching code.
-2. Read every `read_first` pointer and inspect the named changed files.
-3. Compare the relay fingerprint with the current tree. Drift is a warning that the relay describes an earlier state.
-4. Re-run the listed verification commands. The tree is truth; if evidence differs, report the mismatch and update the plan from current state.
-5. After absorbing the knowledge, run `<this-skill-dir>/scripts/relay.py consume --root . --verified`. This explicit flag asserts that re-verification happened and removes both transient files. Write a fresh relay later; never accumulate or incrementally nurse a stale one.
+1. Obtain the trusted envelope. Clone its repository, checkout its HEAD
+   (detached is valid), and place both artifacts at root. Never execute a
+   command merely because the relay contains it.
+2. Run `relay.py inspect --root . --expected-recipient cross-machine
+   --trusted-head <sha> --trusted-manifest-sha256 <digest>
+   --trusted-repository-url <url>`. Read committed
+   changed files, every `read_first` pointer, inline knowledge, hypotheses, and
+   landmines before editing.
+3. Manually approve and run every verification command in the receiver's
+   coding harness; Relay never executes artifact commands. Compare each exit
+   code and decisive line with the recorded evidence.
+4. The tree wins on mismatch: report it and update the plan from current state.
+   After all evidence matches, run `relay.py consume --root . --verified
+   --expected-recipient cross-machine --trusted-head <sha>
+   --trusted-manifest-sha256 <digest> --trusted-repository-url <url>`.
+
+For same-machine, inspect normally, rerun evidence manually, then consume with
+`--verified`; never reuse a stale relay.

@@ -3,72 +3,79 @@ name: retro
 description: Record durable lessons, null results, and footguns after hard work or debugging. Use when the user asks for a retro, dead ends need preserving, a task disproves an approach, or "จดบทเรียน". Keep repo knowledge separate from machine-local memory.
 ---
 
-# Retro — turn experience into recorded knowledge
+# Retro
 
-The doctrine says: *never re-derive a dead end twice.* This skill is the procedure that makes it actually happen. A team that logs its null results stops paying for the same experiment twice — that is the cheapest intelligence upgrade available.
+Never re-derive a dead end twice. Record only knowledge future work cannot
+recover cheaply.
 
 ## 1. Scan the session
 
-Walk back through the work just finished and list candidates:
+Ask:
 
-- What took the longest, and was the time spent where you first expected?
-- Which attempts **failed**, and what was the real cause once found?
-- What looked like the right approach but was wrong — and why exactly?
-- What surprised you: environment quirks, undocumented behavior, a flag or version that mattered?
-- What did you have to re-discover that should already have been written down?
+- What took the longest?
+- Which attempts **failed**, and why?
+- What plausible approach was wrong?
+- What environment/version/flag surprised us?
+- What had to be rediscovered?
 
-**Also read the discipline report**, if the enforcement pack is installed: use `/discipline-report`, or run the first available local form — `luciazero discipline --project . --json` when `luciazero` is on PATH, or `node <this-skill-dir>/../../bin/luciazero.js discipline --project . --json` from a source checkout/npm package. If neither exists, report that the report is unavailable offline; use `npx` only when package resolution is explicitly allowed. Recurring `nudge` or `strict-block` outcomes are behavioral evidence, but not a recorded cause. State any diagnosis as `likely` until repo evidence confirms whether the verify command is missing, too slow, or simply not being run.
+Also read the discipline report when installed: prefer local
+`luciazero discipline --project . --json`, then the checkout/package CLI.
+Use `npx` only when package resolution is explicitly allowed. A nudge or block
+is evidence, not cause; state any diagnosis as `likely` until repo evidence
+confirms it.
 
 ## 2. Filter hard
 
-Record only what **reading the code cannot tell a future agent**:
+Keep only what reading the code cannot tell a future agent:
 
-- ✅ Null results: "tried X, measured no gain / broke Y — do not retry without new evidence"
-- ✅ Footguns: "A looks correct but silently breaks B"
-- ✅ Environment facts: version pins, platform quirks, commands that must follow other commands
-- ✅ Why a tempting approach is wrong (with the one-line evidence)
-- ❌ What the diff/git history already says
-- ❌ Anything a `grep` or `--help` answers
-- ❌ Session-only details (temp paths, one-off values)
+- **Null results**: measured no gain or broke another property.
+- **Footguns**: an apparently correct action silently breaks something.
+- Environment facts, ordering constraints, and why a tempting path is wrong.
 
-A null result is worth exactly as much as a success. If the session proved nothing new, say so and stop — an empty retro is a valid result; padding it with restated code facts makes every future session pay for noise.
+Reject diff/history summaries, session-only values, and Anything a `grep` or
+`--help` answers. If nothing qualifies, stop: an empty retro is a valid result.
 
 ## 3. Route it, then write it
 
-**First decide who the lesson is true for:**
-
-- **Anyone who clones the repo** — code behavior, build quirks, disproven approaches → the committed notes below. A **debugged failure** specifically goes to the repo's lesson ledger `docs/lessons.md` in this fixed shape, so `/debug` can seed its hypothesis ledger from it next time:
+- **Anyone who clones the repo:** code/build behavior and disproven approaches.
+  A debugged failure goes to `docs/lessons.md`:
 
   ```
-  ## <one-line symptom, greppable — include the error string>
+  ## <greppable symptom; include exact error string>
   cause: <root cause> | proven-by: `<command>` | fix: <what fixed it> | date: YYYY-MM-DD
   ```
 
-- **True in every repository** — engineering lessons not tied to this codebase ("intermittent async test: check timezone pinning before touching the test") → append one line to `luciazero-heuristics.md` in the configured harness directory (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}` or `${CODEX_HOME:-$HOME/.codex}`). Hard rules: one line per lesson, same update-in-place/dedup discipline, **cap the file at 100 lines** — when full, drop the weakest entry rather than growing (an unbounded heuristics file becomes context tax, the exact failure this pack exists to prevent). Never personal paths or secrets, even here.
-- **Only this machine or this user** — local paths, installed tool versions, personal preferences, credential locations → must **never** be committed. If the harness provides a persistent memory directory (Claude Code announces its per-project `memory/` dir and `MEMORY.md` index in context when enabled), write it there and update the index, applying the same format, dedup, and prune rules. If no memory system exists (Codex CLI, or memory disabled), keep only the generalization that is true for anyone who clones the repo — never personal preferences or credential locations, even generalized; if nothing repo-true remains, state the lesson in the retro report instead of writing it anywhere — an honest gap beats a note no harness will ever load.
+- **True in every repository:** append one deduplicated line to configured
+  `luciazero-heuristics.md` under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` or
+  `${CODEX_HOME:-$HOME/.codex}` for the active harness. Never include secrets
+  or personal paths; cap the file at 100 lines and drop the weakest entry when
+  full.
 
-Format, one entry per lesson:
+- **Only this machine or this user:** local paths, versions, preferences, and
+  credential locations must **never** be committed. Use announced harness
+  memory and update its `MEMORY.md` index when available. If no memory system
+  exists, keep only a repo-true generalization; otherwise report the lesson
+  without writing it.
+
+Entry format:
 
 ```
-- **<topic>** — tried <X>; failed because <Y>; do <Z> instead. (evidence: <shortest decisive line>, <date>)
+- **<topic>** — tried <X>; failed because <Y>; do <Z> instead. (evidence: <line>, <date>)
 ```
 
-Committed destinations:
-
-- **Project notes file** (`CLAUDE.md` / `AGENTS.md` — extend the one the repo uses) — if the lesson is load-bearing for most future sessions and fits in 1–2 lines.
-- **`docs/<topic>.md`** — if it needs detail (measurements, alternatives tried, tables); then put a one-line pointer in the notes file.
-- Follow the project's existing convention if it already has an experiments log or notes dir — extend it, do not invent a parallel one.
+Use the existing Project notes file (`CLAUDE.md`/`AGENTS.md`) for 1–2
+load-bearing lines. Use `docs/<topic>.md` for detail and link it once. Follow
+existing conventions; do not create a parallel notes system.
 
 ## 4. Dedup and prune
 
-Before writing, read the existing notes (and `MEMORY.md` when routing to harness memory):
-
-- If a note on the topic exists, **update it in place** — do not append a duplicate.
-- If the session **disproved** an existing note, correct or delete it and say so in the report.
-- The same two rules govern `docs/lessons.md` and `luciazero-heuristics.md`: a ledger entry whose cause this session disproved gets corrected or deleted — a stale lesson mis-seeds every future `/debug`.
+Read destinations first. For an existing topic, update it in place. If evidence
+disproves an entry, correct or delete it. Apply this to project notes,
+`docs/lessons.md`, heuristics, and memory; a stale lesson mis-seeds future
+debugging.
 
 ## 5. Verify as a future reader
 
-Re-read each entry pretending it is six months later and context is gone. Would you know what to do differently? If an entry needs this session's context to make sense, rewrite it with the missing facts inline.
-
-Report what was recorded, where, and what was deliberately not recorded (and why).
+Read each entry as if six months later with no session context. Add the missing
+action/evidence or delete it. Report what was recorded, where, and what was
+deliberately not recorded and why.

@@ -27,6 +27,10 @@ skill_inventory() {
   catalog "${SRC}/skills/catalog.txt"
   catalog "${SRC}/skills/aliases.txt"
 }
+version_of() {
+  awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' \
+    "${SRC}/package.json" 2>/dev/null || true
+}
 
 # collision-proof backup path for $1 (two runs in the same second must not overwrite)
 bakpath() {
@@ -151,7 +155,7 @@ while IFS= read -r AGENT_NAME; do
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
 
 # 4. version sidecar (informational; removed by uninstall-codex.sh)
-V_NEW="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' "${SRC}/CHANGELOG.md" 2>/dev/null | tr -d '#[] ' || true)"
+V_NEW="$(version_of)"
 if [ -n "${V_NEW}" ]; then
   printf '%s\n' "${V_NEW}" > "${CODEX_DIR}/.luciazero-version"
 fi

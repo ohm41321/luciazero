@@ -7,6 +7,7 @@ __pycache__/
 HANDOFF.md
 LUCIA_RELAY.json
 LUCIA_RELAY.md
+LUCIA_RELAY_RECEIPT.json
 # Canonical eval fixtures deliberately exercise those exact transfer names.
 !eval/tasks/relay-transfer/gamed/HANDOFF.md
 !eval/tasks/relay-transfer/reference/LUCIA_RELAY.json

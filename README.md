@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="220" alt="Lucia — Luciazero's mascot">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="220" alt="Lucia — Luciazero's mascot">
   <h1>Luciazero</h1>
   <p>
     <strong>Evidence-first discipline for coding agents.</strong><br>
@@ -8,11 +8,11 @@
   <p>
     <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
     <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
+    <a href="https://github.com/ohm41321/luciazero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
   </p>
 </div>
 
-**English** · [ภาษาไทย](README.th.md)
+**English** · [ภาษาไทย](https://github.com/ohm41321/luciazero/blob/main/README.th.md)
 
 Luciazero is a lightweight discipline layer for coding agents. It works with
 Claude Code, Codex CLI, and compatible skill runtimes through plugin, CLI, or
@@ -21,7 +21,7 @@ skills-only installs.
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
 
-It ships a compact [9-rule doctrine](claude/luciazero.md), 11 on-demand skills,
+It ships a compact [9-rule doctrine](https://github.com/ohm41321/luciazero/blob/main/claude/luciazero.md), 11 on-demand skills,
 verification hooks, a risk-routed reviewer, and an eval harness. It is designed
 to make completion claims auditable—not to replace an agent runtime or become an
 overnight orchestrator.
@@ -31,7 +31,7 @@ overnight orchestrator.
 This GIF is driven by the shipped hooks, not a mockup:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="Edit becomes unverified, a red check stays red, and a successful verify turns green">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/statusline-demo.gif" width="720" alt="Edit becomes unverified, a red check stays red, and a successful verify turns green">
 </p>
 
 ```text
@@ -53,30 +53,34 @@ This GIF is driven by the shipped hooks, not a mockup:
 | Context lost between agents | `/lucia-relay` transfers evidence, next action, and negative knowledge |
 
 Mechanical guarantees run in `test.sh`; behavioral claims are measured by the
-[eval harness](eval/README.md).
+[eval harness](https://github.com/ohm41321/luciazero/blob/main/eval/README.md).
 
 ## Keep work portable
 
 `/lucia-relay` transfers decisions and evidence instead of dumping a chat
 transcript. Session A writes canonical `LUCIA_RELAY.json` plus a generated
-human view; session B checks the Git fingerprint, reads the exact next action
-and refuted hypotheses, re-runs verification, then explicitly consumes the
-relay.
+human view; session B checks trusted repository identity, HEAD, and manifest
+digest, reads the exact next action and negative knowledge, re-runs every
+approved verification command in its own harness, then explicitly consumes.
 
-Relay decides where the recipient is before it writes pointers. Same-machine
-receivers may use full local paths. Cross-machine relays require a clean pushed
-commit, reject machine-only paths, and carry otherwise-local knowledge inline
-in the JSON.
+Same-machine receivers may use local paths and schema 1/2. Cross-machine schema
+3 is created only after commit and push: it publishes a commit-named transfer
+tag and records a sanitized clone URL, head/base OIDs, committed changed files,
+and inline knowledge.
+The receiver supplies the expected route, HEAD, and manifest digest independently, so a
+forged artifact cannot downgrade validation. Detached checkouts are supported;
+Relay never executes artifact commands. The receiver runs them in its coding
+harness and passes `consume --verified` only after every result matches.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
 </p>
 
-The GIF runs the [shipped implementation](docs/assets/relay-demo.sh) in a
+The GIF runs the [shipped implementation](https://github.com/ohm41321/luciazero/blob/main/docs/assets/relay-demo.sh) in a
 temporary Git repository. CI's `relay-transfer` fixture scores the complete
 reference 6/6 and rejects a generic Markdown handoff (1/6) plus a
 content-complete but stale fingerprint (5/6). Those are mechanical protocol
-checks—not model-uplift results. See the [method and limits](docs/benchmark.md#skill-protocol-evidence).
+checks—not model-uplift results. See the [method and limits](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md#skill-protocol-evidence).
 
 ## Install
 
@@ -217,9 +221,9 @@ Snapshot: 2026-08-12.
 
 *One Luciazero run was invalidated by model capacity. †This is a
 **ceiling-effect warning, not evidence of uplift or no effect**: the pilot has
-only one run per arm per task. See the [full benchmark](docs/benchmark.md),
-[campaign registry](eval/results/campaigns.json), and
-[raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
+only one run per arm per task. See the [full benchmark](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md),
+[campaign registry](https://github.com/ohm41321/luciazero/blob/main/eval/results/campaigns.json), and
+[raw pilot rows](https://github.com/ohm41321/luciazero/blob/main/eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).
 
 <!-- END GENERATED: benchmark-evidence -->
 
@@ -246,7 +250,7 @@ only one run per arm per task. See the [full benchmark](docs/benchmark.md),
 - Windows: the installers and hooks are Bash scripts — run them under WSL.
   `npx luciazero discipline` works in native Node.
 
-See [SECURITY.md](SECURITY.md) for the complete trust boundary.
+See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) for the complete trust boundary.
 
 ## Developing Luciazero
 
@@ -264,14 +268,14 @@ tier.
 
 More detail:
 
-- [Architecture and trade-offs](docs/comparison.md)
-- [Eval methodology](eval/README.md)
-- [Benchmark results and GPT plan](docs/benchmark.md)
-- [Raw campaign registry](eval/results/campaigns.json)
-- [Experiment log](docs/experiments.md)
-- [Contributing](CONTRIBUTING.md)
-- [Publishing](docs/publishing.md)
-- [Changelog](CHANGELOG.md)
+- [Architecture and trade-offs](https://github.com/ohm41321/luciazero/blob/main/docs/comparison.md)
+- [Eval methodology](https://github.com/ohm41321/luciazero/blob/main/eval/README.md)
+- [Benchmark results and GPT plan](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md)
+- [Raw campaign registry](https://github.com/ohm41321/luciazero/blob/main/eval/results/campaigns.json)
+- [Experiment log](https://github.com/ohm41321/luciazero/blob/main/docs/experiments.md)
+- [Contributing](https://github.com/ohm41321/luciazero/blob/main/CONTRIBUTING.md)
+- [Publishing](https://github.com/ohm41321/luciazero/blob/main/docs/publishing.md)
+- [Changelog](https://github.com/ohm41321/luciazero/blob/main/CHANGELOG.md)
 
 ## Support the project
 
@@ -281,8 +285,8 @@ a Thai-language Discord bot. If Luciazero saves you review cycles, you can
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/ohm41321/luciazero/blob/main/LICENSE)
 
 ## ภาษาไทย
 
-README ฉบับภาษาไทยเต็ม: [README.th.md](README.th.md)
+README ฉบับภาษาไทยเต็ม: [README.th.md](https://github.com/ohm41321/luciazero/blob/main/README.th.md)

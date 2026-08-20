@@ -165,10 +165,12 @@ reference scores 6/6, the empty project and generic Markdown handoff score 1/6,
 and a content-complete relay with a stale commit fingerprint scores 5/6. CI
 recomputes all four results offline on every push. The public demo also drives
 the shipped `draft → render → inspect → consume` implementation in a temporary
-Git repository. Unit fixtures additionally prove recipient-first routing:
-same-machine relays may carry local paths, while cross-machine relays reject
-local paths, dirty worktrees, and commits absent from locally known remote
-branches; local-only knowledge can travel inline in the JSON.
+Git repository. Unit fixtures additionally prove recipient-first routing.
+Same-machine relays may carry local paths. Cross-machine schema 3 runs sender →
+pushed bare remote → fresh detached clone → trusted inspect → receiver-approved
+external verification → explicit trusted consume. It rejects local paths, dirty trees, stale
+remote refs, route downgrade, incomplete evidence/knowledge, and unsafe file
+pointers; local-only knowledge travels inline.
 
 This proves that Relay has a falsifiable transfer contract and that the grader
 can reject two realistic shortcuts. It is **not behavioral model evidence**:

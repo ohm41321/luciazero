@@ -355,9 +355,9 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "",
         "*One Luciazero run was invalidated by model capacity. †This is a",
         "**ceiling-effect warning, not evidence of uplift or no effect**: the pilot has",
-        "only one run per arm per task. See the [full benchmark](docs/benchmark.md),",
-        "[campaign registry](eval/results/campaigns.json), and",
-        "[raw pilot rows](eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).",
+        "only one run per arm per task. See the [full benchmark](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md),",
+        "[campaign registry](https://github.com/ohm41321/luciazero/blob/main/eval/results/campaigns.json), and",
+        "[raw pilot rows](https://github.com/ohm41321/luciazero/blob/main/eval/results/gpt-5.6-terra-medium-pilot-2026-08-12.jsonl).",
     ]
     return "\n".join(lines)
 

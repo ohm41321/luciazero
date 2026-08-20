@@ -220,20 +220,12 @@ KEY="$(printf '%s' "${CWD}" | python3 -c 'import sys,hashlib;print(hashlib.md5(s
 BASE="${TMPDIR:-/tmp}/luciazero-verify-state-$(id -u 2>/dev/null || echo unknown)"
 # The base name is predictable, so validate ownership/type before touching it.
 # A hostile pre-created symlink or directory makes the hook fail open.
-python3 - "${BASE}" <<'PY' 2>/dev/null || exit 0
-import os, stat, sys
-path = sys.argv[1]
-try:
-    info = os.lstat(path)
-except FileNotFoundError:
-    os.mkdir(path, 0o700)
-    info = os.lstat(path)
-if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-    raise SystemExit(1)
-if hasattr(os, "getuid") and info.st_uid != os.getuid():
-    raise SystemExit(1)
-os.chmod(path, 0o700)
-PY
+if [ -e "${BASE}" ] || [ -L "${BASE}" ]; then
+  [ -d "${BASE}" ] && [ ! -L "${BASE}" ] && [ -O "${BASE}" ] || exit 0
+else
+  (umask 077 && mkdir "${BASE}") 2>/dev/null || exit 0
+fi
+chmod 700 "${BASE}" 2>/dev/null || exit 0
 STATE="${BASE}/${KEY}"
 mkdir -p "${STATE}" 2>/dev/null || exit 0
 chmod 700 "${STATE}" 2>/dev/null || exit 0

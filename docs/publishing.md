@@ -80,8 +80,13 @@ One-time setup, in this order:
       default and scanners flag packages that carry them. `test.sh` enforces
       this; keep it that way.
 - [x] npmjs.com does not resolve relative image paths in READMEs — README image
-      tags use absolute `raw.githubusercontent.com` URLs (GitHub renders them
-      too).
+      tags use immutable-revision `cdn.jsdelivr.net` URLs shared with GitHub,
+      avoiding mutable branch paths and raw GitHub rate limits.
+- [x] npm treats every root README variant as mandatory and npm 11 selected
+      `README.th.md` for 2.3.0. The release job now publishes from a disposable
+      staged package containing only `README.md`; the repository keeps the Thai
+      README at its existing public path. The stage also omits `CHANGELOG.md`,
+      which is release documentation rather than installer/runtime payload.
 
 Users check and apply classic/Codex updates explicitly with
 `npx luciazero@latest check-update` and `npx luciazero@latest update`.

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/lucia.png" width="220" alt="Lucia — มาสคอตของ Luciazero">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="220" alt="Lucia — มาสคอตของ Luciazero">
   <h1>Luciazero</h1>
   <p>
     <strong>ชั้นวินัยที่พิสูจน์ได้ด้วยหลักฐานสำหรับ coding agent</strong><br>
@@ -31,7 +31,7 @@ orchestration สำหรับรันงานข้ามคืน
 GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใช่ mockup:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/statusline-demo.gif" width="720" alt="แก้ไฟล์แล้วขึ้น unverified, verify แดงยังคงแดง และเปลี่ยนเป็นเขียวเมื่อผ่าน">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/statusline-demo.gif" width="720" alt="แก้ไฟล์แล้วขึ้น unverified, verify แดงยังคงแดง และเปลี่ยนเป็นเขียวเมื่อผ่าน">
 </p>
 
 ```text
@@ -59,15 +59,20 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 
 `/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต
 Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พร้อม human view
-ที่ generate จากไฟล์นั้น ส่วน Session B ตรวจ Git fingerprint, อ่าน next action
-กับสมมติฐานที่ถูกหักล้าง, รัน verification ซ้ำ แล้ว consume relay อย่างชัดเจน
+ส่วน Session B ตรวจ repository identity, HEAD และ manifest digest จากช่องทางที่เชื่อถือได้
+อ่าน next action และ negative knowledge รัน verification ที่อนุมัติแล้วซ้ำ
+ใน coding harness ของเครื่องรับ แล้วจึง consume อย่างชัดเจน
 
-Relay ต้องตัดสินก่อนว่าผู้รับอยู่ที่ไหน: ถ้าอยู่เครื่องเดิมใช้ full local path
-ได้ แต่ถ้าข้ามเครื่องต้องเป็น commit ที่ clean และ push แล้วเท่านั้น ตัวตรวจจะ
-ปฏิเสธ path เฉพาะเครื่อง และให้ใส่ความรู้ที่อยู่นอก repo ลงใน JSON โดยตรง
+เครื่องเดิมยังใช้ local path และ schema 1/2 ได้ ส่วน cross-machine schema 3
+สร้างหลัง commit/push เท่านั้น โดย publish transfer tag ที่ตั้งชื่อตาม commit
+และบันทึก clone URL ที่ตัด credential แล้ว, head/base OID, committed changed files
+และ inline knowledge
+ฝั่งรับต้องระบุ route, trusted HEAD และ manifest digest เอง จึง downgrade validation ด้วย
+artifact ปลอมไม่ได้ รองรับ detached checkout และ Relay ไม่ execute command
+จาก artifact ผู้รับต้องรันเองให้ครบก่อนใช้ `consume --verified`
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ohm41321/luciazero/main/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
 </p>
 
 GIF นี้รัน [implementation ที่ ship จริง](docs/assets/relay-demo.sh) ใน Git

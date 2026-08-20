@@ -18,12 +18,32 @@ hooks, Node.js 18+ for the CLI/report, and Python 3 for hook JSON handling and
 Lucia Relay. The guarantees below are enforced by `test.sh` on every push — a
 way around any of them is a reportable vulnerability, not expected behavior:
 
-- **Core operation is offline.** Installers, hooks, Relay/report helpers, and
-  eval graders never phone home. `npx luciazero check-update` is an explicit,
-  read-only exception that queries the configured npm registry with a five-
-  second timeout; `update` itself uses the already-downloaded package. Real
-  behavioral `eval/run.sh` runs are the other explicit exception: they invoke
-  the selected Claude or Codex CLI; `--offline` does not.
+- **Core operation is offline.** Installers, hooks, same-machine Relay/report
+  helpers, and eval graders never phone home. Cross-machine Relay drafting is
+  an explicit network and remote-write exception: it checks the configured
+  upstream branch and publishes one deterministic
+  `refs/tags/lucia-relay-<HEAD>` transfer tag. Existing tags are reused only
+  when their OID matches HEAD; Git URL rewrites and separate push URLs are
+  rejected, Relay Git calls strip ambient `GIT_*` overrides, and the trusted
+  envelope live-checks the tag again.
+  `npx luciazero check-update` is another explicit, read-only exception that
+  queries the configured npm registry with a five-second timeout; `update`
+  itself uses the already-downloaded package. Real behavioral `eval/run.sh`
+  runs are the other explicit exception: they invoke the selected Claude or
+  Codex CLI; `--offline` does not.
+- **Relay secret scanning is best-effort.** Cross-machine validation rejects
+  common provider tokens, private keys, authenticated URLs/DSNs, and JWT shapes,
+  but it is not a comprehensive secret scanner; review both relay artifacts
+  before sending them.
+- **Relay never executes artifact commands.** The receiver inspects and runs
+  evidence through its own coding harness and sandbox, compares exit codes and
+  decisive lines, then explicitly passes `consume --verified`. The flag is a
+  receiver assertion, not an artifact-provided proof.
+- **Local executables are trusted prerequisites.** As with the installers and
+  hooks, the Python, Git, and SSH executables resolved from the operator's OS
+  environment must be trusted; a compromised local `PATH` is outside Relay's
+  artifact/remote threat model. Relay strips `GIT_*` overrides and rejects Git
+  transport config overrides it can inspect.
 - **Nothing runs at npm install time.** The npm package has zero lifecycle
   scripts (`preinstall`/`install`/`postinstall`/`prepare` are all forbidden
   and checked); `npx luciazero` only launches the same audited bash

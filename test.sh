@@ -38,13 +38,15 @@ trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 # LUCIAZERO_VERIFY_CMD flips the tracker into exact-match mode, so fixture
 # commands stop counting as verify runs and this suite goes red on exactly the
 # machines that dogfood the pack. Every test sets what it needs per invocation.
-while IFS= read -r LZ_VAR; do
-  if [ -n "${LZ_VAR}" ]; then unset "${LZ_VAR}"; fi
-done < <(env | sed -n 's/^\(LUCIAZERO_[A-Za-z0-9_]*\)=.*/\1/p')
-unset LZ_VAR
+# Keep the boundary in a sourceable helper so its regression test can exercise
+# the exact implementation without adding a bypass to this entrypoint.
+# shellcheck source=scripts/sanitize-luciazero-env.sh
+source "${ROOT}/scripts/sanitize-luciazero-env.sh"
 
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
+         scripts/sanitize-luciazero-env.sh
+         scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
          skills/ready/scripts/detect.sh
@@ -96,24 +98,37 @@ else
   echo "skip shellcheck (not installed — local only; CI fails without it)"
 fi
 
-# 2a. ambient LUCIAZERO_* must not change this suite's outcome. Re-runs the fast
-# tier in a child poisoned with every knob the hooks read; the sanitation above
-# is what keeps it green (regression: an exported LUCIAZERO_VERIFY_CMD turned
-# the hook state-machine tests red for anyone running the pack on themselves).
-if [ -z "${LZ_SELFTEST_CHILD:-}" ]; then
-  CHILD_RC=0
-  CHILD_OUT="$(LZ_SELFTEST_CHILD=1 \
-    LUCIAZERO_VERIFY_CMD='never-the-fixture-command' \
-    LUCIAZERO_VERIFY_REGEX='^zzz-never-matches$' \
-    LUCIAZERO_STRICT_VERIFY_CMD='false' \
-    LUCIAZERO_DOC_REGEX='.' \
-    LUCIAZERO_CHANNEL='plugin' \
-    bash "${ROOT}/test.sh" --fast 2>&1)" || CHILD_RC=$?
-  # The child re-runs every fast check, so a plain failure here is ambiguous:
-  # quote its own decisive line instead of blaming sanitation for a real bug.
-  [ "${CHILD_RC}" = 0 ] || fail "fast tier is not immune to ambient LUCIAZERO_*: $(printf '%s' "${CHILD_OUT}" | grep -m1 '^FAIL' || printf 'child exited %s' "${CHILD_RC}")"
-  echo "ok  ambient LUCIAZERO_* sanitation"
-fi
+# 2a. ambient LUCIAZERO_* must not change this suite's outcome. A tiny child
+# sources the same sanitation helper under every poisoned knob; the test
+# entrypoint itself has no environment-controlled early exit.
+CHILD_RC=0
+CHILD_OUT="$(LUCIAZERO_VERIFY_CMD='never-the-fixture-command' \
+  LUCIAZERO_VERIFY_REGEX='^zzz-never-matches$' \
+  LUCIAZERO_STRICT_VERIFY_CMD='false' \
+  LUCIAZERO_DOC_REGEX='.' \
+  LUCIAZERO_CHANNEL='plugin' \
+  bash -c '
+    source "$1"
+    LEFTOVER_LZ="$(env | sed -n '\''s/^\(LUCIAZERO_[A-Za-z0-9_]*\)=.*/\1/p'\'')"
+    [ -z "${LEFTOVER_LZ}" ] || {
+      echo "ambient Luciazero variables survived sanitation: ${LEFTOVER_LZ}" >&2
+      exit 1
+    }
+  ' _ "${ROOT}/scripts/sanitize-luciazero-env.sh" 2>&1)" || CHILD_RC=$?
+[ "${CHILD_RC}" = 0 ] \
+  || fail "ambient LUCIAZERO_* sanitation failed: ${CHILD_OUT:-child exited ${CHILD_RC}}"
+# A historical probe variable must not bypass the real entrypoint. Put a
+# failing bash shim at the first syntax check so this assertion stays tiny.
+FORGE_BIN="$(mktemp -d)"
+printf '#!/bin/sh\n[ -z "${LUCIAZERO_VERIFY_CMD+x}" ] || exit 8\nexit 7\n' > "${FORGE_BIN}/bash"
+chmod +x "${FORGE_BIN}/bash"
+FORGE_RC=0
+PATH="${FORGE_BIN}:/usr/bin:/bin" LZ_SANITATION_PROBE=1 \
+  LUCIAZERO_VERIFY_CMD='must-be-removed-before-syntax-checks' \
+  /bin/bash "${ROOT}/test.sh" --fast >/dev/null 2>&1 || FORGE_RC=$?
+rm -rf "${FORGE_BIN}"
+[ "${FORGE_RC}" = 7 ] || fail "environment variable bypassed the verification entrypoint (rc=${FORGE_RC})"
+echo "ok  ambient LUCIAZERO_* sanitation"
 
 # 2b. detect.sh runs green against this repo and finds the CI verify command
 OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${ROOT}")" \
@@ -156,12 +171,162 @@ while IFS= read -r AGENT_NAME; do
   head -1 "${AGENT}" | grep -qx -- '---' || fail "${AGENT_NAME}.md missing frontmatter"
   grep -q "^name: ${AGENT_NAME}\$" "${AGENT}" || fail "${AGENT_NAME}.md missing name"
   grep -q '^description: .' "${AGENT}" || fail "${AGENT_NAME}.md missing description"
+  AGENT_DESC_WORDS="$(sed -n 's/^description:[[:space:]]*//p' "${AGENT}" | wc -w | tr -d '[:space:]')"
+  [ "${AGENT_DESC_WORDS}" -le 40 ] \
+    || fail "${AGENT_NAME}.md description is ${AGENT_DESC_WORDS} words (limit 40)"
   grep -q '^model: inherit$' "${AGENT}" || fail "${AGENT_NAME}.md must inherit the authoring model"
 done < <(catalog "${ROOT}/claude/agents/catalog.txt")
 cmp -s "${ROOT}/agents/reviewer.md" "${ROOT}/claude/agents/reviewer.md" \
   || fail "plugin agents/reviewer.md drifted from the classic reviewer source"
+python3 - "${ROOT}" <<'PY' || fail "reviewer/ready prompt budget or contract drift"
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+reviewer = (root / "claude/agents/reviewer.md").read_text()
+ready = (root / "skills/ready/SKILL.md").read_text()
+
+def normalized(text):
+    return " ".join(text.casefold().split())
+
+def section_bodies(text, expected, strip_fences):
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    if strip_fences:
+        text = re.sub(r"(?ms)^(?:```|~~~).*?^(?:```|~~~)[ \t]*$", "", text)
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    matches = list(re.finditer(r"(?m)^## (.+?)[ \t]*$", text))
+    names = [match.group(1) for match in matches]
+    assert all(names.count(name) == 1 for name in expected), f"lost or duplicated sections: {expected}"
+    indices = [names.index(name) for name in expected]
+    assert indices == sorted(indices), f"sections out of order: {expected}"
+    bodies = {"__intro__": text[:matches[0].start()] if matches else text}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        bodies[match.group(1)] = text[match.end():end]
+    return bodies
+
+def frontmatter(text, label, expected_name, expected_fields):
+    match = re.match(r"\A---\n(.*?)\n---\n", text, flags=re.S)
+    assert match, f"{label} lost frontmatter block"
+    block = match.group(1)
+    fields = {"name": expected_name, **expected_fields}
+    for field, expected in fields.items():
+        values = re.findall(rf"(?m)^{re.escape(field)}:[ \t]*(.+)$", block)
+        assert values == [expected], f"{label} frontmatter {field} drift: {values}"
+        assert not re.search(rf"(?m)^{re.escape(field)}:[ \t]*", text[match.end():]), \
+            f"{label} has {field} outside frontmatter"
+    descriptions = re.findall(r"(?m)^description:[ \t]*(.+)$", block)
+    assert len(descriptions) == 1, f"{label} needs one frontmatter description"
+    assert not re.search(r"(?m)^description:[ \t]*", text[match.end():]), \
+        f"{label} has description outside frontmatter"
+    return descriptions[0]
+
+def validate(text, label, expected_name, expected_fields, expected, contracts, code_contracts, budget):
+    prose = section_bodies(text, expected, strip_fences=True)
+    raw = section_bodies(text, expected, strip_fences=False)
+    prose["__description__"] = frontmatter(text, label, expected_name, expected_fields)
+    for section, clauses in contracts.items():
+        body = normalized(prose[section])
+        missing = [clause for clause in clauses if normalized(clause) not in body]
+        assert not missing, f"{label} {section} lost behavioral clauses: {missing}"
+    for section, literal in code_contracts:
+        assert literal in raw[section], f"{label} {section} lost code contract"
+    assert len(text.split()) <= budget, f"{label} prompt is {len(text.split())} words (budget {budget})"
+
+reviewer_sections = ("Route the search", "Evidence discipline", "Output")
+reviewer_contracts = {
+    "__description__": ("Prefer built-in review; otherwise use this agent independently.",),
+    "__intro__": ("Refute the change; do not approve or praise it.",),
+    "Route the search": (
+        "rank risks by impact and reachability",
+        "trace each changed trust boundary from external input to a sensitive sink",
+        "identify the old observable shape, then search callers, consumers, fixtures, docs, serializers, migrations, and compatibility code",
+        "prioritize error paths, state transitions, concurrency, resource cleanup, and material edge cases",
+        "A changed test is suspect if it would still pass when the implementation is reverted.",
+    ),
+    "Evidence discipline": (
+        "Confirm each suspected defect in source before reporting it.",
+        "Never edit, commit, or push.", "Stay inside the diff's causal scope.",
+        "Report every verified `blocker`/`major`; report at most three `minor` findings",
+    ),
+    "Output": ("output exactly `No findings.`",),
+}
+ready_sections = (
+    "1. Detect", "2. Establish verification", "3. Add smoke tests only when absent",
+    "4. Add only paying guardrails", "5. Record project knowledge", "6. Prove the loop",
+)
+ready_contracts = {
+    "1. Detect": ("Run the bundled scan first", "CI config: use what CI runs."),
+    "2. Establish verification": (
+        "exit non-zero on failure and run unattended", "work offline without credentials, GPU, network, or secrets",
+        "Run `verify` on every edit loop; run `verify-full` at closeout and before a PR.",
+        "root full suite as fallback", "references/smart-verification.md",
+        "ask first before offering exact-match", "Never commit this variable",
+        "This setting caches CI truth; update it whenever CI's verify command changes.",
+    ),
+    "3. Add smoke tests only when absent": (
+        "Add 3–6 small tests for catastrophic failures", "never the user's real data paths",
+        "enforce a hard timeout and cleanup",
+    ),
+    "4. Add only paying guardrails": (
+        "on Codex or another harness, put necessary constraints in AGENTS.md instead",
+        "Never add a hook that deploys, pushes, deletes, or writes outside the repository.",
+    ),
+    "5. Record project knowledge": ("Every line becomes future context cost.",),
+    "6. Prove the loop": ("Flake check", "Red check", "restore exactly that edit", "does not cover"),
+}
+
+reviewer_code = (("Output", "```\npath:line — severity — problem. Concrete fix.\n```"),)
+ready_code = (("1. Detect", "```\n<this-skill-dir>/scripts/detect.sh <repo-root>\n```"),)
+reviewer_fields = {"tools": "Read, Grep, Glob, Bash", "model": "inherit"}
+validate(reviewer, "reviewer", "reviewer", reviewer_fields, reviewer_sections,
+         reviewer_contracts, reviewer_code, 400)
+validate(ready, "ready", "ready", {}, ready_sections, ready_contracts, ready_code, 1000)
+
+def assert_rejected(text, label, expected_name, expected_fields, expected, contracts, code_contracts, budget):
+    try:
+        validate(text, label, expected_name, expected_fields, expected, contracts, code_contracts, budget)
+    except AssertionError:
+        return
+    raise AssertionError(f"{label} validator accepted adversarial stuffing")
+
+all_reviewer_clauses = " ".join(clause for clauses in reviewer_contracts.values() for clause in clauses)
+reviewer_frame = ("---\nname: reviewer\n"
+                  "description: Prefer built-in review; otherwise use this agent independently.\n"
+                  "tools: Read, Grep, Glob, Bash\nmodel: inherit\n---\n")
+reviewer_headings = "\n".join(f"## {section}" for section in reviewer_sections)
+assert_rejected(reviewer_frame + reviewer_headings + f"\n<!-- {all_reviewer_clauses} -->",
+                "reviewer comment bag", "reviewer", reviewer_fields, reviewer_sections,
+                reviewer_contracts, reviewer_code, 400)
+assert_rejected(reviewer_frame + reviewer_headings + f"\n```\n{all_reviewer_clauses}\n```",
+                "reviewer code bag", "reviewer", reviewer_fields, reviewer_sections,
+                reviewer_contracts, reviewer_code, 400)
+wrong_section = (reviewer_frame + "\nRefute the change; do not approve or praise it.\n"
+                 + f"## Route the search\n{all_reviewer_clauses}\n"
+                 + "## Evidence discipline\n\n## Output\n```\npath:line — severity — problem. Concrete fix.\n```\n")
+assert_rejected(wrong_section, "reviewer wrong-section bag", "reviewer", reviewer_fields, reviewer_sections,
+                reviewer_contracts, reviewer_code, 400)
+fenced_description = reviewer.replace(
+    "description: Adversarial reviewer with general, security, and contract routes. Use for diffs or risky closeout. Prefer built-in review; otherwise use this agent independently. Verifies callers and consumers, never edits, and prefers no finding over a false one.\n",
+    "",
+).replace("# Reviewer\n", "```yaml\ndescription: moved outside frontmatter\n```\n\n# Reviewer\n")
+assert_rejected(fenced_description, "reviewer fenced description", "reviewer", reviewer_fields, reviewer_sections,
+                reviewer_contracts, reviewer_code, 400)
+fenced_tools = reviewer.replace("tools: Read, Grep, Glob, Bash\n", "").replace(
+    "# Reviewer\n", "```yaml\ntools: Read, Grep, Glob, Bash\n```\n\n# Reviewer\n",
+)
+assert_rejected(fenced_tools, "reviewer fenced tools", "reviewer", reviewer_fields, reviewer_sections,
+                reviewer_contracts, reviewer_code, 400)
+print(f"ok  prompt budgets (reviewer {len(reviewer.split())}/400; ready {len(ready.split())}/1000 words)")
+PY
+python3 "${ROOT}/scripts/check-skill-prompts.py" \
+  || fail "remaining skill prompt budget or contract drift"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/skills/lucia-relay/scripts/relay.py" || fail "relay.py syntax"
+PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT}/test_lucia_relay.py" >/dev/null \
+  || fail "focused lucia-relay trust regressions"
+echo "ok  focused lucia-relay trust regressions"
+python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
+  "${ROOT}/scripts/check-skill-prompts.py" || fail "skill prompt checker syntax"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/eval/evidence.py" || fail "evidence.py syntax"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
@@ -766,112 +931,266 @@ echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
   || { rm -rf "${RR}"; fail "relay broke legacy draft callers without --recipient"; }
 rm -rf "${RR}"
 
-# Cross-machine routing must be an explicit, mechanically portable decision:
-# pushed clean tree + no source-machine paths. Local knowledge travels inline.
+# Cross-machine schema 3 must survive an actual fresh clone. The receiver
+# supplies the trusted route and HEAD, reruns approved argv-safe evidence in
+# its own harness, then explicitly asserts verification while consuming.
 RR="$(mktemp -d)"
 RREMOTE="$(mktemp -d)"
+RRECEIVER="$(mktemp -d)"
+RREMOTE_URL="git@relay.test.invalid:org/repo.git"
 git -C "${RREMOTE}" init -q --bare
 git -C "${RR}" init -q -b main
 git -C "${RR}" config user.name test
 git -C "${RR}" config user.email test@example.invalid
 mkdir -p "${RR}/docs"
-echo base > "${RR}/work.txt"
-echo portable > "${RR}/docs/notes.md"
-git -C "${RR}" add work.txt docs/notes.md && git -C "${RR}" commit -qm base
-git -C "${RR}" remote add origin "${RREMOTE}"
+printf 'portable\n' > "${RR}/docs/notes.md"
+printf 'delete after base\n' > "${RR}/docs/deleted.md"
+printf '#!/bin/sh\nprintf "PASS relay verification\\n"\n' > "${RR}/verify.sh"
+chmod +x "${RR}/verify.sh"
+printf 'base\n' > "${RR}/work.txt"
+git -C "${RR}" add work.txt docs/notes.md docs/deleted.md verify.sh
+git -C "${RR}" commit -qm base
+RBASE="$(git -C "${RR}" rev-parse HEAD)"
+printf 'task change\n' > "${RR}/work.txt"
+rm "${RR}/docs/deleted.md"
+git -C "${RR}" add work.txt docs/deleted.md
+git -C "${RR}" commit -qm task
+RHEAD="$(git -C "${RR}" rev-parse HEAD)"
+git -C "${RR}" remote add origin "${RREMOTE_URL}"
+RPATH_ORIGINAL="${PATH}"
+RSSH_DIR="${RREMOTE}/relay-test-bin"
+mkdir -p "${RSSH_DIR}"
+RSSH="${RSSH_DIR}/ssh"
+printf '%s\n' '#!/bin/sh' \
+  'case "$*" in' \
+  '  *git-receive-pack*) exec git-receive-pack "${RELAY_TEST_REMOTE}" ;;' \
+  '  *git-upload-pack*) exec git-upload-pack "${RELAY_TEST_REMOTE}" ;;' \
+  '  *) exit 64 ;;' \
+  'esac' > "${RSSH}"
+chmod +x "${RSSH}"
+export PATH="${RSSH_DIR}:${PATH}" RELAY_TEST_REMOTE="${RREMOTE}"
 git -C "${RR}" push -qu -u origin main
-write_cross_relay() {
-  "${RELAY}" draft --root "${RR}" --recipient cross-machine > "${RR}/LUCIA_RELAY.json"
-  python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+git --git-dir "${RREMOTE}" symbolic-ref HEAD refs/heads/main
+
+"${RELAY}" draft --root "${RR}" --recipient cross-machine --base "${RBASE}" \
+  > "${RR}/LUCIA_RELAY.json" \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine draft failed after push"; }
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
 import json, sys
 p=sys.argv[1]; d=json.load(open(p))
-d["goal"]="Move the parser knowledge to another machine"
-d["state"]["done"]=["Confirmed the receiver location"]
-d["state"]["in_progress"]=["Implementation remains untouched"]
+d["goal"]="Move parser knowledge to a fresh machine"
+d["state"]["done"]=["Task commit is pushed"]
+d["state"]["in_progress"]=["Receiver verification is pending"]
 d["state"]["next_step"]={"kind":"command","value":"./verify.sh"}
-d["verification"]=[{"command":"./verify.sh","exit_code":1,"decisive_line":"parser case fails","run_at":"2026-08-12T12:00:00+00:00"}]
+d["verification"]=[
+  {"command":"./verify.sh","exit_code":0,"decisive_line":"PASS relay verification","run_at":"2026-08-12T12:00:00+00:00"},
+  {"command":"./verify.sh","exit_code":0,"decisive_line":"PASS relay verification","run_at":"2026-08-12T12:00:01+00:00"},
+]
 d["knowledge"]["read_first"]=["docs/notes.md — portable note"]
-d["knowledge"]["hypotheses"]=[{"id":"H1","claim":"encoding","status":"refuted","evidence":"ASCII fails too"}]
+d["knowledge"]["inline"]=[{"label":"decision","content":"Keep the public parser contract"}]
+d["knowledge"]["hypotheses"]=[{"id":"H1","claim":"encoding","status":"refuted","evidence":"ASCII passes"}]
 open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
-}
-write_cross_relay
-"${RELAY}" validate --root "${RR}" >/dev/null \
-  || { rm -rf "${RR}" "${RREMOTE}"; fail "clean pushed cross-machine relay rejected"; }
+"${RELAY}" render --root "${RR}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "schema 3 relay render failed"; }
+git -C "${RR}" config "url.${RREMOTE}.insteadOf" "${RREMOTE_URL}"
+RC=0
+"${RELAY}" envelope --root "${RR}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted envelope accepted a late Git URL rewrite"; }
+git -C "${RR}" config --unset-all "url.${RREMOTE}.insteadOf"
+git -C "${RR}" config remote.origin.pushurl git@wrong.invalid:other/repo.git
+RC=0
+"${RELAY}" envelope --root "${RR}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted envelope accepted a split push URL"; }
+git -C "${RR}" config --unset-all remote.origin.pushurl
+RENVELOPE="$("${RELAY}" envelope --root "${RR}")" \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted relay envelope failed"; }
+RMANIFEST="$(printf '%s' "${RENVELOPE}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["trusted_manifest_sha256"])')"
+python3 - "${RR}/LUCIA_RELAY.json" "${RBASE}" "${RHEAD}" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["schema"] == 3 and d["route"]["recipient"] == "cross-machine"
+assert d["repository"]["base"] == sys.argv[2]
+assert d["repository"]["head"] == d["repository"]["remote"]["oid"] == sys.argv[3]
+assert d["repository"]["remote"]["ref"] == "refs/tags/lucia-relay-" + sys.argv[3]
+assert d["repository"]["remote"]["source_ref"] == "refs/heads/main"
+assert d["repository"]["remote"]["url"] == "git@relay.test.invalid:org/repo.git"
+assert d["repository"]["changed_files"] == ["docs/deleted.md", "work.txt"]
+PY
+
+git clone -q "${RREMOTE_URL}" "${RRECEIVER}"
+git -C "${RRECEIVER}" fetch -q origin "refs/tags/lucia-relay-${RHEAD}"
+cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
+git -C "${RRECEIVER}" checkout -q --detach "${RHEAD}"
+RC=0; "${RELAY}" inspect --root "${RRECEIVER}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 2 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine inspect trusted artifact-declared routing"; }
+"${RELAY}" inspect --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "fresh detached receiver rejected matching relay"; }
+python3 - "${RRECEIVER}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p)); d["route"]["recipient"]="same-machine"
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+RC=0
+"${RELAY}" consume --root "${RRECEIVER}" --verified >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 2 ] && [ -f "${RRECEIVER}/LUCIA_RELAY.json" ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "schema 3 route downgrade bypassed receiver trust"; }
+cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
+python3 - "${RRECEIVER}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p)); d["schema"]=True; d["route"]["recipient"]="same-machine"
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+RC=0
+"${RELAY}" consume --root "${RRECEIVER}" --verified >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] && [ -f "${RRECEIVER}/LUCIA_RELAY.json" ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "boolean schema bypassed receiver trust"; }
+cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
+git -C "${RRECEIVER}" config remote.origin.url git@wrong.invalid:other/repo.git
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver trusted an unrelated clone remote"; }
+git -C "${RRECEIVER}" config remote.origin.url "${RREMOTE_URL}"
+git -C "${RRECEIVER}" config remote.origin.pushurl git@wrong.invalid:other/repo.git
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver accepted a split push URL"; }
+git -C "${RRECEIVER}" config --unset-all remote.origin.pushurl
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "https://wrong.invalid/repo.git" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver accepted a mismatched trusted repository URL"; }
+python3 - "${RRECEIVER}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p)); d["goal"]="tampered next machine goal"
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+"${RELAY}" render --root "${RRECEIVER}" >/dev/null
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted digest accepted tampered relay knowledge"; }
+cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
+python3 - "${RRECEIVER}/LUCIA_RELAY_RECEIPT.json" "${RMANIFEST}" "${RHEAD}" <<'PY'
+import json, sys
+json.dump({
+    "schema": 1,
+    "kind": "luciazero-relay-receipt",
+    "manifest_sha256": sys.argv[2],
+    "repository_head": sys.argv[3],
+    "results": [{
+        "index": 1, "argv": ["./verify.sh"], "exit_code": 0,
+        "decisive_line": "PASS relay verification", "matched": True,
+        "run_at": "2026-08-12T12:00:00+00:00",
+    }],
+}, open(sys.argv[1], "w"))
+PY
+RC=0
+"${RELAY}" consume --root "${RRECEIVER}" --expected-recipient cross-machine \
+  --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 2 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "forged repo-local verification receipt was accepted"; }
+for EVIDENCE_INDEX in 0 1; do
+  EVIDENCE_OUT="$(cd "${RRECEIVER}" && ./verify.sh)" \
+    || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver evidence ${EVIDENCE_INDEX} failed"; }
+  [ "${EVIDENCE_OUT}" = "PASS relay verification" ] \
+    || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver evidence ${EVIDENCE_INDEX} mismatched"; }
+done
+"${RELAY}" consume --root "${RRECEIVER}" --verified \
+  --expected-recipient cross-machine --trusted-head "${RHEAD}" \
+  --trusted-manifest-sha256 "${RMANIFEST}" \
+  --trusted-repository-url "${RREMOTE_URL}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "verified receiver could not consume relay"; }
+for TRANSIENT in LUCIA_RELAY.json LUCIA_RELAY.md LUCIA_RELAY_RECEIPT.json; do
+  [ ! -e "${RRECEIVER}/${TRANSIENT}" ] \
+    || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "${TRANSIENT} survived consumption"; }
+done
+
+# Reject stale tracking refs, incomplete knowledge/evidence, traversal, common
+# secret formats, route downgrade, and legacy cross-machine payloads.
 PYTHONDONTWRITEBYTECODE=1 python3 - "${RELAY}" "${RR}/LUCIA_RELAY.json" <<'PY'
 import copy, importlib.util, json, sys
 spec=importlib.util.spec_from_file_location("relay_under_test", sys.argv[1])
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 data=json.load(open(sys.argv[2]))
-assert module.machine_paths({"note":"compare parser / renderer"}) == []
+trusted_digest=module.manifest_sha256(__import__("pathlib").Path(sys.argv[2]).parent)
+downgrade=copy.deepcopy(data); downgrade["route"]["recipient"]="same-machine"
+result=module.inspect(
+    __import__("pathlib").Path(sys.argv[2]).parent,
+    downgrade,
+    expected_recipient="cross-machine",
+    trusted_head=data["repository"]["head"],
+    trusted_manifest_sha256=trusted_digest,
+    trusted_repository_url=data["repository"]["remote"]["url"],
+    receiver_context=True,
+)
+assert any("receiver expected recipient cross-machine" in error for error in result["errors"])
+for mutate in (
+    lambda d: d.update(verification=[]),
+    lambda d: d["knowledge"].update(read_first=[], inline=[], hypotheses=[], landmines=[]),
+    lambda d: d["files"].update(modified=["../../.ssh/config"]),
+    lambda d: d["knowledge"].update(inline=[{"label":"token","content":"npm_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}]),
+    lambda d: d["knowledge"].update(inline=[{"label":"dsn","content":"postgres://user:password@example.invalid/db"}]),
+    lambda d: d["knowledge"].update(inline=[{"label":"jwt","content":"eyJAAAAAAAAAAAA.eyJBBBBBBBBBBBB.CCCCCCCCCCCC"}]),
+):
+    bad=copy.deepcopy(data); mutate(bad)
+    assert module.validate(bad)[0]
+legacy=copy.deepcopy(data); legacy["schema"]=2
+legacy["repository"].pop("remote"); legacy["repository"].pop("base"); legacy["repository"].pop("changed_files")
+assert module.validate(legacy)[0]
 assert module.machine_paths({"note":"file:///Users/sender/notes.md"})
-assert module.machine_paths({"note":r"\\server\share\notes.md"})
-legacy=copy.deepcopy(data)
-legacy["schema"]=1
-legacy.pop("route")
-legacy["repository"].pop("known_remote_refs")
-legacy["knowledge"].pop("inline")
-errors, warnings=module.validate(legacy)
-assert errors == [] and any("legacy schema 1" in warning for warning in warnings)
-rendered=module.render_markdown(legacy)
-assert "Recipient:" not in rendered and "## Inline knowledge" not in rendered
+deleted=copy.deepcopy(data); deleted["knowledge"]["read_first"]=["docs/deleted.md"]
+assert module.cross_machine_repository_errors(
+    __import__("pathlib").Path(sys.argv[2]).parent, deleted
+)
+nested={}
+cursor=nested
+for _ in range(module.MAX_DEPTH + 2):
+    cursor["x"]={}; cursor=cursor["x"]
+assert module.structure_errors(nested)
+assert module.sanitize_remote_url("https://example.invalid:bad/repo.git") is None
+assert module.safe_command_argv("sh -c 'touch /tmp/pwned'") is None
+assert module.safe_command_argv("git -c alias.pwn=!id pwn") is None
+assert "valid immutable" in module.repository_path_error(
+    __import__("pathlib").Path(sys.argv[2]).parent, "--batch", "docs/notes.md"
+)
 PY
-python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
-import json, sys
-p=sys.argv[1]; d=json.load(open(p))
-d["knowledge"]["read_first"]=["docs/missing.md"]
-open(p,"w").write(json.dumps(d, indent=2)+"\n")
-PY
-RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'not present in the pushed relay commit'; }; then
-  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted a missing repo-relative pointer"
-fi
-write_cross_relay
-python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
-import json, sys
-p=sys.argv[1]; d=json.load(open(p))
-assert d["route"]["recipient"] == "cross-machine"
-assert d["repository"]["known_remote_refs"] == ["origin/main"]
-d["knowledge"]["read_first"]=["/Users/sender/private/notes.md"]
-open(p,"w").write(json.dumps(d, indent=2)+"\n")
-PY
-RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'machine-only paths'; }; then
-  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted a source-machine path"
-fi
-python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
-import json, sys
-p=sys.argv[1]; d=json.load(open(p))
-d["knowledge"]["read_first"]=["docs/notes.md — portable note"]
-d["knowledge"]["inline"]=[{"label":"sender note","content":"Use the public parser contract"}]
-open(p,"w").write(json.dumps(d, indent=2)+"\n")
-PY
-"${RELAY}" validate --root "${RR}" >/dev/null \
-  || { rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay rejected inline knowledge"; }
-cp "${RR}/LUCIA_RELAY.json" "${RREMOTE}/stale-relay.json"
-echo pushed-later >> "${RR}/work.txt"
-git -C "${RR}" add work.txt && git -C "${RR}" commit -qm pushed-later
-git -C "${RR}" push -qu
-cp "${RREMOTE}/stale-relay.json" "${RR}/LUCIA_RELAY.json"
-RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'fingerprint is stale'; }; then
-  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted stale repository state"
-fi
-git -C "${RR}" reset -q --hard HEAD~1
-echo dirty >> "${RR}/work.txt"
-write_cross_relay
-RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'dirty worktree'; }; then
-  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted an uncommitted task tree"
-fi
-git -C "${RR}" add work.txt && git -C "${RR}" commit -qm local-ahead
-write_cross_relay
-RC=0; OUT="$("${RELAY}" validate --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${OUT}" | grep -q 'push it before routing'; }; then
-  rm -rf "${RR}" "${RREMOTE}"; fail "cross-machine relay accepted an unpushed HEAD"
-fi
-rm -rf "${RR}" "${RREMOTE}"
-echo "ok  lucia relay lifecycle"
+git -C "${RR}" config "url.${RREMOTE}.insteadOf" "${RREMOTE_URL}"
+RC=0
+"${RELAY}" draft --root "${RR}" --recipient cross-machine --base "${RBASE}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine draft accepted a Git URL rewrite"; }
+git -C "${RR}" config --unset-all "url.${RREMOTE}.insteadOf"
+git --git-dir "${RREMOTE}" update-ref -d "refs/tags/lucia-relay-${RHEAD}"
+RC=0
+"${RELAY}" envelope --root "${RR}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted envelope accepted a deleted remote ref"; }
+git --git-dir "${RREMOTE}" update-ref -d refs/heads/main
+RC=0
+"${RELAY}" draft --root "${RR}" --recipient cross-machine --base "${RBASE}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine draft trusted a stale local remote ref"; }
+rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"
+PATH="${RPATH_ORIGINAL}"
+unset RELAY_TEST_REMOTE
+echo "ok  lucia relay lifecycle + fresh-machine receiver verification"
 
 # The public Relay demo drives the real producer/receiver lifecycle rather
 # than printing a canned transcript.
@@ -1761,10 +2080,12 @@ for line in open(os.path.join(root, "CHANGELOG.md")):
 assert pkg["version"] == ver, f"package.json version {pkg['version']} != CHANGELOG {ver}"
 for bad in ("preinstall", "install", "postinstall", "prepare"):
     assert bad not in pkg.get("scripts", {}), f"lifecycle script '{bad}' forbidden (npm v12 blocks them; scanners flag them)"
+assert not pkg.get("dependencies"), "npm wrapper must remain dependency-free"
 files = set(pkg["files"])
 for need in ("bin", "agents", "claude", "skills", "install.sh", "uninstall.sh",
-             "install-codex.sh", "uninstall-codex.sh", "migrations", "CHANGELOG.md"):
+             "install-codex.sh", "uninstall-codex.sh", "migrations"):
     assert need in files, f"files allowlist missing {need} — npx install would ship a broken payload"
+assert "CHANGELOG.md" not in files, "release changelog must not inflate the npm runtime payload"
 for base in ("bin", "agents", "claude", "skills", "migrations"):
     for directory, subdirs, names in os.walk(os.path.join(root, base)):
         assert "__pycache__" not in subdirs, f"npm payload contains Python cache dir: {directory}"
@@ -1803,18 +2124,62 @@ for token in ("RELEASE_TAG: ${{ github.ref_name }}", "package.json",
     assert token in gate_block, f"release version gate missing {token}"
 assert "\\d+\\.\\d+\\.\\d+" in gate_block, \
     "release version gate must skip the Unreleased changelog heading"
+stage = release_workflow.find("scripts/stage-npm-package.sh")
+npm_publish = release_workflow.find('npm publish "${PACKAGE_DIR}"')
+assert 0 <= stage < npm_publish, "npm release must publish the English-README staging package"
 show = open(os.path.join(root, "skills/show/SKILL.md")).read()
 for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
     assert contract in show, f"show skill missing output contract: {contract}"
 imouto = open(os.path.join(root, "skills/imouto-mode/SKILL.md")).read()
+imouto_normalized = " ".join(imouto.split())
 for contract in ("Default: off", "on", "focus", "off", "work first", "non-romantic", "Never auto-trigger",
                  "tsundere", "care through useful action", "Never insult", "Never withhold"):
-    assert contract in imouto, f"imouto-mode missing contract: {contract}"
+    assert contract in imouto_normalized, f"imouto-mode missing contract: {contract}"
 assert "disable-model-invocation: true" in imouto, "imouto-mode must disable Claude model invocation"
 imouto_meta = open(os.path.join(root, "skills/imouto-mode/agents/openai.yaml")).read()
 assert "allow_implicit_invocation: false" in imouto_meta, "imouto-mode must be explicit-only"
 PY
 if command -v node >/dev/null 2>&1; then
+  NP_GUARD="$(mktemp -d)"
+  printf 'keep\n' > "${NP_GUARD}/sentinel"
+  NRC=0
+  "${ROOT}/scripts/stage-npm-package.sh" "${NP_GUARD}" >/dev/null 2>&1 || NRC=$?
+  [ "${NRC}" -eq 64 ] && grep -qx keep "${NP_GUARD}/sentinel" \
+    || { rm -rf "${NP_GUARD}"; fail "npm staging accepted or changed a non-empty directory"; }
+  rm -rf "${NP_GUARD}"
+
+  NP_STAGE="$(mktemp -d)"
+  NP_CACHE="$(mktemp -d)"
+  NP_DIR="$(NPM_CONFIG_CACHE="${NP_CACHE}" \
+    "${ROOT}/scripts/stage-npm-package.sh" "${NP_STAGE}")" \
+    || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "npm staging script failed"; }
+  NP_JSON="$(NPM_CONFIG_CACHE="${NP_CACHE}" npm pack "${NP_DIR}" --dry-run --json)" \
+    || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload could not be packed"; }
+  printf '%s' "${NP_JSON}" | python3 -c '
+import json, os, sys
+pkg = json.load(sys.stdin)[0]
+paths = [item["path"] for item in pkg["files"]]
+readmes = [path for path in paths if os.path.basename(path).upper().startswith("README")]
+assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
+assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
+assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
+for required in ("bin/luciazero.js", "install.sh", "install-codex.sh", "claude/luciazero.md"):
+    assert required in paths, f"staged npm package lost {required}"
+' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
+  NP_VERSION="$(node -p "require('${NP_DIR}/package.json').version")"
+  NP_CLAUDE="$(mktemp -d)"
+  NP_CODEX="$(mktemp -d)"
+  CLAUDE_CONFIG_DIR="${NP_CLAUDE}" bash "${NP_DIR}/install.sh" >/dev/null \
+    || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged Claude installer failed"; }
+  CODEX_HOME="${NP_CODEX}" bash "${NP_DIR}/install-codex.sh" >/dev/null \
+    || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged Codex installer failed"; }
+  [ "$(cat "${NP_CLAUDE}/.luciazero-version")" = "${NP_VERSION}" ] \
+    && [ "$(cat "${NP_CODEX}/.luciazero-version")" = "${NP_VERSION}" ] \
+    || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged installers lost the package version sidecar"; }
+  rm -rf "${NP_CLAUDE}" "${NP_CODEX}"
+  rm -rf "${NP_STAGE}" "${NP_CACHE}"
+  echo "ok  npm staging selects README.md + trims docs + installs with version"
+
   NB="$(mktemp -d)"
   set +e
   NOUT="$(CLAUDE_CONFIG_DIR="${NB}" node "${ROOT}/bin/luciazero.js" --status 2>&1)"

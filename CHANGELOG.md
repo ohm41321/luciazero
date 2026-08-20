@@ -5,7 +5,27 @@ All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.0] - 2026-08-20
+
+### Added
+
+- `/lucia-relay` cross-machine schema 3 publishes a commit-named transfer tag
+  and records a sanitized repository locator, live-checked ref/OID, task base,
+  and committed changed files.
+  `relay.py envelope` emits repository URL, HEAD, and manifest digest for a
+  trusted channel. A fresh receiver clone supplies that envelope, supports
+  detached checkout, never executes artifact commands, and consumes only after
+  the receiver reruns evidence in its own harness and explicitly passes
+  `--verified` with the trusted envelope fields.
+
+### Security
+
+- Cross-machine relays no longer trust their own route or commands. Legacy
+  schema 1/2 is same-machine only; receiver context prevents route downgrade,
+  artifact and string sizes are bounded, common npm/Slack/Google/GitLab secret
+  shapes plus authenticated URLs and JWTs are rejected, multiple/rewritten/
+  split/command-overridden Git transports fail closed, Git calls have timeouts,
+  and repository pointers must be contained tracked blobs.
 
 ## [2.3.0] - 2026-08-16
 

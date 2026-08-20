@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-08-20
+
+### Fixed
+
+- Release verification no longer treats intentional shell fixtures and
+  boolean assertions in `test.sh` as ShellCheck failures on GitHub Actions.
+
 ## [2.4.0] - 2026-08-20
 
 ### Added

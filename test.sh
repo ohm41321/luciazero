@@ -120,6 +120,8 @@ CHILD_OUT="$(LUCIAZERO_VERIFY_CMD='never-the-fixture-command' \
 # A historical probe variable must not bypass the real entrypoint. Put a
 # failing bash shim at the first syntax check so this assertion stays tiny.
 FORGE_BIN="$(mktemp -d)"
+# The fixture intentionally writes a literal shell parameter expansion.
+# shellcheck disable=SC2016
 printf '#!/bin/sh\n[ -z "${LUCIAZERO_VERIFY_CMD+x}" ] || exit 8\nexit 7\n' > "${FORGE_BIN}/bash"
 chmod +x "${FORGE_BIN}/bash"
 FORGE_RC=0
@@ -961,6 +963,8 @@ RPATH_ORIGINAL="${PATH}"
 RSSH_DIR="${RREMOTE}/relay-test-bin"
 mkdir -p "${RSSH_DIR}"
 RSSH="${RSSH_DIR}/ssh"
+# The fixture intentionally writes literal parameter expansions for its shim.
+# shellcheck disable=SC2016
 printf '%s\n' '#!/bin/sh' \
   'case "$*" in' \
   '  *git-receive-pack*) exec git-receive-pack "${RELAY_TEST_REMOTE}" ;;' \
@@ -1038,8 +1042,10 @@ open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
 RC=0
 "${RELAY}" consume --root "${RRECEIVER}" --verified >/dev/null 2>&1 || RC=$?
-[ "${RC}" -eq 2 ] && [ -f "${RRECEIVER}/LUCIA_RELAY.json" ] \
-  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "schema 3 route downgrade bypassed receiver trust"; }
+if [ "${RC}" -ne 2 ] || [ ! -f "${RRECEIVER}/LUCIA_RELAY.json" ]; then
+  rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"
+  fail "schema 3 route downgrade bypassed receiver trust"
+fi
 cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
 python3 - "${RRECEIVER}/LUCIA_RELAY.json" <<'PY'
 import json, sys
@@ -1048,8 +1054,10 @@ open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
 RC=0
 "${RELAY}" consume --root "${RRECEIVER}" --verified >/dev/null 2>&1 || RC=$?
-[ "${RC}" -ne 0 ] && [ -f "${RRECEIVER}/LUCIA_RELAY.json" ] \
-  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "boolean schema bypassed receiver trust"; }
+if [ "${RC}" -eq 0 ] || [ ! -f "${RRECEIVER}/LUCIA_RELAY.json" ]; then
+  rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"
+  fail "boolean schema bypassed receiver trust"
+fi
 cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
 git -C "${RRECEIVER}" config remote.origin.url git@wrong.invalid:other/repo.git
 RC=0
@@ -2144,8 +2152,10 @@ if command -v node >/dev/null 2>&1; then
   printf 'keep\n' > "${NP_GUARD}/sentinel"
   NRC=0
   "${ROOT}/scripts/stage-npm-package.sh" "${NP_GUARD}" >/dev/null 2>&1 || NRC=$?
-  [ "${NRC}" -eq 64 ] && grep -qx keep "${NP_GUARD}/sentinel" \
-    || { rm -rf "${NP_GUARD}"; fail "npm staging accepted or changed a non-empty directory"; }
+  if [ "${NRC}" -ne 64 ] || ! grep -qx keep "${NP_GUARD}/sentinel"; then
+    rm -rf "${NP_GUARD}"
+    fail "npm staging accepted or changed a non-empty directory"
+  fi
   rm -rf "${NP_GUARD}"
 
   NP_STAGE="$(mktemp -d)"
@@ -2173,9 +2183,11 @@ for required in ("bin/luciazero.js", "install.sh", "install-codex.sh", "claude/l
     || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged Claude installer failed"; }
   CODEX_HOME="${NP_CODEX}" bash "${NP_DIR}/install-codex.sh" >/dev/null \
     || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged Codex installer failed"; }
-  [ "$(cat "${NP_CLAUDE}/.luciazero-version")" = "${NP_VERSION}" ] \
-    && [ "$(cat "${NP_CODEX}/.luciazero-version")" = "${NP_VERSION}" ] \
-    || { rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"; fail "staged installers lost the package version sidecar"; }
+  if [ "$(cat "${NP_CLAUDE}/.luciazero-version")" != "${NP_VERSION}" ] \
+    || [ "$(cat "${NP_CODEX}/.luciazero-version")" != "${NP_VERSION}" ]; then
+    rm -rf "${NP_STAGE}" "${NP_CACHE}" "${NP_CLAUDE}" "${NP_CODEX}"
+    fail "staged installers lost the package version sidecar"
+  fi
   rm -rf "${NP_CLAUDE}" "${NP_CODEX}"
   rm -rf "${NP_STAGE}" "${NP_CACHE}"
   echo "ok  npm staging selects README.md + trims docs + installs with version"

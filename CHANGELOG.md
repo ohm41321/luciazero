@@ -7,6 +7,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-08-21
+
+### Fixed
+
+- Skill frontmatter no longer uses an unquoted `: ` in the `done`
+  description, so `npx skills update done` can parse and refresh it.
+- Prompt checks reject unquoted colon-space YAML descriptions to prevent the
+  update failure from returning.
+
 ### Changed
 
 - Package, plugin, marketplace, and license metadata now carry the

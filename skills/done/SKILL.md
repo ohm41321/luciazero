@@ -1,6 +1,6 @@
 ---
 name: done
-description: Run the closeout ritual before handing back non-trivial work: full verification, revert-probe honesty, independent review, and scope reporting. Use before declaring completion, opening a PR, wrapping up a change, or "ปิดงาน".
+description: Run the closeout ritual before handing back non-trivial work; full verification, revert-probe honesty, independent review, and scope reporting. Use before declaring completion, opening a PR, wrapping up a change, or "ปิดงาน".
 ---
 
 # Done

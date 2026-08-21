@@ -1,5 +1,9 @@
 # Debugging lessons
 
+## skills update failed with YAML parse error
+
+cause: `skills/done/SKILL.md` used an unquoted `: ` inside a plain YAML description, so the `skills` CLI skipped it and reported only a generic update failure | proven-by: `npx skills@1.5.23 add https://github.com/ohm41321/luciazero.git --skill done -g -y` (red); local CLI install after the fix (green) | fix: keep frontmatter descriptions free of `: ` or quote the YAML scalar; the prompt checker now rejects unquoted colon-space | date: 2026-08-21
+
 ## forged repo-local verification receipt was accepted
 
 cause: a persistent cross-invocation signing key lets sender-controlled evidence or surviving descendants forge, merge, or replay verification state | proven-by: `./test.sh --fast` | fix: Relay never executes artifact commands or trusts receipts; the receiver reruns evidence in its own harness and explicitly passes trusted envelope fields with `consume --verified` | date: 2026-08-20

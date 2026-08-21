@@ -2,6 +2,7 @@
 """Contract and prompt-budget checks for cataloged skills not covered inline."""
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import sys
@@ -49,9 +50,25 @@ def frontmatter(text: str, skill: str, expected_fields: dict[str, str]) -> str:
     descriptions = re.findall(r"(?m)^description:[ \t]*(.+)$", block)
     if len(descriptions) != 1:
         raise AssertionError(f"{skill} needs one frontmatter description")
+    description = descriptions[0]
+    if description.startswith(("'", '"')):
+        quote = description[0]
+        if not description.endswith(quote):
+            raise AssertionError(f"{skill} frontmatter description has an unterminated quote")
+        if quote == '"':
+            try:
+                description = json.loads(description)
+            except json.JSONDecodeError as exc:
+                raise AssertionError(f"{skill} frontmatter description has invalid double quotes") from exc
+            if not isinstance(description, str):
+                raise AssertionError(f"{skill} frontmatter description must be a string")
+        else:
+            description = description[1:-1].replace("''", "'")
+    elif ": " in description:
+        raise AssertionError(f"{skill} frontmatter description has an unquoted ': '")
     if re.search(r"(?m)^description:[ \t]*", text[match.end() :]):
         raise AssertionError(f"{skill} has description outside frontmatter")
-    return descriptions[0]
+    return description
 
 
 def self_test() -> None:
@@ -76,6 +93,13 @@ finish
     assert "hidden code clause" in raw["First"], "raw code contracts became invisible"
     assert frontmatter(probe, "probe", {}) == "visible description"
 
+    for quote in ('"', "'"):
+        quoted = probe.replace(
+            "description: visible description\n",
+            f"description: {quote}visible description{quote}\n",
+        )
+        assert frontmatter(quoted, "probe", {}) == "visible description"
+
     relocated = probe.replace("description: visible description\n", "").replace(
         "## First\n", "## First\ndescription: visible description\n", 1
     )
@@ -85,6 +109,14 @@ finish
         pass
     else:
         raise AssertionError("frontmatter validator accepted a relocated description")
+
+    invalid_yaml = probe.replace("description: visible description\n", "description: visible: description\n")
+    try:
+        frontmatter(invalid_yaml, "probe", {})
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("frontmatter validator accepted an unquoted ': '")
 
 
 SPECS = {
@@ -340,7 +372,7 @@ APPROVED_DESCRIPTIONS = {
     "plan": "Build a falsifiable implementation plan for new features, major refactors, ambiguous work, or risky multi-module changes. Use when the user asks for a plan or material choices remain; skip routine edits with clear scope and proof.",
     "debug": 'Debug a stubborn bug with a deterministic reproduction, hypothesis ledger, one-variable fixes, and a regression test. Use after the first obvious look fails, reproduction is unclear, or a fix attempt failed. Not for routine obvious failures; use for "ไล่บั๊ก".',
     "bisect": "Pinpoint the first bad commit for a reproducible regression in a safe temporary worktree. Use when HEAD is bad, a known revision is good, and one unattended command distinguishes them; handles flaky endpoints and git-bisect skip exit 125.",
-    "done": 'Run the closeout ritual before handing back non-trivial work: full verification, revert-probe honesty, independent review, and scope reporting. Use before declaring completion, opening a PR, wrapping up a change, or "ปิดงาน".',
+    "done": 'Run the closeout ritual before handing back non-trivial work; full verification, revert-probe honesty, independent review, and scope reporting. Use before declaring completion, opening a PR, wrapping up a change, or "ปิดงาน".',
     "lucia-relay": 'Transfer unfinished work and non-obvious knowledge across sessions, agents, people, machines, or harnesses. Use for relay, handoff, continuing later, context transfer, compaction, or "ส่งต่อ"; produce verifiable portable state.',
     "experiment": 'Measure performance or tuning changes with a baseline, controlled comparison, correctness check, and recorded verdict. Use for speed, memory, latency, size, "ทดลอง", or any claim that one approach is better. Not for correctness bugs.',
     "discipline-report": "Analyze Luciazero stop-outcome logs for evidence-backed verification habits. Use for discipline stats, recurring nudge or strict-block patterns, local behavior reports, or machine-readable JSON.",

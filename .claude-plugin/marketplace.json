@@ -1,6 +1,6 @@
 {
   "name": "luciazero",
-  "owner": { "name": "naris", "email": "naris@riverpark.co.th" },
+  "owner": { "name": "athit", "email": "athitfkm@gmail.com" },
   "description": "Single-plugin marketplace for Luciazero, the verification-first discipline pack.",
   "plugins": [
     {

@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Package, plugin, marketplace, and license metadata now carry the
+  maintainer identity athit <athitfkm@gmail.com>.
+
 ## [2.4.1] - 2026-08-20
 
 ### Fixed

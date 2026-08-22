@@ -21,10 +21,39 @@ Codex CLI และ runtime ที่ใช้ skill ได้ ผ่านก�
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
 
-ภายในมี [doctrine 9 ข้อ](claude/luciazero.md) ที่สั้น, skill แบบเรียกเมื่อจำเป็น
-11 ตัว, hook ติดตามการ verify, reviewer ที่ route ตามความเสี่ยง และ eval harness
-นี่คือชั้นวินัยที่ทำให้คำกล่าวว่าเสร็จตรวจสอบได้ ไม่ใช่ agent runtime หรือระบบ
-orchestration สำหรับรันงานข้ามคืน
+Luciazero เหมาะกับทีมที่อยากให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ
+ช่วยป้องกันการ verify แบบ false-green และ scope ที่หาย เก็บบทเรียนจากทางตันเดิม
+และส่ง context ข้าม handoff ได้เมื่อใช้ `/lucia-relay` นี่คือชั้นวินัย ไม่ใช่ agent runtime
+
+## เริ่มใช้ใน 30 วินาที
+
+เลือกช่องทางตาม agent ที่ใช้ แล้วเริ่ม session ใหม่:
+
+**Claude Code · full pack**
+
+```text
+/plugin marketplace add ohm41321/luciazero
+/plugin install luciazero@luciazero
+```
+
+ใน session ใหม่รัน `/luciazero:ready`
+
+**Codex CLI · doctrine + skill**
+
+```bash
+npx luciazero codex
+```
+
+ใน session ใหม่รัน `$ready`
+
+**เฉพาะ skill · agent ที่รองรับ**
+
+```bash
+npx skills add ohm41321/luciazero
+```
+
+เรียกใช้ skill `ready` ด้วย syntax ของ agent ที่ใช้ (ถ้าเป็น Codex CLI ให้ใช้
+`$ready`) ช่องทางนี้ตั้งใจไม่ติดตั้ง doctrine, reviewer หรือ hook
 
 ## ดูลูปการทำงาน
 
@@ -148,11 +177,12 @@ npx luciazero@latest update         # อัปเดต classic/Codex ทุก
 
 ```bash
 claude plugin update luciazero@luciazero   # แล้วรัน /reload-plugins
-npx skills update                          # ตรวจ scope ใน prompt ก่อนยืนยัน
+npx skills update                          # ทุก skill ใน scope ที่เลือก
+npx skills update done -g                 # เฉพาะ skill "done" แบบ global
 ```
 
 คำสั่ง skills จะอัปเดต skill ทุกตัวใน scope ที่เลือก ไม่ใช่เฉพาะ Luciazero
-จึงควรตรวจ prompt ก่อนยืนยัน
+จึงควรตรวจ prompt ก่อนยืนยัน ถ้าต้องการอัปเดตเพียงตัวเดียวให้ใช้รูปแบบ targeted
 
 Claude Code อัปเดต plugin ตอนเริ่มโปรแกรมอัตโนมัติได้: เปิด `/plugin` →
 **Marketplaces** → **luciazero** → **Enable auto-update** โดย marketplace
@@ -161,7 +191,8 @@ GitHub **Watch → Custom → Releases**
 
 ## ภาพรวม skill ทั้ง 11 ตัว
 
-รัน `/ready` ก่อนหนึ่งครั้ง ที่เหลือใช้เมื่อถึงจังหวะของมัน
+เรียกใช้ `ready` ก่อนหนึ่งครั้ง (`/ready` สำหรับ agent ที่ใช้ slash และ `$ready`
+ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน
 
 | จังหวะ | Skill | ผลลัพธ์ |
 |---|---|---|
@@ -186,6 +217,10 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจแยกสองรอบ
 
 ## หลักฐานและข้อจำกัด
+
+ผลด้านล่างเป็นการวัดเบื้องต้นและขึ้นกับโมเดลกับ task โดยตรง ให้ยึด raw rows
+และวิธีวัดที่ลิงก์ไว้เป็นหลัก ไม่ใช่คำรับประกันว่าจะ uplift กับทุก repository
+หรือทุกโมเดล
 
 <!-- BEGIN GENERATED: benchmark-evidence -->
 

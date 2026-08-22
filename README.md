@@ -21,10 +21,41 @@ skills-only installs.
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
 
-It ships a compact [9-rule doctrine](https://github.com/ohm41321/luciazero/blob/main/claude/luciazero.md), 11 on-demand skills,
-verification hooks, a risk-routed reviewer, and an eval harness. It is designed
-to make completion claims auditable—not to replace an agent runtime or become an
-overnight orchestrator.
+Luciazero is for teams that want coding agents to prove work instead of merely
+report it. It helps prevent false-green verification and dropped scope,
+preserves lessons from repeated dead ends, and carries context across handoffs
+when `/lucia-relay` is used. It is a discipline layer, not an agent runtime.
+
+## Start in 30 seconds
+
+Choose the path that matches your agent, then start a new session:
+
+**Claude Code · full pack**
+
+```text
+/plugin marketplace add ohm41321/luciazero
+/plugin install luciazero@luciazero
+```
+
+Run `/luciazero:ready` in the new session.
+
+**Codex CLI · doctrine + skills**
+
+```bash
+npx luciazero codex
+```
+
+Run `$ready` in the new session.
+
+**Skills-only · any compatible agent**
+
+```bash
+npx skills add ohm41321/luciazero
+```
+
+Invoke the installed `ready` skill using your agent's syntax (for Codex CLI,
+use `$ready`). This path intentionally does not install the doctrine, reviewer,
+or hooks.
 
 ## See the loop
 
@@ -151,11 +182,13 @@ Other install channels use their own updater:
 
 ```bash
 claude plugin update luciazero@luciazero   # then run /reload-plugins
-npx skills update                          # review the scope prompt
+npx skills update                          # every installed skill in the selected scope
+npx skills update done -g                 # only the global "done" skill
 ```
 
 The skills command updates every installed skill in the selected scope, not
-only Luciazero; review its prompt before confirming.
+only Luciazero; review its prompt before confirming. Use the targeted form when
+you only want to refresh one skill.
 
 Claude Code can auto-update the plugin at startup: open `/plugin` →
 **Marketplaces** → **luciazero** → **Enable auto-update**. Third-party
@@ -164,7 +197,8 @@ GitHub **Watch → Custom → Releases**.
 
 ## Skills at a glance
 
-Run `/ready` first; the rest activate when their moment arrives.
+Invoke `ready` first (`/ready` for slash-based agents, `$ready` in Codex); the
+rest activate when their moment arrives.
 
 | Moment | Skill | Result |
 |---|---|---|
@@ -190,6 +224,10 @@ Risky diffs also pass through one read-only `reviewer` with `security`,
 separate passes.
 
 ## Evidence & limitations
+
+The measurements below are early and model/task-specific. The linked raw rows
+and methodology are the source of truth; they are not a promise of uplift on
+every repository or model.
 
 <!-- BEGIN GENERATED: benchmark-evidence -->
 

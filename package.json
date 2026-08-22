@@ -32,10 +32,17 @@
   "keywords": [
     "claude-code",
     "codex",
+    "ai-agent",
+    "ai-agents",
     "agent-skills",
+    "coding-agent",
+    "claude-plugin",
+    "context-handoff",
     "verification",
     "doctrine",
     "hooks",
-    "agentic-engineering"
+    "agentic-engineering",
+    "agent-workflow",
+    "test-discipline"
   ]
 }

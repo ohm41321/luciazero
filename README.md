@@ -2,21 +2,29 @@
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="220" alt="Lucia — Luciazero's mascot">
   <h1>Luciazero</h1>
   <p>
-    <strong>Evidence-first discipline for coding agents.</strong><br>
+    <strong>Make coding agents prove their work.</strong><br>
     <code>plan → change → verify → fix</code>
   </p>
   <p>
     <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
+    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/dw/luciazero" alt="npm weekly downloads"></a>
     <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="https://github.com/ohm41321/luciazero/stargazers"><img src="https://img.shields.io/github/stars/ohm41321/luciazero?style=flat" alt="GitHub stars"></a>
+    <a href="https://github.com/ohm41321/luciazero/network/members"><img src="https://img.shields.io/github/forks/ohm41321/luciazero?style=flat" alt="GitHub forks"></a>
     <a href="https://github.com/ohm41321/luciazero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
   </p>
 </div>
 
 **English** · [ภาษาไทย](https://github.com/ohm41321/luciazero/blob/main/README.th.md)
 
-Luciazero is a lightweight discipline layer for coding agents. It works with
-Claude Code, Codex CLI, and compatible skill runtimes through plugin, CLI, or
-skills-only installs.
+<p align="center">
+  <strong>11 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
+</p>
+<p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
+
+Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
+compatible skill runtimes. It helps agents prove tests, preserve scope, and
+move unfinished work with evidence.
 
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
@@ -70,6 +78,20 @@ This GIF is driven by the shipped hooks, not a mockup:
 ❌ verify RED  → the latest check failed
 ✅ verify 3m   → the latest check passed three minutes ago
 ```
+
+Run the same shipped hook driver locally—no model or API is required:
+
+```bash
+bash docs/assets/statusline-demo.sh
+```
+
+For the cross-session handoff demo:
+
+```bash
+bash docs/assets/relay-demo.sh
+```
+
+Both scripts use throwaway directories and exercise the real implementation.
 
 ## What it protects
 
@@ -311,6 +333,7 @@ More detail:
 - [Benchmark results and GPT plan](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md)
 - [Raw campaign registry](https://github.com/ohm41321/luciazero/blob/main/eval/results/campaigns.json)
 - [Experiment log](https://github.com/ohm41321/luciazero/blob/main/docs/experiments.md)
+- [Launch kit](https://github.com/ohm41321/luciazero/blob/main/docs/launch-kit.md)
 - [Contributing](https://github.com/ohm41321/luciazero/blob/main/CONTRIBUTING.md)
 - [Publishing](https://github.com/ohm41321/luciazero/blob/main/docs/publishing.md)
 - [Changelog](https://github.com/ohm41321/luciazero/blob/main/CHANGELOG.md)

@@ -7,6 +7,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-08-24
+
+### Changed
+
+- README hero copy, live badges, proof strip, and 30-second demos now make the
+  Claude Code/Codex entry points easier to discover.
+- Added `docs/launch-kit.md` with reproducible launch copy, benchmark gates, and
+  distribution checklists.
+
 ## [2.4.2] - 2026-08-21
 
 ### Fixed

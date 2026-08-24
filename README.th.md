@@ -2,21 +2,29 @@
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="220" alt="Lucia — มาสคอตของ Luciazero">
   <h1>Luciazero</h1>
   <p>
-    <strong>ชั้นวินัยที่พิสูจน์ได้ด้วยหลักฐานสำหรับ coding agent</strong><br>
+    <strong>ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ</strong><br>
     <code>วางแผน → แก้ → ตรวจ → แก้ซ้ำ</code>
   </p>
   <p>
     <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
+    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/dw/luciazero" alt="npm weekly downloads"></a>
     <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="https://github.com/ohm41321/luciazero/stargazers"><img src="https://img.shields.io/github/stars/ohm41321/luciazero?style=flat" alt="GitHub stars"></a>
+    <a href="https://github.com/ohm41321/luciazero/network/members"><img src="https://img.shields.io/github/forks/ohm41321/luciazero?style=flat" alt="GitHub forks"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
   </p>
 </div>
 
 [English](README.md) · **ภาษาไทย**
 
-Luciazero เป็นชั้นวินัยขนาดเล็กสำหรับ coding agent รองรับ Claude Code,
-Codex CLI และ runtime ที่ใช้ skill ได้ ผ่านการติดตั้งแบบ plugin, CLI
-หรือเฉพาะ skill
+<p align="center">
+  <strong>11 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
+</p>
+<p align="center"><sub>Relay 6/6 เป็นการตรวจ protocol ด้วยเครื่อง ส่วนผลด้านพฤติกรรมรายงานแยกต่างหาก</sub></p>
+
+Luciazero เป็นชั้น verification และ handoff สำหรับ Claude Code, Codex CLI
+และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
+และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
@@ -68,6 +76,20 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 ❌ verify RED  → การตรวจครั้งล่าสุดไม่ผ่าน
 ✅ verify 3m   → การตรวจผ่านเมื่อสามนาทีก่อน
 ```
+
+รัน hook driver ตัวจริงในเครื่องได้โดยไม่ใช้ model หรือ API:
+
+```bash
+bash docs/assets/statusline-demo.sh
+```
+
+สำหรับ demo การส่งต่องานข้าม session:
+
+```bash
+bash docs/assets/relay-demo.sh
+```
+
+ทั้งสอง script ใช้ directory ชั่วคราวและรัน implementation จริง
 
 ## ปกป้องอะไร
 
@@ -302,6 +324,7 @@ plugin/npm, eval grader ที่พิสูจน์ตัวเองได�
 - [ผล benchmark และแผน GPT](docs/benchmark.md)
 - [ทะเบียน raw campaign](eval/results/campaigns.json)
 - [บันทึกการทดลอง](docs/experiments.md)
+- [Launch kit](docs/launch-kit.md)
 - [การ contribute](CONTRIBUTING.md)
 - [การ publish](docs/publishing.md)
 - [Changelog](CHANGELOG.md)

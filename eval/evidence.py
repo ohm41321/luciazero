@@ -293,10 +293,11 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
     lines = [
         "### Claude results",
         "",
-        "Snapshot: 2026-08-11. All-criteria pass rate generated from checked-in raw rows:",
+        "Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.",
+        "All-criteria pass rate generated from checked-in raw rows:",
         "",
-        "| Claude model | Luciazero | Bare | Difference |",
-        "|---|---:|---:|---:|",
+        "| Claude model | Tasks | Luciazero | Bare | Difference |",
+        "|---|---:|---:|---:|---:|",
     ]
     for campaign in claude:
         rows = data[campaign["id"]]
@@ -312,15 +313,20 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         if campaign["expected_model_rows"] < valid_rows:
             label += "†"
         lines.append(
-            f"| {label}, {n} valid/task{suffix} | {rate_cell(doctrine)} | "
+            f"| {label}, {n} valid/task{suffix} | {len(campaign['tasks'])} | "
+            f"{rate_cell(doctrine)} | "
             f"{rate_cell(bare)} | {percent(doctrine) - percent(bare):+d}pp |"
         )
     lines += [
         "",
         "The `Luciazero` arm installs the classic pack without hooks; it is not a clean",
-        "doctrine-only ablation. *Sonnet is preliminary because eight invalid rows leave",
-        "several arms at four valid runs. The previously stated `+37pp` top-up is retired",
-        "because its replacement raw rows could not be recovered.",
+        "doctrine-only ablation. Rows are not like-for-like: the 2026-09-02 Sonnet",
+        "campaign adds four harder tasks that the 2026-08-11 campaigns never ran, so",
+        "compare each row against its own bare arm rather than across models.",
+        "*The Sonnet pilot stays preliminary because eight invalid rows leave several",
+        "arms at four valid runs; the 2026-09-02 campaign supersedes it with five valid",
+        "runs in every cell and no invalid rows. The previously stated `+37pp` top-up",
+        "remains retired because its replacement raw rows could not be recovered.",
         "",
         "†Model provenance is incomplete for Haiku: only 70/140 rows encode model",
         "identity. The other 70 are attributed at campaign-file/report level and",
@@ -368,6 +374,7 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
     table_end = english.index("\n\nThe `Luciazero`", table_start)
     claude_table = (english[table_start:table_end]
                     .replace("Claude model", "โมเดล Claude")
+                    .replace("| Tasks |", "| จำนวน task |")
                     .replace("Difference", "ผลต่าง"))
     gpt_start = english.index("| Model | Valid invocations")
     gpt_table_end = english.index("\n\n*One Luciazero", gpt_start)
@@ -380,13 +387,18 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         [
             "### ผล Claude",
             "",
-            "Snapshot: 2026-08-11 อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:",
+            "Snapshot: 2026-08-11 สำหรับ Haiku และ Sonnet pilot, 2026-09-02 สำหรับ Sonnet",
+            "อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:",
             "",
             claude_table,
             "",
             "Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ",
-            "doctrine เพียงอย่างเดียว *Sonnet ยังเป็นผล preliminary เพราะ invalid 8 rows",
-            "ทำให้หลาย arm มี valid run เพียง 4 รอบ ส่วนผล top-up `+37pp` เดิมถูกยกเลิก",
+            "doctrine เพียงอย่างเดียว และแต่ละแถวเทียบข้ามกันตรงๆ ไม่ได้ เพราะ campaign",
+            "Sonnet วันที่ 2026-09-02 เพิ่ม task ที่ยากขึ้นอีก 4 ตัวซึ่ง campaign วันที่",
+            "2026-08-11 ไม่เคยรัน ให้เทียบแต่ละแถวกับ arm bare ของตัวเองเท่านั้น",
+            "*Sonnet pilot ยังเป็นผล preliminary เพราะ invalid 8 rows ทำให้หลาย arm มี",
+            "valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 มาแทนที่ด้วย valid run",
+            "ครบ 5 รอบทุก cell และไม่มี invalid เลย ส่วนผล top-up `+37pp` เดิมยังถูกยกเลิก",
             "เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้",
             "",
             "†Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก",
@@ -413,26 +425,35 @@ def benchmark_doc(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
     lines = [
         "## Claude campaigns",
         "",
-        "Snapshot: 2026-08-11. Tables below are generated from digest-verified raw JSONL.",
+        "Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.",
+        "Tables below are generated from digest-verified raw JSONL.",
         "",
-        "| Model | Luciazero | Bare | Difference | Valid runs per task | Status |",
-        "|---|---:|---:|---:|---:|---|",
+        "| Model | Tasks | Luciazero | Bare | Difference | Valid runs per task | Status |",
+        "|---|---:|---:|---:|---:|---:|---|",
     ]
     for campaign in claude:
         rows = data[campaign["id"]]
         doctrine = arm_rows(rows, "doctrine")
         bare = arm_rows(rows, "bare")
         lines.append(
-            f"| {campaign['display_model']} | {rate_cell(doctrine)} | {rate_cell(bare)} | "
+            f"| {campaign['display_model']} | {len(campaign['tasks'])} | "
+            f"{rate_cell(doctrine)} | {rate_cell(bare)} | "
             f"{percent(doctrine) - percent(bare):+d}pp | "
             f"{valid_range(rows, campaign['tasks'])} | {campaign['status']} |"
         )
     lines += [
         "",
-        "> **Canonical Sonnet result:** the checked-in campaign contains eight invalid",
-        "> rows and leaves several arms at four valid runs. Commit `b24f6a2` described",
-        "> replacement runs yielding +37pp, but those raw rows could not be recovered.",
-        "> The auditable preliminary campaign below is canonical; do not quote +37pp.",
+        "> **Canonical Sonnet result:** the 2026-09-02 campaign is canonical — ten tasks,",
+        "> five valid runs in every cell, no invalid rows, one pinned repository commit",
+        "> and one pinned CLI build. The 2026-08-11 pilot remains checked in for audit",
+        "> but contains eight invalid rows and leaves several arms at four valid runs.",
+        "> Commit `b24f6a2` described replacement runs yielding +37pp, but those raw rows",
+        "> could not be recovered; do not quote +37pp.",
+        "",
+        "> **Task sets differ:** the 2026-09-02 campaign runs four tasks",
+        "> (`archive-security`, `schema-migration`, `paginated-sync`, `relay-transfer`)",
+        "> that did not exist on 2026-08-11. Model rows are not like-for-like; each arm",
+        "> is only comparable with the bare arm of its own campaign.",
         "",
         "> **Haiku model-provenance limitation:** only 70/140 rows encode model",
         "> identity. Attribution of the other 70 comes from the original campaign",

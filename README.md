@@ -255,17 +255,23 @@ every repository or model.
 
 ### Claude results
 
-Snapshot: 2026-08-11. All-criteria pass rate generated from checked-in raw rows:
+Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.
+All-criteria pass rate generated from checked-in raw rows:
 
-| Claude model | Luciazero | Bare | Difference |
-|---|---:|---:|---:|
-| Haiku†, 10 valid/task | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet, 4–5 valid/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
+| Claude model | Tasks | Luciazero | Bare | Difference |
+|---|---:|---:|---:|---:|
+| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp |
+| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp |
+| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp |
 
 The `Luciazero` arm installs the classic pack without hooks; it is not a clean
-doctrine-only ablation. *Sonnet is preliminary because eight invalid rows leave
-several arms at four valid runs. The previously stated `+37pp` top-up is retired
-because its replacement raw rows could not be recovered.
+doctrine-only ablation. Rows are not like-for-like: the 2026-09-02 Sonnet
+campaign adds four harder tasks that the 2026-08-11 campaigns never ran, so
+compare each row against its own bare arm rather than across models.
+*The Sonnet pilot stays preliminary because eight invalid rows leave several
+arms at four valid runs; the 2026-09-02 campaign supersedes it with five valid
+runs in every cell and no invalid rows. The previously stated `+37pp` top-up
+remains retired because its replacement raw rows could not be recovered.
 
 †Model provenance is incomplete for Haiku: only 70/140 rows encode model
 identity. The other 70 are attributed at campaign-file/report level and

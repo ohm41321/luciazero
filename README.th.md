@@ -248,16 +248,22 @@ Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย
 
 ### ผล Claude
 
-Snapshot: 2026-08-11 อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:
+Snapshot: 2026-08-11 สำหรับ Haiku และ Sonnet pilot, 2026-09-02 สำหรับ Sonnet
+อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:
 
-| โมเดล Claude | Luciazero | Bare | ผลต่าง |
-|---|---:|---:|---:|
-| Haiku†, 10 valid/task | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet, 4–5 valid/task* | 25/27 (93%) | 16/26 (62%) | +31pp |
+| โมเดล Claude | จำนวน task | Luciazero | Bare | ผลต่าง |
+|---|---:|---:|---:|---:|
+| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp |
+| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp |
+| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp |
 
 Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ
-doctrine เพียงอย่างเดียว *Sonnet ยังเป็นผล preliminary เพราะ invalid 8 rows
-ทำให้หลาย arm มี valid run เพียง 4 รอบ ส่วนผล top-up `+37pp` เดิมถูกยกเลิก
+doctrine เพียงอย่างเดียว และแต่ละแถวเทียบข้ามกันตรงๆ ไม่ได้ เพราะ campaign
+Sonnet วันที่ 2026-09-02 เพิ่ม task ที่ยากขึ้นอีก 4 ตัวซึ่ง campaign วันที่
+2026-08-11 ไม่เคยรัน ให้เทียบแต่ละแถวกับ arm bare ของตัวเองเท่านั้น
+*Sonnet pilot ยังเป็นผล preliminary เพราะ invalid 8 rows ทำให้หลาย arm มี
+valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 มาแทนที่ด้วย valid run
+ครบ 5 รอบทุก cell และไม่มี invalid เลย ส่วนผล top-up `+37pp` เดิมยังถูกยกเลิก
 เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้
 
 †Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก

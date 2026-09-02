@@ -37,7 +37,7 @@
       "id": "claude-sonnet-preliminary-2026-08-11",
       "date": "2026-08-11",
       "provider": "claude",
-      "display_model": "Claude Sonnet",
+      "display_model": "Claude Sonnet (2026-08-11 pilot)",
       "observed_model": "claude-haiku-4-5-20251001,claude-sonnet-5",
       "reasoning_effort": null,
       "status": "preliminary",
@@ -73,7 +73,8 @@
         "Eight rows are invalid after an OAuth expiry, leaving several arms at four valid runs.",
         "Commit b24f6a2 described eight replacement runs and a +37pp result, but those raw replacement rows are not present in Git, the local stash, or the recoverable result files. This auditable preliminary file is canonical; the unrecoverable +37pp claim is retired.",
         "Historical rows predate campaign metadata: timestamps, repository commit, fixture hashes, pair IDs, arm order, and operating system were not recorded.",
-        "Every row says run=1 because each repetition was launched as a separate one-run invocation."
+        "Every row says run=1 because each repetition was launched as a separate one-run invocation.",
+        "Superseded by campaign claude-sonnet-2026-08-21, which runs ten tasks with five valid runs in every cell."
       ]
     },
     {
@@ -107,6 +108,82 @@
         "One run per arm per task is below the publication floor.",
         "One Luciazero flaky-report run is invalid because model capacity was exhausted.",
         "The pilot predates the adapter's explicit core-only child-process environment."
+      ]
+    },
+    {
+      "id": "claude-sonnet-2026-08-21",
+      "date": "2026-09-02",
+      "provider": "claude",
+      "display_model": "Claude Sonnet",
+      "observed_model": "claude-haiku-4-5-20251001,claude-sonnet-5",
+      "reasoning_effort": null,
+      "status": "published",
+      "file": "claude-sonnet-2026-08-21.jsonl",
+      "sha256": "08d84cf48a250d3369175089a2e00d0878e6c28021ee493478e3113f84637922",
+      "expected_result_schema": 2,
+      "expected_runs_per_cell": 5,
+      "lessons_tasks": [],
+      "expected_invalid": {},
+      "expected_model_rows": 100,
+      "expected_task_sha256": {
+        "archive-security": {
+          "task": "9348ceacbfaaef205b11ce830dfab2de3dc119956ff215ce50aa6b82000416ed",
+          "prompt": "2c36869f70626fe87283a4e3b962bff07b6426e08e75b21c2f1e8eb49d20bfe0"
+        },
+        "false-green": {
+          "task": "b64df09ab2a99f08c077b6e35ff90bb9b15bae3666be648b60974ed963b540d4",
+          "prompt": "6061ca6d9f4862c9627d41b8e5eb557d8aba46ad4d41994faa0fc715431bbf29"
+        },
+        "flaky-report": {
+          "task": "d344d739daecd680096586a695f0b24805c7269aed8bea2af4cc0c813d86845e",
+          "prompt": "a5769f9ff625df5ce4358c0aed803f96b77cb8e2d6bf5ade9d9f221ec82471aa"
+        },
+        "merge-conflict": {
+          "task": "55e3a807960065759493802c9628080be0284c5d7cb8b3cd027c5c2817b91e36",
+          "prompt": "a9d7cf7219015a8332b5040b1e862459c5b2c40a7549fcfb812e0219c0877785"
+        },
+        "paginated-sync": {
+          "task": "44dba0c968a0740bf58d4f4a6638ad7896bb96670658e37d235dcaa191acc624",
+          "prompt": "f102236282a883feac7c4a684d1b3712ccb30808381ac962dd6be022a4147330"
+        },
+        "pipeline": {
+          "task": "537e57001363cdbe83909a9989bb43d4faad318ab9b1c0486ba7b00b897f1785",
+          "prompt": "c13a8f8a43b30b59a584e9277e7bbf77a5ca78f709636bad9c338c482eadbcd0"
+        },
+        "red-suite": {
+          "task": "abfca75046eeb2cc323e88b698b41b7f5a33ff878324b2e21677b353d30d00ca",
+          "prompt": "78d29f5d44a42deb2aa787e9dc27a6e811cc45258d55aae8b86090e466515b20"
+        },
+        "relay-transfer": {
+          "task": "07bb175aa2e6c1b6169eda7b85dc95c984a997a9afb6c8e2ca56339d578995d6",
+          "prompt": "612f128103137fbaa2e4d3b7da54120258496d396d49a4195dd9950986f4c442"
+        },
+        "schema-migration": {
+          "task": "0cd29304d7074bfe026e14b6803b20ce445295438526e85d323635fd1e13eea2",
+          "prompt": "c9a13e70dbaeaf6d2bce8219ed853d26fa6da676c1971d542bb7dfa0c78a8e77"
+        },
+        "slugify": {
+          "task": "288a7ffcee26d2de818b64010797ee0b982f508fe1470999210c12c28f98e9db",
+          "prompt": "0124af85a6e859859e46c04cb6ba95eb19b31d862b4c0f728bbe9c55487622f7"
+        }
+      },
+      "model_provenance": "Every row encodes model identity. Claude Code delegates small internal steps to Haiku, so each row lists both the requested Sonnet model and that helper.",
+      "tasks": [
+        "archive-security",
+        "false-green",
+        "flaky-report",
+        "merge-conflict",
+        "paginated-sync",
+        "pipeline",
+        "red-suite",
+        "relay-transfer",
+        "schema-migration",
+        "slugify"
+      ],
+      "limitations": [
+        "The Luciazero arm installs the classic pack without hooks, so this measures the installed bundle rather than a doctrine-only ablation.",
+        "Runs were paced across 2026-08-21 to 2026-09-02 against one pinned repository commit and one pinned CLI build; wall-clock means are not comparable with campaigns run in a single sitting.",
+        "Four tasks (archive-security, schema-migration, paginated-sync, relay-transfer) do not exist in the 2026-08-11 campaigns, so per-model differences are not like-for-like."
       ]
     }
   ]

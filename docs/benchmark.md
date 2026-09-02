@@ -30,23 +30,49 @@ box.
 
 ## Claude campaigns
 
-Snapshot: 2026-08-11. Tables below are generated from digest-verified raw JSONL.
+Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.
+Tables below are generated from digest-verified raw JSONL.
 
-| Model | Luciazero | Bare | Difference | Valid runs per task | Status |
-|---|---:|---:|---:|---:|---|
-| Claude Haiku | 36/60 (60%) | 27/60 (45%) | +15pp | 10 | published |
-| Claude Sonnet | 25/27 (93%) | 16/26 (62%) | +31pp | 4–5 | preliminary |
+| Model | Tasks | Luciazero | Bare | Difference | Valid runs per task | Status |
+|---|---:|---:|---:|---:|---:|---|
+| Claude Haiku | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | 10 | published |
+| Claude Sonnet (2026-08-11 pilot) | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | 4–5 | preliminary |
+| Claude Sonnet | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | 5 | published |
 
-> **Canonical Sonnet result:** the checked-in campaign contains eight invalid
-> rows and leaves several arms at four valid runs. Commit `b24f6a2` described
-> replacement runs yielding +37pp, but those raw rows could not be recovered.
-> The auditable preliminary campaign below is canonical; do not quote +37pp.
+> **Canonical Sonnet result:** the 2026-09-02 campaign is canonical — ten tasks,
+> five valid runs in every cell, no invalid rows, one pinned repository commit
+> and one pinned CLI build. The 2026-08-11 pilot remains checked in for audit
+> but contains eight invalid rows and leaves several arms at four valid runs.
+> Commit `b24f6a2` described replacement runs yielding +37pp, but those raw rows
+> could not be recovered; do not quote +37pp.
+
+> **Task sets differ:** the 2026-09-02 campaign runs four tasks
+> (`archive-security`, `schema-migration`, `paginated-sync`, `relay-transfer`)
+> that did not exist on 2026-08-11. Model rows are not like-for-like; each arm
+> is only comparable with the bare arm of its own campaign.
 
 > **Haiku model-provenance limitation:** only 70/140 rows encode model
 > identity. Attribution of the other 70 comes from the original campaign
 > file/report and cannot be independently verified per row.
 
 ### Claude Sonnet
+
+| Task | Luciazero | Bare | Difference | Lessons arm |
+|---|---:|---:|---:|---:|
+| archive-security | 1/5 | 1/5 | +0pp | — |
+| false-green | 5/5 | 5/5 | +0pp | — |
+| flaky-report | 5/5 | 5/5 | +0pp | — |
+| merge-conflict | 5/5 | 0/5 | +100pp | — |
+| paginated-sync | 5/5 | 5/5 | +0pp | — |
+| pipeline | 5/5 | 0/5 | +100pp | — |
+| red-suite | 5/5 | 5/5 | +0pp | — |
+| relay-transfer | 2/5 | 0/5 | +40pp | — |
+| schema-migration | 2/5 | 0/5 | +40pp | — |
+| slugify | 4/5 | 2/5 | +40pp | — |
+
+Raw: [`claude-sonnet-2026-08-21.jsonl`](../eval/results/claude-sonnet-2026-08-21.jsonl) · SHA-256 `08d84cf48a250d3369175089a2e00d0878e6c28021ee493478e3113f84637922`
+
+### Claude Sonnet (2026-08-11 pilot)
 
 | Task | Luciazero | Bare | Difference | Lessons arm |
 |---|---:|---:|---:|---:|

@@ -7,6 +7,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Canonical Claude Sonnet campaign `claude-sonnet-2026-08-21`: ten tasks, five
+  valid runs in every cell, no invalid rows, one pinned repository commit and
+  CLI build. Sonnet passes every criterion in 39/50 runs against 23/50 bare.
+  The 2026-08-11 Sonnet pilot stays checked in for audit but is superseded.
+
+### Changed
+
+- Generated evidence tables now carry a task count per campaign, because the
+  2026-09-02 campaign runs four tasks the 2026-08-11 campaigns never had and
+  the rows are not like-for-like.
+
 ## [2.4.3] - 2026-08-24
 
 ### Changed

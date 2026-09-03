@@ -145,7 +145,11 @@ publishes a fix commit from its own worktree, the reviewer (new session,
 same id) verifies that commit on an export in its own worktree, and the
 architect receives the result. It prints the record counts and the final
 correlation id, and removes its temporary directory. Live runs spend
-provider quota and need explicit approval; they are never part of CI.
+provider quota and need explicit approval; they are never part of CI. A
+live run may add messages the flow does not owe (a model thanking a peer);
+the gate matches the six-turn flow as a subsequence, tolerates that
+chatter, and prints it, but still refuses a repeated step or a chatter
+delivery that failed.
 
 ## Decision evidence log
 

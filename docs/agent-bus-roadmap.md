@@ -435,7 +435,7 @@ Exit gate:
 Security fixtures must prove cross-worktree isolation, stale-identity refusal,
 approval provenance, path containment, secret redaction, and bounded input.
 
-### M4 — Pull-beta vertical slice (complete 2026-09-03, one live gate rerun owed)
+### M4 — Pull-beta vertical slice (complete 2026-09-03)
 
 Known state on 2026-09-03: `scripts/agent_bus_e2e.py` drives the outcome
 flow through the shipped daemon (subprocess on a disposable state
@@ -452,8 +452,9 @@ that had never registered; `luciazero-agentd roster add` (human channel)
 names the team once and the agent's own `agent_register` refreshes the
 row. `luciazero-agentd cancel` is the human cancellation path; no MCP tool
 cancels. Live provider turns run through the same driver (`--live`, Codex through
-App Server on-request, Claude through `claude -p --mcp-config`); the one
-approved live run is recorded in the last item below.
+App Server on-request, Claude through `claude -p --mcp-config`); the two
+approved live runs are recorded in the live item below, the second one
+green.
 
 - [x] Register `codex-architect`, `claude-reviewer`, and
   `codex-implementer` as agents in user-started sessions (roster first,
@@ -473,7 +474,7 @@ approved live run is recorded in the last item below.
   (`docs/assets/agent-bus-demo.sh`, the same driver with narration).
 - [x] Document setup, status inspection, cancellation, recovery, and cleanup
   (`docs/agent-bus.md`).
-- [ ] Run the live slice once with quota approval
+- [x] Run the live slice once with quota approval
   (`LZ_AGENT_BUS_LIVE=1 scripts/agent-bus-e2e.sh --live`, six turns; the
   `test.sh` tier takes no extra arguments and stays fake-provider only).
   Ran 2026-09-03 on `codex-cli 0.152.1` and `2.1.259 (Claude Code)`, six
@@ -499,9 +500,19 @@ approved live run is recorded in the last item below.
   adversarial review of that relaxation found two majors, both fixed here:
   the first version let a duplicated `result` and a dead-lettered chatter
   delivery through. `agentd/tests/test_e2e_outcome.py` covers the branch in
-  nine cases, including the recorded message and delivery set of this run,
-  because no fake-provider run reaches it. The item stays unchecked until a
-  live run exits 0: that costs another six turns and has not been spent.
+  nine cases, including the recorded message and delivery set of that run,
+  because no fake-provider run reaches it. A second approved live run then
+  exited 0 the same day (six more turns, correlation id
+  `msg_4e38f88304e04e8ea57855348f5902c4`, daemon pids 69984 to 71139,
+  commit `b913d23` verified green from an export): `PASS  agent bus M4
+  pull-beta vertical slice (live providers)`. It vindicated the
+  subsequence rule rather than merely repeating the first run, because
+  this time the chatter fell in the MIDDLE of the flow — the implementer
+  sent its own `result` to the architect before the reviewer's, and its
+  delivery was completed, not queued. A positional prefix would have
+  failed it. Live chatter is therefore a standing property of live runs,
+  not a one-off: 12 provider turns, two runs, two different chatter
+  shapes.
 - [x] Resolve the independent adversarial review findings (`reviewer`
   agent: 3 minor, 5 nits, no major): the outcome assertion now checks who
   held each task, who produced each artifact, who sent each message and
@@ -541,6 +552,53 @@ recorded before M5 starts:
 
 If that evidence does not exist, the release decision is "stop at the pull
 beta"; "it feels used" is not a gate.
+
+### M4.5 — Terminal binding and session credentials (proposed)
+
+The last identity the model still asserts is its own: the user tells it "you
+are `claude-reviewer`" and every tool call repeats that string. ADR 0004
+proposes moving that decision into the human channel -- the user picks a
+terminal with `luciazero-agentd terminal list` and binds it with `attach` or
+`run` -- and makes the binding enforceable by giving each session its own
+credential, because the daemon serves one shared token over HTTP and
+otherwise cannot tell which terminal a request came from. Worktree binding
+stays as the fallback for writers, so nothing in M4 has to change.
+
+- [ ] Accept ADR 0004 (needs the user's decision; Codex reviewed the design).
+- [ ] `luciazero-agentd terminal list`: provider processes with tty, pid,
+  start time, cwd, and the agent bound to each (read-only).
+- [ ] `attach` and `run` (spawn with the binding in place; `run` is reused by
+  the M6 dispatcher), plus `detach`, `whoami`, and `sessions`.
+- [ ] Schema v3: session credentials (`lzsc_<32hex>`, sha256 at rest) bound
+  to one `binding_id` and one `agent_id`, presented in `Authorization:
+  Bearer` in place of the daemon token, resolved at MCP `initialize` and
+  re-read on every request.
+- [ ] Enforce the actor-field matrix of ADR 0004: the daemon fills and checks
+  `agent_id`, `sender`, `created_by` and `produced_by`, leaves `recipient`,
+  `assigned_to` and read-only queries alone (`worktree_get` on a peer must
+  keep working), and refuses a contradiction with `IdentityMismatch` plus a
+  `session.identity_refused` event; add the `lzsc_` shape to the strict
+  redaction tier.
+- [ ] Binding lifecycle: `detach`, revoked and stale states, invalidation of
+  the pinned `Mcp-Session-Id`, reaping by pid plus start time on every
+  resolve and human command, absolute credential expiry.
+- [ ] `--allow-unattributed` (default on for the pull beta): without a
+  credential a session is `unverified`, its events record `trust: asserted`,
+  and `bus status` says so. The gate below is what turns the default off.
+- [ ] Read-only `agent_whoami` tool and a `/lucia-bus` step that asks the
+  daemon who it is instead of being told.
+- [ ] Document the reconnect limit: a session already running on the shared
+  token cannot be remapped in place.
+
+Exit gate:
+
+```bash
+./test.sh --agent-bus-store
+./test.sh --agent-bus-security
+```
+
+Two sessions on one machine must not be able to act as each other, and a
+model that names a peer's id must be refused with the event recorded.
 
 ### M5 — Task orchestration and artifacts
 

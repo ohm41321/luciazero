@@ -18,7 +18,7 @@
 [English](README.md) · **ภาษาไทย**
 
 <p align="center">
-  <strong>11 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
+  <strong>12 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
 </p>
 <p align="center"><sub>Relay 6/6 เป็นการตรวจ protocol ด้วยเครื่อง ส่วนผลด้านพฤติกรรมรายงานแยกต่างหาก</sub></p>
 
@@ -159,7 +159,7 @@ Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใ
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 11 ตัว ไม่มี doctrine, reviewer หรือ hook
+ช่องทางนี้ติดตั้งเฉพาะ skill 12 ตัว ไม่มี doctrine, reviewer หรือ hook
 
 </details>
 
@@ -211,7 +211,7 @@ Claude Code อัปเดต plugin ตอนเริ่มโปรแกร
 ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
 GitHub **Watch → Custom → Releases**
 
-## ภาพรวม skill ทั้ง 11 ตัว
+## ภาพรวม skill ทั้ง 12 ตัว
 
 เรียกใช้ `ready` ก่อนหนึ่งครั้ง (`/ready` สำหรับ agent ที่ใช้ slash และ `$ready`
 ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน
@@ -226,6 +226,7 @@ GitHub **Watch → Custom → Releases**
 | รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |
 | ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
 | ต้องส่งงานไปที่อื่น | `/lucia-relay` | State แบบ JSON + Markdown พร้อมตรวจ drift |
+| มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง |
 | ปรับ performance | `/experiment` | Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม |
 | ดูนิสัยการ verify ในเครื่อง | `/discipline-report` | รายงาน outcome กรองตามเวลา/โปรเจกต์ |
 | หลังงานยาก | `/retro` | เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก |

@@ -6,14 +6,15 @@
 # integrity for intermediate loops. The default/`--full` continues through
 # eval, packaging, and sandboxed install cycles for both harnesses.
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
-# the provider CLIs). `--agent-bus-store` runs only the M1 store suite.
+# the provider CLIs). `--agent-bus-store` runs only the M1/M2 daemon suite.
+# `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp]" >&2
   exit 64
 fi
 case "${1:-}" in
@@ -21,7 +22,8 @@ case "${1:-}" in
   --fast) TIER=fast ;;
   --agent-bus-spike) TIER=agent-bus-spike ;;
   --agent-bus-store) TIER=agent-bus-store ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store]" >&2; exit 64 ;;
+  --agent-bus-mcp) TIER=agent-bus-mcp ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -33,6 +35,9 @@ skill_inventory() {
 if [ "${TIER}" = agent-bus-spike ]; then
   exec "${ROOT}/scripts/agent-bus-spike.sh"
 fi
+if [ "${TIER}" = agent-bus-mcp ]; then
+  exec "${ROOT}/scripts/agent-bus-mcp.sh"
+fi
 
 # M1 exit gate: migrations, atomic claims, idempotent replays, append-only
 # history, and kill-at-commit crash tests. Python only; no provider CLI.
@@ -42,12 +47,42 @@ agent_bus_store() {
   (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
     || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
   rm -f "${ROOT}/agentd/.last-store-run.log"
-  echo "ok  agent bus M1 store suite (store, crash transitions)"
+  echo "ok  agent bus M1/M2 daemon suite (store, crash transitions, MCP conformance, daemon CLI)"
+
+  # `luciazero bus status` (Node, core package) against a real daemon on a
+  # throwaway state directory: proves the human-facing queue view end to end
+  # without touching ~/.luciazero. Skipped without Node, like every other
+  # Node fixture in this suite.
+  if ! command -v node >/dev/null 2>&1; then
+    echo "skip  luciazero bus status (node not installed)"
+    return 0
+  fi
+  local BUS_STATE BUS_PID BUS_JSON
+  BUS_STATE="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-bus-state.XXXXXX")"
+  # No subshell: BUS_PID must be the Python process itself so kill reaches it.
+  PYTHONPATH="${ROOT}/agentd" PYTHONDONTWRITEBYTECODE=1 python3 -m luciazero_agentd serve --state-dir "${BUS_STATE}" --port 0 >/dev/null 2>&1 &
+  BUS_PID=$!
+  for _ in $(seq 1 100); do [ -f "${BUS_STATE}/endpoint.json" ] && break; sleep 0.05; done
+  [ -f "${BUS_STATE}/endpoint.json" ] || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "agent bus daemon did not publish endpoint.json"; }
+  BUS_JSON="$(LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status --json)" \
+    || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status failed against a running daemon"; }
+  printf '%s' "${BUS_JSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["queued_deliveries"] == 0 and d["server"]["name"] == "luciazero-agentd", d' \
+    || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status returned an unexpected summary"; }
+  LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status | grep -q "queued deliveries: 0" \
+    || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status human output drift"; }
+  kill "${BUS_PID}" 2>/dev/null; wait "${BUS_PID}" 2>/dev/null || true
+  LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status >/dev/null 2>&1 \
+    && { rm -rf "${BUS_STATE}"; fail "luciazero bus status must fail once the daemon is gone"; }
+  LUCIAZERO_AGENT_BUS_HOME="/nonexistent/luciazero-bus" node "${ROOT}/bin/luciazero.js" bus status >/dev/null 2>&1 \
+    && fail "luciazero bus status must fail without a state directory"
+  node "${ROOT}/bin/luciazero.js" bus nope >/dev/null 2>&1 && fail "luciazero bus must reject unknown subcommands"
+  rm -rf "${BUS_STATE}"
+  echo "ok  luciazero bus status (Node client against a throwaway daemon)"
 }
 if [ "${TIER}" = agent-bus-store ]; then
   agent_bus_store
   echo
-  echo "PASS  agent bus M1 store gate green"
+  echo "PASS  agent bus M1/M2 daemon gate green"
   exit 0
 fi
 
@@ -72,6 +107,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          scripts/sanitize-luciazero-env.sh
          scripts/agent-bus-spike.sh
+         scripts/agent-bus-mcp.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
@@ -2145,12 +2181,12 @@ actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.
 assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
-assert len(skills) == 11, f"expected 11 cataloged skills, found {len(skills)}"
+assert len(skills) == 12, f"expected 12 cataloged skills, found {len(skills)}"
 assert aliases == [], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
-    assert "11 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+    assert "12 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 publishing = open(os.path.join(root, "docs/publishing.md")).read()
-assert "carries the 11 skills" in publishing, "publishing channel skill count drift"
+assert "carries the 12 skills" in publishing, "publishing channel skill count drift"
 release_workflow = open(os.path.join(root, ".github/workflows/release.yml")).read()
 gate = release_workflow.find("- name: Validate release versions")
 publish = release_workflow.find("- name: Publish GitHub Release")

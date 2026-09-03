@@ -18,7 +18,7 @@
 **English** · [ภาษาไทย](https://github.com/ohm41321/luciazero/blob/main/README.th.md)
 
 <p align="center">
-  <strong>11 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
+  <strong>12 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
 
@@ -163,7 +163,7 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 11 skills: no doctrine, reviewer, or hooks.
+This installs the 12 skills: no doctrine, reviewer, or hooks.
 
 </details>
 
@@ -232,6 +232,7 @@ rest activate when their moment arrives.
 | Good and bad revisions are known | `/bisect` | Finds the first bad commit in a temporary worktree |
 | Before claiming completion | `/done` | Full verify, skeptic review, scope report |
 | Work must move elsewhere | `/lucia-relay` | Portable JSON + Markdown state with drift inspection |
+| Another agent's work is queued for you (beta) | `/lucia-bus` | Register, read the inbox, claim, work, publish the result through the local Agent Bus |
 | Optimizing performance | `/experiment` | Baseline, threshold, controlled measurement |
 | Reviewing local verify habits | `/discipline-report` | Time/project-filtered local outcome report |
 | After difficult work | `/retro` | Stores reusable lessons and disproved approaches |

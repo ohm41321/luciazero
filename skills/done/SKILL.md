@@ -47,7 +47,8 @@ well-understood diff with no routed risk may stop after the skeptic pass.
 ## 4. Scope check
 
 Re-read the original request. Every item is delivered, or named as left out with
-a reason. Never drop scope silently.
+a reason. Never drop scope silently. A bus task you claimed through
+`/lucia-bus` must be `completed` or `blocked`, with its result published.
 
 ## 5. Lessons
 

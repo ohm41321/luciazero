@@ -435,7 +435,7 @@ Exit gate:
 Security fixtures must prove cross-worktree isolation, stale-identity refusal,
 approval provenance, path containment, secret redaction, and bounded input.
 
-### M4 — Pull-beta vertical slice (in progress)
+### M4 — Pull-beta vertical slice (complete 2026-09-03, one live gate rerun owed)
 
 Known state on 2026-09-03: `scripts/agent_bus_e2e.py` drives the outcome
 flow through the shipped daemon (subprocess on a disposable state
@@ -451,9 +451,9 @@ the user opens that session, so the first agent could not address peers
 that had never registered; `luciazero-agentd roster add` (human channel)
 names the team once and the agent's own `agent_register` refreshes the
 row. `luciazero-agentd cancel` is the human cancellation path; no MCP tool
-cancels. Live provider turns are constructed (`--live`, Codex through App
-Server on-request, Claude through `claude -p --mcp-config`) and rendered by
-`--live --dry-run`, but not yet run: 6 turns of quota, pending approval.
+cancels. Live provider turns run through the same driver (`--live`, Codex through
+App Server on-request, Claude through `claude -p --mcp-config`); the one
+approved live run is recorded in the last item below.
 
 - [x] Register `codex-architect`, `claude-reviewer`, and
   `codex-implementer` as agents in user-started sessions (roster first,
@@ -476,6 +476,32 @@ Server on-request, Claude through `claude -p --mcp-config`) and rendered by
 - [ ] Run the live slice once with quota approval
   (`LZ_AGENT_BUS_LIVE=1 scripts/agent-bus-e2e.sh --live`, six turns; the
   `test.sh` tier takes no extra arguments and stays fake-provider only).
+  Ran 2026-09-03 on `codex-cli 0.152.1` and `2.1.259 (Claude Code)`, six
+  real turns, ~11 minutes, correlation id
+  `msg_92e94a57dd0647ac85458439840ce11b`. The flow reached the roadmap
+  state: three tasks completed by their assignees, artifacts
+  report/commit/report from reviewer/implementer/reviewer, the five owed
+  deliveries all acknowledged and completed, one correlation id
+  throughout, the daemon restarted (pid 32900 to 33935) with the queue
+  surviving, both writers on their own worktrees with no
+  `worktree.mismatch`, zero approvals needed. The models did the real
+  work: Codex committed `0d88c4b` fixing `split_fields` on quoted
+  segments, and the reviewer's second session verified it on an export
+  (base red, fix `OK`). The driver still exited 1, because
+  `assert_outcome` demanded exactly five messages and the live architect
+  added a sixth courtesy `result` to the reviewer that no later turn
+  exists to read. That assertion was the bug. It now
+  matches the five-step spine as a subsequence, so chatter from any turn
+  is tolerated in live mode, while fake mode still refuses every extra
+  message; chatter that repeats a step of the flow is refused in both
+  modes (a replayed send is not politeness), and a chatter delivery that
+  failed or was dead-lettered still fails the gate. An independent
+  adversarial review of that relaxation found two majors, both fixed here:
+  the first version let a duplicated `result` and a dead-lettered chatter
+  delivery through. `agentd/tests/test_e2e_outcome.py` covers the branch in
+  nine cases, including the recorded message and delivery set of this run,
+  because no fake-provider run reaches it. The item stays unchecked until a
+  live run exits 0: that costs another six turns and has not been spent.
 - [x] Resolve the independent adversarial review findings (`reviewer`
   agent: 3 minor, 5 nits, no major): the outcome assertion now checks who
   held each task, who produced each artifact, who sent each message and

@@ -39,7 +39,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agentd"))
@@ -391,7 +391,7 @@ LIVE_GOALS = {
     3: f"acknowledge the finding, create a fix task for {IMPLEMENTER} (requires_worktree true, payload finding_artifact and paths [fields.py]) and a verify task for {REVIEWER} (requires_worktree true), then message_send the fix task to {IMPLEMENTER} including finding_artifact and verify_task ids.",
     4: "acknowledge the task, claim it, read the finding report through artifact_get and worktree_get of its producer, fix fields.py so quoted segments stay whole, run the check until green, commit, publish the commit id as a commit artifact, complete the task, and message_send an artifact message to the reviewer with the artifact id and verify_task.",
     5: "acknowledge the artifact message, claim the open verify task assigned to you, read the commit through artifact_get, prove it is green on an export of that commit in your worktree, write reports/verification.md, publish it, complete the verify task, and message_send a result to the architect.",
-    6: "acknowledge the result message and mark it completed.",
+    6: "acknowledge the result message and mark it completed; no further message is required.",
 }
 
 
@@ -461,25 +461,64 @@ def snapshot(db: Path) -> dict[str, Any]:
         }
 
 
-def assert_outcome(snap: dict[str, Any], daemon: Daemon, ws: Workspace, first_message: str) -> dict[str, Any]:
+# The outcome flow of the roadmap: kind and sender of every message the six
+# turns owe the bus, in order. A live turn may add a courtesy message of its own
+# (the architect thanking the reviewer, say); that is model chatter, not part of
+# the contract, so live mode matches the spine as a subsequence and allows the
+# leftovers -- but only leftovers that repeat no spine step, since a second
+# `result` from the reviewer would be a replayed send, not politeness.
+SPINE = (("task", ARCHITECT), ("finding", REVIEWER), ("task", ARCHITECT), ("artifact", IMPLEMENTER), ("result", REVIEWER))
+# Nobody has a turn left to read chatter, so it may sit unread; a delivery that
+# failed or was dead-lettered is a bus defect and must still fail the gate.
+CHATTER_STATES = ("queued", "acknowledged", "completed")
+
+
+def split_spine(messages: Sequence[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Walk the messages in order, taking each one that is the next step the
+    outcome flow owes; everything else is chatter. Returns (spine, chatter),
+    where a short spine means a step never happened."""
+    spine: list[dict[str, Any]] = []
+    chatter: list[dict[str, Any]] = []
+    for message in messages:
+        step = len(spine)
+        if step < len(SPINE) and (message["kind"], message["from"]) == SPINE[step]:
+            spine.append(message)
+        else:
+            chatter.append(message)
+    return spine, chatter
+
+
+def assert_outcome(snap: dict[str, Any], daemon: Daemon, ws: Workspace, first_message: str, *, live: bool = False) -> dict[str, Any]:
     failures = []
+    # snapshot() builds messages and deliveries in one pass over the same
+    # `message.sent` events, so a message and its delivery share an index.
+    deliveries = dict(zip((m["id"] for m in snap["messages"]), snap["deliveries"]))
+    spine, chatter = split_spine(snap["messages"])
+    sent = [(m["kind"], m["from"]) for m in snap["messages"]]
     if [t["state"] for t in snap["tasks"]] != ["completed"] * 3:
         failures.append(f"tasks: {snap['tasks']}")
     if [t["assigned_to"] for t in snap["tasks"]] != [REVIEWER, IMPLEMENTER, REVIEWER]:
         failures.append(f"task holders: {[t['assigned_to'] for t in snap['tasks']]}")
-    if [m["kind"] for m in snap["messages"]] != ["task", "finding", "task", "artifact", "result"]:
-        failures.append(f"messages: {[m['kind'] for m in snap['messages']]}")
+    if len(spine) != len(SPINE):
+        failures.append(f"messages: {sent} does not contain {list(SPINE)} in order")
+    if chatter and not live:
+        failures.append(f"unexpected messages beside the outcome flow: {[(m['kind'], m['from']) for m in chatter]}")
+    repeats = [(m["kind"], m["from"]) for m in chatter if (m["kind"], m["from"]) in SPINE]
+    if repeats:
+        failures.append(f"a step of the outcome flow was sent twice: {repeats}")
     correlations = {m["correlation_id"] for m in snap["messages"]}
     if correlations != {first_message}:
         failures.append(f"correlation ids drifted: {correlations}")
-    if any(d["state"] != "completed" for d in snap["deliveries"]):
-        failures.append(f"deliveries not all completed: {snap['deliveries']}")
+    owed = [deliveries[m["id"]] for m in spine]
+    if any(d["state"] != "completed" for d in owed):
+        failures.append(f"deliveries of the outcome flow not all completed: {owed}")
+    unhealthy = [deliveries[m["id"]] for m in chatter if deliveries[m["id"]]["state"] not in CHATTER_STATES]
+    if unhealthy:
+        failures.append(f"deliveries beside the outcome flow failed: {unhealthy}")
     if [a["kind"] for a in snap["artifacts"]] != ["report", "commit", "report"]:
         failures.append(f"artifacts: {snap['artifacts']}")
     if [a["by"] for a in snap["artifacts"]] != [REVIEWER, IMPLEMENTER, REVIEWER]:
         failures.append(f"artifact producers: {[a['by'] for a in snap['artifacts']]}")
-    if [m["from"] for m in snap["messages"]] != [ARCHITECT, REVIEWER, ARCHITECT, IMPLEMENTER, REVIEWER]:
-        failures.append(f"message senders: {[m['from'] for m in snap['messages']]}")
     if len(daemon.pids) != 2 or daemon.pids[0] == daemon.pids[1]:
         failures.append(f"daemon did not restart: pids {daemon.pids}")
     if snap["event_kinds"].count("worktree.bound") < 3 or "worktree.mismatch" in snap["event_kinds"]:
@@ -491,7 +530,13 @@ def assert_outcome(snap: dict[str, Any], daemon: Daemon, ws: Workspace, first_me
         failures.append("no approval should have been needed")
     if failures:
         raise E2EError("outcome flow did not reach the roadmap state:\n  " + "\n  ".join(failures))
-    return {"correlation_id": first_message, "commit": next(a["ref"] for a in snap["artifacts"] if a["kind"] == "commit"), "daemon_pids": daemon.pids, "leases": snap["counts"]["leases"]}
+    return {
+        "correlation_id": first_message,
+        "commit": next(a["ref"] for a in snap["artifacts"] if a["kind"] == "commit"),
+        "daemon_pids": daemon.pids,
+        "leases": snap["counts"]["leases"],
+        "chatter": [(m["kind"], m["from"], m["to"], deliveries[m["id"]]["state"]) for m in chatter],
+    }
 
 
 def main() -> int:
@@ -567,7 +612,7 @@ def main() -> int:
         assert first_message is not None
         snap = snapshot(daemon.state_dir / "bus.sqlite3")
         report["records"] = snap
-        report["outcome"] = assert_outcome(snap, daemon, ws, first_message)
+        report["outcome"] = assert_outcome(snap, daemon, ws, first_message, live=args.live)
     except (E2EError, GateError, spike.SpikeError, subprocess.CalledProcessError) as exc:
         detail = getattr(exc, "stderr", "") or ""
         print(f"FAIL: {exc}\n{detail}".rstrip(), file=sys.stderr)
@@ -583,6 +628,8 @@ def main() -> int:
     outcome = report["outcome"]
     print(f"records: tasks {snap['counts']['tasks']} messages {snap['counts']['messages']} deliveries {snap['counts']['deliveries']} artifacts {snap['counts']['artifacts']} events {snap['counts']['events']} worktrees {snap['counts']['worktrees']} leases {outcome['leases']} (reserved for M6)")
     print(f"final correlation id: {outcome['correlation_id']}   verified commit: {outcome['commit']}   daemon pids: {outcome['daemon_pids']}")
+    for kind, sender, recipient, state in outcome["chatter"]:
+        print(f"message beside the outcome flow: {kind} {sender} -> {recipient}, delivery {state} (no turn owes it a read)")
     print("PASS  agent bus M4 pull-beta vertical slice " + ("(live providers)" if args.live else "(fake provider)"))
     return 0
 

@@ -6,7 +6,7 @@
 # integrity for intermediate loops. The default/`--full` continues through
 # eval, packaging, and sandboxed install cycles for both harnesses.
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
-# the provider CLIs). `--agent-bus-store` runs only the M1-M3 daemon suite.
+# the provider CLIs). `--agent-bus-store` runs only the M1-M4 daemon suite.
 # `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
 # `--agent-bus-security` runs only the M3 safety fixtures. `--agent-bus-e2e`
 # runs the M4 pull-beta flow with the fake provider (also part of `--full`).
@@ -54,7 +54,7 @@ agent_bus_store() {
   (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
     || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
   rm -f "${ROOT}/agentd/.last-store-run.log"
-  echo "ok  agent bus M1-M3 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures)"
+  echo "ok  agent bus M1-M4 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures, e2e outcome assertion)"
 
   # `luciazero bus status` (Node, core package) against a real daemon on a
   # throwaway state directory: proves the human-facing queue view end to end
@@ -89,7 +89,7 @@ agent_bus_store() {
 if [ "${TIER}" = agent-bus-store ]; then
   agent_bus_store
   echo
-  echo "PASS  agent bus M1-M3 daemon gate green"
+  echo "PASS  agent bus M1-M4 daemon gate green"
   exit 0
 fi
 

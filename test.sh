@@ -5,19 +5,22 @@
 # `--fast` covers core doctrine, hooks/report, Relay, bisect, and evidence
 # integrity for intermediate loops. The default/`--full` continues through
 # eval, packaging, and sandboxed install cycles for both harnesses.
+# `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
+# the provider CLIs).
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike]" >&2
   exit 64
 fi
 case "${1:-}" in
   ""|--full) ;;
   --fast) TIER=fast ;;
-  *) echo "usage: ./test.sh [--fast|--full]" >&2; exit 64 ;;
+  --agent-bus-spike) TIER=agent-bus-spike ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -25,6 +28,10 @@ skill_inventory() {
   catalog "${ROOT}/skills/catalog.txt"
   catalog "${ROOT}/skills/aliases.txt"
 }
+
+if [ "${TIER}" = agent-bus-spike ]; then
+  exec "${ROOT}/scripts/agent-bus-spike.sh"
+fi
 
 # The hooks append a stats line to ${CLAUDE_CONFIG_DIR:-~/.claude}; no test is
 # ever allowed to touch the real one, so the whole run gets a sandbox default.
@@ -46,6 +53,7 @@ source "${ROOT}/scripts/sanitize-luciazero-env.sh"
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          scripts/sanitize-luciazero-env.sh
+         scripts/agent-bus-spike.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
@@ -64,6 +72,10 @@ done
 # 1. shell syntax
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
 echo "ok  shell syntax"
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  "${ROOT}/scripts/agent_bus_spike.py" || fail "agent bus M0 Python syntax"
+echo "ok  agent bus M0 Python syntax"
 
 # 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
 # macOS. Verified against a real 3.2: a here-document inside a command

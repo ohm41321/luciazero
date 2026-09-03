@@ -99,7 +99,9 @@ application data directories.
   deferred to any multi-user scope, which v1 excludes.
 - Verified 2026-09-02: both CLIs deliver the token. Claude through
   `claude mcp add --transport http <name> <url> --header "Authorization:
-  Bearer ..."` (the variadic `--header` must come after the positionals) and
+  Bearer ..."` (the variadic `--header` must come after the positionals;
+  `claude -p --allowedTools a,b PROMPT` has the same trap and swallows the
+  prompt, so a single-value option must sit between them) and
   through `--mcp-config` `headers`; Codex through
   `codex mcp add --url <url> --bearer-token-env-var <VAR>` and the
   equivalent `mcp_servers.<name>.bearer_token_env_var` override passed with
@@ -150,7 +152,7 @@ evidence.
 Whether the daemon ships inside `luciazero` or as a companion package, and
 which implementation language it uses, is decided in ADR 0002 before M1 starts.
 ADR 0002 was accepted on 2026-09-02: companion package `luciazero-agentd`,
-Python 3.11+ standard library. The README states that Luciazero is a
+Python standard library only, floor 3.10 (amended the same day from 3.11). The README states that Luciazero is a
 discipline layer, not an agent runtime; the daemon must not enter the core
 package and ordinary installation must not start one.
 

@@ -357,6 +357,25 @@ class ToolsContract(ServerCase):
         self.assertEqual(json.loads(result["content"][0]["text"]), result["structuredContent"])
         self.assertFalse(result["isError"])
 
+    def test_client_connection_resets_are_not_tracebacks(self) -> None:
+        # Live gate: the Codex MCP client resets keep-alive connections and
+        # socketserver printed a traceback per reset.
+        import contextlib
+        import io
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                raise ConnectionResetError(54, "Connection reset by peer")
+            except ConnectionResetError:
+                self.server._httpd.handle_error(None, ("127.0.0.1", 1))
+            try:
+                raise RuntimeError("real bug")
+            except RuntimeError:
+                self.server._httpd.handle_error(None, ("127.0.0.1", 1))
+        self.assertNotIn("ConnectionResetError", stderr.getvalue())
+        self.assertIn("RuntimeError", stderr.getvalue())  # genuine failures still surface
+
 
 class DaemonCli(unittest.TestCase):
     def test_serve_status_and_client_config(self) -> None:

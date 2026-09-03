@@ -266,7 +266,7 @@ Exit gate:
 The suite must prove that concurrent claimers produce one winner and that
 replaying a request does not create a second task or message.
 
-### M2 — MCP control plane (in progress)
+### M2 — MCP control plane (complete 2026-09-03)
 
 Known state on 2026-09-02: `agentd/luciazero_agentd/server.py` serves the
 12 tools over Streamable HTTP with bearer auth, `Mcp-Session-Id` sessions,
@@ -277,8 +277,7 @@ is the Node client. The conformance suite (21 tests) runs inside the
 M2 gate passed against the real CLIs: both negotiated `2025-06-18`, both
 called `tools/list` (Codex also `resources/list`), Codex reported the same
 12 tools, and the raw-client exchange ended with `delivery.completed`
-after 10 events. The live gate (model tool use over the daemon) is not run
-yet; it needs quota approval. The independent adversarial review returned
+after 10 events. The live gate passed on 2026-09-03 (see the checklist). The independent adversarial review returned
 one major (control characters in peer-supplied `role`/`title` reached the
 human's terminal through `bus status`), eight minor (non-ASCII bearer crash,
 pathological JSON dropping the connection, unread bodies on keep-alive after
@@ -330,8 +329,16 @@ user and the M4 decision gate cannot collect evidence.
   skill count in `README.md` and `README.th.md` (11 to 12 everywhere
   `test.sh` asserts it).
 - [x] Resolve the independent adversarial review findings (16 of 16).
-- [ ] Run the live M2 gate once with quota approval
-  (`LZ_AGENT_BUS_LIVE=1 ./test.sh --agent-bus-mcp`, two turns per provider).
+- [x] Run the live M2 gate once with quota approval
+  (`LZ_AGENT_BUS_LIVE=1 ./test.sh --agent-bus-mcp`). Passed 2026-09-03 on
+  `codex-cli 0.152.1` and `2.1.259 (Claude Code)` with
+  `PASS  agent bus M2 live cross-vendor exchange`: the Codex model called
+  `message_send` with a fresh marker, the Claude model called
+  `message_inbox` and `message_ack` and returned the marker, and the store
+  showed the delivery acknowledged. Cost: 3 provider turns (2 Codex, 1
+  Claude); the first attempt failed before Claude inference because
+  `--allowedTools` is variadic and swallowed the trailing prompt, now fixed
+  in the gate and recorded in ADR 0001.
 
 Exit gate:
 

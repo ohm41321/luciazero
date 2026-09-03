@@ -176,7 +176,11 @@ def claude_live(claude: str, url: str, token: str, marker: str) -> dict[str, str
         f'Using the MCP server "{SERVER_NAME}": call message_inbox with agent_id "claude-reviewer", find the delivery whose payload '
         'contains a "marker", call message_ack with that delivery_id and agent_id "claude-reviewer", then reply with exactly the marker value and nothing else.'
     )
-    result = spike.run([claude, "-p", "--output-format", "json", "--permission-mode", "dontAsk", "--tools", "", "--mcp-config", mcp_config, "--strict-mcp-config", "--allowedTools", allowed, prompt], cwd=ROOT, timeout=180)
+    # `--allowedTools` is variadic and would swallow a trailing prompt (the
+    # first live run failed with "Input must be provided"), so the prompt
+    # follows a single-value option instead. The spike puts `--session-id`
+    # between them for the same reason.
+    result = spike.run([claude, "-p", "--allowedTools", allowed, "--tools", "", "--permission-mode", "dontAsk", "--mcp-config", mcp_config, "--strict-mcp-config", "--output-format", "json", prompt], cwd=ROOT, timeout=180)
     text = spike.claude_result_text(result)
     if marker not in text:
         raise GateError(f"Claude model did not return the marker; got {text[:300]!r}")

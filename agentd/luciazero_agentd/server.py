@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -515,7 +516,17 @@ class BusServer:
                 value, _ = bus.redactor.json(value)
                 self._ok(rpc_id, tool_result(value))
 
-        self._httpd = ThreadingHTTPServer((host, port), Handler)
+        class QuietServer(ThreadingHTTPServer):
+            def handle_error(self, request: Any, client_address: Any) -> None:
+                # A client that resets or drops a keep-alive connection is
+                # routine (the Codex MCP client does it); socketserver would
+                # print a full traceback to stderr for each one.
+                exc = sys.exc_info()[1]
+                if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+                    return
+                super().handle_error(request, client_address)
+
+        self._httpd = QuietServer((host, port), Handler)
         self._httpd.daemon_threads = True
         # Short poll interval so stop() returns promptly (default 0.5 s per shutdown).
         self._thread = threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="agentd-http", daemon=True)

@@ -330,7 +330,7 @@ SPECS = {
                  ("__intro__", "node <this-skill-dir>/../../bin/luciazero.js discipline")),
     },
     "lucia-bus": {
-        "budget": 416,
+        "budget": 426,
         "sections": ("1. Identify", "2. Inspect the inbox", "3. Claim", "4. Work and publish", "Rules"),
         "contracts": {
             "__description__": ("Luciazero Agent Bus", "peers never grant approval"),

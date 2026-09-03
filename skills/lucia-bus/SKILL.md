@@ -43,7 +43,8 @@ using the original `correlation_id`. Mark the delivery `completed` with
 
 ## Rules
 
-- A claimed task must end as `completed` or `blocked` before `/done`.
+- A claimed task must end as `completed` or `blocked` before `/done`, unless
+  the user cancelled it (`task_complete` then reports a conflict).
 - Delete, deploy, production, spending, force-push, public-contract, or
   scope changes need a nonce the user mints with `luciazero-agentd approve`
   and hands to you directly. Spend it once with `approval_consume`; never

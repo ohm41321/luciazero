@@ -435,18 +435,60 @@ Exit gate:
 Security fixtures must prove cross-worktree isolation, stale-identity refusal,
 approval provenance, path containment, secret redaction, and bounded input.
 
-### M4 — Pull-beta vertical slice
+### M4 — Pull-beta vertical slice (in progress)
 
-- [ ] Register `codex-architect`, `claude-reviewer`, and
-  `codex-implementer` as agents in user-started sessions.
-- [ ] Run the outcome flow at the top of this document in a disposable Git
-  repository, with the user starting each turn and no manual copying.
-- [ ] Capture task, message, lease, event, and artifact records.
-- [ ] Verify daemon restart between the Claude finding and Codex fix.
-- [ ] Verify a new provider session can continue an open task under the same
-  stable agent ID.
-- [ ] Publish a reproducible demo that uses the shipped implementation.
-- [ ] Document setup, status inspection, cancellation, recovery, and cleanup.
+Known state on 2026-09-03: `scripts/agent_bus_e2e.py` drives the outcome
+flow through the shipped daemon (subprocess on a disposable state
+directory) in a disposable repository with one worktree per writer; every
+turn opens a fresh MCP session and learns its work only from the inbox,
+task list and artifact records. Fake provider: `./test.sh --agent-bus-e2e`
+prints `PASS  agent bus M4 pull-beta vertical slice (fake provider)` with
+3 tasks, 5 messages, 5 deliveries, 3 artifacts (report, commit, report),
+2 worktrees, one correlation id across all messages, and two daemon pids
+(restart between the finding and the fix). `--full` runs it; `--fast`
+does not. Building it surfaced one gap: a pull-beta turn exists only when
+the user opens that session, so the first agent could not address peers
+that had never registered; `luciazero-agentd roster add` (human channel)
+names the team once and the agent's own `agent_register` refreshes the
+row. `luciazero-agentd cancel` is the human cancellation path; no MCP tool
+cancels. Live provider turns are constructed (`--live`, Codex through App
+Server on-request, Claude through `claude -p --mcp-config`) and rendered by
+`--live --dry-run`, but not yet run: 6 turns of quota, pending approval.
+
+- [x] Register `codex-architect`, `claude-reviewer`, and
+  `codex-implementer` as agents in user-started sessions (roster first,
+  then each session's `agent_register`; fake provider, so "user-started"
+  is structural until the live run below).
+- [x] Run the outcome flow at the top of this document in a disposable Git
+  repository, with the user starting each turn and no manual copying (fake
+  provider; live providers pending approval).
+- [x] Capture task, message, lease, event, and artifact records (`--json`;
+  leases are empty by design until M6).
+- [x] Verify daemon restart between the Claude finding and Codex fix.
+- [x] Verify a new provider session can continue an open task under the same
+  stable agent ID (the reviewer's second MCP session claims the verify
+  task; the daemon binds nothing to provider sessions in the pull beta, so
+  the live run is what proves it with a real second session).
+- [x] Publish a reproducible demo that uses the shipped implementation
+  (`docs/assets/agent-bus-demo.sh`, the same driver with narration).
+- [x] Document setup, status inspection, cancellation, recovery, and cleanup
+  (`docs/agent-bus.md`).
+- [ ] Run the live slice once with quota approval
+  (`LZ_AGENT_BUS_LIVE=1 scripts/agent-bus-e2e.sh --live`, six turns; the
+  `test.sh` tier takes no extra arguments and stays fake-provider only).
+- [x] Resolve the independent adversarial review findings (`reviewer`
+  agent: 3 minor, 5 nits, no major): the outcome assertion now checks who
+  held each task, who produced each artifact, who sent each message and
+  that the two writers hold exactly their own real worktree paths (it had
+  checked states and kinds only); cancelling a task dead-letters its queued
+  `task` messages so `bus status` stops asking for a dead turn, and `/done`
+  plus `/lucia-bus` accept a user-cancelled task; `roster add` audits as
+  `agent.rostered` under `human:<user>` and keeps recorded capabilities
+  when none are given; docs say every command runs from `agentd/` and the
+  cleanup honours `LUCIAZERO_AGENT_BUS_HOME`; the driver refuses a bare
+  `--dry-run`, uses the tar data filter on 3.12+, and fails cleanly when the
+  verify task is missing; the two "session" items above are hedged as
+  structural until the live run.
 
 Exit gate:
 

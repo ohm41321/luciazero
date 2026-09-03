@@ -424,28 +424,36 @@ class Store:
         *,
         provider: str,
         role: str,
-        capabilities: Sequence[str] = (),
+        capabilities: Optional[Sequence[str]] = None,
         ttl_seconds: int = 300,
+        by: Optional[str] = None,
     ) -> dict[str, Any]:
+        """Upsert a stable agent identity. ``capabilities=None`` keeps what is
+        recorded (empty for a new row). ``by`` names a human actor for the
+        roster command; the audit event then reads ``agent.rostered`` under
+        that actor instead of the agent registering itself."""
         _check_id(agent_id, "agent id", self._redactor)
         _check_enum(provider, PROVIDERS, "provider")
         role = self.redact(_check_text(role, "role", MAX_ID_LENGTH))
         _check_int(ttl_seconds, 1, 86_400, "ttl_seconds")
         if isinstance(capabilities, (str, bytes)):
             raise ValidationError("capabilities must be a sequence of non-empty strings")
-        cleaned = [self.redact(_check_text(capability, "capability", 64)) for capability in capabilities]
-        caps = json.dumps(sorted(set(cleaned)))
+        caps: Optional[str] = None
+        if capabilities is not None:
+            cleaned = [self.redact(_check_text(capability, "capability", 64)) for capability in capabilities]
+            caps = json.dumps(sorted(set(cleaned)))
+        actor = self.redact(_check_text(by, "by", 128)) if by is not None else agent_id
         now = utcnow()
         with self._tx("register_agent"):
             self._conn.execute(
                 """INSERT INTO agents (id, provider, role, capabilities, status, ttl_seconds, last_seen_at, created_at)
-                   VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+                   VALUES (?, ?, ?, COALESCE(?, '[]'), 'active', ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, role = excluded.role,
-                       capabilities = excluded.capabilities, status = 'active',
+                       capabilities = COALESCE(?, capabilities), status = 'active',
                        ttl_seconds = excluded.ttl_seconds, last_seen_at = excluded.last_seen_at""",
-                (agent_id, provider, role, caps, ttl_seconds, now, now),
+                (agent_id, provider, role, caps, ttl_seconds, now, now, caps),
             )
-            self._event(agent_id, "agent.registered", "agent", agent_id, {"provider": provider, "role": role})
+            self._event(actor, "agent.rostered" if by is not None else "agent.registered", "agent", agent_id, {"provider": provider, "role": role})
         return self.get_agent(agent_id)
 
     def heartbeat(self, agent_id: str) -> dict[str, Any]:
@@ -720,6 +728,46 @@ class Store:
                     f"task {task_id!r} is {row['state']} held by {row['assigned_agent_id']!r}; {agent_id!r} cannot complete it"
                 )
             self._event(agent_id, f"task.{outcome}", "task", task_id, {})
+        return self.get_task(task_id)
+
+    def cancel_task(self, task_id: str, by: str, *, reason: Optional[str] = None) -> dict[str, Any]:
+        """open | claimed -> cancelled, from the human channel (the CLI, never
+        an MCP tool). The claim holder's next ``task_complete`` fails with a
+        conflict, so a worker learns on its next turn; the record keeps who
+        cancelled and why."""
+        _check_id(task_id, "task id", self._redactor)
+        by = self.redact(_check_text(by, "by", 128))
+        note = self.redact(_check_text(reason, "reason", 500)) if reason is not None else None
+        with self._tx("cancel_task"):
+            row = self._conn.execute("SELECT state, assigned_agent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"task {task_id!r} does not exist")
+            now = utcnow()
+            cur = self._conn.execute(
+                """UPDATE tasks SET state = 'cancelled', result = ?, version = version + 1, completed_at = ?, updated_at = ?
+                   WHERE id = ? AND state IN ('open', 'claimed')""",
+                (json.dumps({"cancelled_by": by, "reason": note}, sort_keys=True), now, now, task_id),
+            )
+            if cur.rowcount != 1:
+                raise ConflictError(f"task {task_id!r} is {row['state']}; only open or claimed tasks can be cancelled")
+            # Queued task messages for this task are dead work now: dead-letter
+            # them so `bus status` stops asking for a turn nobody should start.
+            # Acknowledged ones stay with their reader to complete.
+            queued = self._conn.execute(
+                """SELECT d.id, m.payload FROM deliveries d JOIN messages m ON m.id = d.message_id
+                   WHERE d.state = 'queued' AND m.kind = 'task'"""
+            ).fetchall()
+            dead = []
+            for delivery in queued:
+                try:
+                    payload = json.loads(delivery["payload"])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and payload.get("task_id") == task_id:
+                    self._conn.execute("UPDATE deliveries SET state = 'dead_letter', updated_at = ? WHERE id = ? AND state = 'queued'", (now, delivery["id"]))
+                    self._event(by, "delivery.dead_letter", "delivery", delivery["id"], {"task_id": task_id, "reason": "task cancelled"})
+                    dead.append(delivery["id"])
+            self._event(by, "task.cancelled", "task", task_id, {"was": row["state"], "holder": row["assigned_agent_id"], "reason": note, "dead_lettered": dead})
         return self.get_task(task_id)
 
     # -------------------------------------------------------------- artifacts

@@ -232,7 +232,7 @@ rest activate when their moment arrives.
 | Good and bad revisions are known | `/bisect` | Finds the first bad commit in a temporary worktree |
 | Before claiming completion | `/done` | Full verify, skeptic review, scope report |
 | Work must move elsewhere | `/lucia-relay` | Portable JSON + Markdown state with drift inspection |
-| Another agent's work is queued for you (beta) | `/lucia-bus` | Register, read the inbox, claim, work, publish the result through the local Agent Bus |
+| Another agent's work is queued for you (beta) | `/lucia-bus` | Register, read the inbox, claim, work, publish the result through the local Agent Bus ([setup and demo](docs/agent-bus.md)) |
 | Optimizing performance | `/experiment` | Baseline, threshold, controlled measurement |
 | Reviewing local verify habits | `/discipline-report` | Time/project-filtered local outcome report |
 | After difficult work | `/retro` | Stores reusable lessons and disproved approaches |

@@ -17,7 +17,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from luciazero_agentd import Store
+from luciazero_agentd import NotFound, Store
 from luciazero_agentd.server import HANDLER_TIMEOUT_SECONDS, MAX_BODY_BYTES, MAX_SESSIONS, PROTOCOL_VERSIONS, TOOLS, BusServer, tool_contract
 from luciazero_agentd.statedir import read_endpoint
 from tests.fixtures import make_repo
@@ -440,6 +440,58 @@ class DaemonCli(unittest.TestCase):
             config = subprocess.run([sys.executable, "-m", "luciazero_agentd", "client-config", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(config.returncode, 0, config.stderr)
             self.assertIn("'" + str(Path(tmp) / "token") + "'", config.stdout)  # shlex-quoted because of the space and $
+
+    def test_cancel_command_is_the_human_channel(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agentd-cancel-") as tmp:
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT))
+            with Store.open(Path(tmp) / "bus.sqlite3") as store:
+                store.migrate()
+                store.register_agent("codex-architect", provider="codex", role="architect")
+                store.register_agent("claude-reviewer", provider="claude", role="reviewer")
+                task = store.create_task(title="drop it", created_by="codex-architect")
+                store.claim_task(task["id"], "claude-reviewer")
+            done = subprocess.run([sys.executable, "-m", "luciazero_agentd", "cancel", task["id"], "--reason", "changed my mind", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("cancelled (was held by claude-reviewer)", done.stdout)
+            again = subprocess.run([sys.executable, "-m", "luciazero_agentd", "cancel", task["id"], "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(again.returncode, 1)
+            missing = subprocess.run([sys.executable, "-m", "luciazero_agentd", "cancel", "tsk_nope", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(missing.returncode, 2)
+            with Store.open(Path(tmp) / "bus.sqlite3") as store:
+                record = store.get_task(task["id"])
+                self.assertEqual(record["state"], "cancelled")
+                self.assertTrue(record["result"]["cancelled_by"].startswith("human:"))
+            self.assertNotIn("cancel", {t["name"] for t in TOOLS} | {t["name"].split("_")[-1] for t in TOOLS})  # never an MCP tool
+
+    def test_roster_add_names_a_peer_before_its_first_session(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agentd-roster-") as tmp:
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT))
+            with Store.open(Path(tmp) / "bus.sqlite3") as store:
+                store.migrate()
+                store.register_agent("codex-architect", provider="codex", role="architect")
+                with self.assertRaises(NotFound):  # the pull-beta problem: the reviewer has no session yet
+                    store.create_task(title="review", created_by="codex-architect", assigned_to="claude-reviewer")
+            added = subprocess.run([sys.executable, "-m", "luciazero_agentd", "roster", "add", "claude-reviewer", "claude", "reviewer", "--capability", "review", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(added.returncode, 0, added.stderr)
+            self.assertIn("claude-reviewer (claude, reviewer) is on the roster", added.stdout)
+            bad = subprocess.run([sys.executable, "-m", "luciazero_agentd", "roster", "add", "lzap_" + "0" * 32, "claude", "mule", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(bad.returncode, 1)
+            self.assertNotIn("lzap_", bad.stderr)
+            again = subprocess.run([sys.executable, "-m", "luciazero_agentd", "roster", "add", "claude-reviewer", "claude", "reviewer", "--state-dir", tmp], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            with Store.open(Path(tmp) / "bus.sqlite3") as store:
+                task = store.create_task(title="review", created_by="codex-architect", assigned_to="claude-reviewer")
+                self.assertEqual(task["assigned_agent_id"], "claude-reviewer")
+                self.assertEqual(store.get_agent("claude-reviewer")["capabilities"], ["review"])  # refresh without --capability kept them
+                rostered = [e for e in store.events(limit=100) if e["kind"] == "agent.rostered"]
+                self.assertEqual(len(rostered), 2)
+                self.assertTrue(all(e["actor"].startswith("human:") for e in rostered))  # the human did it, not the agent
+                self.assertNotIn("agent.registered", [e["kind"] for e in store.events(limit=100) if e["entity_id"] == "claude-reviewer"])
+                # The agent's own registration later refreshes the same row and audits as itself.
+                refreshed = store.register_agent("claude-reviewer", provider="claude", role="reviewer", capabilities=["review", "verify"])
+                self.assertEqual(refreshed["capabilities"], ["review", "verify"])
+                self.assertEqual(store.register_agent("claude-reviewer", provider="claude", role="reviewer")["capabilities"], ["review", "verify"])
+                self.assertEqual(store.events(limit=100)[-1]["actor"], "claude-reviewer")
 
 
 if __name__ == "__main__":

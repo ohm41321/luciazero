@@ -8,14 +8,15 @@
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
 # the provider CLIs). `--agent-bus-store` runs only the M1-M3 daemon suite.
 # `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
-# `--agent-bus-security` runs only the M3 safety fixtures.
+# `--agent-bus-security` runs only the M3 safety fixtures. `--agent-bus-e2e`
+# runs the M4 pull-beta flow with the fake provider (also part of `--full`).
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e]" >&2
   exit 64
 fi
 case "${1:-}" in
@@ -25,7 +26,8 @@ case "${1:-}" in
   --agent-bus-store) TIER=agent-bus-store ;;
   --agent-bus-mcp) TIER=agent-bus-mcp ;;
   --agent-bus-security) TIER=agent-bus-security ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security]" >&2; exit 64 ;;
+  --agent-bus-e2e) TIER=agent-bus-e2e ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -39,6 +41,9 @@ if [ "${TIER}" = agent-bus-spike ]; then
 fi
 if [ "${TIER}" = agent-bus-mcp ]; then
   exec "${ROOT}/scripts/agent-bus-mcp.sh"
+fi
+if [ "${TIER}" = agent-bus-e2e ]; then
+  exec "${ROOT}/scripts/agent-bus-e2e.sh"
 fi
 
 # M1 exit gate: migrations, atomic claims, idempotent replays, append-only
@@ -123,6 +128,8 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/sanitize-luciazero-env.sh
          scripts/agent-bus-spike.sh
          scripts/agent-bus-mcp.sh
+         scripts/agent-bus-e2e.sh
+         docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
@@ -1426,6 +1433,16 @@ if [ "${TIER}" = fast ]; then
   echo "PASS  fast checks green"
   exit 0
 fi
+
+# M4 exit gate (fake provider, deterministic): the pull-beta outcome flow end
+# to end through the shipped daemon, including a daemon restart mid-flow.
+# Never a live provider: --full stays free of quota by roadmap rule (M8).
+"${ROOT}/scripts/agent-bus-e2e.sh" >"${ROOT}/agentd/.last-store-run.log" 2>&1 \
+  || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M4 pull-beta slice"; }
+grep -q "^PASS  agent bus M4 pull-beta vertical slice (fake provider)" "${ROOT}/agentd/.last-store-run.log" \
+  || { rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M4 slice printed no PASS line"; }
+rm -f "${ROOT}/agentd/.last-store-run.log"
+echo "ok  agent bus M4 pull-beta slice (fake provider, daemon restart, two worktrees)"
 
 # 4d. eval graders stay honest — auto-discovered, so no task can ship without
 # its proofs: PROMPT.md present, grader executable and following the output

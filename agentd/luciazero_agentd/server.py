@@ -117,7 +117,7 @@ ToolHandler = Callable[[Store, dict[str, Any]], Any]
 
 
 def _t_agent_register(store: Store, a: dict[str, Any]) -> Any:
-    return store.register_agent(a["agent_id"], provider=a["provider"], role=a["role"], capabilities=a.get("capabilities", []), ttl_seconds=a.get("ttl_seconds", 300))
+    return store.register_agent(a["agent_id"], provider=a["provider"], role=a["role"], capabilities=a.get("capabilities"), ttl_seconds=a.get("ttl_seconds", 300))
 
 
 def _t_agent_list(store: Store, a: dict[str, Any]) -> Any:

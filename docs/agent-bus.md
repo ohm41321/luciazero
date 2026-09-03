@@ -1,0 +1,158 @@
+# Luciazero Agent Bus (pull beta)
+
+A local queue that lets Codex CLI and Claude Code CLI sessions hand work to
+each other without you copying messages between terminals. One daemon owns
+a SQLite database under `~/.luciazero/agent-bus`; each agent talks to it
+through MCP tools; you start each agent turn yourself. Design and evidence:
+[the roadmap](agent-bus-roadmap.md) and the ADRs under [`adr/`](adr/).
+
+The bus is beta and separate from the core install: `npx luciazero` never
+starts a daemon. Everything below runs from a checkout of this repository,
+and every `python3 -m luciazero_agentd ...` command runs from its `agentd/`
+directory (or with `PYTHONPATH=agentd` from the repository root). The
+daemon needs Python 3.10+ and `git`; nothing is installed with pip.
+
+## Setup
+
+1. Start the daemon in a terminal you can leave open:
+
+   ```bash
+   cd agentd && python3 -m luciazero_agentd serve
+   ```
+
+   It prints `luciazero-agentd listening on http://127.0.0.1:8765/mcp` and
+   writes `endpoint.json` plus a capability token (mode `0600`) into the
+   state directory. Override the directory with `LUCIAZERO_AGENT_BUS_HOME`
+   or `--state-dir`; tests and the demo always use a temporary one.
+
+2. Name the team once. A pull-beta turn exists only when you open that
+   agent's session, so the first agent must be able to address peers that
+   have not registered yet:
+
+   ```bash
+   python3 -m luciazero_agentd roster add codex-architect   codex  architect
+   python3 -m luciazero_agentd roster add claude-reviewer   claude reviewer --capability review
+   python3 -m luciazero_agentd roster add codex-implementer codex  implementer
+   ```
+
+3. Register the bus with each CLI. `python3 -m luciazero_agentd
+   client-config` prints the exact commands: `claude mcp add --scope user
+   --transport http luciazero-bus <url> --header "Authorization: Bearer ..."`
+   and `codex mcp add luciazero-bus --url <url> --bearer-token-env-var
+   LUCIAZERO_AGENT_BUS_TOKEN`. Neither command edits the other tool's
+   configuration.
+
+4. In each agent session, tell the model its stable agent id and run
+   `/lucia-bus` (Codex: `$lucia-bus`). The skill registers the agent, binds
+   its git worktree, reads the inbox, claims, works, and publishes. Every
+   writing agent needs its own worktree (`git worktree add ../wt-reviewer
+   -b review`); the daemon refuses two agents on one checkout.
+
+## Status inspection
+
+Before starting a turn, look at what is waiting on whom:
+
+```bash
+npx luciazero bus status            # from the core package (Node 18+)
+python3 -m luciazero_agentd status  # same view, Python only; --json for records
+```
+
+Both show queued deliveries per agent, open tasks (with `needs worktree`
+when a task requires one), each agent's bound branch and dirty state, and
+pending approvals. The line `next: start the agent's session and run
+/lucia-bus` appears whenever something is queued. Peer-supplied text is
+scrubbed of control characters before it reaches your terminal.
+
+## Approvals
+
+Delete, deploy, production access, spending, force-push, public-contract
+changes, and scope expansion need your approval. No bus tool can create one.
+When an agent reports that it needs one, run, in your own terminal:
+
+```bash
+python3 -m luciazero_agentd approve <task_id> delete
+```
+
+It shows the task and its claim holder, asks once, and prints a single-use
+nonce valid for 15 minutes. Hand that nonce to the agent in its own session;
+the agent spends it with `approval_consume`. A nonce pasted into a bus
+message, task, artifact name or file is scrubbed or refused, so it cannot be
+forwarded between agents. The command refuses piped input; ADR 0003 states
+the exact boundary.
+
+## Cancellation
+
+```bash
+python3 -m luciazero_agentd cancel <task_id> --reason "scope changed"
+```
+
+Open and claimed tasks become `cancelled`. Queued `task` messages for
+that task are dead-lettered so `bus status` stops asking for a turn;
+already-acknowledged ones stay with their reader to complete. The claim
+holder's next `task_complete` returns a conflict, so it learns on its next
+turn, and `/done` accepts a user-cancelled task; the record keeps who
+cancelled and why. Completed and blocked tasks cannot be cancelled.
+
+## Recovery
+
+- **Daemon restart.** Stop it with Ctrl-C or `kill <pid>` and start it
+  again on the same state directory. Acknowledged messages, claimed tasks,
+  worktree records and artifacts survive; the demo restarts the daemon
+  between the reviewer's finding and the implementer's fix to prove it.
+- **A second daemon.** `serve` refuses to start while `endpoint.json` names
+  a live process, and a daemon only ever removes its own record.
+- **Stale worktree.** If an agent's checkout changed branch, moved, or was
+  deleted, its next claim or publish is refused with `WorktreeMismatch` and
+  a `worktree.mismatch` event. Restore the branch, or finish the task as
+  `blocked` (always allowed) and rebind. Rebinding elsewhere while holding
+  claimed worktree tasks is refused until they are completed or blocked.
+- **Lost claim holder.** Cancel the task and create a new one; there is no
+  reassignment in the pull beta (leases and retries arrive with managed
+  dispatch, M6).
+- **Expired approval.** Ask for a new nonce; used and expired ones are
+  refused and recorded.
+- **Continuing in a new session.** A fresh provider session that registers
+  with the same agent id sees the same inbox and can claim the same open
+  tasks; nothing is tied to a provider session id in the pull beta.
+
+## Cleanup
+
+```bash
+BUS="${LUCIAZERO_AGENT_BUS_HOME:-$HOME/.luciazero/agent-bus}"
+kill "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["pid"])' "$BUS/endpoint.json")"
+rm -rf "$BUS"                            # queue, token, worktree records
+claude mcp remove --scope user luciazero-bus
+codex mcp remove luciazero-bus
+git worktree remove ../wt-reviewer       # per writing agent
+```
+
+Provider session files created by live runs stay in the providers' own
+stores; the bus never touches them.
+
+## Demo and gates
+
+```bash
+bash docs/assets/agent-bus-demo.sh        # fake provider, no quota, ~10 s
+./test.sh --agent-bus-e2e                 # the same flow as a gate (also in --full)
+LZ_AGENT_BUS_LIVE=1 bash docs/assets/agent-bus-demo.sh --live   # real models, 6 turns
+bash docs/assets/agent-bus-demo.sh --live --dry-run             # print the plan only
+```
+
+The demo runs the roadmap's outcome flow: the architect opens a review
+task, the reviewer reports a finding as a report artifact, the architect
+turns it into fix and verify tasks, the daemon restarts, the implementer
+publishes a fix commit from its own worktree, the reviewer (new session,
+same id) verifies that commit on an export in its own worktree, and the
+architect receives the result. It prints the record counts and the final
+correlation id, and removes its temporary directory. Live runs spend
+provider quota and need explicit approval; they are never part of CI.
+
+## Decision evidence log
+
+The pull beta graduates to managed dispatch (M5+) only with recorded
+evidence, per the roadmap's M4 decision point: at least three real
+workflows (not the demo) with their correlation ids and record sets kept,
+at least two retros naming the user-started turn as the blocking cost with
+the wait or turn count measured, and no open M3 safety finding. Record each
+workflow here or in the project's notes file as
+`date, correlation id, agents, turns started by hand, wait cost`.

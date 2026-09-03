@@ -226,7 +226,7 @@ GitHub **Watch → Custom → Releases**
 | รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |
 | ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
 | ต้องส่งงานไปที่อื่น | `/lucia-relay` | State แบบ JSON + Markdown พร้อมตรวจ drift |
-| มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง |
+| มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง ([วิธีตั้งค่าและ demo](docs/agent-bus.md)) |
 | ปรับ performance | `/experiment` | Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม |
 | ดูนิสัยการ verify ในเครื่อง | `/discipline-report` | รายงาน outcome กรองตามเวลา/โปรเจกต์ |
 | หลังงานยาก | `/retro` | เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก |

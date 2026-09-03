@@ -47,7 +47,7 @@ NONCE_RE = re.compile(r"lzap_[0-9a-f]{32}")
 class SecurityCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-sec-")
-        self.tmp = Path(self._tmp.name)
+        self.tmp = Path(os.path.realpath(self._tmp.name))  # worktree records hold real paths
         self.db = str(self.tmp / "bus.sqlite3")
         self.store = Store.open(self.db)
         self.store.migrate()

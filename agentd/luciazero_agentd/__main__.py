@@ -6,6 +6,8 @@ client-config  print the exact mcp-add commands for Claude Code and Codex CLI
 approve        grant one single-use approval nonce for a sensitive operation
                (interactive terminal only; writes the store directly, never
                through the agent-facing MCP endpoint)
+cancel         cancel an open or claimed task (human channel, direct store)
+roster add     name an agent so peers can address it before its first session
 """
 
 from __future__ import annotations
@@ -169,6 +171,53 @@ def cmd_client_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Human channel: cancel an open or claimed task. Writes the store
+    directly; the claim holder sees a conflict on its next task_complete."""
+    state_dir = resolve_state_dir(args.state_dir)
+    path = db_path(state_dir)
+    if not path.exists():
+        print(f"cancel: no bus database in {state_dir}", file=sys.stderr)
+        return 2
+    try:
+        with Store.open(path) as store:
+            store.migrate()
+            task = store.cancel_task(args.task_id, f"human:{getpass.getuser()}", reason=args.reason)
+    except NotFound as exc:
+        print(f"cancel: {clean(exc)}", file=sys.stderr)
+        return 2
+    except StoreError as exc:
+        print(f"cancel: {clean(exc)}", file=sys.stderr)
+        return 1
+    holder = clean(task["assigned_agent_id"] or "nobody")
+    print(f"task {clean(task['id'])} cancelled (was held by {holder}): {clean(task['title'])}")
+    return 0
+
+
+def cmd_roster(args: argparse.Namespace) -> int:
+    """Human channel: name the team once so an agent can address a peer the
+    user has not started yet (a pull-beta turn only exists when the user
+    opens that session). The peer's own agent_register later refreshes it."""
+    state_dir = resolve_state_dir(args.state_dir)
+    path = db_path(state_dir)
+    if not path.exists():
+        print(f"roster: no bus database in {state_dir}", file=sys.stderr)
+        return 2
+    try:
+        with Store.open(path) as store:
+            store.migrate()
+            record = store.register_agent(
+                args.agent_id, provider=args.provider, role=args.role,
+                capabilities=args.capability or None,  # none given: keep what the agent recorded
+                by=f"human:{getpass.getuser()}",
+            )
+    except StoreError as exc:
+        print(f"roster: {clean(exc)}", file=sys.stderr)
+        return 1
+    print(f"agent {clean(record['id'])} ({clean(record['provider'])}, {clean(record['role'])}) is on the roster")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="luciazero-agentd", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -191,6 +240,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     approve.add_argument("--state-dir", default=None)
     approve.add_argument("--ttl", type=int, default=APPROVAL_TTL_SECONDS, help=f"seconds until the nonce expires (default {APPROVAL_TTL_SECONDS})")
     approve.set_defaults(func=cmd_approve)
+    cancel = sub.add_parser("cancel", help="cancel an open or claimed task (human channel)")
+    cancel.add_argument("task_id")
+    cancel.add_argument("--reason", default=None)
+    cancel.add_argument("--state-dir", default=None)
+    cancel.set_defaults(func=cmd_cancel)
+    roster = sub.add_parser("roster", help="name an agent so peers can address it before its first session")
+    roster_sub = roster.add_subparsers(dest="roster_command", required=True)
+    add = roster_sub.add_parser("add", help="add or refresh one agent on the roster")
+    add.add_argument("agent_id")
+    add.add_argument("provider", choices=("codex", "claude", "other"))
+    add.add_argument("role")
+    add.add_argument("--capability", action="append", default=[])
+    add.add_argument("--state-dir", default=None)
+    add.set_defaults(func=cmd_roster)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

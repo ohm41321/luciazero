@@ -337,5 +337,58 @@ class HistoryTests(StoreCase):
             self.store.publish_artifact(kind="commit", ref=git(repo, "rev-parse", "HEAD"), produced_by="claude-reviewer", task_id="tsk_missing")
 
 
+class CancellationTests(StoreCase):
+    """M4: the human channel can cancel open or claimed work; the holder
+    finds out through a conflict on its next transition."""
+
+    def test_cancel_open_and_claimed_tasks(self) -> None:
+        open_task = self.store.create_task(title="later", created_by="codex-architect")
+        claimed = self.store.create_task(title="now", created_by="codex-architect")
+        self.store.claim_task(claimed["id"], "claude-reviewer")
+        self.assertEqual(self.store.cancel_task(open_task["id"], "human:test")["state"], "cancelled")
+        record = self.store.cancel_task(claimed["id"], "human:test", reason="scope changed; password=hunter2hunter2")
+        self.assertEqual(record["state"], "cancelled")
+        self.assertEqual(record["assigned_agent_id"], "claude-reviewer")  # history kept
+        self.assertEqual(record["result"], {"cancelled_by": "human:test", "reason": "scope changed; password=[redacted]"})
+        with self.assertRaises(ConflictError):
+            self.store.complete_task(claimed["id"], "claude-reviewer", result={"late": True})
+        with self.assertRaises(ConflictError):
+            self.store.claim_task(open_task["id"], "claude-reviewer")
+        with self.assertRaises(ConflictError):
+            self.store.cancel_task(claimed["id"], "human:test")  # already cancelled
+        with self.assertRaises(NotFound):
+            self.store.cancel_task("tsk_missing", "human:test")
+        kinds = [e["kind"] for e in self.store.events(limit=100)]
+        self.assertEqual(kinds.count("task.cancelled"), 2)
+        self.assertEqual(self.store.status()["tasks"]["cancelled"], 2)
+
+    def test_cancel_dead_letters_queued_task_messages_but_keeps_read_ones(self) -> None:
+        # Review finding: a cancelled task left its queued task message
+        # behind, so `bus status` kept asking for a turn nobody should start.
+        task = self.store.create_task(title="doomed", created_by="codex-architect")
+        other = self.store.create_task(title="alive", created_by="codex-architect")
+        queued = self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": task["id"]})
+        unrelated = self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": other["id"]})
+        read = self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": task["id"]})
+        read_delivery = self.store.inbox("claude-reviewer")["items"][-1]["delivery_id"]
+        self.store.ack_delivery(read_delivery, "claude-reviewer")
+        self.store.cancel_task(task["id"], "human:test")
+        states = {i["message_id"]: i["delivery_state"] for i in self.store.inbox("claude-reviewer", states=("queued", "acknowledged", "dead_letter"))["items"]}
+        self.assertEqual(states[queued["id"]], "dead_letter")
+        self.assertEqual(states[unrelated["id"]], "queued")
+        self.assertEqual(states[read["id"]], "acknowledged")
+        self.assertEqual(self.store.status()["queued_deliveries"], 1)  # only the unrelated task still asks for a turn
+        event = next(e for e in self.store.events(limit=100) if e["kind"] == "task.cancelled")
+        self.assertEqual(len(event["payload"]["dead_lettered"]), 1)
+        self.assertEqual(self.store.complete_delivery(read_delivery, "claude-reviewer")["state"], "completed")
+
+    def test_completed_tasks_cannot_be_cancelled(self) -> None:
+        task = self.store.create_task(title="done", created_by="codex-architect")
+        self.store.claim_task(task["id"], "claude-reviewer")
+        self.store.complete_task(task["id"], "claude-reviewer")
+        with self.assertRaises(ConflictError):
+            self.store.cancel_task(task["id"], "human:test")
+
+
 if __name__ == "__main__":
     unittest.main()

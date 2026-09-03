@@ -127,3 +127,35 @@ class CrashCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeAndApprovalCrashes(CrashCase):
+    """M3 transitions are as atomic as the M1 ones."""
+
+    def test_bind_worktree_before_and_after_commit(self) -> None:
+        from tests.fixtures import make_repo
+
+        repo = make_repo(Path(self._tmp.name) / "repo")
+        self.assert_killed(run_child(self.db, "bind_worktree", "before_commit:bind_worktree", "worker", repo))
+        with self.reopen() as store:
+            self.assertEqual(store.counts()["worktrees"], 0)
+        self.assert_killed(run_child(self.db, "bind_worktree", "after_commit:bind_worktree", "worker", repo))
+        with self.reopen() as store:
+            self.assertEqual(store.get_worktree("worker")["path"], repo)
+            self.assertEqual(store.counts()["worktrees"], 1)
+
+    def test_consume_approval_before_and_after_commit(self) -> None:
+        from luciazero_agentd import ApprovalRefused
+
+        with Store.open(self.db) as store:
+            task = store.create_task(title="crash approval", created_by="sender")
+            store.claim_task(task["id"], "worker")
+            _, nonce = store.grant_approval(task["id"], "delete", granted_by="human:test")
+        self.assert_killed(run_child(self.db, "consume_approval", "before_commit:consume_approval", task["id"], "delete", nonce, "worker"))
+        with self.reopen() as store:
+            self.assertEqual(len(store.pending_approvals()), 1)  # still unused after the crash
+        self.assert_killed(run_child(self.db, "consume_approval", "after_commit:consume_approval", task["id"], "delete", nonce, "worker"))
+        with self.reopen() as store:
+            self.assertEqual(store.pending_approvals(), [])
+            with self.assertRaises(ApprovalRefused):
+                store.consume_approval(task["id"], "delete", nonce, "worker")

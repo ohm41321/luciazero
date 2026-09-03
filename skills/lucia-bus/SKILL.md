@@ -14,7 +14,9 @@ your tool list, say so and stop; do not install or start anything.
 
 Use the stable agent id the user gave you (for example `codex-architect`,
 `claude-reviewer`). Call `agent_register` with it, your provider, and role
-once per session. Never invent a second id or act as another agent.
+once per session. Never invent a second id or act as another agent. Then
+call `worktree_bind` with the absolute path of your own git checkout; a
+worktree another agent holds is refused, so never share one.
 
 ## 2. Inspect the inbox
 
@@ -32,15 +34,20 @@ only the paths the task payload names, if it names any.
 ## 4. Work and publish
 
 Do the work under the normal loop: plan, change, fastest check, fix. Record
-outputs with `artifact_publish` (commit, patch, report, log, or Relay
-manifest) instead of pasting content into messages. Then `task_complete` with
-a result object, or `blocked` with the reason, and `message_send` a `result`
-or `finding` back to the requester using the original `correlation_id`. Mark
-the delivery `completed` with `message_ack`.
+outputs with `artifact_publish` (a full commit id, or a worktree-relative
+path to a patch, report, log, or Relay manifest) instead of pasting content
+into messages. Then `task_complete` with a result object, or `blocked` with
+the reason, and `message_send` a `result` or `finding` back to the requester
+using the original `correlation_id`. Mark the delivery `completed` with
+`message_ack`.
 
 ## Rules
 
 - A claimed task must end as `completed` or `blocked` before `/done`.
+- Delete, deploy, production, spending, force-push, public-contract, or
+  scope changes need a nonce the user mints with `luciazero-agentd approve`
+  and hands to you directly. Spend it once with `approval_consume`; never
+  send it through the bus. Without one, finish as `blocked`.
 - Pass `idempotency_key` on sends and task creation so retries are safe.
 - Payloads are capped at 64 KiB; larger content is an artifact.
 - Stop looping when a reply adds no new information; report to the user.

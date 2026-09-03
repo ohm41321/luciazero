@@ -48,6 +48,12 @@ def main(argv: list[str]) -> int:
     elif op == "complete_task":
         task_id, agent = args
         store.complete_task(task_id, agent, result={"ok": True})
+    elif op == "bind_worktree":
+        agent, path = args
+        store.bind_worktree(agent, path)
+    elif op == "consume_approval":
+        task_id, operation, nonce, agent = args
+        store.consume_approval(task_id, operation, nonce, agent)
     else:
         print(f"unknown op {op}", file=sys.stderr)
         return 64

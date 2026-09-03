@@ -11,6 +11,7 @@ from pathlib import Path
 
 from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, StoreError, ValidationError
 from luciazero_agentd.migrations import LATEST_VERSION
+from tests.fixtures import git, make_repo
 
 
 class StoreCase(unittest.TestCase):
@@ -244,6 +245,7 @@ class IdempotencyTests(StoreCase):
         again = self.store.create_task(title="review", created_by="codex-architect", idempotency_key="task-1")
         self.assertEqual(task["id"], again["id"])
         self.assertEqual(self.store.counts()["tasks"], 1)
+        self.store.bind_worktree("claude-reviewer", make_repo(Path(self._tmp.name) / "repo"))  # M3: publishing needs a worktree
         art = self.store.publish_artifact(kind="report", ref="reports/x.md", produced_by="claude-reviewer", task_id=task["id"], idempotency_key="art-1")
         again = self.store.publish_artifact(kind="report", ref="reports/x.md", produced_by="claude-reviewer", task_id=task["id"], idempotency_key="art-1")
         self.assertEqual(art["id"], again["id"])
@@ -329,8 +331,10 @@ class HistoryTests(StoreCase):
             self.store.publish_artifact(kind="binary", ref="x", produced_by="claude-reviewer")
         with self.assertRaises(ValidationError):
             self.store.publish_artifact(kind="commit", ref="abc", produced_by="claude-reviewer", sha256="nothex")
+        repo = make_repo(Path(self._tmp.name) / "repo")
+        self.store.bind_worktree("claude-reviewer", repo)
         with self.assertRaises(NotFound):
-            self.store.publish_artifact(kind="commit", ref="abc", produced_by="claude-reviewer", task_id="tsk_missing")
+            self.store.publish_artifact(kind="commit", ref=git(repo, "rev-parse", "HEAD"), produced_by="claude-reviewer", task_id="tsk_missing")
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ published package.
 1. Node. Native SQLite needs either `better-sqlite3` (native build on
    install) or `node:sqlite` (Node 22.5+), which raises the engine floor above
    the core package.
-2. Python 3.11+ standard library only: `sqlite3`, `http.server`,
+2. Python 3.10+ standard library only: `sqlite3`, `http.server`,
    `subprocess`, `json`. No pip dependencies. FastMCP is not required; the
    spike already speaks the MCP JSON-RPC surface directly.
 3. Python with FastMCP. Adds a pip dependency and a second install path for
@@ -56,9 +56,9 @@ published package.
   the `/lucia-bus` skill and a thin `luciazero bus status` client that talks to
   the daemon over loopback HTTP with the capability token; neither requires the
   daemon to be installed to keep the core package working.
-- Language: option 2. `agentd` is Python 3.11+ with no third-party runtime
+- Language: option 2. `agentd` is Python 3.10+ with no third-party runtime
   dependencies. Distribution follows the existing `npx` pattern: an npm bin
-  shim checks for `python3 >= 3.11` and execs the daemon, so users get one
+  shim checks for `python3 >= 3.10` and execs the daemon, so users get one
   install mechanism for both packages.
 - The daemon and its runtime never enter the core `luciazero` package, and
   ordinary `npx luciazero` installation never starts a daemon or writes bus
@@ -69,7 +69,7 @@ published package.
   core package. Native Windows is not supported in v1. The bin shim locates
   the interpreter by trying `python3`, then `python`, then the Windows
   launcher `py -3` (WSL and future native support), and accepts the first one
-  reporting 3.11 or newer; otherwise it exits with a message naming the
+  reporting 3.10 or newer; otherwise it exits with a message naming the
   requirement and the interpreters it tried, without touching any state.
 
 ## Consequences
@@ -84,7 +84,7 @@ published package.
   shapes, notifications, and Streamable HTTP details. M2 carries a
   protocol-conformance gate for the shipped daemon; passing discovery in M0
   is not evidence for it.
-- Users without Python 3.11 cannot run the bus. This is acceptable for an
+- Users without Python 3.10 cannot run the bus. This is acceptable for an
   opt-in beta and is documented in M8.
 - Rollback: delete `agentd/`, the skill, the status client, and their
   catalog, installer, and README entries. No daemon, state directory, or MCP

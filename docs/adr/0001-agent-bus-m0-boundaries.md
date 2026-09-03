@@ -159,16 +159,14 @@ package and ordinary installation must not start one.
 - The offline spike is deterministic on a developer machine with both CLIs
   installed. It is not part of the CI gate because CI has no provider binaries.
 - A green offline spike proves protocol compatibility, not provider inference
-  or authentication. The live gate passed once on 2026-09-02 with
-  `codex-cli 0.152.1` and `2.1.258 (Claude Code)`, both providers returning
-  start and resume correlation tokens. M0 still has two open items that the
-  live probe does not cover: model-selected tool calls and bearer-token
-  delivery.
-- Live-mode evidence for M0 (2026-09-02, `codex-cli 0.152.1`,
-  `2.1.258 (Claude Code)`): each model called `spike_echo` through the
-  bearer-protected server and each session resumed with a fresh token. Cost
-  of the whole M0 live investigation was 15 provider turns, including one
-  turn wasted by running the probe before an edit had landed.
+  or authentication. The first live run on 2026-09-02 (`codex-cli 0.152.1`,
+  `2.1.258 (Claude Code)`) proved start and resume for both providers but
+  left two items open: model-selected tool calls and bearer-token delivery.
+- The final live run the same day closed both: each model called
+  `spike_echo` through the bearer-protected server and each session resumed
+  with a fresh token. M0 is complete. Cost of the whole M0 live
+  investigation was 15 provider turns, including one turn wasted by running
+  the probe before an edit had landed.
 - App Server remains the primary Codex adapter; `codex exec resume` stays a
   fallback for the dispatcher milestone.
 - The daemon cannot adopt already-open interactive sessions automatically.

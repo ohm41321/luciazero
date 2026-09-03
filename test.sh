@@ -6,15 +6,16 @@
 # integrity for intermediate loops. The default/`--full` continues through
 # eval, packaging, and sandboxed install cycles for both harnesses.
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
-# the provider CLIs). `--agent-bus-store` runs only the M1/M2 daemon suite.
+# the provider CLIs). `--agent-bus-store` runs only the M1-M3 daemon suite.
 # `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
+# `--agent-bus-security` runs only the M3 safety fixtures.
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security]" >&2
   exit 64
 fi
 case "${1:-}" in
@@ -23,7 +24,8 @@ case "${1:-}" in
   --agent-bus-spike) TIER=agent-bus-spike ;;
   --agent-bus-store) TIER=agent-bus-store ;;
   --agent-bus-mcp) TIER=agent-bus-mcp ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp]" >&2; exit 64 ;;
+  --agent-bus-security) TIER=agent-bus-security ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -47,7 +49,7 @@ agent_bus_store() {
   (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
     || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
   rm -f "${ROOT}/agentd/.last-store-run.log"
-  echo "ok  agent bus M1/M2 daemon suite (store, crash transitions, MCP conformance, daemon CLI)"
+  echo "ok  agent bus M1-M3 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures)"
 
   # `luciazero bus status` (Node, core package) against a real daemon on a
   # throwaway state directory: proves the human-facing queue view end to end
@@ -82,7 +84,20 @@ agent_bus_store() {
 if [ "${TIER}" = agent-bus-store ]; then
   agent_bus_store
   echo
-  echo "PASS  agent bus M1/M2 daemon gate green"
+  echo "PASS  agent bus M1-M3 daemon gate green"
+  exit 0
+fi
+
+# M3 exit gate on its own: worktree isolation, stale-identity refusal,
+# approval provenance, path containment, secret redaction, bounded input.
+# The same module also runs inside agent_bus_store, so --fast covers it.
+if [ "${TIER}" = agent-bus-security ]; then
+  (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_security >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
+    || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M3 security suite"; }
+  rm -f "${ROOT}/agentd/.last-store-run.log"
+  echo "ok  agent bus M3 security fixtures (worktree isolation, stale identity, approval provenance, path containment, redaction, bounded input)"
+  echo
+  echo "PASS  agent bus M3 security gate green"
   exit 0
 fi
 

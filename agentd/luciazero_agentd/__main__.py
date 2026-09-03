@@ -3,11 +3,15 @@
 serve          run the daemon in the foreground (writes endpoint.json + token)
 status         print what is waiting on whom, via the running daemon
 client-config  print the exact mcp-add commands for Claude Code and Codex CLI
+approve        grant one single-use approval nonce for a sensitive operation
+               (interactive terminal only; writes the store directly, never
+               through the agent-facing MCP endpoint)
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -38,10 +42,47 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import Store
+from .store import APPROVAL_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """The administrative approval channel (ADR 0003). Interactive only: a
+    piped or scripted invocation is refused so an agent cannot drive it. The
+    nonce is printed once; the store keeps only its hash."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print("approve: refusing non-interactive input; run this yourself in a terminal", file=sys.stderr)
+        return 2
+    state_dir = resolve_state_dir(args.state_dir)
+    path = db_path(state_dir)
+    if not path.exists():
+        print(f"approve: no bus database in {state_dir}", file=sys.stderr)
+        return 2
+    try:
+        with Store.open(path) as store:
+            store.migrate()
+            task = store.get_task(args.task_id)
+            print(f"task {clean(task['id'])} [{clean(task['state'])}] held by {clean(task['assigned_agent_id'] or 'nobody')}: {clean(task['title'])}")
+            try:
+                answer = input(f"Approve one {args.operation} for this task (single use, valid {args.ttl}s)? [y/N] ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes"):
+                print("not approved")
+                return 1
+            record, nonce = store.grant_approval(args.task_id, args.operation, granted_by=f"human:{getpass.getuser()}", ttl_seconds=args.ttl)
+    except NotFound as exc:
+        print(f"approve: {clean(exc)}", file=sys.stderr)
+        return 2
+    except StoreError as exc:
+        print(f"approve: {clean(exc)}", file=sys.stderr)
+        return 1
+    print(f"approval {record['id']} granted for {args.operation} on {clean(record['task_id'])} until {clean(record['expires_at'])}")
+    print("nonce (single use; hand it to the agent in its own session, never through the bus):")
+    print(nonce)
+    return 0
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -99,10 +140,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"agent bus: {clean(status['server']['name'])} {clean(status['server']['version'])} since {clean(status['server']['started_at'])}")
     print(f"queued deliveries: {status['queued_deliveries']}   tasks: " + ", ".join(f"{clean(k)} {v}" for k, v in status["tasks"].items()))
     for agent in status["agents"]:
-        print(f"  {clean(agent['id']):<24} {clean(agent['provider']):<7} {clean(agent['role']):<14} inbox {agent['queued_deliveries']:>3}  claimed {agent['claimed_tasks']:>3}  seen {clean(agent['last_seen_at'])}")
+        worktree = agent.get("worktree")
+        where = f"  on {clean(worktree['branch'])}{' (dirty)' if worktree.get('dirty') else ''}" if worktree else ""
+        print(f"  {clean(agent['id']):<24} {clean(agent['provider']):<7} {clean(agent['role']):<14} inbox {agent['queued_deliveries']:>3}  claimed {agent['claimed_tasks']:>3}  seen {clean(agent['last_seen_at'])}{where}")
     for task in status["open_tasks"]:
         who = clean(task["assigned_to"] or "unassigned")
-        print(f"  open task {clean(task['id'])}  p{task['priority']}  {who}: {clean(task['title'])}")
+        needs = "  needs worktree" if task.get("requires_worktree") else ""
+        print(f"  open task {clean(task['id'])}  p{task['priority']}  {who}: {clean(task['title'])}{needs}")
+    if status.get("approvals_pending", 0) > 0:
+        print(f"approvals pending: {int(status['approvals_pending'])} (unused nonces; each is bound to one task and operation)")
     if status["queued_deliveries"] > 0 or status["tasks"].get("open", 0) > 0:
         print("next: start the agent's session and run /lucia-bus (Codex: $lucia-bus)")
     return 0
@@ -139,6 +185,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     config = sub.add_parser("client-config", help="print mcp-add commands for both CLIs")
     config.add_argument("--state-dir", default=None)
     config.set_defaults(func=cmd_client_config)
+    approve = sub.add_parser("approve", help="grant one single-use approval nonce (interactive terminal only)")
+    approve.add_argument("task_id")
+    approve.add_argument("operation", choices=SENSITIVE_OPERATIONS)
+    approve.add_argument("--state-dir", default=None)
+    approve.add_argument("--ttl", type=int, default=APPROVAL_TTL_SECONDS, help=f"seconds until the nonce expires (default {APPROVAL_TTL_SECONDS})")
+    approve.set_defaults(func=cmd_approve)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

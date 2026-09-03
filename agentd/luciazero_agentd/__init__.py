@@ -1,7 +1,9 @@
 """Luciazero Agent Bus daemon package (companion to ``luciazero``).
 
-M1 scope: the durable SQLite store and its state machine. See
-``docs/agent-bus-roadmap.md`` and ``docs/adr/0002-agent-bus-packaging-and-language.md``.
+The durable SQLite store and state machine (M1), the Streamable HTTP MCP
+control plane (M2), and the worktree-isolation, approval-provenance and
+redaction rules (M3). See ``docs/agent-bus-roadmap.md`` and the ADRs under
+``docs/adr/``.
 """
 
 from __future__ import annotations
@@ -15,21 +17,31 @@ if sys.version_info < MIN_PYTHON:  # pragma: no cover - exercised only on old in
         f"found {sys.version.split()[0]}"
     )
 
-from .store import (  # noqa: E402 - version guard must run first
+from .redact import Redactor  # noqa: E402 - version guard must run first
+from .store import (  # noqa: E402
+    SENSITIVE_OPERATIONS,
+    ApprovalRefused,
     ConflictError,
     IdempotencyConflict,
     NotFound,
     Store,
     StoreError,
+    UnsafeReference,
     ValidationError,
+    WorktreeMismatch,
 )
 
 __all__ = [
+    "SENSITIVE_OPERATIONS",
+    "ApprovalRefused",
     "ConflictError",
     "IdempotencyConflict",
     "NotFound",
+    "Redactor",
     "Store",
     "StoreError",
+    "UnsafeReference",
     "ValidationError",
+    "WorktreeMismatch",
 ]
 __version__ = "0.1.0a0"

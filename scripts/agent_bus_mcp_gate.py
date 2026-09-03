@@ -5,7 +5,8 @@ through disposable homes, and one structured message travels through it.
 Offline (default): starts the daemon in-process on a temporary state
 directory, registers it in a throwaway CODEX_HOME and CLAUDE_CONFIG_DIR with
 the bearer token, checks each CLI initialises against it (Codex must also list
-the same 12 tools), then runs the pull-beta exchange through a raw MCP client.
+the same tool contract), then runs the pull-beta exchange through a raw MCP
+client, including the M3 worktree binding a publish now requires.
 
 Live (--live, opt-in, spends quota): the Codex model sends a message through
 message_send and the Claude model reads and acknowledges it through
@@ -108,13 +109,28 @@ def claude_discovery(claude: str, url: str, token: str, temporary: Path) -> dict
     return {"connected": True}
 
 
-def exchange(client: McpClient, db: str) -> dict[str, Any]:
+def make_repo(path: Path) -> str:
+    """A disposable git repository the reviewer binds as its worktree (M3)."""
+    env = dict(os.environ, GIT_AUTHOR_NAME="gate", GIT_AUTHOR_EMAIL="gate@example.invalid", GIT_COMMITTER_NAME="gate",
+               GIT_COMMITTER_EMAIL="gate@example.invalid", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "reports").mkdir()
+    (path / "reports" / "bus.md").write_text("# bus review\n", encoding="utf-8")
+    for args in (["init", "-q", "-b", "main", "."], ["add", "-A"], ["commit", "-q", "-m", "gate fixture"]):
+        spike.run(["git", *args], cwd=path, env=env)
+    return os.path.realpath(str(path))
+
+
+def exchange(client: McpClient, db: str, repo: str) -> dict[str, Any]:
     token = f"lz-m2-{uuid.uuid4().hex[:12]}"
     client.call("agent_register", {"agent_id": "codex-architect", "provider": "codex", "role": "architect"})
     client.call("agent_register", {"agent_id": "claude-reviewer", "provider": "claude", "role": "reviewer"})
+    bound = client.call("worktree_bind", {"agent_id": "claude-reviewer", "path": repo})
+    if bound.get("path") != repo or bound.get("branch") != "main":
+        raise GateError(f"worktree_bind recorded {bound!r}, expected {repo} on main")
     task = client.call("task_create", {"title": "review the bus", "created_by": "codex-architect", "idempotency_key": f"{token}-task"})
-    sent = client.call("message_send", {"sender": "codex-architect", "recipient": "claude-reviewer", "kind": "task", "payload": {"task_id": task["id"], "token": token}, "idempotency_key": f"{token}-msg"})
-    replay = client.call("message_send", {"sender": "codex-architect", "recipient": "claude-reviewer", "kind": "task", "payload": {"task_id": task["id"], "token": token}, "idempotency_key": f"{token}-msg"})
+    sent = client.call("message_send", {"sender": "codex-architect", "recipient": "claude-reviewer", "kind": "task", "payload": {"task_id": task["id"], "probe": token}, "idempotency_key": f"{token}-msg"})
+    replay = client.call("message_send", {"sender": "codex-architect", "recipient": "claude-reviewer", "kind": "task", "payload": {"task_id": task["id"], "probe": token}, "idempotency_key": f"{token}-msg"})
     if replay["id"] != sent["id"]:
         raise GateError("replayed message_send created a second message")
     inbox = client.call("message_inbox", {"agent_id": "claude-reviewer"})
@@ -200,7 +216,7 @@ def main() -> int:
             report["daemon_sessions"] = sessions
             client = McpClient(server.url, token)
             client.initialize()
-            report["exchange"] = exchange(client, db)
+            report["exchange"] = exchange(client, db, make_repo(temporary / "repo"))
             if args.live:
                 marker = None
                 if args.only in (None, "codex"):

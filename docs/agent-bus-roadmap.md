@@ -345,15 +345,57 @@ message through a temporary daemon. The daemon must pass the
 protocol-conformance suite, and the skill must pass the existing prompt and
 catalog checks in `--fast`.
 
-### M3 — Git isolation and safety
+### M3 — Git isolation and safety (complete 2026-09-03)
 
-- [ ] Record one worktree and branch per writing worker.
-- [ ] Record repository identity, base OID, current HEAD, and dirty state.
-- [ ] Refuse task claims and artifact publishes when the recorded worktree
+Known state on 2026-09-03 (closed after a third Codex pass returned no findings): ADR 0003 records the decisions. Schema version 2
+adds `worktrees`, `approvals`, and `tasks.requires_worktree`; the tool
+contract grows to 15 (`worktree_bind`, `worktree_get`, `approval_consume`)
+and both real CLIs still discover it (offline M2 gate re-run: 15 tools,
+`delivery.completed`). The daemon reads worktree identity with `git`
+itself, re-verifies it before every claim and publish, refuses shared
+toplevels, and contains artifact paths. Approvals are minted only by the
+interactive `luciazero-agentd approve` command (refuses piped stdin,
+exercised on a real pseudo-terminal), stored as a hash, bound to one task,
+operation, and nonce, single use, and scrubbed from any payload that tries
+to forward them. `luciazero_agentd.redact` scrubs payloads, titles,
+results, events, tool errors, and `/status`, with the daemon token as a
+literal. Two independent adversarial reviews (Codex and the `reviewer`
+agent) each found a major the first fixtures missed, both proven with live
+probes: `.GIT/config` published on a case-insensitive filesystem because
+only an exact-case leading `.git` was refused, and an approval nonce
+travelled through an artifact file name and file content, and through
+dict keys and id-shaped fields (`correlation_id`, `idempotency_key`,
+`agent_id`, capabilities) because only payload values were scrubbed. Fixed
+by refusing any `.git` component in any case at any depth plus an inode
+check against the git dir and common dir, refusing secret-shaped ids,
+refs, file contents and worktree paths, scrubbing JSON keys, roles and
+capabilities, and scrubbing tool results on the way out. Minor and nit
+findings also fixed: rebinding elsewhere while holding claimed worktree
+tasks is refused, the `key = value` heuristic now catches `access_token=`
+and `AWS_SECRET_ACCESS_KEY=` but no longer damages prose or code (value
+must carry a digit), URL userinfo matches any scheme case and an empty
+user, every regex is bounded (a 64 KiB hyphenated payload cost 2 s before),
+`commit` artifacts refuse a caller-supplied sha256, EOF at the approve
+prompt declines cleanly, and ADR 0003 no longer overclaims what the TTY
+check stops. A second Codex pass then proved one more major: id checks ran
+against the pattern-only redactor, so the daemon's own bearer token (no
+fixed shape) went into `correlation_id` and `idempotency_key` raw. Every id
+check now runs through the store's redactor, with a regression across all
+ten id channels and through the daemon itself. Decision on the residual
+risk it raised: any value after `Authorization: Bearer` is caught, a bare
+`Bearer` value needs a digit, and the all-letter bare case is an accepted,
+documented false negative. The daemon suite is now 104 tests; the M3
+fixtures also run on their own under `--agent-bus-security`.
+
+- [x] Record one worktree and branch per writing worker.
+- [x] Record repository identity, base OID, current HEAD, and dirty state.
+- [x] Refuse task claims and artifact publishes when the recorded worktree
   identity no longer matches.
-- [ ] Require user approval for delete, deploy, production access, spending,
-  force-push, public-contract changes, and scope expansion.
-- [ ] Implement the approval provenance contract:
+- [x] Require user approval for delete, deploy, production access, spending,
+  force-push, public-contract changes, and scope expansion (fixed set
+  `SENSITIVE_OPERATIONS`; the `/lucia-bus` skill ends without one as
+  `blocked`).
+- [x] Implement the approval provenance contract:
   - No MCP tool can create an approval.
   - An agent `decision` message is a recommendation only.
   - An approval is bound to one task, one operation, and one nonce; it cannot
@@ -362,18 +404,25 @@ catalog checks in `--fast`.
     consent instead of proceeding on peer input.
   - The local approval CLI is interactive, refuses non-TTY input, and uses a
     separate administrative channel, not the agent-facing MCP endpoint.
-- [ ] State the threat model: v1 defends against cooperative-agent mistakes.
+- [x] State the threat model: v1 defends against cooperative-agent mistakes.
   It does not defend against a malicious local process running as the same
-  OS user, which can reach the same files and CLI.
-- [ ] Redact secrets from messages, events, errors, and provider output.
-- [ ] Refuse unsafe artifact paths, symlinks, oversized payloads, and
+  OS user, which can reach the same files and CLI. (ADR 0003.)
+- [x] Redact secrets from messages, events, errors, and provider output
+  (provider output: the M6 adapters must route through the same scrubber;
+  recorded as an M6 item).
+- [x] Refuse unsafe artifact paths, symlinks, oversized payloads, and
   credential-bearing repository URLs.
-- [ ] Threat-model prompt injection through messages and artifacts.
+- [x] Threat-model prompt injection through messages and artifacts (ADR
+  0003; mechanical guarantees plus skill guidance).
+- [x] Resolve the independent adversarial review findings (Codex: 2 major,
+  2 minor on ADR 0001/0002 wording; `reviewer` agent: 1 major, 3 minor,
+  5 nits; all fixed with regression tests).
 
 Exit gate:
 
 ```bash
 ./test.sh --agent-bus-security
+./test.sh --fast
 ```
 
 Security fixtures must prove cross-worktree isolation, stale-identity refusal,
@@ -451,7 +500,10 @@ reject a cycle, stop an infinite reply loop, and preserve artifact provenance.
 - [ ] Implement the Codex App Server adapter.
 - [ ] Add `codex exec resume` as a tested fallback.
 - [ ] Implement the Claude print-mode resume adapter.
-- [ ] Stream provider output into bounded run logs.
+- [ ] Stream provider output into bounded run logs, routed through
+  `luciazero_agentd.redact.Redactor` with the daemon token as a literal
+  before anything is written (ADR 0003: provider output is in the redaction
+  contract, and no adapter exists before this milestone).
 - [ ] Add lease acquisition, renewal, expiry, and generation fencing on the
   columns reserved in M1.
 - [ ] Renew the session lease only while the owned process is alive.
@@ -559,9 +611,9 @@ Items marked (M6+) apply only once managed dispatch exists.
 
 ## Open decisions
 
-- Can Codex's and Claude's MCP client configuration attach the capability
-  bearer token to Streamable HTTP requests at all? Tracked as an M0 checklist
-  item; see ADR 0001, Transports.
+- Resolved in M0 (2026-09-02): both CLIs attach the capability bearer token
+  to Streamable HTTP requests; see ADR 0001, Transports, for the exact
+  configuration surface each one uses.
 - Which artifact formats should be first-class beyond commits and Lucia Relay?
 - When should multi-machine delivery graduate from Relay references to a
   networked bus backend?

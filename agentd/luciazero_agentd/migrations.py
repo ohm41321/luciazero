@@ -148,8 +148,43 @@ CREATE TABLE idempotency (
 );
 """
 
+# M3: one worktree per writing worker, and human approvals that no MCP tool
+# can create. The nonce is stored only as a hash; the plain nonce is shown
+# once on the approver's terminal and consumed once by the claim holder.
+SCHEMA_V2 = """
+ALTER TABLE tasks ADD COLUMN requires_worktree INTEGER NOT NULL DEFAULT 0 CHECK (requires_worktree IN (0, 1));
+
+CREATE TABLE worktrees (
+    id            TEXT PRIMARY KEY,
+    agent_id      TEXT NOT NULL UNIQUE REFERENCES agents(id),
+    repo_id       TEXT NOT NULL,
+    path          TEXT NOT NULL UNIQUE,
+    branch        TEXT NOT NULL,
+    base_oid      TEXT NOT NULL,
+    head_oid      TEXT NOT NULL,
+    dirty         INTEGER NOT NULL CHECK (dirty IN (0, 1)),
+    recorded_at   TEXT NOT NULL,
+    verified_at   TEXT NOT NULL
+);
+
+CREATE TABLE approvals (
+    id           TEXT PRIMARY KEY,
+    task_id      TEXT NOT NULL REFERENCES tasks(id),
+    operation    TEXT NOT NULL CHECK (operation IN (
+                     'delete', 'deploy', 'production', 'spend', 'force_push', 'public_contract', 'scope_expansion')),
+    nonce_hash   TEXT NOT NULL UNIQUE,
+    granted_by   TEXT NOT NULL,
+    granted_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    consumed_by  TEXT REFERENCES agents(id),
+    consumed_at  TEXT
+);
+CREATE INDEX approvals_task ON approvals (task_id, operation);
+"""
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
+    (2, SCHEMA_V2),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

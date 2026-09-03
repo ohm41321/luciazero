@@ -60,13 +60,19 @@ async function status(json) {
   console.log(`agent bus: ${clean(body.server.name)} ${clean(body.server.version)} since ${clean(body.server.started_at)}`);
   console.log(`queued deliveries: ${Number(body.queued_deliveries)}   tasks: ${tasks}`);
   for (const agent of body.agents) {
+    const wt = agent.worktree;
+    const where = wt ? `  on ${clean(wt.branch)}${wt.dirty ? " (dirty)" : ""}` : "";
     console.log(
       `  ${clean(agent.id).padEnd(24)} ${clean(agent.provider).padEnd(7)} ${clean(agent.role).padEnd(14)} ` +
-      `inbox ${String(Number(agent.queued_deliveries)).padStart(3)}  claimed ${String(Number(agent.claimed_tasks)).padStart(3)}  seen ${clean(agent.last_seen_at)}`
+      `inbox ${String(Number(agent.queued_deliveries)).padStart(3)}  claimed ${String(Number(agent.claimed_tasks)).padStart(3)}  seen ${clean(agent.last_seen_at)}${where}`
     );
   }
   for (const task of body.open_tasks) {
-    console.log(`  open task ${clean(task.id)}  p${Number(task.priority)}  ${clean(task.assigned_to || "unassigned")}: ${clean(task.title)}`);
+    const needs = task.requires_worktree ? "  needs worktree" : "";
+    console.log(`  open task ${clean(task.id)}  p${Number(task.priority)}  ${clean(task.assigned_to || "unassigned")}: ${clean(task.title)}${needs}`);
+  }
+  if (Number(body.approvals_pending) > 0) {
+    console.log(`approvals pending: ${Number(body.approvals_pending)} (unused nonces; each is bound to one task and operation)`);
   }
   if (body.queued_deliveries > 0 || body.tasks.open > 0) {
     console.log("next: start the agent's session and run /lucia-bus (Codex: $lucia-bus)");

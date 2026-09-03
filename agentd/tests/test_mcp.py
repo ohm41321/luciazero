@@ -20,6 +20,7 @@ from typing import Any, Optional
 from luciazero_agentd import Store
 from luciazero_agentd.server import HANDLER_TIMEOUT_SECONDS, MAX_BODY_BYTES, MAX_SESSIONS, PROTOCOL_VERSIONS, TOOLS, BusServer, tool_contract
 from luciazero_agentd.statedir import read_endpoint
+from tests.fixtures import make_repo
 
 TOKEN = "test-token-0123456789abcdef"
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -292,7 +293,8 @@ class ToolsContract(ServerCase):
             self.assertIn("readOnlyHint", tool["annotations"])
         names = {t["name"] for t in listed}
         expected = {"agent_register", "agent_list", "agent_heartbeat", "message_send", "message_inbox", "message_ack",
-                    "task_create", "task_list", "task_claim", "task_complete", "artifact_publish", "artifact_get"}
+                    "task_create", "task_list", "task_claim", "task_complete", "artifact_publish", "artifact_get",
+                    "worktree_bind", "worktree_get", "approval_consume"}
         self.assertEqual(names, expected)
 
     def test_full_pull_beta_flow_through_tools(self) -> None:
@@ -323,7 +325,14 @@ class ToolsContract(ServerCase):
         self.assertEqual(claimed["state"], "claimed")
         lost = c.call("task_claim", {"task_id": task["id"], "agent_id": "codex-architect"})
         self.assertTrue(lost["isError"])
-        art = c.call("artifact_publish", {"kind": "report", "ref": "reports/x.md", "produced_by": "claude-reviewer", "task_id": task["id"], "sha256": "a" * 64})["structuredContent"]
+        unbound = c.call("artifact_publish", {"kind": "report", "ref": "reports/x.md", "produced_by": "claude-reviewer", "task_id": task["id"]})
+        self.assertTrue(unbound["isError"])  # M3: publishing needs a bound worktree
+        repo = make_repo(Path(self._tmp.name) / "repo")
+        bound = c.call("worktree_bind", {"agent_id": "claude-reviewer", "path": repo})["structuredContent"]
+        self.assertEqual((bound["path"], bound["branch"], bound["dirty"]), (repo, "main", False))
+        self.assertEqual(c.call("worktree_get", {"agent_id": "claude-reviewer"})["structuredContent"]["path"], repo)
+        art = c.call("artifact_publish", {"kind": "report", "ref": "reports/x.md", "produced_by": "claude-reviewer", "task_id": task["id"]})["structuredContent"]
+        self.assertRegex(art["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(c.call("artifact_get", {"artifact_id": art["id"]})["structuredContent"]["ref"], "reports/x.md")
         done = c.call("task_complete", {"task_id": task["id"], "agent_id": "claude-reviewer", "result": {"artifact": art["id"]}, "outcome": "completed"})["structuredContent"]
         self.assertEqual(done["state"], "completed")

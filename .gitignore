@@ -15,3 +15,4 @@ LUCIA_RELAY_RECEIPT.json
 !eval/tasks/relay-transfer/gamed-stale/LUCIA_RELAY.json
 !eval/tasks/relay-transfer/gamed-stale/LUCIA_RELAY.md
 /*.jsonl
+agentd/.last-store-run.log

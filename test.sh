@@ -6,21 +6,22 @@
 # integrity for intermediate loops. The default/`--full` continues through
 # eval, packaging, and sandboxed install cycles for both harnesses.
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
-# the provider CLIs).
+# the provider CLIs). `--agent-bus-store` runs only the M1 store suite.
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store]" >&2
   exit 64
 fi
 case "${1:-}" in
   ""|--full) ;;
   --fast) TIER=fast ;;
   --agent-bus-spike) TIER=agent-bus-spike ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike]" >&2; exit 64 ;;
+  --agent-bus-store) TIER=agent-bus-store ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -31,6 +32,23 @@ skill_inventory() {
 
 if [ "${TIER}" = agent-bus-spike ]; then
   exec "${ROOT}/scripts/agent-bus-spike.sh"
+fi
+
+# M1 exit gate: migrations, atomic claims, idempotent replays, append-only
+# history, and kill-at-commit crash tests. Python only; no provider CLI.
+agent_bus_store() {
+  # No separate py_compile pass: importing the suite already proves syntax,
+  # and py_compile writes __pycache__ regardless of PYTHONDONTWRITEBYTECODE.
+  (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
+    || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
+  rm -f "${ROOT}/agentd/.last-store-run.log"
+  echo "ok  agent bus M1 store suite (store, crash transitions)"
+}
+if [ "${TIER}" = agent-bus-store ]; then
+  agent_bus_store
+  echo
+  echo "PASS  agent bus M1 store gate green"
+  exit 0
 fi
 
 # The hooks append a stats line to ${CLAUDE_CONFIG_DIR:-~/.claude}; no test is
@@ -76,6 +94,7 @@ echo "ok  shell syntax"
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
   "${ROOT}/scripts/agent_bus_spike.py" || fail "agent bus M0 Python syntax"
 echo "ok  agent bus M0 Python syntax"
+agent_bus_store
 
 # 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
 # macOS. Verified against a real 3.2: a here-document inside a command

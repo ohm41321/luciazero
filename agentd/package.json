@@ -1,0 +1,19 @@
+{
+  "name": "luciazero-agentd",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Local-first coordination daemon for Codex CLI and Claude Code CLI workers. Companion to luciazero; not published until the M8 release decision.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ohm41321/luciazero.git",
+    "directory": "agentd"
+  },
+  "author": { "name": "athit", "email": "athitfkm@gmail.com" },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -t ."
+  }
+}

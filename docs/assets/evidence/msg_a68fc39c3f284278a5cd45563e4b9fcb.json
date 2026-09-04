@@ -1,0 +1,282 @@
+{
+  "agents": [
+    "claude-implementer",
+    "codex-architect"
+  ],
+  "artifacts": [
+    {
+      "created_at": "2026-09-04T10:52:35.668453+00:00",
+      "id": "art_8a2409ec4cf442bdbb53657a298e9f4e",
+      "kind": "report",
+      "produced_by_agent_id": "claude-implementer",
+      "ref": "docs/agent-bus-roadmap.md",
+      "seq": 1,
+      "sha256": "cbb3ac8fa563793e1ae18cd91d05359b81f0c09033fc04f2db2532866e721a46",
+      "task_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "trust": "bound"
+    },
+    {
+      "created_at": "2026-09-04T10:52:41.464633+00:00",
+      "id": "art_7db22f01b9304f999d83340b87b75119",
+      "kind": "report",
+      "produced_by_agent_id": "claude-implementer",
+      "ref": "docs/adr/0007-agent-bus-managed-vertical-slice.md",
+      "seq": 2,
+      "sha256": "4608ee7075e71b8c7b59859b5fa49c59b8b6ea5978192bf25fa271fdce87ba5a",
+      "task_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "trust": "bound"
+    }
+  ],
+  "correlation_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+  "deliveries": [
+    {
+      "acknowledged_at": "2026-09-04T10:44:23.258081+00:00",
+      "acknowledged_by": "claude-implementer",
+      "attempts": 0,
+      "completed_at": "2026-09-04T10:53:26.739959+00:00",
+      "id": "dlv_f6a76a3c6a8b4b2a931462c707b5334d",
+      "max_attempts": 3,
+      "message_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "recipient_agent_id": "claude-implementer",
+      "seq": 1,
+      "state": "completed",
+      "updated_at": "2026-09-04T10:53:26.739959+00:00"
+    },
+    {
+      "acknowledged_at": null,
+      "acknowledged_by": null,
+      "attempts": 0,
+      "completed_at": null,
+      "id": "dlv_25d1d0ed10f84461af6fe4774cb9fc69",
+      "max_attempts": 3,
+      "message_id": "msg_90a65bc1530541e29aff3dcd515fa817",
+      "recipient_agent_id": "codex-architect",
+      "seq": 2,
+      "state": "queued",
+      "updated_at": "2026-09-04T10:53:22.189026+00:00"
+    }
+  ],
+  "events": [
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-04T10:42:15.630034+00:00",
+      "entity_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "entity_type": "task",
+      "kind": "task.created",
+      "payload": {
+        "assigned_to": "claude-implementer",
+        "budget": {},
+        "depends_on": [],
+        "redactions": 0,
+        "requires_worktree": false,
+        "state": "open",
+        "title": "M7 vertical slice design: several agents, several turns, recovery mid-flight",
+        "trust": "bound"
+      },
+      "seq": 7
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-04T10:42:22.924915+00:00",
+      "entity_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "entity_type": "message",
+      "kind": "message.sent",
+      "payload": {
+        "delivery_id": "dlv_f6a76a3c6a8b4b2a931462c707b5334d",
+        "hop_count": 0,
+        "kind": "task",
+        "recipient": "claude-implementer",
+        "redactions": 0,
+        "trust": "bound"
+      },
+      "seq": 8
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:44:23.258224+00:00",
+      "entity_id": "dlv_f6a76a3c6a8b4b2a931462c707b5334d",
+      "entity_type": "delivery",
+      "kind": "delivery.acknowledged",
+      "payload": {
+        "from": [
+          "queued",
+          "dispatched",
+          "processing"
+        ],
+        "to": "acknowledged",
+        "trust": "bound"
+      },
+      "seq": 11
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:44:25.013453+00:00",
+      "entity_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "entity_type": "task",
+      "kind": "task.claimed",
+      "payload": {
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-implementer"
+      },
+      "seq": 12
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:52:35.668903+00:00",
+      "entity_id": "art_8a2409ec4cf442bdbb53657a298e9f4e",
+      "entity_type": "artifact",
+      "kind": "artifact.published",
+      "payload": {
+        "bytes": 64191,
+        "kind": "report",
+        "task_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-implementer"
+      },
+      "seq": 13
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:52:41.464864+00:00",
+      "entity_id": "art_7db22f01b9304f999d83340b87b75119",
+      "entity_type": "artifact",
+      "kind": "artifact.published",
+      "payload": {
+        "bytes": 14700,
+        "kind": "report",
+        "task_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-implementer"
+      },
+      "seq": 14
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:53:08.888233+00:00",
+      "entity_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "entity_type": "task",
+      "kind": "task.completed",
+      "payload": {
+        "artifacts": [
+          "art_8a2409ec4cf442bdbb53657a298e9f4e",
+          "art_7db22f01b9304f999d83340b87b75119"
+        ],
+        "trust": "bound"
+      },
+      "seq": 15
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:53:22.189625+00:00",
+      "entity_id": "msg_90a65bc1530541e29aff3dcd515fa817",
+      "entity_type": "message",
+      "kind": "message.sent",
+      "payload": {
+        "delivery_id": "dlv_25d1d0ed10f84461af6fe4774cb9fc69",
+        "hop_count": 1,
+        "kind": "result",
+        "recipient": "codex-architect",
+        "redactions": 0,
+        "trust": "bound"
+      },
+      "seq": 16
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-04T10:53:26.740203+00:00",
+      "entity_id": "dlv_f6a76a3c6a8b4b2a931462c707b5334d",
+      "entity_type": "delivery",
+      "kind": "delivery.completed",
+      "payload": {
+        "from": [
+          "acknowledged"
+        ],
+        "to": "completed",
+        "trust": "bound"
+      },
+      "seq": 17
+    }
+  ],
+  "messages": [
+    {
+      "correlation_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "created_at": "2026-09-04T10:42:22.924320+00:00",
+      "hop_count": 0,
+      "id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "kind": "task",
+      "payload": {
+        "task_id": "tsk_e6e62c6a8e504477952c900994daeaba"
+      },
+      "recipient_agent_id": "claude-implementer",
+      "reply_to": null,
+      "sender_agent_id": "codex-architect",
+      "seq": 1
+    },
+    {
+      "correlation_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "created_at": "2026-09-04T10:53:22.189026+00:00",
+      "hop_count": 1,
+      "id": "msg_90a65bc1530541e29aff3dcd515fa817",
+      "kind": "result",
+      "payload": {
+        "artifacts": [
+          "art_8a2409ec4cf442bdbb53657a298e9f4e",
+          "art_7db22f01b9304f999d83340b87b75119"
+        ],
+        "files": [
+          "docs/agent-bus-roadmap.md",
+          "docs/adr/0007-agent-bus-managed-vertical-slice.md"
+        ],
+        "outcome": "completed",
+        "precondition": "Design only, no code changed and no quota spent. The live slice should not run until the M4 decision gate is resolved in docs/agent-bus-decision-log.md, which states M7 has no baseline until then. Your call, not mine.",
+        "summary": "M7 section rewritten and ADR 0007 drafted. Two gaps in the shipped code shaped the design: (1) a task made claimable by _settle_dependents queues no delivery and the dispatcher scans deliveries only, so the M5 graph is inert under managed dispatch; (2) spent.turns is counted in send_message, so a dispatched turn that sends nothing costs the task nothing. Fixes: a claimable task assigned to an enabled managed worker queues its own task delivery in the same transaction, scoped to enrolled workers so the M4 gate and pull-beta records are unchanged; begin_turn counts a dispatched turn while send_message keeps counting only an undispatched one; a task created inside a dispatched turn inherits the unspent remainder of its parent budget. Resume: bus records are the worker's memory, provider-session resume is an optimisation, and the gate rotates the session mid-flow to prove it. Recovery: the dispatcher is killed at every seam of the flow, not only inside a turn, and every managed step is idempotent on <delivery_id>:<step>. Exit gate is offline by construction (./test.sh --agent-bus-managed against rehearsal workers, in --full); the live six-turn run stays behind --spend-quota with --rehearse first.",
+        "task_id": "tsk_e6e62c6a8e504477952c900994daeaba",
+        "verification": "./test.sh --fast -> PASS fast checks green"
+      },
+      "recipient_agent_id": "codex-architect",
+      "reply_to": "msg_a68fc39c3f284278a5cd45563e4b9fcb",
+      "sender_agent_id": "claude-implementer",
+      "seq": 2
+    }
+  ],
+  "runs": [],
+  "tasks": [
+    {
+      "assigned_agent_id": "claude-implementer",
+      "budget": {},
+      "claimed_at": "2026-09-04T10:44:25.013304+00:00",
+      "completed_at": "2026-09-04T10:53:08.887837+00:00",
+      "created_at": "2026-09-04T10:42:15.629399+00:00",
+      "created_by_agent_id": "codex-architect",
+      "deadline_at": null,
+      "depends_on": "[]",
+      "id": "tsk_e6e62c6a8e504477952c900994daeaba",
+      "payload": {
+        "scope": "\u0e40\u0e02\u0e35\u0e22\u0e19 section M7 \u0e43\u0e19 docs/agent-bus-roadmap.md \u0e41\u0e25\u0e30 ADR \u0e23\u0e48\u0e32\u0e07\u0e43\u0e19 docs/adr/ \u0e04\u0e23\u0e2d\u0e1a multi-agent handoff, resume \u0e02\u0e49\u0e32\u0e21 turn, recovery \u0e15\u0e2d\u0e19 dispatcher \u0e15\u0e32\u0e22\u0e01\u0e25\u0e32\u0e07 flow, exit gate \u0e17\u0e35\u0e48\u0e1e\u0e34\u0e2a\u0e39\u0e08\u0e19\u0e4c\u0e44\u0e14\u0e49\u0e2d\u0e2d\u0e1f\u0e44\u0e25\u0e19\u0e4c, \u0e41\u0e25\u0e30\u0e40\u0e07\u0e37\u0e48\u0e2d\u0e19\u0e44\u0e02 live \u0e17\u0e35\u0e48\u0e15\u0e49\u0e2d\u0e07\u0e02\u0e2d\u0e2d\u0e19\u0e38\u0e21\u0e31\u0e15\u0e34 quota"
+      },
+      "priority": 0,
+      "requires_worktree": 0,
+      "result": "{\"artifacts\":[\"art_8a2409ec4cf442bdbb53657a298e9f4e\",\"art_7db22f01b9304f999d83340b87b75119\"],\"decisions\":[\"A task that becomes claimable queues its own task delivery to an enabled managed worker, in the same transaction, idempotent per readiness, scoped to enrolled workers so pull-beta records and the M4 gate are unchanged.\",\"Bus records are the worker's memory; provider-session resume stays an optimisation and the gate proves it by rotating the session mid-flow.\",\"Every side-effecting step of a managed turn is idempotent, keyed <delivery_id>:<step>; a retried turn reads what it already did rather than remembering it.\",\"begin_turn counts a dispatched turn against the task budget; send_message keeps counting only an undispatched one, so no turn is counted twice.\",\"A task created inside a dispatched turn inherits the unspent remainder of its parent budget: a chain may subdivide what it was given, never enlarge it.\",\"A stalled flow is a query over the graph reported by bus status, not a repair; restarting a flow stays the human channel.\",\"Exit gate is offline by construction (./test.sh --agent-bus-managed against rehearsal workers, in --full); the live six-turn run is opt-in behind --spend-quota with --rehearse first.\"],\"files\":[\"docs/agent-bus-roadmap.md\",\"docs/adr/0007-agent-bus-managed-vertical-slice.md\"],\"precondition\":\"Not started, and the live side should not start until the M4 decision gate is resolved in docs/agent-bus-decision-log.md, which states M7 has no baseline until then. Design only: no code changed, no quota spent.\",\"summary\":\"M7 design written: roadmap section rewritten and ADR 0007 drafted, covering multi-agent handoff, cross-turn resume, mid-flow dispatcher recovery, an offline-provable exit gate, and the conditions the live run needs.\",\"two_gaps_found_in_code\":[\"A task made claimable by _settle_dependents queues no delivery, and the dispatcher scans deliveries only, so the M5 task graph is inert under managed dispatch: the flow cannot chain without a model choosing to send a message.\",\"spent.turns is incremented in send_message, not when a turn starts, so a dispatched turn that sends nothing costs the task nothing; the one budget dimension that could stop a runaway machine loop is blind to the machine.\"],\"verification\":\"./test.sh --fast -> PASS fast checks green (docs-only change; no bus tier exercises these files). Structural check: heading order intact, 28 balanced fences, every new line within the file's 80-column wrap.\"}",
+      "seq": 1,
+      "spent": "{\"cost_usd\": 0.0, \"tokens\": 0, \"turns\": 1}",
+      "state": "completed",
+      "title": "M7 vertical slice design: several agents, several turns, recovery mid-flight",
+      "updated_at": "2026-09-04T10:53:08.887837+00:00",
+      "version": 3
+    }
+  ],
+  "worktrees": [
+    {
+      "agent_id": "claude-implementer",
+      "base_oid": "658a9d8115e84ee53f495f5b251c8c54ca2635a9",
+      "branch": "m7-design",
+      "dirty": 1,
+      "head_oid": "658a9d8115e84ee53f495f5b251c8c54ca2635a9",
+      "id": "wt_238c81ba0a50455f9f81d77476f564aa",
+      "path": "/Users/athitfkm/Code/Personal/wt-implementer",
+      "recorded_at": "2026-09-04T10:44:12.232636+00:00",
+      "repo_id": "c08635e4269925407a51a8c7f30e426f89ff018a",
+      "verified_at": "2026-09-04T10:52:41.464723+00:00"
+    }
+  ]
+}

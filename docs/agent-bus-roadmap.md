@@ -969,8 +969,15 @@ themselves, transcript rendered by the watcher's own renderer.
   `dispatch --stop-when-idle` ends the run when the conversation does.
 - [x] The offline worker learned `--reply-to`, so a rehearsal is a genuine
   two-way exchange rather than one turn talking to a stub.
-- [ ] The live version. It needs the user's explicit quota approval and has
-  not been run.
+- [x] The live version, approved and run on 2026-09-04:
+  `./scripts/agent-bus-chat.sh --spend-quota --turns 4 --keep` →
+  `PASS agent bus autonomous chat (4 turn(s), 4 agent message(s))`, four
+  completed turns, no failed turn, correlation
+  `msg_297bdf0309d745168c990b8912609e16`, record set exported to
+  `docs/assets/evidence/`. Claude opened by proposing they split along write
+  access; Codex took implementation and asked for review from a published
+  patch artifact "so the handoff stays immutable"; both checked the task queue
+  independently and reported it empty. The dispatcher stopped at the cap.
 
 ### M7 — Managed-dispatch vertical slice
 

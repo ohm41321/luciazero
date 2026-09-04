@@ -21,7 +21,7 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 0 | **not met** |
+| Distinct real workflows on the pull beta, not the demo | 3 | 1 | **not met** |
 | Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 0 | **not met** |
 | Open M3 safety findings | 0 | 0 | met |
 
@@ -70,7 +70,17 @@ redaction contract over what it writes, and prints the ledger row filled in.
 
 | Workflow | Correlation ID | Started | Agents | Records | Turns | Record set |
 | --- | --- | --- | --- | --- | --- | --- |
-| _(none yet)_ | | | | | | |
+| M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
+
+The first row, and what it does not say. The work was real -- the M7 section of
+the roadmap and ADR 0007 were written by the implementer on the bus, from its
+own worktree, against a task the architect created there -- and the task
+reached `completed` with two artifacts. What it does not show is a closed
+loop: the implementer's `result` message is still `queued`, because the
+architect's session was closed before anyone opened it. The 120.334s on the
+one delivery that was opened is measured from the records, but nothing yet
+says whether that was the person being away from the keyboard or the model
+working, so it is not one of the two retros the gate asks for.
 
 **Counts as a real workflow**: work the user would have done anyway, done
 through the bus, with more than one agent taking part.
@@ -116,6 +126,23 @@ was removed. The gate now prints the correlation id of the turn it ran, and
 `--keep` leaves the state directory for the exporter, so a later run is
 auditable. `--rehearse` runs the identical gate against the offline worker for
 no quota, which is what proves the gate's own assertions before money is spent.
+
+### M7b — two agents answering each other, live (2026-09-04)
+
+`./scripts/agent-bus-chat.sh --spend-quota --turns 4 --keep`, approved by the
+user beforehand: `PASS agent bus autonomous chat (4 turn(s), 4 agent
+message(s))`, correlation `msg_297bdf0309d745168c990b8912609e16`, record set
+kept in `docs/assets/evidence/`. Four dispatched turns, four completed, no
+failed turn, the dispatcher stopping at its own cap. Claude and Codex agreed a
+split of work between themselves — implementation on one side, review from a
+published artifact on the other — and each verified the task queue
+independently rather than taking the other's word for it.
+
+It is not a ledger row. The gate asks for work the user would have done
+anyway; this was a demonstration of the mechanism, and the roadmap excludes
+demos by name. What it does prove is that the first record set in this
+repository whose waits are not a human's exists: `4 dispatched`, longest 58s,
+which is dispatcher latency rather than somebody being away from the keyboard.
 
 ### Offline gates standing green (2026-09-04)
 

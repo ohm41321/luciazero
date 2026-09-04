@@ -119,7 +119,7 @@ no quota, which is what proves the gate's own assertions before money is spent.
 
 ### Offline gates standing green (2026-09-04)
 
-`./test.sh` — 280 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
+`./test.sh` — 286 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
 with a fake provider, the M5 workflow gate, the M6 dispatch gate (dispatcher
 killed mid-turn and recovered), and the M3/M4.5 safety fixtures.
 
@@ -150,9 +150,12 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
 
 ## Carry-over, not claimed as done
 
-- **Kill-at-commit matrix for the new delivery transitions (M6).** The dispatch
-  gate kills the dispatcher mid-turn and recovers, but not at every commit
-  point in `dispatched` and `processing`.
+- ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed
+  2026-09-04: `agentd/tests/test_crash.py` kills the process at every commit
+  point of the dispatch transitions, including each of the three inside
+  recovery, and proves the next pass still reaches exactly one outcome with the
+  attempt counted once and no credential or lease left live. Made red first by
+  removing the credential revocation from recovery.
 - **The three workflows and two retros above.** Open by definition until the
   ledger has rows.
 

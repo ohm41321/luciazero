@@ -753,12 +753,10 @@ The bus stops being a queue somebody reads and becomes a thing that runs
 models. ADR 0006 states the constraint before the design: managed dispatch
 adds no path around terminal binding, identity, or approval provenance, and a
 task M5 stopped stays stopped. The dispatcher core, its records, the offline
-gate, both provider adapters, and the live smoke gate are done: on 2026-09-04
-a real `codex` turn and a real `claude` turn were started by the dispatcher and
-each did the whole bus procedure with its own bound session. One item is
-carried forward rather than claimed: the kill-at-commit matrix for the new
-delivery transitions (the gate kills the dispatcher mid-turn, but not at every
-commit point).
+gate, both provider adapters, the live smoke gate, and the kill-at-commit
+matrix are done: on 2026-09-04 a real `codex` turn and a real `claude` turn
+were started by the dispatcher and each did the whole bus procedure with its
+own bound session.
 
 - [x] Define one adapter contract for start, resume, cancel, status, and event
   streaming (`adapters.py`: `TurnRequest`, `TurnResult`, `Adapter`, and
@@ -849,10 +847,21 @@ commit point).
   `actor_agent_id`, a column the events table does not have -- while the turn
   itself had completed the whole procedure. `--rehearse` exists because of
   that: a gate that costs money proves its own assertions first.
-- [ ] Test process crash and restart during every delivery transition,
-  including `dispatched` and `processing` (the gate kills the dispatcher
-  mid-turn; the kill-at-commit matrix for the new transitions is still to
-  come).
+- [x] Test process crash and restart during every delivery transition,
+  including `dispatched` and `processing`. `tests/test_crash.py` now kills the
+  process at each commit point of the dispatch transitions the way M1 did for
+  the pull beta: `begin_turn` (nothing before, the attempt and the run together
+  after), `finish_run`, `record_run_process`, `record_provider_session`,
+  `acquire_lease`, `release_lease`, `dead_letter_delivery`, and -- the one that
+  matters most -- every point inside recovery, which is three transactions
+  (release the lease, revoke the credential, settle the run) and so can be
+  interrupted half way. After a kill at any of those six points the next
+  recovery finishes the job: exactly one outcome, the attempt counted once, no
+  credential and no lease outliving the dispatcher, and running recovery again
+  changes nothing. The attempt limit still holds across crashes: a killed turn
+  costs one attempt, and the second one dead-letters. Made red first by
+  removing the credential revocation from recovery, which fails four of the six
+  points with `'active' != 'revoked'`.
 - [x] Independent adversarial review of the dispatcher core (two `reviewer`
   agents, semantics and security routes; 2 blockers, 3 majors, 1 minor, all
   fixed with regressions): counting the attempt and recording the run were two
@@ -875,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 280 tests, includes the dispatch and adapter suites
+./test.sh --agent-bus-store      # 286 tests, includes the dispatch and adapter suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```

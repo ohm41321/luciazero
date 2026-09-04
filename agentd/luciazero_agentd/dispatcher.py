@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import getpass
 import os
+import shutil
 import signal
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -54,6 +56,8 @@ PROMPT = (
     "blocked and say why.\n"
 )
 DEFAULT_POLL_SECONDS = 2.0
+# How long an orphaned provider gets to exit on SIGTERM before SIGKILL.
+TERMINATE_GRACE_SECONDS = 5.0
 # How much longer than the turn it covers a lease lives.
 LEASE_MARGIN_SECONDS = 60
 
@@ -80,6 +84,9 @@ class Dispatcher:
         self.state_dir = Path(state_dir)
         self.db_path = self.state_dir / "bus.sqlite3"
         self.log_dir = self.state_dir / "runs"
+        # One private directory per turn for whatever an adapter must write
+        # (Claude's MCP config carries the credential). It dies with the turn.
+        self.turn_dir = self.state_dir / "turns"
         self.lease_ttl_seconds = lease_ttl_seconds
         self._adapter_for = adapters or adapter_for
         self.prompt = prompt
@@ -113,7 +120,38 @@ class Dispatcher:
             recovered = store.recover_runs(alive=self._alive, by=self.holder)
         for run in recovered:
             self.stop_orphan(run)
+            self.clear_workspace(str(run["id"]))
+        self.sweep_workspaces()
         return recovered
+
+    def sweep_workspaces(self) -> list[str]:
+        """Turn directories with no live run behind them. Anything here was
+        written for a turn that is over, and may carry that turn's credential."""
+        if not self.turn_dir.is_dir():
+            return []
+        removed = []
+        with self.open_store() as store:
+            for entry in sorted(self.turn_dir.iterdir()):
+                # Only a real directory this dispatcher's own turns created: a
+                # symlink is never followed, and a name that is not a run this
+                # bus recorded is left alone rather than removed on a guess.
+                if entry.is_symlink() or not entry.is_dir():
+                    continue
+                try:
+                    run = store.get_run(entry.name)
+                except StoreError:
+                    continue
+                if run["state"] == "running":
+                    continue
+                shutil.rmtree(entry, ignore_errors=True)
+                removed.append(entry.name)
+        return removed
+
+    def clear_workspace(self, run_id: str) -> None:
+        """Remove a turn's private directory. Called when the turn ends and
+        again during recovery: a killed dispatcher skips its own cleanup, and
+        what it leaves behind holds a credential."""
+        shutil.rmtree(self.turn_dir / run_id, ignore_errors=True)
 
     def stop_orphan(self, run: dict[str, Any]) -> bool:
         """Terminate a provider left behind by a dispatcher that was killed.
@@ -125,10 +163,32 @@ class Dispatcher:
         # leaving an orphan whose credential is already revoked.
         if not pid or not started_at or not self._alive(int(pid), started_at):
             return False
+        return self.stop_group(int(pid), started_at)
+
+    def stop_group(self, pid: int, started_at: str) -> bool:
+        """Signal the orphan's whole process group, then make sure.
+
+        Review finding: a plain `SIGTERM` to the one recorded pid left exactly
+        what `start_new_session=True` exists to prevent -- the provider's own
+        children, still running, still spending. The group is signalled only
+        when the process leads its own group, which every provider this
+        dispatcher starts does; anything else is signalled alone, because a
+        process that joined somebody else's group is not ours to sweep."""
         try:
-            os.kill(int(pid), signal.SIGTERM)
-        except (OSError, ProcessLookupError):
+            group = os.getpgid(pid)
+        except OSError:
             return False
+        alone = group != pid
+        for sig, wait in ((signal.SIGTERM, TERMINATE_GRACE_SECONDS), (signal.SIGKILL, 0.0)):
+            try:
+                os.kill(pid, sig) if alone else os.killpg(group, sig)
+            except OSError:
+                return sig is signal.SIGKILL  # already gone by the second pass
+            deadline = time.monotonic() + wait
+            while time.monotonic() < deadline:
+                if not self._alive(pid, started_at):
+                    return True
+                time.sleep(0.05)
         return True
 
     # ----------------------------------------------------------------- pass
@@ -206,6 +266,11 @@ class Dispatcher:
                         delivery_id, agent_id=agent_id, lease_id=str(lease["id"]), generation=generation,
                         session_id=str(session["id"]), binding_id=str(binding["id"]),
                         max_attempts=int(worker["max_attempts"]),
+                        # The policy as it stood when the turn started: the
+                        # worker row can be re-enrolled while this runs, and an
+                        # audit must read what governed this turn, not what
+                        # somebody chose after it ended.
+                        approval_policy=str(worker["approval_policy"]),
                     )
                 except MootWork as exc:
                     store.dead_letter_delivery(delivery_id, by=self.holder, reason=str(exc))
@@ -277,14 +342,20 @@ class Dispatcher:
             adapter = self._adapter_for(provider)
         except KeyError:
             return TurnResult(ok=False, exit_state="no_adapter", error=f"no adapter ships for provider {provider!r}", permanent=True)
+        workspace = self.turn_dir / str(run["id"])
+        workspace.mkdir(parents=True, exist_ok=True)
+        os.chmod(workspace, 0o700)
         if self._in_flight is not None:
             self._in_flight["adapter"] = adapter
         log = RunLog(self.log_dir / f"{run['id']}.log", literals=(credential, self.token))
+        policy = str(run["approval_policy"] or worker["approval_policy"])
+        log.write(f"[dispatcher] run {run['id']} for {worker['agent_id']} on {provider} under approval policy {policy}\n")
         request = TurnRequest(
             agent_id=str(worker["agent_id"]), provider=provider, command=tuple(worker["command"]),
             cwd=str(worker["cwd"] or os.getcwd()), prompt=self.prompt.format(agent_id=worker["agent_id"]),
             credential=credential, url=self.url, timeout_seconds=int(worker["turn_timeout_seconds"]),
             log=log, provider_session_id=session["provider_session_id"],
+            workspace=workspace, approval_policy=policy,
         )
         def remember(pid: int) -> None:
             try:
@@ -300,6 +371,7 @@ class Dispatcher:
                 result = adapter.start(request)
         finally:
             ref = log.close()
+            self.clear_workspace(str(run["id"]))
             try:
                 store.set_run_output(str(run["id"]), ref)
             except StoreError:

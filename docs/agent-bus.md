@@ -240,10 +240,41 @@ the run's own credential as literals before anything is written.
 
 `bus status` names every managed worker and every turn in flight.
 
-Not yet shipped: the Codex and Claude adapters. The contract and the loop are
-here and the `other` provider (any command) runs today; a worker enrolled as
-`codex` or `claude` dead-letters its delivery with `no_adapter` until those
-land.
+Three adapters ship, one per provider:
+
+| provider | how a turn runs |
+| --- | --- |
+| `claude` | `claude -p [--resume ID] --mcp-config F --strict-mcp-config --allowedTools mcp__luciazero-bus --permission-mode M --output-format json PROMPT`. The credential is in `F` at `0600`, never on the command line, and `F` is deleted when the turn ends however it ends. The session id printed in the JSON result is what the next turn resumes. |
+| `codex` | Codex App Server on a private stdio child: `initialize`, `thread/start` (or `thread/resume`), `turn/start`, collect until the turn completes. The bus arrives through `-c mcp_servers...` overrides, which apply to that process only and never touch the `config.toml` in `CODEX_HOME`. |
+| `codex` with `exec` in its command | `codex exec [resume ID] -c OVERRIDE... PROMPT`, the tested fallback. It cannot answer an approval request, so a turn that needs one ends there. |
+| `other` | any command, with the bus in its environment. This is what the offline gate runs. |
+
+`--approve` says how far a turn may go when the provider asks, and it is
+chosen by the person who enrols the worker, because nobody is watching while a
+managed turn runs:
+
+| policy | Codex thread sandbox | Codex approval requests | Claude permission mode |
+| --- | --- | --- | --- |
+| `deny` (default) | `read-only` | refused; the turn reports instead of acting | `default` — only the bus is pre-allowed |
+| `workspace` | `workspace-write` | accepted only when the request stays inside the turn's own directory and asks for no escalation | `acceptEdits` |
+| `accept` | `workspace-write` | accepted as asked, escalation included | `bypassPermissions` |
+
+The policy is recorded on the run, so re-enrolling a worker later does not
+change what a finished turn ran under, and every answer the dispatcher gave is
+on that turn's log next to the policy that gave it.
+
+A worker command may not carry the flags the dispatcher sets for it
+(`--permission-mode`, `--allowedTools`, `--mcp-config`, `-c`,
+`--dangerously-skip-permissions`, and the rest), and may not end in an option
+still waiting for a value: `claude --model` would swallow the `--mcp-config`
+that follows it. Both are refused when the worker is enrolled, and again
+before a turn starts.
+
+This is not the bus approval nonce and never becomes one: a sensitive
+operation on a task still needs a nonce the user mints in their own terminal.
+
+Codex runs `approvalPolicy: "on-request"` because ADR 0001 recorded that
+`"never"` fails a model-selected MCP tool call before it reaches the bus.
 
 ## Recovery
 

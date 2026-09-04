@@ -1,7 +1,6 @@
 # ADR 0006: Agent Bus dispatcher, leases, and provider adapters
 
-Status: accepted 2026-09-04 for milestone M6 (the dispatcher core; the Codex
-and Claude adapters land under it)
+Status: accepted 2026-09-04 for milestone M6
 
 ## Context
 
@@ -157,11 +156,51 @@ over one dataclass of run parameters. The daemon ships:
 A `FakeAdapter` implements the same contract deterministically and is what the
 offline gate runs, so the dispatcher's own logic is provable without quota.
 
+### The worker command may not carry the flags the dispatcher sets
+
+Both CLIs let a repeated flag win or accumulate, and the adapter's own flags
+are appended after the worker's. A worker enrolled `--approve deny` whose
+command carried `--dangerously-skip-permissions` would therefore have run with
+no permission check at all, and one ending in an unpaired option (`--model`)
+would swallow the `--mcp-config` -- or the prompt -- that followed it, which is
+ADR 0001's trap exactly.
+
+Enrolment refuses both shapes, and the adapter refuses them again at run time
+as a permanent failure, because a worker enrolled before the check existed must
+not be silently obeyed. A denylist alone could not close the second class; the
+rule is that a worker's command may not end in an option still waiting for a
+value.
+
+### `workspace` is narrower than `accept`, at the sandbox as well as the answer
+
+The three policies are the human's answer, chosen at enrolment, to what a turn
+may do when nobody is watching:
+
+| policy | Codex thread sandbox | Codex approval requests | Claude permission mode |
+| --- | --- | --- | --- |
+| `deny` (default) | `read-only` | refused; the turn reports instead of acting | `default` |
+| `workspace` | `workspace-write` | accepted only when the request stays inside the turn's own directory and asks for no escalation | `acceptEdits` |
+| `accept` | `workspace-write` | accepted as asked, escalation included | `bypassPermissions` |
+
+Two review findings shaped this. `workspace` and `accept` first answered every
+execution approval identically, which made the middle tier decoration. And the
+sandbox was `workspace-write` for every policy, so a `deny` worker -- whose
+whole promise is that it reports instead of acting -- could still edit its
+worktree freely, because a write inside the sandbox raises no approval at all.
+The tier now has to hold in both places.
+
+What is not claimed: a command's argv is not inspected. A shell string cannot
+be bounded by reading it, so under `workspace` the sandbox is the boundary and
+the approval answer only refuses leaving it.
+
 ## Consequences
 
-- New schema: `workers` (which agents may be dispatched, with their command
-  and limits) and a rebuilt `runs` (it was reserved and empty). `leases` and
-  `sessions.generation`, reserved since M1, come into use.
+- New schema: `workers` (which agents may be dispatched, with their command,
+  limits, and `approval_policy`) and a rebuilt `runs` (it was reserved and
+  empty), which also keeps the `approval_policy` the turn ran under -- the
+  worker row can be re-enrolled at any time, and an audit must read what
+  governed *this* turn. `leases` and `sessions.generation`, reserved since M1,
+  come into use.
 - New commands: `roster worker` to enrol a managed worker, and `dispatch`
   (`--once` / `--watch`).
 - `trust` gains `system`; the M4/M5 gates that refuse `asserted` writes are

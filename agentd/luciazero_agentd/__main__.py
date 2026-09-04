@@ -58,7 +58,7 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
+from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
@@ -269,7 +269,7 @@ def cmd_worker(args: argparse.Namespace) -> int:
                     state = "enabled" if worker["enabled"] else "paused"
                     print(f"  {clean(worker['agent_id']):<24} {clean(worker['provider']):<7} {state:<8} "
                           f"attempts {worker['max_attempts']}  timeout {worker['turn_timeout_seconds']}s  "
-                          f"{clean(' '.join(worker['command']))}")
+                          f"approve {clean(worker['approval_policy']):<9} {clean(' '.join(worker['command']))}")
                 return 0
             if args.worker_command == "add":
                 command = list(args.command)
@@ -280,10 +280,12 @@ def cmd_worker(args: argparse.Namespace) -> int:
                     return 2
                 worker = store.enrol_worker(
                     args.agent_id, provider=args.provider, command=command, cwd=args.cwd,
-                    max_attempts=args.max_attempts, turn_timeout_seconds=args.timeout, by=who,
+                    max_attempts=args.max_attempts, turn_timeout_seconds=args.timeout,
+                    approval_policy=args.approve, by=who,
                 )
                 print(f"agent {clean(worker['agent_id'])} is a managed {clean(worker['provider'])} worker "
-                      f"({worker['max_attempts']} attempts, {worker['turn_timeout_seconds']}s per turn)")
+                      f"({worker['max_attempts']} attempts, {worker['turn_timeout_seconds']}s per turn, "
+                      f"approvals: {clean(worker['approval_policy'])})")
                 print("the dispatcher starts its turns: luciazero-agentd dispatch --watch")
                 return 0
             if args.worker_command in ("pause", "resume"):
@@ -766,6 +768,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     worker_add.add_argument("--cwd", default=None, help="absolute path the turn runs in")
     worker_add.add_argument("--max-attempts", type=int, default=3, dest="max_attempts")
     worker_add.add_argument("--timeout", type=int, default=600, help="seconds one turn may take")
+    worker_add.add_argument("--approve", choices=APPROVAL_POLICIES, default="deny",
+                            help="how far a turn may go when the provider asks: deny (default, report instead of act), "
+                                 "workspace (run commands and edit in its own worktree), accept (whatever it asks)")
     worker_add.add_argument("--state-dir", default=None)
     worker_add.add_argument("command", nargs="*", default=[], help="-- then the provider command")
     worker_add.set_defaults(func=cmd_worker, takes_provider_command=True)

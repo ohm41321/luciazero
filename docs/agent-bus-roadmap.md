@@ -742,27 +742,43 @@ the commit the implementer published still names the implementer after the
 reviewer cites it. It also fails if any write in the run carries
 `trust: asserted`, so M4.5's invariant keeps holding here.
 
-### M6 — Dispatcher and provider adapters (core complete 2026-09-04, adapters in progress)
+### M6 — Dispatcher and provider adapters (dispatcher core and adapters
+complete 2026-09-04; live provider smoke gate outstanding)
 
 The bus stops being a queue somebody reads and becomes a thing that runs
 models. ADR 0006 states the constraint before the design: managed dispatch
 adds no path around terminal binding, identity, or approval provenance, and a
-task M5 stopped stays stopped. The dispatcher core, its records, and the
-offline gate are done; the two provider adapters are the remaining slice.
+task M5 stopped stays stopped. The dispatcher core, its records, the offline
+gate, and both provider adapters are done. What is not done, and is what keeps
+the milestone open, is the one thing an offline suite cannot prove: a real
+`codex` and a real `claude` turn started by the dispatcher end to end. That
+gate spends quota, so it runs only when the user asks for it.
 
 - [x] Define one adapter contract for start, resume, cancel, status, and event
   streaming (`adapters.py`: `TurnRequest`, `TurnResult`, `Adapter`, and
   `ProcessAdapter`, which runs any command and is what the offline gate uses).
   An adapter never touches the database, so it cannot invent progress.
-- [ ] Codex adapter: start threads with `approvalPolicy: "on-request"` and
-  answer approval requests per the user's configured policy; `"never"` fails
-  MCP tool calls before they reach the bus (ADR 0001 null result 3).
-- [ ] Claude adapter: pass the bus server through `--mcp-config` with
-  `--strict-mcp-config` and pre-allow bus tools with `--allowedTools`; the
-  user's own MCP configuration is never written.
-- [ ] Implement the Codex App Server adapter.
-- [ ] Add `codex exec resume` as a tested fallback.
-- [ ] Implement the Claude print-mode resume adapter.
+- [x] Codex adapter: threads start with `approvalPolicy: "on-request"` and the
+  adapter answers approval requests per the policy the user chose when they
+  enrolled the worker -- `deny` (the default, refuse and let the turn report),
+  `workspace`, or `accept`. `"never"` is not used: ADR 0001 null result 3
+  recorded that it fails a model-selected MCP tool call before it reaches the
+  bus. Every answer is written to the run log with the policy that produced it.
+- [x] Claude adapter: the bus goes through `--mcp-config` with
+  `--strict-mcp-config`, so the user's own MCP configuration is never read or
+  written, and `--allowedTools` pre-allows the bus and nothing else. The
+  credential is in that config file at `0600` and is deleted when the turn
+  ends, however it ends; it is never on the command line, because argv is
+  world-readable through `ps`. Both `--allowedTools` and `--mcp-config` are
+  variadic, so each is followed by a single-value option and the prompt comes
+  last -- ADR 0001 recorded the swallowed prompt.
+- [x] Implement the Codex App Server adapter (`appserver.py`: JSON-RPC on a
+  private stdio child, every step bounded by the turn's own timeout, the child
+  and its children stopped as a process group).
+- [x] Add `codex exec resume` as a tested fallback, selected by naming `exec`
+  in the worker's command. It cannot answer an approval request, and says so.
+- [x] Implement the Claude print-mode resume adapter: `--output-format json`
+  names the session the turn ran in, and that is what the next turn resumes.
 - [x] Stream provider output into bounded run logs (`runlog.py`), routed
   through `luciazero_agentd.redact.Redactor` with the daemon token and the
   run's own credential as literals before anything is written, `0600`, head
@@ -801,6 +817,22 @@ offline gate are done; the two provider adapters are the remaining slice.
   (`--once`/`--watch`), plus worker and running-turn lines on both status
   printers. Enrolling a worker is the decision to let a machine start turns,
   so no bus tool can make it.
+- [x] A worker command may not carry the flags the dispatcher sets for it, and
+  may not end in an option still waiting for a value. Both CLIs let a repeated
+  flag win or accumulate, so `--dangerously-skip-permissions` in a command
+  would have overridden the policy chosen at enrolment, and `claude --model`
+  would have swallowed the `--mcp-config` that follows it -- ADR 0001's
+  swallowed-prompt trap. Refused at enrolment, and again before a turn starts.
+- [x] `workspace` is a narrower policy than `accept`, in the answer (nothing
+  that asks to leave the sandbox, nothing naming a path outside the turn's own
+  directory) and in the sandbox the thread runs in (`read-only` for `deny`,
+  because a write inside the workspace raises no approval at all).
+- [x] The policy a turn ran under is recorded on the run, so re-enrolling the
+  worker later cannot rewrite what governed a turn that already ended.
+- [ ] One live smoke gate: a real Codex turn and a real Claude turn started by
+  the dispatcher, each reaching one completed logical outcome, with the
+  credential revoked and the workspace gone afterwards. Spends quota; runs on
+  request only.
 - [ ] Test process crash and restart during every delivery transition,
   including `dispatched` and `processing` (the gate kills the dispatcher
   mid-turn; the kill-at-commit matrix for the new transitions is still to
@@ -827,7 +859,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 240 tests, includes the dispatch suite
+./test.sh --agent-bus-store      # 272 tests, includes the dispatch and adapter suites
 ```
 
 The suite must kill the dispatcher during a run, restart it, and show that the
@@ -842,9 +874,34 @@ fenced, and a lease whose holder is gone is reclaimed rather than waited out.
 It also fails if any write carries `trust: asserted`, if the worker's writes
 are not `bound`, or if a lease or managed credential outlives its turn.
 
-The milestone closes when the Codex and Claude adapters ship under the same
-contract; until then a worker enrolled as either provider dead-letters with
-`no_adapter`, and only the `other` provider runs.
+Slice B added `./test.sh --agent-bus-store` coverage for the adapters
+themselves (`tests/test_adapters.py`, 26 cases): the exact command each
+provider gets and the variadic-option traps in it, the credential never
+reaching argv or the environment where it is not needed, the config file gone
+after success, failure, timeout and spawn failure, a provider's own children
+dying with the turn, the exit-to-outcome mapping, session ids recorded for
+resume, the App Server handshake and approval policy against a scripted
+server, and a turn's private directory removed when it ends and swept on
+recovery. Every fake CLI is a script the test writes: no test starts a real
+`codex` or `claude`, so the suite spends no quota and touches no provider
+state.
+
+Independent adversarial review of the adapters (one `reviewer` agent, security
+and contract routes; 3 majors, 3 minors, all fixed with regressions proven red
+first): `workspace` and `accept` answered every execution approval identically,
+which made the middle tier decoration -- and the sandbox was `workspace-write`
+for every policy, so even a `deny` worker could edit freely, because a write
+inside the sandbox raises no approval; recovery signalled the one recorded pid
+rather than the orphan's process group, leaving exactly the children
+`start_new_session=True` exists to reach; and a denylist of dangerous flags
+could not stop a worker command ending in an unpaired option from swallowing
+the flags appended after it. The minors: a structural App Server protocol
+mismatch retried until the attempts ran out instead of failing at once, the
+App Server path dropped the worker's own arguments without saying so, and a
+`prepare` that failed in a way other than `OSError` would have skipped the
+credential cleanup.
+
+The live proof of a managed turn belongs to the smoke gate above and to M7.
 
 ### M7 — Managed-dispatch vertical slice
 

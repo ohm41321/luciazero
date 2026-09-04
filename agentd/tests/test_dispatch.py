@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -26,6 +27,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from luciazero_agentd import procinfo
 from luciazero_agentd import ConflictError, NotFound, Store, ValidationError
 from luciazero_agentd.adapters import ProcessAdapter, TurnRequest
 from luciazero_agentd.dispatcher import DispatchError, Dispatcher
@@ -42,6 +44,31 @@ from luciazero_agentd.store import (
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _running(pid: int) -> bool:
+    """Is this pid still around? Polled, because a signal is not instant."""
+    for _ in range(100):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _reap_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _reap(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.kill()
+    process.wait(timeout=5)
+
 DEAD = lambda pid, started_at=None: False  # noqa: E731 - a process that is gone
 LIVE = lambda pid, started_at=None: True  # noqa: E731
 
@@ -137,6 +164,26 @@ class WorkerTests(DispatchCase):
             self.worker(max_attempts=0)
         with self.assertRaises(NotFound):
             self.worker("nobody")
+
+    def test_a_command_may_not_carry_the_flags_the_dispatcher_sets(self) -> None:
+        """A worker enrolled `--approve deny` whose command carried
+        `--dangerously-skip-permissions` would have run with no permission check
+        at all: both CLIs let the command's own flags win or accumulate, and our
+        flags are appended, not merged. The enrolment is refused instead, so the
+        policy the human chose is the policy the turn runs under."""
+        for command in (["claude", "--dangerously-skip-permissions"],
+                        ["claude", "--allowedTools", "Bash"],
+                        ["claude", "--permission-mode=bypassPermissions"],
+                        ["claude", "--mcp-config", "/tmp/other.json"]):
+            with self.assertRaises(ValidationError, msg=command):
+                self.worker(provider="claude", command=command)
+        for command in (["codex", "exec", "-c", "sandbox_mode=danger-full-access"],
+                        ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+                        ["codex", "exec", "--full-auto"]):
+            with self.assertRaises(ValidationError, msg=command):
+                self.worker(provider="codex", command=command)
+        kept = self.worker(provider="claude", command=["claude", "--model", "sonnet"])
+        self.assertEqual(kept["command"], ["claude", "--model", "sonnet"])
 
     def test_a_command_carrying_a_secret_shape_is_refused(self) -> None:
         with self.assertRaises(UnsafeReference):
@@ -445,11 +492,84 @@ class DispatcherTests(DispatchCase):
         self.assertEqual(self.store.list_runs(), [])
 
     def test_a_provider_with_no_adapter_is_a_permanent_failure(self) -> None:
+        """No test ever starts a real provider: this one asks for an adapter
+        that does not exist, which is what a future provider looks like."""
         self.worker(provider="codex", command=["codex"])
         self.queued()
-        summaries = self.engine().tick()
+
+        def missing(provider: str):  # type: ignore[no-untyped-def]
+            raise KeyError(provider)
+
+        summaries = Dispatcher(self.root, adapters=missing).tick()
         self.assertEqual(summaries[0]["exit_state"], "no_adapter")
         self.assertEqual(summaries[0]["delivery_state"], "dead_letter")
+
+    def test_failing_turns_spend_the_attempts_and_stop_at_the_dead_letter(self) -> None:
+        """The adapter's failures have to walk the same limit a store-level
+        failure does: retry, retry, dead letter, and then nothing."""
+        self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=2)
+        engine = self.engine()
+        self.queued()
+        self.assertEqual([s["delivery_state"] for s in engine.tick()], ["retryable_failed"])
+        self.assertEqual([s["delivery_state"] for s in engine.tick()], ["dead_letter"])
+        self.assertEqual(engine.tick(), [])
+        self.assertEqual(len(self.store.list_runs()), 2)
+
+    def test_a_task_that_runs_out_of_budget_mid_retry_is_never_started_again(self) -> None:
+        """M5's stop outranks the attempts left: a task stopped between two
+        attempts must not get the third."""
+        task = self.store.create_task(title="expensive", created_by="codex-architect", budget={"tokens": 100})
+        self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=3)
+        self.queued(task_id=task["id"])
+        engine = self.engine()
+        self.assertEqual([s["delivery_state"] for s in engine.tick()], ["retryable_failed"])
+        self.store.claim_task(task["id"], "claude-reviewer")
+        self.store.record_usage(task["id"], "claude-reviewer", tokens=400)
+        self.assertEqual(self.store.get_task(task["id"])["state"], "exhausted")
+        summaries = engine.tick()
+        self.assertEqual([s["outcome"] for s in summaries], ["dead_letter"])
+        self.assertIn("exhausted", str(summaries[0]["reason"]))
+        self.assertEqual(len(self.store.list_runs()), 1)  # no second provider was started
+
+    def test_the_policy_a_turn_ran_under_is_recorded_on_the_run(self) -> None:
+        """Re-enrolling the worker rewrites the worker row; an audit asking what
+        governed a turn that already ended must not read the new answer."""
+        self.worker(command=[sys.executable, "-c", "print('turn')"], approval_policy="workspace")
+        self.queued()
+        self.engine().tick()
+        run = self.store.list_runs()[0]
+        self.assertEqual(run["approval_policy"], "workspace")
+        self.assertIn("under approval policy workspace", Path(str(run["output_ref"])).read_text(encoding="utf-8"))
+        self.worker(command=[sys.executable, "-c", "print('turn')"], approval_policy="accept")
+        self.assertEqual(self.store.get_run(str(run["id"]))["approval_policy"], "workspace")
+
+    def test_the_sweep_removes_only_the_workspaces_its_own_turns_made(self) -> None:
+        """The sweep deletes directories that carried a credential. It runs
+        every pass, so what it may delete has to be exactly what this bus
+        recorded a run for -- never a stranger's directory, and never through a
+        symlink."""
+        self.worker(command=[sys.executable, "-c", "print('turn')"])
+        self.queued()
+        engine = self.engine()
+        engine.tick()
+        run_id = str(self.store.list_runs()[0]["id"])
+        stranger = engine.turn_dir / "not-a-run-id"
+        stranger.mkdir(parents=True)
+        (stranger / "keep").write_text("not ours", encoding="utf-8")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "precious").write_text("not ours either", encoding="utf-8")
+        (engine.turn_dir / run_id).symlink_to(outside, target_is_directory=True)
+        self.assertEqual(engine.sweep_workspaces(), [])
+        self.assertTrue((outside / "precious").exists())
+        self.assertTrue((stranger / "keep").exists())
+        (engine.turn_dir / run_id).unlink()
+        leftover = engine.turn_dir / run_id  # what a killed dispatcher leaves
+        leftover.mkdir()
+        (leftover / "mcp.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(engine.sweep_workspaces(), [run_id])
+        self.assertFalse(leftover.exists())
+        self.assertTrue((stranger / "keep").exists())
 
     def test_a_human_owned_agent_is_left_alone(self) -> None:
         self.worker(command=[sys.executable, "-c", "print('turn')"])
@@ -542,6 +662,46 @@ class DispatcherTests(DispatchCase):
         self.assertEqual(self.store.get_binding(binding["id"])["state"], "revoked")
         self.assertIsNone(self.store.resolve_credential(credential))
         self.assertEqual(self.store.get_run(run["id"])["state"], "abandoned")
+
+    def test_recovery_stops_the_children_an_orphaned_provider_started(self) -> None:
+        """Review finding: recovery signalled the one pid it had recorded, which
+        is exactly what `start_new_session=True` exists to make insufficient --
+        the provider's own children kept running, and kept spending, after the
+        dispatcher that started them was killed."""
+        marker = self.root / "grandchild.pid"
+        provider = subprocess.Popen(
+            [sys.executable, "-c",
+             "import subprocess, sys, time\n"
+             "kid = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+             f"open({str(marker)!r}, 'w').write(str(kid.pid))\n"
+             "time.sleep(120)\n"],
+            start_new_session=True,
+        )
+        self.addCleanup(_reap, provider)
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        grandchild = int(marker.read_text(encoding="utf-8"))
+        self.addCleanup(_reap_pid, grandchild)
+
+        self.worker(command=[sys.executable, "-c", "print('turn')"])
+        delivery = self.queued()
+        session = self.store.ensure_session("claude-reviewer", provider="other")
+        lease = self.store.acquire_lease("session", "claude-reviewer", holder="dispatch:dead",
+                                         session_id=session["id"], holder_pid=424242, holder_started_at=None)
+        binding, _credential = self.store.bind_terminal("claude-reviewer", provider="other", by="dispatch:dead", ownership="managed")
+        self.store.dispatch_delivery(delivery["delivery_id"], agent_id="claude-reviewer", lease_id=lease["id"],
+                                     generation=lease["generation"], session_id=session["id"])
+        run = self.store.start_run(agent_id="claude-reviewer", delivery_id=delivery["delivery_id"], session_id=session["id"],
+                                   lease_id=lease["id"], generation=lease["generation"], binding_id=binding["id"])
+        self.store.record_run_process(str(run["id"]), pid=provider.pid, started_at=procinfo.started_at(provider.pid))
+
+        # The dispatcher that held the lease is gone; the provider it started
+        # is not, and neither is what the provider started.
+        alive = lambda pid, started_at=None: pid != 424242 and procinfo.alive(pid, started_at)  # noqa: E731
+        Dispatcher(self.root, alive=alive).recover()
+        provider.wait(timeout=10)
+        self.assertFalse(_running(grandchild), "the orphan's own child outlived recovery")
 
     def test_a_sigterm_leaves_no_live_credential_and_no_running_provider(self) -> None:
         """Review finding: `run` installs a SIGTERM handler for exactly this

@@ -340,12 +340,33 @@ ALTER TABLE leases ADD COLUMN holder_started_at TEXT;
 """
 
 
+# M6 slice B: how far a managed turn may go on the user's machine. The Codex
+# adapter runs `approvalPolicy: "on-request"` (ADR 0001 null result 3: "never"
+# fails a model-selected MCP tool call before it reaches the bus), so somebody
+# has to answer those requests. The answer is the user's, recorded per worker
+# when they enrol it, and the default is the one that can do the least.
+SCHEMA_V6 = """
+ALTER TABLE workers ADD COLUMN approval_policy TEXT NOT NULL DEFAULT 'deny'
+    CHECK (approval_policy IN ('deny', 'workspace', 'accept'));
+"""
+
+
+SCHEMA_V7 = """
+-- What the run was allowed to do without asking, as it stood when the turn
+-- started. The worker row can be re-enrolled at any time; an audit asking what
+-- governed *this* turn must not read a policy chosen after it ended.
+ALTER TABLE runs ADD COLUMN approval_policy TEXT;
+"""
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
     (4, SCHEMA_V4),
     (5, SCHEMA_V5),
+    (6, SCHEMA_V6),
+    (7, SCHEMA_V7),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

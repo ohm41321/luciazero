@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Optional, Sequence
 
 from . import procinfo
+from .adapters import dangling_option, reserved_flags_in
 from .gitinfo import GitError, commit_exists, inspect_worktree, is_oid
 from .migrations import LATEST_VERSION, MIGRATIONS
 from .redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX
@@ -81,6 +82,10 @@ RUNNING_DELIVERY_STATES = ("dispatched", "processing")
 PENDING_DELIVERY_STATES = ("queued", "dispatched", "processing")
 MAX_WORKER_COMMAND = 32
 DEFAULT_TURN_TIMEOUT_SECONDS = 600
+# How far a managed turn may go on the user's machine when the provider asks:
+# nothing beyond the model's own reply, commands and edits inside the bound
+# worktree, or whatever it asks for. The default is the one that can do least.
+APPROVAL_POLICIES = ("deny", "workspace", "accept")
 BINDING_STATES = ("active", "revoked", "stale")
 OWNERSHIPS = ("human", "managed")
 MAX_PAYLOAD_BYTES = 64 * 1024
@@ -1885,6 +1890,7 @@ class Store:
         cwd: Optional[str] = None,
         max_attempts: int = 3,
         turn_timeout_seconds: int = DEFAULT_TURN_TIMEOUT_SECONDS,
+        approval_policy: str = "deny",
         enabled: bool = True,
         by: str,
     ) -> dict[str, Any]:
@@ -1905,25 +1911,43 @@ class Store:
                 # A command is executed verbatim, so it cannot be scrubbed
                 # without changing what runs; it is refused instead.
                 raise UnsafeReference(f"worker command carries a secret-shaped value ({', '.join(sorted(set(leaked)))}); pass it through the environment instead")
+        taken = reserved_flags_in(provider, argv)
+        if taken:
+            # What the turn may do without asking is the human's decision at
+            # enrolment, and it is carried by flags the dispatcher sets itself.
+            # A command that names one of them could override that decision, so
+            # the enrolment is refused rather than quietly disarmed.
+            raise ValidationError(
+                f"worker command names {', '.join(taken)}, which the dispatcher sets itself for a "
+                f"{provider} turn; drop it and choose what the turn may do with approval_policy"
+            )
+        dangling = dangling_option(provider, argv)
+        if dangling:
+            raise ValidationError(
+                f"worker command ends in {dangling}, an option with no value; it would swallow the flag "
+                f"the dispatcher appends after it. Write it as {dangling}=value or give it its value"
+            )
         if cwd is not None:
             cwd = _check_path_arg(cwd)
         _check_int(max_attempts, 1, 10, "max_attempts")
         _check_int(turn_timeout_seconds, 10, 7200, "turn_timeout_seconds")
+        _check_enum(approval_policy, APPROVAL_POLICIES, "approval_policy")
         if not isinstance(enabled, bool):
             raise ValidationError("enabled must be a boolean")
         with self._tx("enrol_worker"):
             self._require_agent(agent_id)
             now = utcnow()
             self._conn.execute(
-                """INSERT INTO workers (agent_id, provider, command, cwd, max_attempts, turn_timeout_seconds, enabled, enrolled_by, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """INSERT INTO workers (agent_id, provider, command, cwd, max_attempts, turn_timeout_seconds, approval_policy, enabled, enrolled_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT (agent_id) DO UPDATE SET
                        provider = excluded.provider, command = excluded.command, cwd = excluded.cwd,
                        max_attempts = excluded.max_attempts, turn_timeout_seconds = excluded.turn_timeout_seconds,
+                       approval_policy = excluded.approval_policy,
                        enabled = excluded.enabled, enrolled_by = excluded.enrolled_by, updated_at = excluded.updated_at""",
-                (agent_id, provider, json.dumps(argv), cwd, max_attempts, turn_timeout_seconds, int(enabled), by, now, now),
+                (agent_id, provider, json.dumps(argv), cwd, max_attempts, turn_timeout_seconds, approval_policy, int(enabled), by, now, now),
             )
-            self._event(by, "worker.enrolled", "worker", agent_id, {"provider": provider, "enabled": enabled, "max_attempts": max_attempts})
+            self._event(by, "worker.enrolled", "worker", agent_id, {"provider": provider, "enabled": enabled, "max_attempts": max_attempts, "approval_policy": approval_policy})
         return self.get_worker(agent_id)
 
     def get_worker(self, agent_id: str) -> dict[str, Any]:
@@ -2242,13 +2266,13 @@ class Store:
         context["attempts"], context["max_attempts"], context["state"] = attempts, limit, "dispatched"
         return context
 
-    def _start_run_locked(self, context: dict[str, Any], *, agent_id: str, session_id: str, lease_id: str, generation: int, binding_id: Optional[str], output_ref: Optional[str], now: str) -> str:
+    def _start_run_locked(self, context: dict[str, Any], *, agent_id: str, session_id: str, lease_id: str, generation: int, binding_id: Optional[str], output_ref: Optional[str], approval_policy: Optional[str], now: str) -> str:
         """The run row and the processing state; the caller owns the transaction."""
         run_id = new_id("run")
         self._conn.execute(
-            """INSERT INTO runs (id, agent_id, session_id, binding_id, lease_id, generation, delivery_id, task_id, attempt, state, output_ref, started_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
-            (run_id, agent_id, session_id, binding_id, lease_id, generation, context["id"], context["task_id"], int(context["attempts"]), output_ref, now),
+            """INSERT INTO runs (id, agent_id, session_id, binding_id, lease_id, generation, delivery_id, task_id, attempt, state, output_ref, approval_policy, started_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)""",
+            (run_id, agent_id, session_id, binding_id, lease_id, generation, context["id"], context["task_id"], int(context["attempts"]), output_ref, approval_policy, now),
         )
         self._conn.execute("UPDATE deliveries SET state = 'processing', updated_at = ? WHERE id = ?", (now, context["id"]))
         self._event("dispatcher", "run.started", "run", run_id, {"agent_id": agent_id, "delivery_id": context["id"], "attempt": int(context["attempts"]), "generation": generation})
@@ -2265,6 +2289,7 @@ class Store:
         binding_id: Optional[str] = None,
         max_attempts: Optional[int] = None,
         output_ref: Optional[str] = None,
+        approval_policy: Optional[str] = None,
     ) -> dict[str, Any]:
         """Count the attempt and record the run that covers it, together.
 
@@ -2276,12 +2301,15 @@ class Store:
         _check_id(agent_id, "agent id", self._redactor)
         if max_attempts is not None:
             _check_int(max_attempts, 1, 10, "max_attempts")
+        if approval_policy is not None:
+            _check_enum(approval_policy, APPROVAL_POLICIES, "approval_policy")
         with self._tx("begin_turn"):
             now = utcnow()
             context = self._dispatch_locked(delivery_id, agent_id=agent_id, lease_id=lease_id, generation=generation,
                                             session_id=session_id, max_attempts=max_attempts, now=now)
             run_id = self._start_run_locked(context, agent_id=agent_id, session_id=session_id, lease_id=lease_id,
-                                            generation=generation, binding_id=binding_id, output_ref=output_ref, now=now)
+                                            generation=generation, binding_id=binding_id, output_ref=output_ref,
+                                            approval_policy=approval_policy, now=now)
         return self.get_run(run_id)
 
     def dispatch_delivery(self, delivery_id: str, *, agent_id: str, lease_id: str, generation: int, session_id: str, max_attempts: Optional[int] = None) -> dict[str, Any]:
@@ -2319,6 +2347,7 @@ class Store:
         generation: int,
         binding_id: Optional[str] = None,
         output_ref: Optional[str] = None,
+        approval_policy: Optional[str] = None,
     ) -> dict[str, Any]:
         """dispatched -> processing, with the run that covers it. The run keeps
         the lease and generation it holds, so its later writes can be fenced."""
@@ -2331,7 +2360,8 @@ class Store:
             if context["state"] != "dispatched":
                 raise ConflictError(f"delivery {delivery_id!r} is {context['state']}; only a dispatched delivery starts a run")
             run_id = self._start_run_locked(context, agent_id=agent_id, session_id=session_id, lease_id=lease_id,
-                                            generation=generation, binding_id=binding_id, output_ref=output_ref, now=utcnow())
+                                            generation=generation, binding_id=binding_id, output_ref=output_ref,
+                                            approval_policy=approval_policy, now=utcnow())
         return self.get_run(run_id)
 
     def record_run_process(self, run_id: str, *, pid: int, started_at: Optional[str] = None) -> dict[str, Any]:

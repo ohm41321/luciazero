@@ -73,6 +73,10 @@ async function status(json) {
     const needs = task.requires_worktree ? "  needs worktree" : "";
     console.log(`  open task ${clean(task.id)}  p${Number(task.priority)}  ${clean(task.assigned_to || "unassigned")}: ${clean(task.title)}${needs}`);
   }
+  const stopped = Array.isArray(body.stopped_tasks) ? body.stopped_tasks : [];
+  for (const task of stopped) {
+    console.log(`  stopped task ${clean(task.id)}  spent its ${clean(task.dimension || "budget")} budget: ${clean(task.title)}`);
+  }
   const unverified = Array.isArray(body.unverified_agents) ? body.unverified_agents : [];
   if (unverified.length > 0) {
     console.log(

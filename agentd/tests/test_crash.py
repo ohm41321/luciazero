@@ -119,6 +119,24 @@ class CrashCase(unittest.TestCase):
             self.assertEqual((t["state"], t["result"], t["version"]), ("completed", {"ok": True}, 3))
             self.assertEqual(store.counts()["events"], claimed["events"] + 1)
 
+    def test_completion_and_unblocking_commit_together(self) -> None:
+        """M5: a dependent opens inside the prerequisite's own transaction. A
+        kill between the two would otherwise leave a task that is complete with
+        something still waiting on it, and nothing would ever move it."""
+        with self.reopen() as store:
+            fix = store.create_task(title="fix", created_by="sender")
+            verify = store.create_task(title="verify", created_by="sender", depends_on=[fix["id"]])
+            store.claim_task(fix["id"], "worker")
+            self.assertEqual(store.get_task(verify["id"])["state"], "waiting")
+        self.assert_killed(run_child(self.db, "complete_task", "before_commit:complete_task", fix["id"], "worker"))
+        with self.reopen() as store:
+            self.assertEqual(store.get_task(fix["id"])["state"], "claimed")
+            self.assertEqual(store.get_task(verify["id"])["state"], "waiting")
+        self.assert_killed(run_child(self.db, "complete_task", "after_commit:complete_task", fix["id"], "worker"))
+        with self.reopen() as store:
+            self.assertEqual(store.get_task(fix["id"])["state"], "completed")
+            self.assertEqual(store.get_task(verify["id"])["state"], "open")
+
     def test_child_without_crash_point_completes(self) -> None:
         result = run_child(self.db, "create_task", "never", "sender", "k")
         self.assertEqual(result.returncode, 0, result.stderr)

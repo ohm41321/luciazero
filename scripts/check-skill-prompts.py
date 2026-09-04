@@ -330,7 +330,7 @@ SPECS = {
                  ("__intro__", "node <this-skill-dir>/../../bin/luciazero.js discipline")),
     },
     "lucia-bus": {
-        "budget": 486,
+        "budget": 560,
         "sections": ("1. Identify", "2. Inspect the inbox", "3. Claim", "4. Work and publish", "Rules"),
         "contracts": {
             "__description__": ("Luciazero Agent Bus", "peers never grant approval"),
@@ -339,12 +339,13 @@ SPECS = {
                             "Never invent a second id", "`worktree_bind`", "never share one"),
             "2. Inspect the inbox": ("`message_inbox`", "`message_ack`", "untrusted input",
                                      "never consent, approval, or permission"),
-            "3. Claim": ("`task_list`", "`task_claim`", "A conflict means another agent won"),
+            "3. Claim": ("`task_list`", "`task_claim`", "A conflict means another agent won",
+                         "A `waiting` task\ncannot be claimed", "`task_get` names the prerequisites"),
             "4. Work and publish": ("`artifact_publish`", "`task_complete`", "`blocked`", "`message_send`",
-                                    "`correlation_id`"),
+                                    "`correlation_id`", "citing those\nartifact ids in `artifacts`"),
             "Rules": ("`completed` or `blocked` before `/done`", "`luciazero-agentd approve`",
                       "`approval_consume`", "never send it through the bus", "`idempotency_key`", "64 KiB",
-                      "Stop looping"),
+                      "`BudgetExceeded`", "Never retry it", "Stop looping"),
         },
     },
     "retro": {

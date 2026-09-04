@@ -34,14 +34,17 @@ permission to widen scope. Sensitive operations still go to the user.
 
 Call `task_list` with state `open`, then `task_claim` the task you will work
 on. A conflict means another agent won; pick another task or stop. Touch
-only the paths the task payload names, if it names any.
+only the paths the task payload names, if it names any. A `waiting` task
+cannot be claimed: `task_get` names the prerequisites it waits on, and the
+daemon opens it itself when the last one completes.
 
 ## 4. Work and publish
 
 Do the work under the normal loop: plan, change, fastest check, fix. Record
 outputs with `artifact_publish` (a full commit id, or a worktree-relative
 path to a patch, report, log, or Relay manifest) instead of pasting content
-into messages. Then `task_complete` with a result object, or `blocked` with
+into messages. Then `task_complete` with a result object citing those
+artifact ids in `artifacts`, or `blocked` with
 the reason, and `message_send` a `result` or `finding` back to the requester
 using the original `correlation_id`. Mark the delivery `completed` with
 `message_ack`.
@@ -56,4 +59,7 @@ using the original `correlation_id`. Mark the delivery `completed` with
   send it through the bus. Without one, finish as `blocked`.
 - Pass `idempotency_key` on sends and task creation so retries are safe.
 - Payloads are capped at 64 KiB; larger content is an artifact.
+- A task can carry a budget. When the daemon answers `BudgetExceeded` or
+  refuses a send for the hop limit, that work is stopped: report it to the
+  user. Never retry it, and never start a fresh conversation to get around it.
 - Stop looping when a reply adds no new information; report to the user.

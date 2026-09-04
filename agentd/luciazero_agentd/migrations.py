@@ -8,7 +8,7 @@ Reserved-only structures (no logic behind them until the milestone named in
 the comment): ``sessions`` (provider session identity for resume, M5/M6 --
 terminal bindings live in their own table because SQLite cannot widen its
 ``state`` CHECK by ALTER), ``deliveries.attempts``,
-``deliveries.max_attempts``, ``tasks.depends_on``, ``runs``, ``leases``.
+``deliveries.max_attempts``, ``runs``, ``leases``.
 """
 
 from __future__ import annotations
@@ -211,10 +211,84 @@ CREATE UNIQUE INDEX bindings_one_live_per_tty ON bindings (tty) WHERE state = 'a
 CREATE INDEX bindings_live ON bindings (state, expires_at);
 """
 
+# M5: the task graph, budgets and artifact provenance. SQLite cannot widen the
+# ``state`` CHECK of a shipped table by ALTER, so ``tasks`` is rebuilt by the
+# documented copy-drop-rename procedure. ``Store.migrate`` runs every migration
+# with ``foreign_keys`` off and a ``foreign_key_check`` before the commit, so a
+# rebuild that left a dangling reference would fail here rather than ship.
+SCHEMA_V4 = """
+CREATE TABLE tasks_v4 (
+    seq                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                   TEXT NOT NULL UNIQUE,
+    title                TEXT NOT NULL,
+    payload              TEXT NOT NULL DEFAULT '{}',
+    created_by_agent_id  TEXT NOT NULL REFERENCES agents(id),
+    assigned_agent_id    TEXT REFERENCES agents(id),
+    priority             INTEGER NOT NULL DEFAULT 0,
+    depends_on           TEXT NOT NULL DEFAULT '[]',
+    budget               TEXT NOT NULL DEFAULT '{}',
+    spent                TEXT NOT NULL DEFAULT '{}',
+    deadline_at          TEXT,
+    state                TEXT NOT NULL CHECK (state IN (
+                             'open', 'waiting', 'claimed', 'completed', 'blocked', 'cancelled', 'exhausted')),
+    result               TEXT,
+    version              INTEGER NOT NULL DEFAULT 1,
+    requires_worktree    INTEGER NOT NULL DEFAULT 0 CHECK (requires_worktree IN (0, 1)),
+    claimed_at           TEXT,
+    completed_at         TEXT,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+INSERT INTO tasks_v4 (seq, id, title, payload, created_by_agent_id, assigned_agent_id, priority,
+                      depends_on, state, result, version, requires_worktree,
+                      claimed_at, completed_at, created_at, updated_at)
+        SELECT seq, id, title, payload, created_by_agent_id, assigned_agent_id, priority,
+               depends_on, state, result, version, requires_worktree,
+               claimed_at, completed_at, created_at, updated_at
+          FROM tasks;
+
+-- AUTOINCREMENT high-water mark: copying rows sets the new table's mark from
+-- the copied seq values, so a mark standing above the surviving rows (a task
+-- deleted before the migration) would be forgotten and handed out again. seq
+-- is the paging cursor, so a reused one makes `after` skip or repeat a task.
+DELETE FROM sqlite_sequence WHERE name = 'tasks_v4';
+
+INSERT INTO sqlite_sequence (name, seq) SELECT 'tasks_v4', seq FROM sqlite_sequence WHERE name = 'tasks';
+
+DROP TABLE tasks;
+
+-- Renaming the new table into place is the safe direction: SQLite rewrites
+-- references TO the renamed name, and nothing references `tasks_v4`, so
+-- `artifacts.task_id` and `approvals.task_id` keep pointing at `tasks`.
+ALTER TABLE tasks_v4 RENAME TO tasks;
+
+CREATE INDEX tasks_state ON tasks (state, priority DESC, seq);
+CREATE INDEX tasks_deadline ON tasks (deadline_at) WHERE deadline_at IS NOT NULL;
+
+-- The edge table is the graph the daemon walks; ``tasks.depends_on`` keeps the
+-- same list on the task record for readers. Both are written together at
+-- creation and never edited, because an edge set that could change after the
+-- fact could introduce a cycle no creation-time check ever saw.
+CREATE TABLE task_deps (
+    task_id        TEXT NOT NULL REFERENCES tasks(id),
+    depends_on_id  TEXT NOT NULL REFERENCES tasks(id),
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (task_id, depends_on_id)
+);
+CREATE INDEX task_deps_reverse ON task_deps (depends_on_id);
+
+-- ADR 0004 again: an artifact record says how much its producer's identity was
+-- worth when it was published, so provenance survives without event archaeology.
+ALTER TABLE artifacts ADD COLUMN trust TEXT NOT NULL DEFAULT 'asserted';
+"""
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
+    (4, SCHEMA_V4),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

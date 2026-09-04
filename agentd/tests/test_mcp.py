@@ -191,6 +191,11 @@ class ErrorShapes(ServerCase):
         self.assertIn("unknown keys", result["content"][0]["text"])
         result = self.client.call("message_inbox", {"agent_id": "x", "limit": True})
         self.assertTrue(result["isError"])
+        # NaN compares false against every bound, so a range check alone would
+        # admit it; a cost budget is not a number that may be "not a number".
+        result = self.client.call("task_record_usage", {"task_id": "tsk_x", "agent_id": "x", "cost_usd": float("nan")})
+        self.assertTrue(result["isError"])
+        self.assertIn("finite", result["content"][0]["text"])
         result = self.client.call("task_claim", {"task_id": "tsk_missing", "agent_id": "x"})
         self.assertTrue(result["isError"])
         self.assertIn("NotFound", result["content"][0]["text"])
@@ -296,7 +301,8 @@ class ToolsContract(ServerCase):
             self.assertIn("readOnlyHint", tool["annotations"])
         names = {t["name"] for t in listed}
         expected = {"agent_register", "agent_list", "agent_heartbeat", "message_send", "message_inbox", "message_ack",
-                    "task_create", "task_list", "task_claim", "task_complete", "artifact_publish", "artifact_get",
+                    "task_create", "task_list", "task_claim", "task_complete", "task_get", "task_graph_create",
+                    "task_record_usage", "artifact_publish", "artifact_get", "artifact_list",
                     "worktree_bind", "worktree_get", "approval_consume", "agent_whoami"}
         self.assertEqual(names, expected)
 

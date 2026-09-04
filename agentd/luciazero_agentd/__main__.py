@@ -166,6 +166,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         who = clean(task["assigned_to"] or "unassigned")
         needs = "  needs worktree" if task.get("requires_worktree") else ""
         print(f"  open task {clean(task['id'])}  p{task['priority']}  {who}: {clean(task['title'])}{needs}")
+    for task in status.get("stopped_tasks") or []:
+        dimension = clean(task.get("dimension") or "budget")
+        print(f"  stopped task {clean(task['id'])}  spent its {dimension} budget: {clean(task['title'])}")
     unverified = status.get("unverified_agents") or []
     if unverified:
         print(f"unverified: {', '.join(clean(a) for a in unverified)} (no terminal binding; these sessions act as whoever they claim to be)")

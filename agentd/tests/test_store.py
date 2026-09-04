@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, StoreError, ValidationError
+from luciazero_agentd import migrations
 from luciazero_agentd.migrations import LATEST_VERSION
 from tests.fixtures import git, make_repo
 
@@ -33,6 +34,35 @@ class MigrationTests(StoreCase):
         self.assertEqual(self.store.schema_version(), LATEST_VERSION)
         self.assertEqual(self.store.migrate(), LATEST_VERSION)
         self.assertEqual(self.store.schema_version(), LATEST_VERSION)
+
+    def test_the_task_rebuild_carries_the_autoincrement_mark(self) -> None:
+        """M5 schema v4 rebuilds `tasks` by copying rows, which sets the new
+        table's AUTOINCREMENT mark from the copied seq values. A mark standing
+        above the surviving rows must be carried across: seq is the paging
+        cursor, so handing one out twice makes `after` skip or repeat a task."""
+        path = str(Path(self._tmp.name) / "v3.sqlite3")
+        shipped = list(migrations.MIGRATIONS)
+        migrations.MIGRATIONS[:] = [entry for entry in shipped if entry[0] <= 3]
+        try:
+            with Store.open(path) as old:
+                old.migrate()
+                old.register_agent("codex-architect", provider="codex", role="architect")
+                # Seeded through SQL: the shipped code writes v4 columns the v3
+                # table does not have, which is the point of the migration.
+                for title in ("one", "two"):
+                    old._conn.execute(
+                        """INSERT INTO tasks (id, title, created_by_agent_id, state, created_at, updated_at)
+                           VALUES (?, ?, 'codex-architect', 'open', '2026-09-04T00:00:00.000000+00:00', '2026-09-04T00:00:00.000000+00:00')""",
+                        (f"tsk_{title}", title),
+                    )
+                mark = int(old._conn.execute("SELECT seq FROM tasks WHERE id = 'tsk_two'").fetchone()[0])
+                old._conn.execute("DELETE FROM tasks WHERE id = 'tsk_two'")
+        finally:
+            migrations.MIGRATIONS[:] = shipped
+        with Store.open(path) as new:
+            self.assertEqual(new.migrate(), LATEST_VERSION)
+            fresh = new.create_task(title="three", created_by="codex-architect")
+            self.assertGreater(int(fresh["seq"]), mark)
 
     def test_pragmas(self) -> None:
         pragmas = self.store.pragmas()
@@ -172,8 +202,10 @@ class MessageTests(StoreCase):
             self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"x": float("nan")})
         with self.assertRaises(ValidationError):
             self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"x": {1, 2}})
-        with self.assertRaises(ValidationError):
-            self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={}, hop_count=True)
+        with self.assertRaises(TypeError):
+            # M5: hop_count is measured by the daemon, never accepted from the
+            # sender -- a sender that set its own could reset a loop forever.
+            self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={}, hop_count=0)
         with self.assertRaises(ValidationError):
             self.store.inbox("claude-reviewer", limit=0)
         with self.assertRaises(ValidationError):

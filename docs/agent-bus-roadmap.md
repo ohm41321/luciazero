@@ -101,6 +101,9 @@ Claude Code --/                    \--> Claude CLI adapter
   finished or paused work; the bus is live queue coordination. The agent-facing
   workflow ships as a separate `/lucia-bus` skill and does not extend
   `/lucia-relay`.
+- Order between tasks, per-task budgets, and artifact provenance are decided
+  in ADR 0005: the daemon owns the graph and the limits, measures what it can
+  measure itself, and only ever records what a provider tells it.
 - Packaging and implementation language are decided in ADR 0002 before any
   schema or daemon code lands. The README promise that Luciazero is a
   discipline layer, not an agent runtime, is a constraint on that decision.
@@ -553,7 +556,7 @@ recorded before M5 starts:
 If that evidence does not exist, the release decision is "stop at the pull
 beta"; "it feels used" is not a gate.
 
-### M4.5 — Terminal binding and session credentials (accepted 2026-09-03, in progress)
+### M4.5 — Terminal binding and session credentials (complete 2026-09-04)
 
 The last identity the model still asserts is its own: the user tells it "you
 are `claude-reviewer`" and every tool call repeats that string. ADR 0004
@@ -656,25 +659,88 @@ invariant that outranks the rest: `--allow-unattributed` decides only whether
 an unattributed request is permitted, never how it is labelled, so an
 unverified session must never be reported as having a proven identity.
 
-### M5 — Task orchestration and artifacts
+### M5 — Task orchestration and artifacts (complete 2026-09-04)
 
-- [ ] Unblock dependent tasks transactionally when prerequisites complete.
-- [ ] Detect dependency cycles before committing a task graph.
-- [ ] Enforce a maximum hop count and conversation TTL.
-- [ ] Reference commits, reports, patches, logs, and Lucia Relay manifests as
-  artifacts.
-- [ ] Add per-task time, turn, token, and cost budgets where providers expose
-  the necessary measurements.
-- [ ] Stop automatic dispatch when a budget or retry limit is reached.
+Order between tasks lived in the models' heads until here: the architect
+created a verify task and hoped nobody claimed it before the fix existed.
+Nothing bounded a conversation or a task, and an artifact was never cited as
+the evidence for a result. ADR 0005 records the contract; M6 builds automatic
+dispatch on top of it, which is why the limits land before the dispatcher and
+not after.
+
+- [x] Unblock dependent tasks transactionally when prerequisites complete.
+  Completing the last prerequisite opens the dependent inside the same
+  transaction, proved by a kill between the two writes
+  (`test_completion_and_unblocking_commit_together`) rather than by an
+  assertion about ordering. A prerequisite that ends `blocked`, `cancelled`
+  or `exhausted` blocks its dependents instead, cascading down the graph: a
+  task waiting on work nobody will finish is stuck, not waiting.
+- [x] Detect dependency cycles before committing a task graph.
+  `task_graph_create` builds a whole plan in one transaction and refuses a
+  batch containing a cycle before the first insert (Kahn, with the cycle path
+  in the message). Edges are immutable and a single `task_create` may only
+  depend on tasks that already exist, which is what makes the check complete
+  instead of best-effort.
+- [x] Enforce a maximum hop count and conversation TTL. `hop_count` is now
+  measured by the daemon -- how many messages the `correlation_id` already
+  carries -- because a sender that sets its own could reset a loop to zero
+  forever; counting messages rather than `reply_to` depth bounds a loop whether
+  or not the models thread their replies. Past 32 hops, or 24 hours, the send
+  is refused and recorded as `conversation.hop_limit` / `conversation.expired`.
+  A reply inherits its parent's conversation, and a `correlation_id` that
+  contradicts the parent is refused: review found the cap escapable by
+  threading with `reply_to` alone (96 replies, no refusal) while the ADR
+  claimed the stopper was not opt-in.
+- [x] Reference commits, reports, patches, logs, and Lucia Relay manifests as
+  artifacts. Kinds shipped in M3; M5 adds the provenance that makes them
+  evidence: a `trust` column filled from the publishing session, `artifact_list`
+  by task or producer, and `task_complete(artifacts=[...])` citing ids that must
+  already exist. Citing never rewrites production, and a stopped task takes no
+  new artifacts while a finished one still accepts a late report.
+- [x] Add per-task time, turn, token, and cost budgets where providers expose
+  the necessary measurements. `seconds` and `turns` are measured by the daemon
+  and cannot be under-reported; `tokens` and `cost_usd` can only come from the
+  provider, so `task_record_usage` is additive-only, accepted only from the
+  agent holding the claim, and every report keeps the reporting session's
+  trust. An unknown dimension is refused rather than
+  ignored.
+- [x] Stop automatic dispatch when a budget or retry limit is reached. A spent
+  budget is a stop: the task becomes `exhausted`, its queued messages are
+  dead-lettered, its dependents are blocked, and the send or claim that hit the
+  limit is refused -- with the stop committed even though the call fails, so a
+  retry cannot spend it again. M6's dispatcher must treat `exhausted` as
+  terminal. Delivery-level retry limits (`deliveries.attempts`,
+  `max_attempts`) stay reserved for M6: nothing retries by itself in the pull
+  beta, so a retry limit here would be a number nothing could reach.
+- [x] Schema v4 rebuilds `tasks` for the two new states (`waiting`,
+  `exhausted`), which SQLite cannot add to a shipped CHECK by ALTER, and adds
+  the `task_deps` edge table plus `artifacts.trust`. `Store.migrate` now runs
+  every migration with `foreign_keys` off and a `foreign_key_check` before the
+  commit, so a rebuild that left `artifacts.task_id` or `approvals.task_id`
+  dangling fails the migration instead of shipping.
+- [x] The tool contract grows from 16 to 20 tools (`task_get`,
+  `task_graph_create`, `task_record_usage`, `artifact_list`), `/lucia-bus`
+  learns that a `waiting` task cannot be claimed and that a budget stop is
+  final, and both status printers gain a per-state count and a line per
+  stopped task -- a task nothing will resume must not vanish from the only
+  view a human reads.
 
 Exit gate:
 
 ```bash
-./test.sh --agent-bus-workflow
+./test.sh --agent-bus-workflow   # green 2026-09-04
+./test.sh --agent-bus-store      # 193 tests, includes the workflow suite
 ```
 
 A deterministic fake-provider scenario must execute a dependency graph,
 reject a cycle, stop an infinite reply loop, and preserve artifact provenance.
+The gate run does all four through the shipped daemon: the cycle is refused
+with nothing written, `fix -> verify -> report` executes in order with each
+task opening exactly when its own prerequisites complete, a reply loop stops
+at the hop cap, a spent turn budget stops a task and blocks its dependent, and
+the commit the implementer published still names the implementer after the
+reviewer cites it. It also fails if any write in the run carries
+`trust: asserted`, so M4.5's invariant keeps holding here.
 
 ### M6 — Dispatcher and provider adapters
 
@@ -782,8 +848,8 @@ Items marked (M6+) apply only once managed dispatch exists.
 - [ ] Replaying any state-changing request is idempotent.
 - [ ] Daemon restart does not lose acknowledged messages or completed tasks.
 - [ ] A failed dispatch is retried only within its declared policy. (M6+)
-- [ ] Infinite agent-to-agent loops terminate at a budget, TTL, or hop limit.
-  (M5+)
+- [x] Infinite agent-to-agent loops terminate at a budget, TTL, or hop limit.
+  (M5, 2026-09-04: 32-hop cap, 24-hour conversation TTL, per-task budgets.)
 - [ ] A stable agent can rotate to a new provider session without losing its
   open tasks or address.
 - [ ] Concurrent writers never share a worktree.

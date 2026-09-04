@@ -41,6 +41,22 @@ ARTIFACT_KINDS = ("commit", "patch", "report", "log", "relay")
 PATH_ARTIFACT_KINDS = ("patch", "report", "log", "relay")
 PROVIDERS = ("codex", "claude", "other")
 TASK_OUTCOMES = ("completed", "blocked")
+TASK_STATES = ("open", "waiting", "claimed", "completed", "blocked", "cancelled", "exhausted")
+LIVE_TASK_STATES = ("open", "waiting", "claimed")
+STOPPED_TASK_STATES = ("blocked", "cancelled", "exhausted")
+# M5 loop stoppers. A hop is one message the conversation already carries, so
+# the cap bounds a reply loop whether or not the models thread `reply_to`.
+MAX_HOPS = 32
+CONVERSATION_TTL_SECONDS = 24 * 3600
+MAX_DEPENDENCIES = 32
+MAX_GRAPH_NODES = 64
+# What a task may be limited by. `seconds` and `turns` are measured by the
+# daemon itself and cannot be under-reported; `tokens` and `cost_usd` can only
+# come from a provider, so they are recorded with the reporter's trust label
+# and may only ever grow.
+BUDGET_DIMENSIONS = ("seconds", "turns", "tokens", "cost_usd")
+REPORTED_DIMENSIONS = ("tokens", "cost_usd")
+TASK_NODE_FIELDS = ("key", "title", "payload", "assigned_to", "priority", "requires_worktree", "depends_on", "budget")
 # Operations that need a human approval nonce (ADR 0003). Fixed set: the
 # store cannot be talked into a new category through any tool.
 SENSITIVE_OPERATIONS = ("delete", "deploy", "production", "spend", "force_push", "public_contract", "scope_expansion")
@@ -91,6 +107,18 @@ class ApprovalRefused(ConflictError):
 class IdentityMismatch(ConflictError):
     """A credentialed session named an agent other than the one it is bound
     to (ADR 0004)."""
+
+
+class DependencyRefused(ValidationError):
+    """A task graph is not a DAG, or an edge names something undependable."""
+
+
+class BudgetExceeded(ConflictError):
+    """A per-task budget is spent. The task is stopped; nothing more runs on it."""
+
+
+class ConversationLimit(ConflictError):
+    """The conversation hit its hop cap or outlived its TTL."""
 
 
 class UnsafeReference(ValidationError):
@@ -168,7 +196,7 @@ def _row(cursor_row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
     if cursor_row is None:
         return None
     record = dict(cursor_row)
-    for key in ("payload", "capabilities", "depends_on", "result"):
+    for key in ("payload", "capabilities", "depends_on", "result", "budget", "spent"):
         if key in record and isinstance(record[key], str):
             try:
                 record[key] = json.loads(record[key])
@@ -257,6 +285,72 @@ def _split_statements(sql: str) -> list[str]:
     if buffer.strip():
         raise StoreError("migration script ends with an incomplete statement")
     return statements
+
+
+def _elapsed_seconds(since: str, now: str) -> float:
+    """Seconds between two ``utcnow()`` stamps; 0.0 if either cannot be read,
+    so a malformed row can never manufacture an expiry."""
+    try:
+        return (datetime.fromisoformat(now) - datetime.fromisoformat(since)).total_seconds()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _plus_seconds(stamp: str, seconds: int) -> str:
+    return (datetime.fromisoformat(stamp) + timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+
+
+def _find_cycle(edges: dict[str, set[str]]) -> list[str]:
+    """One cycle in ``node -> prerequisites``, for the refusal message."""
+    colour: dict[str, int] = {}
+    stack: list[str] = []
+
+    def walk(node: str) -> Optional[list[str]]:
+        colour[node] = 1
+        stack.append(node)
+        for nxt in sorted(edges.get(node, ())):
+            if colour.get(nxt, 0) == 1:
+                return stack[stack.index(nxt):] + [nxt]
+            if colour.get(nxt, 0) == 0:
+                found = walk(nxt)
+                if found:
+                    return found
+        stack.pop()
+        colour[node] = 2
+        return None
+
+    for node in sorted(edges):
+        if colour.get(node, 0) == 0:
+            found = walk(node)
+            if found:
+                return found
+    return []
+
+
+def _topological_order(edges: dict[str, set[str]]) -> list[str]:
+    """Kahn's algorithm over ``node -> prerequisites``, refusing a cycle before
+    anything is written. Only edges inside the batch matter: a task that
+    already exists cannot gain an edge later, so it can never close a cycle."""
+    remaining = {node: set(deps) for node, deps in edges.items()}
+    order: list[str] = []
+    ready = sorted(node for node, deps in remaining.items() if not deps)
+    seen = set(ready)
+    while ready:
+        node = ready.pop(0)
+        order.append(node)
+        for other, deps in remaining.items():
+            if node in deps:
+                deps.discard(node)
+                if not deps and other not in seen:
+                    ready.append(other)
+                    seen.add(other)
+        ready.sort()
+    if len(order) != len(remaining):
+        cycle = _find_cycle(edges)
+        raise DependencyRefused(
+            "dependency cycle: " + " -> ".join(cycle) if cycle else "the task graph contains a dependency cycle"
+        )
+    return order
 
 
 class Store:
@@ -356,20 +450,33 @@ class Store:
         for version, sql in MIGRATIONS:
             if version <= current:
                 continue
-            self._conn.execute("BEGIN IMMEDIATE")
+            # Rebuilding a table means renaming and dropping one that other
+            # tables reference, which SQLite only allows with foreign keys off
+            # (and the pragma is a no-op inside a transaction, so it goes
+            # here). `foreign_key_check` before the commit is what makes that
+            # safe: a migration that leaves a dangling reference fails instead
+            # of shipping one.
+            self._conn.execute("PRAGMA foreign_keys = OFF")
             try:
-                current = self.schema_version()  # re-read under the lock
-                if version <= current:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    current = self.schema_version()  # re-read under the lock
+                    if version <= current:
+                        self._conn.execute("COMMIT")
+                        continue
+                    for statement in _split_statements(sql):
+                        self._conn.execute(statement)
+                    violations = self._conn.execute("PRAGMA foreign_key_check").fetchall()
+                    if violations:
+                        raise StoreError(f"migration {version} left {len(violations)} dangling foreign key reference(s)")
+                    self._conn.execute(f"PRAGMA user_version = {int(version)}")
                     self._conn.execute("COMMIT")
-                    continue
-                for statement in _split_statements(sql):
-                    self._conn.execute(statement)
-                self._conn.execute(f"PRAGMA user_version = {int(version)}")
-                self._conn.execute("COMMIT")
-            except BaseException:
-                if self._conn.in_transaction:
-                    self._conn.execute("ROLLBACK")
-                raise
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
+            finally:
+                self._conn.execute("PRAGMA foreign_keys = ON")
             current = version
         return current
 
@@ -505,9 +612,19 @@ class Store:
         correlation_id: Optional[str] = None,
         reply_to: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        hop_count: int = 0,
     ) -> dict[str, Any]:
-        """Persist one immutable message and its queued delivery together."""
+        """Persist one immutable message and its queued delivery together.
+
+        The daemon sets ``hop_count`` itself -- how many messages the
+        conversation already carries -- because a sender that could set its own
+        hop count could reset a loop to zero forever. A reply inherits the
+        conversation of the message it answers: threading with ``reply_to``
+        alone must not open a fresh hop window, and a ``correlation_id`` that
+        contradicts the parent is refused rather than honoured. Past
+        ``MAX_HOPS``, or once the conversation outlives
+        ``CONVERSATION_TTL_SECONDS``, the send is refused and recorded. A payload naming a task spends one
+        of that task's turns; the send that would overspend stops the task
+        instead of being delivered."""
         _check_id(sender, "sender", self._redactor)
         _check_id(recipient, "recipient", self._redactor)
         _check_enum(kind, MESSAGE_KINDS, "kind")
@@ -518,11 +635,14 @@ class Store:
             _check_id(reply_to, "reply_to", self._redactor)
         if correlation_id is not None:
             _check_id(correlation_id, "correlation id", self._redactor)
-        _check_int(hop_count, 0, 1_000, "hop_count")
         fingerprint = _fingerprint(
             "send_message", sender=sender, recipient=recipient, kind=kind,
-            payload=encoded, correlation_id=correlation_id, reply_to=reply_to, hop_count=hop_count,
+            payload=encoded, correlation_id=correlation_id, reply_to=reply_to,
         )
+        refusal: Optional[tuple[str, str, dict[str, Any]]] = None
+        stopped: Optional[dict[str, Any]] = None
+        stopped_task: Optional[str] = None
+        message_id = ""
         with self._tx("send_message"):
             existing = self._replay(sender, idempotency_key, "send_message", fingerprint)
             if existing is not None:
@@ -530,23 +650,77 @@ class Store:
             else:
                 self._require_agent(sender)
                 self._require_agent(recipient)
-                if reply_to is not None and self._conn.execute("SELECT 1 FROM messages WHERE id = ?", (reply_to,)).fetchone() is None:
-                    raise NotFound(f"reply_to message {reply_to!r} does not exist")
-                message_id = new_id("msg")
-                delivery_id = new_id("dlv")
+                conversation = correlation_id
+                if reply_to is not None:
+                    parent = self._conn.execute("SELECT correlation_id FROM messages WHERE id = ?", (reply_to,)).fetchone()
+                    if parent is None:
+                        raise NotFound(f"reply_to message {reply_to!r} does not exist")
+                    # The parent's conversation is a fact, not an argument: a
+                    # reply that could file itself elsewhere would open a fresh
+                    # hop and TTL window every turn, and the loop stopper would
+                    # stop nothing.
+                    if conversation is None:
+                        conversation = parent["correlation_id"]
+                    elif conversation != parent["correlation_id"]:
+                        raise ConflictError(
+                            f"reply_to {reply_to!r} belongs to conversation {parent['correlation_id']!r}, not {conversation!r}; "
+                            "omit reply_to to start a new conversation"
+                        )
                 now = utcnow()
-                self._conn.execute(
-                    """INSERT INTO messages (id, sender_agent_id, recipient_agent_id, kind, payload,
-                                             correlation_id, reply_to, hop_count, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (message_id, sender, recipient, kind, encoded, correlation_id or message_id, reply_to, hop_count, now),
-                )
-                self._conn.execute(
-                    "INSERT INTO deliveries (id, message_id, recipient_agent_id, state, updated_at) VALUES (?, ?, ?, 'queued', ?)",
-                    (delivery_id, message_id, recipient, now),
-                )
-                self._event(sender, "message.sent", "message", message_id, {"recipient": recipient, "kind": kind, "delivery_id": delivery_id, "redactions": redactions})
-                self._remember(sender, idempotency_key, "send_message", fingerprint, "message", message_id)
+                hop = 0
+                if conversation is not None:
+                    row = self._conn.execute(
+                        "SELECT COUNT(*) AS hops, MIN(created_at) AS started_at FROM messages WHERE correlation_id = ?", (conversation,)
+                    ).fetchone()
+                    hop = int(row["hops"])
+                    age = _elapsed_seconds(row["started_at"], now) if row["started_at"] else 0.0
+                    if hop > MAX_HOPS:
+                        refusal = ("conversation.hop_limit",
+                                   f"conversation {conversation!r} reached the {MAX_HOPS}-hop limit; start a new one with a fresh correlation_id",
+                                   {"hops": hop, "limit": MAX_HOPS, "sender": sender, "recipient": recipient})
+                    elif age > CONVERSATION_TTL_SECONDS:
+                        refusal = ("conversation.expired",
+                                   f"conversation {conversation!r} is older than its {CONVERSATION_TTL_SECONDS}s time to live; start a new one with a fresh correlation_id",
+                                   {"age_seconds": round(age, 3), "ttl_seconds": CONVERSATION_TTL_SECONDS, "sender": sender, "recipient": recipient})
+                task_row = None
+                if refusal is None and isinstance(payload, dict) and isinstance(payload.get("task_id"), str):
+                    task_row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (payload["task_id"],)).fetchone()
+                    if task_row is not None:
+                        stopped = self._over_budget(task_row, now)
+                        if stopped is None and task_row["state"] in LIVE_TASK_STATES:
+                            budget = self._decode(task_row["budget"])
+                            spent = self._decode(task_row["spent"])
+                            turns = int(spent.get("turns", 0)) + 1
+                            if "turns" in budget and turns > int(budget["turns"]):
+                                stopped = {"dimension": "turns", "limit": budget["turns"], "spent": turns}
+                        if stopped is not None:
+                            stopped_task = str(task_row["id"])
+                            self._exhaust_task(stopped_task, over=stopped, actor=sender, now=now)
+                if refusal is not None:
+                    self._event(sender, refusal[0], "message", conversation or "", refusal[2])
+                elif stopped is None:
+                    message_id = new_id("msg")
+                    delivery_id = new_id("dlv")
+                    self._conn.execute(
+                        """INSERT INTO messages (id, sender_agent_id, recipient_agent_id, kind, payload,
+                                                 correlation_id, reply_to, hop_count, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (message_id, sender, recipient, kind, encoded, conversation or message_id, reply_to, hop, now),
+                    )
+                    self._conn.execute(
+                        "INSERT INTO deliveries (id, message_id, recipient_agent_id, state, updated_at) VALUES (?, ?, ?, 'queued', ?)",
+                        (delivery_id, message_id, recipient, now),
+                    )
+                    if task_row is not None and task_row["state"] in LIVE_TASK_STATES:
+                        spent = self._decode(task_row["spent"])
+                        spent["turns"] = int(spent.get("turns", 0)) + 1
+                        self._conn.execute("UPDATE tasks SET spent = ?, updated_at = ? WHERE id = ?", (json.dumps(spent, sort_keys=True), now, task_row["id"]))
+                    self._event(sender, "message.sent", "message", message_id, {"recipient": recipient, "kind": kind, "delivery_id": delivery_id, "hop_count": hop, "redactions": redactions})
+                    self._remember(sender, idempotency_key, "send_message", fingerprint, "message", message_id)
+        if refusal is not None:
+            raise ConversationLimit(refusal[1])
+        if stopped is not None and stopped_task is not None:
+            raise BudgetExceeded(self._budget_message(stopped_task, stopped))
         return self.get_message(message_id)
 
     def get_message(self, message_id: str) -> dict[str, Any]:
@@ -624,6 +798,121 @@ class Store:
         return record
 
     # ------------------------------------------------------------------ tasks
+    def _check_budget(self, value: Any) -> dict[str, Any]:
+        """A budget names limits the daemon will stop the task on. Unknown
+        dimensions are refused rather than ignored: a typo that silently
+        removed the limit would be the worst possible failure here."""
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValidationError("budget must be an object")
+        out: dict[str, Any] = {}
+        for key in sorted(value):
+            if key not in BUDGET_DIMENSIONS:
+                raise ValidationError(f"budget has no dimension {key!r}; use {', '.join(BUDGET_DIMENSIONS)}")
+            raw = value[key]
+            if key == "cost_usd":
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                    raise ValidationError("budget.cost_usd must be a number")
+                if not 0 < float(raw) <= 1_000_000:
+                    raise ValidationError("budget.cost_usd must be greater than 0")
+                out[key] = float(raw)
+            else:
+                out[key] = _check_int(raw, 1, 10**9, f"budget.{key}")
+        return out
+
+    def _normalize_task(self, node: dict[str, Any], *, index: int) -> dict[str, Any]:
+        """Validate one task description, single or a node of a graph."""
+        where = "task" if index < 0 else f"node {index}"
+        if not isinstance(node, dict):
+            raise ValidationError(f"{where} must be an object")
+        unknown = sorted(set(node) - set(TASK_NODE_FIELDS))
+        if unknown:
+            raise ValidationError(f"{where} has unknown keys: {', '.join(unknown)}")
+        assigned_to = node.get("assigned_to")
+        if assigned_to is not None:
+            _check_id(assigned_to, f"{where} assigned_to", self._redactor)
+        requires_worktree = node.get("requires_worktree", False)
+        if not isinstance(requires_worktree, bool):
+            raise ValidationError(f"{where} requires_worktree must be a boolean")
+        raw_deps = node.get("depends_on") or []
+        if not isinstance(raw_deps, (list, tuple)):
+            raise ValidationError(f"{where} depends_on must be an array")
+        if len(raw_deps) > MAX_DEPENDENCIES:
+            raise ValidationError(f"{where} depends_on has more than {MAX_DEPENDENCIES} entries")
+        depends_on: list[str] = []
+        for dep in raw_deps:
+            _check_id(dep, f"{where} depends_on entry", self._redactor)
+            if dep not in depends_on:
+                depends_on.append(dep)
+        key = node.get("key")
+        if key is not None:
+            _check_id(key, f"{where} key", self._redactor)
+            if key in depends_on:
+                raise DependencyRefused(f"task {key!r} cannot depend on itself")
+        encoded, redactions = self._payload(node.get("payload") or {}, f"{where} payload")
+        return {
+            "key": key,
+            "title": self.redact(_check_text(node.get("title"), f"{where} title", 500)),
+            "payload": encoded,
+            "redactions": redactions,
+            "assigned_to": assigned_to,
+            "priority": _check_int(node.get("priority", 0), -100, 100, f"{where} priority"),
+            "requires_worktree": requires_worktree,
+            "depends_on": depends_on,
+            "budget": self._check_budget(node.get("budget")),
+        }
+
+    def _dependency_states(self, task_id: str) -> dict[str, str]:
+        rows = self._conn.execute(
+            """SELECT d.depends_on_id AS id, t.state AS state
+                 FROM task_deps d JOIN tasks t ON t.id = d.depends_on_id
+                WHERE d.task_id = ? ORDER BY d.depends_on_id""",
+            (task_id,),
+        ).fetchall()
+        return {row["id"]: row["state"] for row in rows}
+
+    def _require_dependencies(self, depends_on: Sequence[str]) -> dict[str, str]:
+        """Existing prerequisites and their states. Missing ones are refused:
+        an edge to a task that does not exist would wait forever."""
+        states: dict[str, str] = {}
+        for dep in depends_on:
+            row = self._conn.execute("SELECT state FROM tasks WHERE id = ?", (dep,)).fetchone()
+            if row is None:
+                raise NotFound(f"task {dep!r} does not exist; a dependency must name a task that already exists")
+            states[dep] = row["state"]
+        return states
+
+    def _insert_task(self, prepared: dict[str, Any], *, created_by: str, task_id: str, now: str, dep_states: dict[str, str]) -> None:
+        """Insert one task, its edges, and the state its prerequisites imply."""
+        blocked_by = [dep for dep, state in dep_states.items() if state in STOPPED_TASK_STATES]
+        unmet = [dep for dep, state in dep_states.items() if state != "completed"]
+        result = None
+        if blocked_by:
+            state = "blocked"
+            result = json.dumps({"blocked_by": blocked_by[0], "prerequisite_state": dep_states[blocked_by[0]]}, sort_keys=True)
+        elif unmet:
+            state = "waiting"
+        else:
+            state = "open"
+        budget = prepared["budget"]
+        deadline = _plus_seconds(now, int(budget["seconds"])) if "seconds" in budget else None
+        self._conn.execute(
+            """INSERT INTO tasks (id, title, payload, created_by_agent_id, assigned_agent_id, priority,
+                                  depends_on, budget, spent, deadline_at, state, result, requires_worktree, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, prepared["title"], prepared["payload"], created_by, prepared["assigned_to"], prepared["priority"],
+             json.dumps(list(dep_states), sort_keys=True), json.dumps(budget, sort_keys=True),
+             json.dumps({"turns": 0, "tokens": 0, "cost_usd": 0.0}, sort_keys=True),
+             deadline, state, result, int(prepared["requires_worktree"]), now, now),
+        )
+        for dep in dep_states:
+            self._conn.execute("INSERT INTO task_deps (task_id, depends_on_id, created_at) VALUES (?, ?, ?)", (task_id, dep, now))
+        self._event(created_by, "task.created", "task", task_id, {
+            "title": prepared["title"], "assigned_to": prepared["assigned_to"], "requires_worktree": prepared["requires_worktree"],
+            "state": state, "depends_on": list(dep_states), "budget": budget, "redactions": prepared["redactions"],
+        })
+
     def create_task(
         self,
         *,
@@ -634,36 +923,96 @@ class Store:
         priority: int = 0,
         idempotency_key: Optional[str] = None,
         requires_worktree: bool = False,
+        depends_on: Optional[Sequence[str]] = None,
+        budget: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        """One task. ``depends_on`` may only name tasks that already exist, so
+        a single creation cannot close a cycle; ``create_task_graph`` is how
+        tasks that depend on one another are created together. A task with an
+        unfinished prerequisite starts ``waiting`` and cannot be claimed until
+        the daemon opens it."""
         _check_id(created_by, "created_by", self._redactor)
-        if assigned_to is not None:
-            _check_id(assigned_to, "assigned_to", self._redactor)
-        title = self.redact(_check_text(title, "title", 500))
-        _check_int(priority, -100, 100, "priority")
-        if not isinstance(requires_worktree, bool):
-            raise ValidationError("requires_worktree must be a boolean")
-        encoded, redactions = self._payload(payload or {}, "payload")
         if idempotency_key is not None:
             _check_id(idempotency_key, "idempotency key", self._redactor)
-        fingerprint = _fingerprint("create_task", title=title, created_by=created_by, payload=encoded, assigned_to=assigned_to, priority=priority, requires_worktree=requires_worktree)
+        prepared = self._normalize_task({
+            "title": title, "payload": payload, "assigned_to": assigned_to, "priority": priority,
+            "requires_worktree": requires_worktree, "depends_on": depends_on, "budget": budget,
+        }, index=-1)
+        fingerprint = _fingerprint(
+            "create_task", title=prepared["title"], created_by=created_by, payload=prepared["payload"],
+            assigned_to=prepared["assigned_to"], priority=prepared["priority"], requires_worktree=prepared["requires_worktree"],
+            depends_on=prepared["depends_on"], budget=prepared["budget"],
+        )
         with self._tx("create_task"):
             existing = self._replay(created_by, idempotency_key, "create_task", fingerprint)
             if existing is not None:
                 task_id = existing
             else:
                 self._require_agent(created_by)
-                if assigned_to is not None:
-                    self._require_agent(assigned_to)
+                if prepared["assigned_to"] is not None:
+                    self._require_agent(prepared["assigned_to"])
+                dep_states = self._require_dependencies(prepared["depends_on"])
                 task_id = new_id("tsk")
-                now = utcnow()
-                self._conn.execute(
-                    """INSERT INTO tasks (id, title, payload, created_by_agent_id, assigned_agent_id, priority, state, requires_worktree, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
-                    (task_id, title, encoded, created_by, assigned_to, priority, int(requires_worktree), now, now),
-                )
-                self._event(created_by, "task.created", "task", task_id, {"title": title, "assigned_to": assigned_to, "requires_worktree": requires_worktree, "redactions": redactions})
+                self._insert_task(prepared, created_by=created_by, task_id=task_id, now=utcnow(), dep_states=dep_states)
                 self._remember(created_by, idempotency_key, "create_task", fingerprint, "task", task_id)
         return self.get_task(task_id)
+
+    def create_task_graph(self, *, nodes: Sequence[dict[str, Any]], created_by: str, idempotency_key: Optional[str] = None) -> list[dict[str, Any]]:
+        """Create several tasks and the edges between them in one transaction.
+        A node's ``depends_on`` names either another node's ``key`` in the same
+        batch or a task that already exists. A batch with a cycle is refused
+        whole, so a half-built graph is never committed. With an
+        ``idempotency_key`` each node replays under ``<key>:<node key>``, so a
+        retried batch returns the same tasks instead of a second graph."""
+        _check_id(created_by, "created_by", self._redactor)
+        if idempotency_key is not None:
+            _check_id(idempotency_key, "idempotency key", self._redactor)
+        if not isinstance(nodes, (list, tuple)) or not nodes:
+            raise ValidationError("nodes must be a non-empty array")
+        if len(nodes) > MAX_GRAPH_NODES:
+            raise ValidationError(f"a task graph carries at most {MAX_GRAPH_NODES} nodes, got {len(nodes)}")
+        prepared: dict[str, dict[str, Any]] = {}
+        for index, node in enumerate(nodes):
+            item = self._normalize_task(node, index=index)
+            if item["key"] is None:
+                raise ValidationError(f"node {index} needs a key naming it inside the batch")
+            if item["key"] in prepared:
+                raise ValidationError(f"node key {item['key']!r} is used twice")
+            prepared[item["key"]] = item
+        local_edges = {key: {dep for dep in item["depends_on"] if dep in prepared} for key, item in prepared.items()}
+        order = _topological_order(local_edges)
+        created: dict[str, str] = {}
+        with self._tx("create_task_graph"):
+            self._require_agent(created_by)
+            fingerprints = {
+                key: _fingerprint(
+                    "create_task", title=item["title"], created_by=created_by, payload=item["payload"],
+                    assigned_to=item["assigned_to"], priority=item["priority"], requires_worktree=item["requires_worktree"],
+                    depends_on=item["depends_on"], budget=item["budget"],
+                )
+                for key, item in prepared.items()
+            }
+            now = utcnow()
+            for key in order:
+                item = prepared[key]
+                node_key = f"{idempotency_key}:{key}" if idempotency_key is not None else None
+                existing = self._replay(created_by, node_key, "create_task", fingerprints[key])
+                if existing is not None:
+                    created[key] = existing
+                    continue
+                if item["assigned_to"] is not None:
+                    self._require_agent(item["assigned_to"])
+                external = [dep for dep in item["depends_on"] if dep not in prepared]
+                dep_states = self._require_dependencies(external)
+                for dep in item["depends_on"]:
+                    if dep in prepared:
+                        dep_states[created[dep]] = self._conn.execute("SELECT state FROM tasks WHERE id = ?", (created[dep],)).fetchone()["state"]
+                task_id = new_id("tsk")
+                self._insert_task(item, created_by=created_by, task_id=task_id, now=now, dep_states=dep_states)
+                self._remember(created_by, node_key, "create_task", fingerprints[key], "task", task_id)
+                created[key] = task_id
+            self._event(created_by, "task_graph.created", "task", created[order[0]], {"nodes": [created[key] for key in order], "keys": list(order)})
+        return [self.get_task(created[key]) for key in order]
 
     def get_task(self, task_id: str) -> dict[str, Any]:
         record = _row(self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
@@ -685,7 +1034,7 @@ class Store:
         params: list[Any] = [after]
         if state is not None:
             clauses.append("state = ?")
-            params.append(_check_enum(state, ("open", "claimed", "completed", "blocked", "cancelled"), "state"))
+            params.append(_check_enum(state, TASK_STATES, "state"))
         if assigned_to is not None:
             clauses.append("assigned_agent_id = ?")
             params.append(_check_id(assigned_to, "assigned_to", self._redactor))
@@ -706,37 +1055,77 @@ class Store:
         if pre is None:
             raise NotFound(f"task {task_id!r} does not exist")
         info = self._check_worktree(agent_id, required=bool(pre["requires_worktree"]), action="task_claim")
+        stopped: Optional[dict[str, Any]] = None
         with self._tx("claim_task"):
-            row = self._conn.execute("SELECT state, assigned_agent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None:
                 raise NotFound(f"task {task_id!r} does not exist")
             self._require_agent(agent_id)
             now = utcnow()
-            cur = self._conn.execute(
-                """UPDATE tasks SET state = 'claimed', assigned_agent_id = ?, version = version + 1, claimed_at = ?, updated_at = ?
-                   WHERE id = ? AND state = 'open' AND (assigned_agent_id IS NULL OR assigned_agent_id = ?)""",
-                (agent_id, now, now, task_id, agent_id),
-            )
-            if cur.rowcount != 1:
-                raise ConflictError(
-                    f"task {task_id!r} is {row['state']}"
-                    + (f" and assigned to {row['assigned_agent_id']!r}" if row["assigned_agent_id"] else "")
-                    + f"; {agent_id!r} did not claim it"
+            stopped = self._over_budget(row, now)
+            if stopped is not None:
+                # Stopping is a write that has to survive the refusal, so it
+                # commits with this transaction and the caller is told after.
+                self._exhaust_task(task_id, over=stopped, actor=agent_id, now=now)
+            else:
+                cur = self._conn.execute(
+                    """UPDATE tasks SET state = 'claimed', assigned_agent_id = ?, version = version + 1, claimed_at = ?, updated_at = ?
+                       WHERE id = ? AND state = 'open' AND (assigned_agent_id IS NULL OR assigned_agent_id = ?)""",
+                    (agent_id, now, now, task_id, agent_id),
                 )
-            self._refresh_worktree(agent_id, info)
-            self._event(agent_id, "task.claimed", "task", task_id, {"worktree": info["path"] if info else None})
+                if cur.rowcount != 1:
+                    unmet = [dep for dep, state in self._dependency_states(task_id).items() if state != "completed"] if row["state"] == "waiting" else []
+                    raise ConflictError(
+                        f"task {task_id!r} is {row['state']}"
+                        + (f" on {', '.join(unmet)}" if unmet else "")
+                        + (f" and assigned to {row['assigned_agent_id']!r}" if row["assigned_agent_id"] else "")
+                        + f"; {agent_id!r} did not claim it"
+                    )
+                self._refresh_worktree(agent_id, info)
+                self._event(agent_id, "task.claimed", "task", task_id, {"worktree": info["path"] if info else None})
+        if stopped is not None:
+            raise BudgetExceeded(self._budget_message(task_id, stopped))
         return self.get_task(task_id)
 
-    def complete_task(self, task_id: str, agent_id: str, *, result: Optional[dict[str, Any]] = None, outcome: str = "completed") -> dict[str, Any]:
-        """claimed -> completed | blocked, only by the agent holding the claim."""
+    def complete_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        result: Optional[dict[str, Any]] = None,
+        outcome: str = "completed",
+        artifacts: Optional[Sequence[str]] = None,
+    ) -> dict[str, Any]:
+        """claimed -> completed | blocked, only by the agent holding the claim.
+        ``artifacts`` cites artifact records as the evidence for the result;
+        each must already exist, so a result cannot name work nobody published.
+        Completing a task settles everything waiting on it in the same
+        transaction: dependents whose prerequisites are all done open, and
+        dependents of a task that ended any other way are blocked, because a
+        prerequisite that will never complete can never be waited out."""
         _check_id(task_id, "task id", self._redactor)
         _check_id(agent_id, "agent id", self._redactor)
         _check_enum(outcome, TASK_OUTCOMES, "outcome")
-        encoded, _ = self._payload(result or {}, "result")
+        body = dict(result or {})
+        cited: list[str] = []
+        if artifacts is not None:
+            if not isinstance(artifacts, (list, tuple)):
+                raise ValidationError("artifacts must be an array of artifact ids")
+            if "artifacts" in body:
+                raise ValidationError("pass cited artifacts once: either in result.artifacts or in artifacts, not both")
+            for artifact_id in artifacts:
+                _check_id(artifact_id, "artifact id", self._redactor)
+                if artifact_id not in cited:
+                    cited.append(artifact_id)
+            body["artifacts"] = cited
+        encoded, _ = self._payload(body, "result")
         with self._tx("complete_task"):
             row = self._conn.execute("SELECT state, assigned_agent_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None:
                 raise NotFound(f"task {task_id!r} does not exist")
+            for artifact_id in cited:
+                if self._conn.execute("SELECT 1 FROM artifacts WHERE id = ?", (artifact_id,)).fetchone() is None:
+                    raise NotFound(f"artifact {artifact_id!r} does not exist; publish it before citing it")
             now = utcnow()
             cur = self._conn.execute(
                 """UPDATE tasks SET state = ?, result = ?, version = version + 1, completed_at = ?, updated_at = ?
@@ -747,7 +1136,8 @@ class Store:
                 raise ConflictError(
                     f"task {task_id!r} is {row['state']} held by {row['assigned_agent_id']!r}; {agent_id!r} cannot complete it"
                 )
-            self._event(agent_id, f"task.{outcome}", "task", task_id, {})
+            self._event(agent_id, f"task.{outcome}", "task", task_id, {"artifacts": cited})
+            self._settle_dependents(task_id, state=outcome, actor=agent_id, now=now)
         return self.get_task(task_id)
 
     def cancel_task(self, task_id: str, by: str, *, reason: Optional[str] = None) -> dict[str, Any]:
@@ -770,25 +1160,179 @@ class Store:
             )
             if cur.rowcount != 1:
                 raise ConflictError(f"task {task_id!r} is {row['state']}; only open or claimed tasks can be cancelled")
-            # Queued task messages for this task are dead work now: dead-letter
-            # them so `bus status` stops asking for a turn nobody should start.
-            # Acknowledged ones stay with their reader to complete.
-            queued = self._conn.execute(
-                """SELECT d.id, m.payload FROM deliveries d JOIN messages m ON m.id = d.message_id
-                   WHERE d.state = 'queued' AND m.kind = 'task'"""
-            ).fetchall()
-            dead = []
-            for delivery in queued:
-                try:
-                    payload = json.loads(delivery["payload"])
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict) and payload.get("task_id") == task_id:
-                    self._conn.execute("UPDATE deliveries SET state = 'dead_letter', updated_at = ? WHERE id = ? AND state = 'queued'", (now, delivery["id"]))
-                    self._event(by, "delivery.dead_letter", "delivery", delivery["id"], {"task_id": task_id, "reason": "task cancelled"})
-                    dead.append(delivery["id"])
+            dead = self._dead_letter_task(task_id, actor=by, reason="task cancelled", now=now)
             self._event(by, "task.cancelled", "task", task_id, {"was": row["state"], "holder": row["assigned_agent_id"], "reason": note, "dead_lettered": dead})
+            self._settle_dependents(task_id, state="cancelled", actor=by, now=now)
         return self.get_task(task_id)
+
+    # --------------------------------------------------- dependencies, budgets
+    def _dead_letter_task(self, task_id: str, *, actor: str, reason: str, now: str) -> list[str]:
+        """Queued task messages for a stopped task are dead work: dead-letter
+        them so `bus status` stops asking for a turn nobody should start.
+        Acknowledged ones stay with their reader to complete."""
+        queued = self._conn.execute(
+            """SELECT d.id, m.payload FROM deliveries d JOIN messages m ON m.id = d.message_id
+               WHERE d.state = 'queued' AND m.kind = 'task'"""
+        ).fetchall()
+        dead: list[str] = []
+        for delivery in queued:
+            try:
+                payload = json.loads(delivery["payload"])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("task_id") == task_id:
+                self._conn.execute("UPDATE deliveries SET state = 'dead_letter', updated_at = ? WHERE id = ? AND state = 'queued'", (now, delivery["id"]))
+                self._event(actor, "delivery.dead_letter", "delivery", delivery["id"], {"task_id": task_id, "reason": reason})
+                dead.append(delivery["id"])
+        return dead
+
+    def _settle_dependents(self, task_id: str, *, state: str, actor: str, now: str) -> dict[str, str]:
+        """Move everything waiting on a finished task, transactionally. A
+        completed prerequisite opens the dependents whose other prerequisites
+        are done; any other ending blocks them, and blocking cascades down the
+        graph, because a task waiting on a task that will never complete would
+        otherwise wait forever."""
+        settled: dict[str, str] = {}
+        pending: list[tuple[str, str]] = [(task_id, state)]
+        while pending:
+            finished, finished_state = pending.pop(0)
+            rows = self._conn.execute(
+                """SELECT t.id AS id FROM task_deps d JOIN tasks t ON t.id = d.task_id
+                    WHERE d.depends_on_id = ? AND t.state = 'waiting' ORDER BY t.seq""",
+                (finished,),
+            ).fetchall()
+            for row in rows:
+                dependent = row["id"]
+                if finished_state == "completed":
+                    unmet = [dep for dep, dep_state in self._dependency_states(dependent).items() if dep_state != "completed"]
+                    if unmet:
+                        continue
+                    self._conn.execute(
+                        "UPDATE tasks SET state = 'open', version = version + 1, updated_at = ? WHERE id = ? AND state = 'waiting'",
+                        (now, dependent),
+                    )
+                    self._event(actor, "task.unblocked", "task", dependent, {"prerequisite": finished})
+                    settled[dependent] = "open"
+                else:
+                    self._conn.execute(
+                        """UPDATE tasks SET state = 'blocked', result = ?, version = version + 1, completed_at = ?, updated_at = ?
+                           WHERE id = ? AND state = 'waiting'""",
+                        (json.dumps({"blocked_by": finished, "prerequisite_state": finished_state}, sort_keys=True), now, now, dependent),
+                    )
+                    self._event(actor, "task.blocked", "task", dependent, {"blocked_by": finished, "prerequisite_state": finished_state})
+                    settled[dependent] = "blocked"
+                    pending.append((dependent, "blocked"))
+        return settled
+
+    @staticmethod
+    def _decode(value: Any) -> dict[str, Any]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        return value if isinstance(value, dict) else {}
+
+    def _over_budget(self, row: Any, now: str) -> Optional[dict[str, Any]]:
+        """The first budget dimension a live task has already spent, or None.
+        A task that is already finished is never reported over: stopping is
+        only meaningful while there is something left to stop."""
+        if row["state"] not in LIVE_TASK_STATES:
+            return None
+        budget = self._decode(row["budget"])
+        if not budget:
+            return None
+        spent = self._decode(row["spent"])
+        if "seconds" in budget and row["deadline_at"] and now > row["deadline_at"]:
+            return {"dimension": "seconds", "limit": budget["seconds"], "spent": round(_elapsed_seconds(row["created_at"], now), 3)}
+        for dimension in ("turns", "tokens", "cost_usd"):
+            if dimension in budget and float(spent.get(dimension, 0)) > float(budget[dimension]):
+                return {"dimension": dimension, "limit": budget[dimension], "spent": spent.get(dimension, 0)}
+        return None
+
+    def _budget_message(self, task_id: str, over: dict[str, Any]) -> str:
+        return (f"task {task_id!r} is stopped: its {over['dimension']} budget of {over['limit']} is spent "
+                f"({over['spent']}); a human reopens it by creating a new task")
+
+    def _exhaust_task(self, task_id: str, *, over: dict[str, Any], actor: str, now: str) -> None:
+        """Stop a task on a spent budget: terminal state, queued work dead-
+        lettered, dependents settled. M6's dispatcher never resumes a task in
+        this state, which is what makes a budget a stop and not a warning."""
+        self._conn.execute(
+            """UPDATE tasks SET state = 'exhausted', result = ?, version = version + 1, completed_at = ?, updated_at = ?
+               WHERE id = ? AND state IN ('open', 'waiting', 'claimed')""",
+            (json.dumps({"stopped": "budget", **over}, sort_keys=True), now, now, task_id),
+        )
+        dead = self._dead_letter_task(task_id, actor=actor, reason="task budget spent", now=now)
+        self._event(actor, "task.exhausted", "task", task_id, {**over, "dead_lettered": dead})
+        self._settle_dependents(task_id, state="exhausted", actor=actor, now=now)
+
+    def record_usage(self, task_id: str, agent_id: str, *, tokens: Optional[int] = None, cost_usd: Optional[float] = None) -> dict[str, Any]:
+        """Add provider-measured usage to a task. The daemon measures turns and
+        elapsed time itself; tokens and cost can only come from the provider,
+        so they are additive only -- a report may raise a total, never lower one
+        -- and the event keeps what the reporter's identity was worth. Spending
+        the budget stops the task rather than raising: the reporter is telling
+        the truth about work already done. Only the agent holding the claim may
+        report: a peer that could credit usage to a task it never claimed could
+        spend another agent's budget and stop its work, and a stop has no
+        reopening."""
+        _check_id(task_id, "task id", self._redactor)
+        _check_id(agent_id, "agent id", self._redactor)
+        if tokens is None and cost_usd is None:
+            raise ValidationError(f"record usage with at least one of {', '.join(REPORTED_DIMENSIONS)}")
+        if tokens is not None:
+            _check_int(tokens, 0, 10**9, "tokens")
+        if cost_usd is not None:
+            if isinstance(cost_usd, bool) or not isinstance(cost_usd, (int, float)):
+                raise ValidationError("cost_usd must be a number")
+            if not 0 <= float(cost_usd) <= 1_000_000:
+                raise ValidationError("cost_usd must be 0 or more")
+        with self._tx("record_usage"):
+            row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"task {task_id!r} does not exist")
+            self._require_agent(agent_id)
+            if row["state"] != "claimed" or row["assigned_agent_id"] != agent_id:
+                holder = f" held by {row['assigned_agent_id']!r}" if row["assigned_agent_id"] else ""
+                raise ConflictError(
+                    f"task {task_id!r} is {row['state']}{holder}; only the agent holding the claim records usage against it"
+                )
+            now = utcnow()
+            spent = self._decode(row["spent"])
+            if tokens is not None:
+                spent["tokens"] = int(spent.get("tokens", 0)) + int(tokens)
+            if cost_usd is not None:
+                spent["cost_usd"] = round(float(spent.get("cost_usd", 0.0)) + float(cost_usd), 6)
+            self._conn.execute("UPDATE tasks SET spent = ?, updated_at = ? WHERE id = ?", (json.dumps(spent, sort_keys=True), now, task_id))
+            self._event(agent_id, "task.usage", "task", task_id, {"tokens": tokens, "cost_usd": cost_usd, "spent": spent})
+            over = self._over_budget(self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone(), now)
+            if over is not None:
+                self._exhaust_task(task_id, over=over, actor=agent_id, now=now)
+        return self.get_task(task_id)
+
+    def task_view(self, task_id: str) -> dict[str, Any]:
+        """The task record plus what a worker needs to decide what to do with
+        it: prerequisite states, what is still unmet, what the budget has left,
+        and the artifacts published against it with their provenance."""
+        record = self.get_task(task_id)
+        states = self._dependency_states(task_id)
+        record["dependencies"] = [{"task_id": dep, "state": state} for dep, state in states.items()]
+        record["unmet_dependencies"] = [dep for dep, state in states.items() if state != "completed"]
+        record["blocks"] = [row["task_id"] for row in self._conn.execute(
+            "SELECT task_id FROM task_deps WHERE depends_on_id = ? ORDER BY task_id", (task_id,)).fetchall()]
+        record["artifacts"] = self.list_artifacts(task_id=task_id)["items"]
+        budget = self._decode(record.get("budget"))
+        spent = self._decode(record.get("spent"))
+        remaining: dict[str, Any] = {}
+        for dimension, limit in budget.items():
+            if dimension == "seconds":
+                used = _elapsed_seconds(record["created_at"], utcnow())
+                remaining[dimension] = round(float(limit) - used, 3)
+            else:
+                remaining[dimension] = round(float(limit) - float(spent.get(dimension, 0)), 6)
+        record["budget_remaining"] = remaining
+        return record
 
     # -------------------------------------------------------------- artifacts
     def publish_artifact(
@@ -841,17 +1385,45 @@ class Store:
                 artifact_id = existing
             else:
                 self._require_agent(produced_by)
-                if task_id is not None and self._conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
-                    raise NotFound(f"task {task_id!r} does not exist")
+                if task_id is not None:
+                    task_row = self._conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+                    if task_row is None:
+                        raise NotFound(f"task {task_id!r} does not exist")
+                    # A stopped task takes no new work. A finished one still
+                    # accepts a late report, which is how a verifier files
+                    # evidence about a task somebody else completed.
+                    if task_row["state"] in ("cancelled", "exhausted"):
+                        raise ConflictError(f"task {task_id!r} is {task_row['state']}; no more artifacts are published against it")
                 artifact_id = new_id("art")
                 self._conn.execute(
-                    "INSERT INTO artifacts (id, task_id, kind, ref, sha256, produced_by_agent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (artifact_id, task_id, kind, ref, digest, produced_by, utcnow()),
+                    "INSERT INTO artifacts (id, task_id, kind, ref, sha256, produced_by_agent_id, trust, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (artifact_id, task_id, kind, ref, digest, produced_by, self.trust, utcnow()),
                 )
                 self._refresh_worktree(produced_by, info)
-                self._event(produced_by, "artifact.published", "artifact", artifact_id, {"kind": kind, "task_id": task_id, "worktree": info["path"], "bytes": size})
+                self._event(produced_by, "artifact.published", "artifact", artifact_id, {"kind": kind, "task_id": task_id, "worktree": info["path"], "bytes": size, "trust": self.trust})
                 self._remember(produced_by, idempotency_key, "publish_artifact", fingerprint, "artifact", artifact_id)
         return self.get_artifact(artifact_id)
+
+    def list_artifacts(self, *, task_id: Optional[str] = None, produced_by: Optional[str] = None, limit: int = 50, after: int = 0) -> dict[str, Any]:
+        """Artifacts in stable order, filtered by the task they belong to or
+        the agent that produced them. Each row carries the producer and the
+        trust its identity had at publication, so provenance is readable
+        without walking the event log."""
+        _check_int(limit, 1, 500, "limit")
+        _check_int(after, 0, 2**62, "after")
+        clauses = ["seq > ?"]
+        params: list[Any] = [after]
+        if task_id is not None:
+            clauses.append("task_id = ?")
+            params.append(_check_id(task_id, "task id", self._redactor))
+        if produced_by is not None:
+            clauses.append("produced_by_agent_id = ?")
+            params.append(_check_id(produced_by, "produced_by", self._redactor))
+        rows = self._conn.execute(
+            f"SELECT * FROM artifacts WHERE {' AND '.join(clauses)} ORDER BY seq LIMIT ?", (*params, limit + 1)
+        ).fetchall()
+        items = [r for r in (_row(x) for x in rows[:limit]) if r is not None]
+        return {"items": items, "next_after": items[-1]["seq"] if items else after, "has_more": len(rows) > limit}
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
         record = _row(self._conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone())
@@ -1290,14 +1862,22 @@ class Store:
             })
         tasks = {
             state: int(self._conn.execute("SELECT COUNT(*) FROM tasks WHERE state = ?", (state,)).fetchone()[0])
-            for state in ("open", "claimed", "completed", "blocked", "cancelled")
+            for state in TASK_STATES
         }
         open_tasks = self.list_tasks(state="open", limit=50)["items"]
+        # M5: a task the daemon stopped on a budget is not open, not claimed,
+        # and nobody is coming back to it -- so it says so on the status view
+        # rather than disappearing from every list a human reads.
+        stopped = [
+            {"id": t["id"], "title": t["title"], "dimension": (t["result"] or {}).get("dimension") if isinstance(t["result"], dict) else None}
+            for t in self.list_tasks(state="exhausted", limit=20)["items"]
+        ]
         pending = self.pending_approvals()
         return {
             "agents": agents,
             "tasks": tasks,
             "open_tasks": [{"id": t["id"], "title": t["title"], "assigned_to": t["assigned_agent_id"], "priority": t["priority"], "requires_worktree": t["requires_worktree"]} for t in open_tasks],
+            "stopped_tasks": stopped,
             "queued_deliveries": sum(a["queued_deliveries"] for a in agents),
             "approvals_pending": len(pending),
             "pending_approvals": pending,
@@ -1308,5 +1888,5 @@ class Store:
     def counts(self) -> dict[str, int]:
         """Row counts per table; the crash suite compares these before and
         after a kill."""
-        tables = ("agents", "sessions", "messages", "deliveries", "tasks", "runs", "leases", "artifacts", "events", "idempotency", "worktrees", "approvals", "bindings")
+        tables = ("agents", "sessions", "messages", "deliveries", "tasks", "task_deps", "runs", "leases", "artifacts", "events", "idempotency", "worktrees", "approvals", "bindings")
         return {t: int(self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]) for t in tables}

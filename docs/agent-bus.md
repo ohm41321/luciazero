@@ -108,9 +108,10 @@ npx luciazero bus status            # from the core package (Node 18+)
 python3 -m luciazero_agentd status  # same view, Python only; --json for records
 ```
 
-Both show queued deliveries per agent, open tasks (with `needs worktree`
-when a task requires one), each agent's bound branch and dirty state, which
-terminal each agent is bound to (or `unverified`), and pending approvals. The line `next: start the agent's session and run
+Both show queued deliveries per agent, a count per task state, open tasks
+(with `needs worktree` when a task requires one), tasks the daemon stopped on
+a spent budget, each agent's bound branch and dirty state, which terminal each
+agent is bound to (or `unverified`), and pending approvals. The line `next: start the agent's session and run
 /lucia-bus` appears whenever something is queued. Peer-supplied text is
 scrubbed of control characters before it reaches your terminal.
 
@@ -143,6 +144,51 @@ already-acknowledged ones stay with their reader to complete. The claim
 holder's next `task_complete` returns a conflict, so it learns on its next
 turn, and `/done` accepts a user-cancelled task; the record keeps who
 cancelled and why. Completed and blocked tasks cannot be cancelled.
+
+## Task graphs, budgets and stoppers
+
+A task can name prerequisites. `task_create` takes `depends_on` for tasks
+that already exist; `task_graph_create` creates a whole plan in one
+transaction, where each node has a `key` other nodes depend on. A batch that
+contains a cycle is refused whole, so a half-built graph is never committed.
+
+A task with an unfinished prerequisite is `waiting`: it cannot be claimed,
+and `task_get` names what it waits on. Completing the last prerequisite opens
+it in that same transaction. A prerequisite that ends any other way --
+blocked, cancelled, or stopped on a budget -- blocks everything below it
+instead, because a task waiting on work nobody will finish would wait
+forever.
+
+`budget` sets per-task limits the daemon enforces:
+
+| dimension  | measured by | spent when |
+| ---------- | ----------- | ---------- |
+| `seconds`  | the daemon  | the wall clock passes the task's deadline |
+| `turns`    | the daemon  | a message naming the task is sent |
+| `tokens`   | the provider, through `task_record_usage` | the claim holder reports usage |
+| `cost_usd` | the provider, through `task_record_usage` | the claim holder reports usage |
+
+The two the daemon measures cannot be under-reported. The two only a provider
+can know are additive and holder-only: a report raises a total, never lowers
+one, only the agent holding the claim may make it, and every report keeps how
+much the reporting session's identity was worth. A spent
+budget is a stop, not a warning: the task becomes `exhausted`, its queued
+messages are dead-lettered, whatever waited on it is blocked, and the send or
+claim that hit the limit is refused. `bus status` names stopped tasks on their
+own line. There is no reopening; the user creates a new task.
+
+Two limits bound a conversation regardless of budgets: `MAX_HOPS` (32
+messages in one `correlation_id`) and a 24-hour conversation time to live.
+The daemon counts hops itself -- a sender that could set its own hop count
+could reset a loop forever -- and records the refusal as a
+`conversation.hop_limit` or `conversation.expired` event. A reply inherits the
+conversation of the message it answers, so threading with `reply_to` alone
+cannot open a fresh window; `reply_to` with a `correlation_id` from another
+conversation is refused.
+
+Delivery-level retry limits (`attempts`, `max_attempts`) stay reserved for
+the dispatcher in M6: nothing retries by itself in the pull beta, so a retry
+limit here would be a number nothing could reach.
 
 ## Recovery
 
@@ -186,6 +232,7 @@ stores; the bus never touches them.
 ```bash
 bash docs/assets/agent-bus-demo.sh        # fake provider, no quota, ~10 s
 ./test.sh --agent-bus-e2e                 # the same flow as a gate (also in --full)
+./test.sh --agent-bus-workflow            # M5: task graph, stoppers, provenance
 LZ_AGENT_BUS_LIVE=1 bash docs/assets/agent-bus-demo.sh --live   # real models, 6 turns
 bash docs/assets/agent-bus-demo.sh --live --dry-run             # print the plan only
 ```
@@ -202,6 +249,12 @@ live run may add messages the flow does not owe (a model thanking a peer);
 the gate matches the six-turn flow as a subsequence, tolerates that
 chatter, and prints it, but still refuses a repeated step or a chatter
 delivery that failed.
+
+The M5 gate drives a second scenario through the same daemon: a cycle is
+refused before anything is written, a fix/verify/report graph executes in
+order, a reply loop stops at the hop cap, a spent turn budget stops a task
+and blocks its dependent, and the commit the implementer published still
+names the implementer after the reviewer cites it as evidence.
 
 ## Decision evidence log
 

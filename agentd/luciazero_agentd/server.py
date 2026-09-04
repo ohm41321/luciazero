@@ -15,6 +15,7 @@ specification; protocol failures are JSON-RPC errors.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import sys
 import threading
@@ -27,7 +28,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from . import procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
-from .store import ARTIFACT_KINDS, MESSAGE_KINDS, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, IdentityMismatch, Store, StoreError
+from .store import ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "luciazero-agentd", "version": __version__}
@@ -37,7 +38,6 @@ SESSION_TTL_SECONDS = 3600
 MAX_SESSIONS = 256
 HANDLER_TIMEOUT_SECONDS = 30
 DELIVERY_STATES = ("queued", "claimed", "dispatched", "processing", "acknowledged", "completed", "retryable_failed", "dead_letter")
-TASK_STATES = ("open", "claimed", "completed", "blocked", "cancelled")
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -96,6 +96,17 @@ def _validate_value(spec: dict[str, Any], value: Any, path: str) -> None:
             raise ToolInputError(f"{path} must be >= {spec['minimum']}")
         if "maximum" in spec and value > spec["maximum"]:
             raise ToolInputError(f"{path} must be <= {spec['maximum']}")
+    elif kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ToolInputError(f"{path} must be a number")
+        # NaN compares false against every bound, so a range check alone would
+        # let it through; the integer branch has no such hole.
+        if not math.isfinite(value):
+            raise ToolInputError(f"{path} must be a finite number")
+        if "minimum" in spec and value < spec["minimum"]:
+            raise ToolInputError(f"{path} must be >= {spec['minimum']}")
+        if "maximum" in spec and value > spec["maximum"]:
+            raise ToolInputError(f"{path} must be <= {spec['maximum']}")
     elif kind == "boolean":
         if not isinstance(value, bool):
             raise ToolInputError(f"{path} must be a boolean")
@@ -144,7 +155,19 @@ def _t_message_ack(store: Store, a: dict[str, Any]) -> Any:
 
 
 def _t_task_create(store: Store, a: dict[str, Any]) -> Any:
-    return store.create_task(title=a["title"], created_by=a["created_by"], payload=a.get("payload"), assigned_to=a.get("assigned_to"), priority=a.get("priority", 0), idempotency_key=a.get("idempotency_key"), requires_worktree=a.get("requires_worktree", False))
+    return store.create_task(title=a["title"], created_by=a["created_by"], payload=a.get("payload"), assigned_to=a.get("assigned_to"), priority=a.get("priority", 0), idempotency_key=a.get("idempotency_key"), requires_worktree=a.get("requires_worktree", False), depends_on=a.get("depends_on"), budget=a.get("budget"))
+
+
+def _t_task_graph_create(store: Store, a: dict[str, Any]) -> Any:
+    return {"tasks": store.create_task_graph(nodes=a["nodes"], created_by=a["created_by"], idempotency_key=a.get("idempotency_key"))}
+
+
+def _t_task_get(store: Store, a: dict[str, Any]) -> Any:
+    return store.task_view(a["task_id"])
+
+
+def _t_task_record_usage(store: Store, a: dict[str, Any]) -> Any:
+    return store.record_usage(a["task_id"], a["agent_id"], tokens=a.get("tokens"), cost_usd=a.get("cost_usd"))
 
 
 def _t_task_list(store: Store, a: dict[str, Any]) -> Any:
@@ -156,7 +179,7 @@ def _t_task_claim(store: Store, a: dict[str, Any]) -> Any:
 
 
 def _t_task_complete(store: Store, a: dict[str, Any]) -> Any:
-    return store.complete_task(a["task_id"], a["agent_id"], result=a.get("result"), outcome=a.get("outcome", "completed"))
+    return store.complete_task(a["task_id"], a["agent_id"], result=a.get("result"), outcome=a.get("outcome", "completed"), artifacts=a.get("artifacts"))
 
 
 def _t_artifact_publish(store: Store, a: dict[str, Any]) -> Any:
@@ -165,6 +188,10 @@ def _t_artifact_publish(store: Store, a: dict[str, Any]) -> Any:
 
 def _t_artifact_get(store: Store, a: dict[str, Any]) -> Any:
     return store.get_artifact(a["artifact_id"])
+
+
+def _t_artifact_list(store: Store, a: dict[str, Any]) -> Any:
+    return store.list_artifacts(task_id=a.get("task_id"), produced_by=a.get("produced_by"), limit=a.get("limit", 50), after=a.get("after", 0))
 
 
 def _t_worktree_bind(store: Store, a: dict[str, Any]) -> Any:
@@ -186,6 +213,10 @@ def _t_agent_whoami(store: Store, a: dict[str, Any]) -> Any:
 
 
 NONCE_SCHEMA = {"type": "string", "minLength": 37, "maxLength": 37, "pattern": "^lzap_[0-9a-f]{32}$"}
+DEPENDS_SCHEMA = {"type": "array", "items": ID_SCHEMA, "maxItems": MAX_DEPENDENCIES}
+# The daemon validates the dimensions themselves and refuses an unknown one, so
+# a typo cannot quietly remove a limit.
+BUDGET_SCHEMA = {"type": "object"}
 
 # ADR 0004: which argument names the agent that ACTS. On a session that
 # presented a live terminal credential the daemon fills this field in and
@@ -200,6 +231,8 @@ NONCE_SCHEMA = {"type": "string", "minLength": 37, "maxLength": 37, "pattern": "
 CREDENTIAL_REQUIRED_TOOLS = ("approval_consume",)
 ACTOR_FIELDS = {
     "agent_register": "agent_id",
+    "task_graph_create": "created_by",
+    "task_record_usage": "agent_id",
     "agent_heartbeat": "agent_id",
     "message_send": "sender",
     "message_inbox": "agent_id",
@@ -219,12 +252,16 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "message_send", "title": "Send message", "description": "Send one typed message to another agent. Large content goes into an artifact; payload is capped at 64 KiB. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"sender": ID_SCHEMA, "recipient": ID_SCHEMA, "kind": {"type": "string", "enum": list(MESSAGE_KINDS)}, "payload": OBJECT_SCHEMA, "correlation_id": ID_SCHEMA, "reply_to": ID_SCHEMA, "idempotency_key": ID_SCHEMA}, ["sender", "recipient", "kind", "payload"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_send},
     {"name": "message_inbox", "title": "Read inbox", "description": "List deliveries addressed to an agent in stable order. Pass the returned next_after back as after to page.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "states": {"type": "array", "items": {"type": "string", "enum": list(DELIVERY_STATES)}, "maxItems": 8}, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_message_inbox},
     {"name": "message_ack", "title": "Acknowledge delivery", "description": "Move a delivery from queued to acknowledged (read), or from acknowledged to completed (handled). Only the recipient may do this.", "inputSchema": _schema({"delivery_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "outcome": {"type": "string", "enum": ["acknowledged", "completed"]}}, ["delivery_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_ack},
-    {"name": "task_create", "title": "Create task", "description": "Create an open task, optionally pre-assigned. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"title": {"type": "string", "minLength": 1, "maxLength": 500}, "created_by": ID_SCHEMA, "payload": OBJECT_SCHEMA, "assigned_to": ID_SCHEMA, "priority": {"type": "integer", "minimum": -100, "maximum": 100}, "idempotency_key": ID_SCHEMA, "requires_worktree": {"type": "boolean"}}, ["title", "created_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_create},
+    {"name": "task_create", "title": "Create task", "description": "Create a task, optionally pre-assigned. depends_on names tasks that already exist; a task with an unfinished prerequisite starts waiting and the daemon opens it when the last prerequisite completes. budget sets per-task limits (seconds, turns, tokens, cost_usd) the daemon stops the task on. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"title": {"type": "string", "minLength": 1, "maxLength": 500}, "created_by": ID_SCHEMA, "payload": OBJECT_SCHEMA, "assigned_to": ID_SCHEMA, "priority": {"type": "integer", "minimum": -100, "maximum": 100}, "idempotency_key": ID_SCHEMA, "requires_worktree": {"type": "boolean"}, "depends_on": DEPENDS_SCHEMA, "budget": BUDGET_SCHEMA}, ["title", "created_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_create},
     {"name": "task_list", "title": "List tasks", "description": "List tasks in stable order, filtered by state and assignee.", "inputSchema": _schema({"state": {"type": "string", "enum": list(TASK_STATES)}, "assigned_to": ID_SCHEMA, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, []), "annotations": {"readOnlyHint": True}, "handler": _t_task_list},
     {"name": "task_claim", "title": "Claim task", "description": "Atomically claim an open task. Exactly one claimer wins; the others receive a conflict.", "inputSchema": _schema({"task_id": ID_SCHEMA, "agent_id": ID_SCHEMA}, ["task_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_claim},
-    {"name": "task_complete", "title": "Complete task", "description": "Finish a claimed task as completed or blocked with a result object. Only the claim holder may do this.", "inputSchema": _schema({"task_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "result": OBJECT_SCHEMA, "outcome": {"type": "string", "enum": list(TASK_OUTCOMES)}}, ["task_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_complete},
+    {"name": "task_complete", "title": "Complete task", "description": "Finish a claimed task as completed or blocked with a result object, citing the artifacts that are its evidence. Only the claim holder may do this. Completing a task opens whatever was waiting on it; ending it any other way blocks those dependents.", "inputSchema": _schema({"task_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "result": OBJECT_SCHEMA, "outcome": {"type": "string", "enum": list(TASK_OUTCOMES)}, "artifacts": {"type": "array", "items": ID_SCHEMA, "maxItems": 64}}, ["task_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_complete},
+    {"name": "task_get", "title": "Get task", "description": "One task with its prerequisites and their states, what is still unmet, the tasks waiting on it, its artifacts, and what its budget has left.", "inputSchema": _schema({"task_id": ID_SCHEMA}, ["task_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_task_get},
+    {"name": "task_graph_create", "title": "Create task graph", "description": "Create several tasks and the edges between them in one transaction. Each node needs a key naming it inside the batch; depends_on names another node's key or a task that already exists. A batch containing a cycle is refused whole, so a half-built graph is never committed.", "inputSchema": _schema({"nodes": {"type": "array", "items": OBJECT_SCHEMA, "maxItems": MAX_GRAPH_NODES}, "created_by": ID_SCHEMA, "idempotency_key": ID_SCHEMA}, ["nodes", "created_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_graph_create},
+    {"name": "task_record_usage", "title": "Record task usage", "description": "Add provider-measured usage (tokens, cost_usd) to a task you hold the claim on; a task claimed by someone else is refused. Additive only: a report raises a total, never lowers one. The daemon measures elapsed time and turns itself. Spending the budget stops the task.", "inputSchema": _schema({"task_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "tokens": {"type": "integer", "minimum": 0, "maximum": 1000000000}, "cost_usd": {"type": "number", "minimum": 0, "maximum": 1000000}}, ["task_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_record_usage},
     {"name": "artifact_publish", "title": "Publish artifact", "description": "Record a typed reference to a commit, patch, report, log, or Relay manifest. Content is never embedded.", "inputSchema": _schema({"kind": {"type": "string", "enum": list(ARTIFACT_KINDS)}, "ref": {"type": "string", "minLength": 1, "maxLength": 2048}, "produced_by": ID_SCHEMA, "task_id": ID_SCHEMA, "sha256": {"type": "string", "minLength": 64, "maxLength": 64}, "idempotency_key": ID_SCHEMA}, ["kind", "ref", "produced_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_artifact_publish},
     {"name": "artifact_get", "title": "Get artifact", "description": "Fetch one artifact record by id.", "inputSchema": _schema({"artifact_id": ID_SCHEMA}, ["artifact_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_artifact_get},
+    {"name": "artifact_list", "title": "List artifacts", "description": "List artifacts in stable order, filtered by task or producer. Each row carries the agent that produced it and how much that identity was worth when it was published.", "inputSchema": _schema({"task_id": ID_SCHEMA, "produced_by": ID_SCHEMA, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, []), "annotations": {"readOnlyHint": True}, "handler": _t_artifact_list},
     {"name": "worktree_bind", "title": "Bind worktree", "description": "Record the one git worktree this agent writes in (absolute path). The daemon reads repository, branch, HEAD and dirty state itself; a worktree held by another agent is refused. Required before claiming tasks that need a worktree and before publishing artifacts.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "path": {"type": "string", "minLength": 1, "maxLength": 1024}, "base": {"type": "string", "minLength": 1, "maxLength": 256}}, ["agent_id", "path"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_worktree_bind},
     {"name": "worktree_get", "title": "Get worktree", "description": "Show the worktree record bound to an agent.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_worktree_get},
     {"name": "agent_whoami", "title": "Who am I", "description": "Ask the daemon which agent this session is bound to. Returns verified false and no agent id when the session presented no terminal credential; it never guesses. The user binds a terminal with `luciazero-agentd attach` or starts it with `luciazero-agentd run`.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_whoami},

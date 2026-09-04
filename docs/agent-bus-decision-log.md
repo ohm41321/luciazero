@@ -119,7 +119,7 @@ no quota, which is what proves the gate's own assertions before money is spent.
 
 ### Offline gates standing green (2026-09-04)
 
-`./test.sh` — 286 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
+`./test.sh` — 288 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
 with a fake provider, the M5 workflow gate, the M6 dispatch gate (dispatcher
 killed mid-turn and recovered), and the M3/M4.5 safety fixtures.
 
@@ -142,11 +142,14 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
 - **Live gate records vanish by default.** Without `--keep` the state directory
   is removed when the run ends, which is why the first Codex and Claude smoke
   turns have no exported record set.
-- **Nothing measures the wait automatically.** The gate's second criterion asks
-  for a measured wait or turn count on a user-started turn. The records carry
-  the timestamps to compute it (message `created_at` against its delivery's
-  `acknowledged` event), but no tool reports it yet, so a retro has to state it
-  by hand.
+- **The wait is measured from the records, not from memory.** The gate's second
+  criterion asks for a measured wait or turn count on a user-started turn.
+  Nothing acknowledges a delivery until a human opens that agent's session, so
+  the gap between the send and the acknowledgement is that cost exactly:
+  `agent-bus-evidence.sh` reports it per delivery, with the count of turns
+  waited on and the longest wait, and puts both in the ledger row. What it
+  cannot see is how long the person was away from the keyboard versus how long
+  the model took, so a retro still has to say which of the two a long wait was.
 
 ## Carry-over, not claimed as done
 

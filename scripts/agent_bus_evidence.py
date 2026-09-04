@@ -18,6 +18,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -126,10 +127,46 @@ def record_set(conn: sqlite3.Connection, correlation_id: str) -> dict[str, Any]:
     }
 
 
+def _at(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """How long each delivery sat before somebody opened the turn that read it.
+
+    This is the decision gate's second criterion made measurable: in the pull
+    beta nothing acknowledges a delivery until a human starts that agent's
+    session, so the gap between the send and the acknowledgement *is* the cost
+    of the user-started turn. Reconstructing it from memory in a retro is
+    guesswork; the records have it exactly."""
+    sent = {str(m["id"]): _at(m.get("created_at")) for m in record["messages"]}
+    measured = []
+    for delivery in record["deliveries"]:
+        started, acknowledged = sent.get(str(delivery["message_id"])), _at(delivery.get("acknowledged_at"))
+        if started is None or acknowledged is None:
+            continue
+        measured.append({"delivery_id": str(delivery["id"]),
+                         "recipient": str(delivery["recipient_agent_id"]),
+                         "seconds": round((acknowledged - started).total_seconds(), 3)})
+    return measured
+
+
+def human_gap(seconds: float) -> str:
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
 def summarise(record: dict[str, Any]) -> dict[str, Any]:
     messages = record["messages"]
     deliveries = record["deliveries"]
     tasks = record["tasks"]
+    measured = waits(record)
     return {
         "correlation_id": record["correlation_id"],
         "started_at": messages[0]["created_at"],
@@ -149,14 +186,22 @@ def summarise(record: dict[str, Any]) -> dict[str, Any]:
         "turns": "user-started" if not record["runs"] else f"{len(record['runs'])} dispatched",
         "unverified_writes": sorted({str(e["kind"]) for e in record["events"]
                                      if isinstance(e.get("payload"), dict) and e["payload"].get("trust") == "asserted"}),
+        "waits": measured,
+        "user_started_turns": len(measured),
+        "longest_wait_seconds": max((w["seconds"] for w in measured), default=None),
+        "total_wait_seconds": round(sum(w["seconds"] for w in measured), 3) if measured else None,
     }
 
 
 def ledger_row(summary: dict[str, Any], *, label: str, path: Optional[Path]) -> str:
     """One markdown row for the decision log, already filled in."""
+    cost = ""
+    if summary["user_started_turns"]:
+        cost = (f", {summary['user_started_turns']} turn(s) waited, longest "
+                f"{human_gap(float(summary['longest_wait_seconds']))}")
     return (f"| {label} | `{summary['correlation_id']}` | {summary['started_at']} | "
             f"{', '.join(summary['agents'])} | {summary['tasks']} task(s) {'/'.join(summary['task_states'])}, "
-            f"{summary['messages']} message(s), {summary['artifacts']} artifact(s) | {summary['turns']} | "
+            f"{summary['messages']} message(s), {summary['artifacts']} artifact(s) | {summary['turns']}{cost} | "
             f"{'`' + str(path) + '`' if path else 'not exported'} |")
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from datetime import datetime, timedelta
 import tempfile
 import unittest
 from pathlib import Path
@@ -122,6 +123,37 @@ class LedgerTests(EvidenceCase):
         with self.connect() as conn:
             summary = evidence.summarise(evidence.record_set(conn, correlation))
         self.assertTrue(summary["unverified_writes"])
+
+    def test_the_wait_a_user_started_turn_cost_is_measured_not_remembered(self) -> None:
+        """The gate's second criterion asks for the wait on a user-started turn.
+        Nothing acknowledges a delivery until a human opens that agent's
+        session, so the gap between the send and the acknowledgement is that
+        cost -- and it is in the records rather than in somebody's memory."""
+        correlation, task_id = self.conversation("the workflow being recorded")
+        # A second delivery, acknowledged an hour after it was sent.
+        opened = self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="finding",
+                                         payload={"task_id": task_id}, correlation_id=correlation)
+        delivery = self.store.inbox(REVIEWER, states=("queued",))["items"][-1]
+        self.store.ack_delivery(delivery["delivery_id"], REVIEWER)
+        later = datetime.fromisoformat(str(opened["created_at"])) + timedelta(hours=1)
+        self.store._conn.execute("UPDATE deliveries SET acknowledged_at = ? WHERE id = ?",
+                                 (later.isoformat(), delivery["delivery_id"]))
+        self.store._conn.commit()
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        self.assertEqual(summary["user_started_turns"], 2)
+        self.assertAlmostEqual(float(summary["longest_wait_seconds"]), 3600, delta=5)
+        self.assertIn("longest 60m", evidence.ledger_row(summary, label="w", path=None))
+
+    def test_a_delivery_nobody_opened_yet_is_not_a_measured_wait(self) -> None:
+        correlation, _ = self.conversation("the workflow being recorded")
+        self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="finding",
+                                payload={}, correlation_id=correlation)
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        # Three deliveries exist; only the one somebody opened a turn for has
+        # a wait. The reply to the architect and the new finding are still owed.
+        self.assertEqual((summary["deliveries"], summary["user_started_turns"]), (3, 1))
 
     def test_the_ledger_row_is_ready_to_paste(self) -> None:
         correlation, _ = self.conversation("the workflow being recorded")

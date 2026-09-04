@@ -291,7 +291,9 @@ any of it -- as JSON, plus a ready ledger row for
 ```
 
 It opens the database read-only and never migrates it, and runs the redaction
-contract over what it writes.
+contract over what it writes. The summary includes what the pull beta costs:
+how long each delivery waited between being sent and somebody opening the turn
+that read it, the number of turns waited on, and the longest wait.
 
 ## Recovery
 

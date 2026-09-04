@@ -101,6 +101,24 @@ the user to say what actually happened, and a retro that claims the records did
 it would be false. This workflow therefore counts as 1 of 3, and as 0 of the 2
 retros.
 
+**Asked and closed as unattributable (2026-09-04).** The user was asked whether
+the 107s was mostly the delay before they gave the implementer its turn, and
+answered that they cannot confirm it: nothing they saw records when the prompt
+was typed. It stays unattributed permanently for this workflow. Do not
+re-derive it -- there is no record that would settle it after the fact.
+
+That is worth stating as a finding rather than a footnote, because it is about
+the question the gate is asking. **The pull beta cannot measure its own
+central cost.** The gate wants to know whether the user-started turn hurts
+enough to justify a dispatcher, and a user-started turn leaves no record of
+when it started: the first observable moment is the session's first bus call,
+by which time the person and the model have already spent an unknown amount of
+time between them. A dispatched turn does have that timestamp -- `runs`
+carries `started_at`, which is why the autonomous chat above could report 58s
+of dispatcher latency exactly. So the evidence the gate asks for can only ever
+be approximate on the side it is asking about, and any future retro has to say
+"the user attributed this", never "the records show it".
+
 **Counts as a real workflow**: work the user would have done anyway, done
 through the bus, with more than one agent taking part.
 
@@ -208,8 +226,13 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** Open by definition until the
-  ledger has rows.
+- **The three workflows and two retros above.** 1 of 3 workflows recorded; 0
+  of 2 retros, and the first workflow can never supply one (see the
+  attribution note above). The remaining two workflows must have their waits
+  attributed while they are happening, by whoever starts the turn, or the
+  second criterion stays unmeetable.
+- **The M7-design workflow's open loop.** Its `result` delivery is still
+  `queued`: closing it needs the architect's own terminal, not this log.
 
 ## Next decision
 

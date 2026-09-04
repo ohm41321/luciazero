@@ -42,11 +42,62 @@ daemon needs Python 3.10+ and `git`; nothing is installed with pip.
    LUCIAZERO_AGENT_BUS_TOKEN`. Neither command edits the other tool's
    configuration.
 
-4. In each agent session, tell the model its stable agent id and run
-   `/lucia-bus` (Codex: `$lucia-bus`). The skill registers the agent, binds
-   its git worktree, reads the inbox, claims, works, and publishes. Every
-   writing agent needs its own worktree (`git worktree add ../wt-reviewer
-   -b review`); the daemon refuses two agents on one checkout.
+4. In each agent session run `/lucia-bus` (Codex: `$lucia-bus`). The skill
+   asks the daemon who it is, registers the agent, binds its git worktree,
+   reads the inbox, claims, works, and publishes. Every writing agent needs
+   its own worktree (`git worktree add ../wt-reviewer -b review`); the daemon
+   refuses two agents on one checkout. Bind the terminal first (below) so the
+   model does not have to be told its id, or tell it the id and accept that
+   the bus cannot prove it.
+
+## Choosing which terminal is which agent
+
+The shared daemon token admits a caller to the bus but names nobody, so a
+session that presents it acts as whoever it says it is. Binding a terminal
+gives that one session its own credential, and the daemon then fills the
+acting agent into every call itself. ADR 0004 has the contract.
+
+```bash
+python3 -m luciazero_agentd terminal list          # which window is which
+python3 -m luciazero_agentd attach --agent claude-reviewer --tty ttys004
+python3 -m luciazero_agentd run --agent claude-reviewer -- claude
+python3 -m luciazero_agentd whoami                 # what is this terminal?
+python3 -m luciazero_agentd sessions               # every live binding
+python3 -m luciazero_agentd detach --agent claude-reviewer
+```
+
+`terminal list` shows one row per provider session: tty, pid, start time,
+working directory, and the agent bound to it. One terminal can carry several
+provider processes, so `attach --tty` refuses an ambiguous terminal and asks
+for `--pid`.
+
+- **`attach`** binds a session that is already running. It prints the
+  credential, so it refuses to run from a pipe, and it prints the `mcp add`
+  command to paste into that session. **That session must reconnect the
+  `luciazero-bus` server (or restart) before anything can be attributed to
+  it**: an MCP client reads its headers when it connects.
+- **`run`** starts the provider with the binding already in place and never
+  prints the credential, which makes it the path for scripts and the one M6
+  will reuse to spawn managed workers. The binding ends when the command
+  exits.
+- A binding dies with its terminal: the daemon checks the recorded pid and
+  its start time on every request, so a killed session cannot be impersonated
+  by a later process that reuses the pid.
+
+An agent with no binding is **unverified**, and `bus status` says so on that
+agent's line. **The daemon refuses acting calls from unverified sessions by
+default**: read-only tools and `agent_whoami` still answer, and spending a
+human approval always needs a binding. `serve --allow-unattributed` turns the
+old behaviour back on for everything except approvals, and is a deliberate
+human choice, not something an agent can ask for. The flag decides only what
+is permitted, never how a session is labelled: an unverified session is
+reported as unverified either way, and `agent_whoami` answers
+`verified: false` rather than guessing from the worktree or the process
+table.
+
+Sessions that were already connected with the shared token keep the header
+they connected with, so after binding a terminal that session must reconnect
+`luciazero-bus` or restart.
 
 ## Status inspection
 
@@ -58,8 +109,8 @@ python3 -m luciazero_agentd status  # same view, Python only; --json for records
 ```
 
 Both show queued deliveries per agent, open tasks (with `needs worktree`
-when a task requires one), each agent's bound branch and dirty state, and
-pending approvals. The line `next: start the agent's session and run
+when a task requires one), each agent's bound branch and dirty state, which
+terminal each agent is bound to (or `unverified`), and pending approvals. The line `next: start the agent's session and run
 /lucia-bus` appears whenever something is queued. Peer-supplied text is
 scrubbed of control characters before it reaches your terminal.
 
@@ -118,6 +169,7 @@ cancelled and why. Completed and blocked tasks cannot be cancelled.
 ## Cleanup
 
 ```bash
+python3 -m luciazero_agentd detach --agent claude-reviewer   # per bound terminal
 BUS="${LUCIAZERO_AGENT_BUS_HOME:-$HOME/.luciazero/agent-bus}"
 kill "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["pid"])' "$BUS/endpoint.json")"
 rm -rf "$BUS"                            # queue, token, worktree records

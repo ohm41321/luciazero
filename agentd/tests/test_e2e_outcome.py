@@ -30,7 +30,7 @@ FLOW = [
 COURTESY = ("result", ARCHITECT, REVIEWER)
 
 
-def snapshot(messages, *, states=None, correlation="msg_0"):
+def snapshot(messages, *, states=None, correlation="msg_0", bindings=3, asserted_writes=()):
     """A record set that passes every other check, so a case fails only for
     the message or delivery reason it is about."""
     states = states or ["completed"] * len(messages)
@@ -51,7 +51,8 @@ def snapshot(messages, *, states=None, correlation="msg_0"):
             {"id": "art_2", "kind": "commit", "ref": "0" * 40, "by": IMPLEMENTER},
             {"id": "art_3", "kind": "report", "ref": "reports/verification.md", "by": REVIEWER},
         ],
-        "event_kinds": ["worktree.bound"] * 3 + ["message.sent"] * len(messages),
+        "event_kinds": ["worktree.bound"] * 3 + ["binding.created"] * bindings + ["message.sent"] * len(messages),
+        "asserted_writes": list(asserted_writes),
         "worktrees": [{"path": "/tmp/wt-reviewer"}, {"path": "/tmp/wt-implementer"}],
     }
 
@@ -100,6 +101,20 @@ class OutcomeAssertionTests(unittest.TestCase):
     def test_a_missing_step_fails_even_with_chatter_to_fill_the_count(self):
         snap = snapshot(FLOW[:4] + [COURTESY], states=["completed"] * 5)
         self.assertIn("does not contain", self.refuse(snap, live=True))
+
+    def test_an_unverified_write_fails_the_slice(self):
+        """ADR 0004: the slice runs on the shipped default, so every write in
+        it comes from a bound session."""
+        snap = snapshot(FLOW, asserted_writes=["message.sent"])
+        self.assertIn("unverified writes reached the bus", self.refuse(snap, live=True))
+
+    def test_every_agent_must_be_bound(self):
+        self.assertIn("bound terminal", self.refuse(snapshot(FLOW, bindings=2), live=True))
+
+    def test_an_identity_refusal_anywhere_fails_the_slice(self):
+        snap = snapshot(FLOW)
+        snap["event_kinds"].append("session.identity_refused")
+        self.assertIn("named an agent it was not bound to", self.refuse(snap, live=True))
 
     def test_the_flow_must_be_read_to_the_end(self):
         snap = snapshot(FLOW, states=["completed"] * 4 + ["acknowledged"])

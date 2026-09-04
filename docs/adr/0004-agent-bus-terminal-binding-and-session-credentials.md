@@ -1,6 +1,6 @@
 # ADR 0004: Agent Bus terminal binding and session credentials
 
-Status: proposed 2026-09-03 for milestone M4.5 (needs acceptance before work starts)
+Status: accepted 2026-09-03 for milestone M4.5
 
 ## Context
 
@@ -59,7 +59,11 @@ luciazero-agentd run --agent claude-reviewer --provider claude -- claude
 
 `attach` binds a session that is already running. `run` spawns the provider
 with the binding already in place and is the safer path, because the
-credential never has to be delivered to a live process. `run` is also the
+credential never has to be delivered to a live process. It also never puts
+the credential on the child's command line: a provider session can run for
+hours and argv is readable through `ps`, so the value goes in a `0600` file
+that is removed when the command exits, or in the child's environment where
+the CLI supports that. `run` is also the
 piece M6 needs to spawn managed workers, so it is built once here.
 
 Both commands: verify the target process exists, owns the given tty, belongs
@@ -153,9 +157,27 @@ exists and still has the recorded start time (`kill(pid, 0)` plus a start-time
 compare) whenever it resolves a credential, and the human commands
 (`terminal list`, `sessions`, `bus status`) reap what they walk past. A stale
 or revoked binding invalidates its credential and its MCP session, and
-records `session.stale` or `session.detached`. Credentials also carry an
+records `binding.stale` or `binding.revoked` against the binding. Credentials also carry an
 absolute expiry so a machine that sleeps for a week wakes up with nothing
 live.
+
+### The invariant: unattributed never reads as proven
+
+One rule outranks the rest of this document, because every other guarantee
+here is downstream of it. **An unattributed request must never be presented,
+recorded, or answered as a request with a proven identity.** In practice:
+
+- `agent_whoami` on a session with no credential returns
+  `{"verified": false, "agent_id": null}` and the reason. It never guesses
+  from the worktree, the process table, or a single registered agent.
+- Every event and record written by such a session carries
+  `trust: "asserted"`; a verified one carries `trust: "bound"`. There is no
+  default that omits the field, so a missing field is a bug, not a maybe.
+- `bus status`, `sessions` and `terminal list` mark those agents
+  `unverified`, and the word appears in the same line as the agent id, not in
+  a legend somewhere else.
+- `--allow-unattributed` decides only whether such a request is *permitted*.
+  It must never change how one is *labelled*. A test asserts both halves.
 
 ### Unattributed sessions are a named legacy mode, not a quiet default
 
@@ -168,10 +190,16 @@ confusion this ADR removes. Instead:
   model-asserted, every event it writes records `trust: "asserted"`, and
   `bus status` marks the agent `unverified`.
 - The daemon flag `--allow-unattributed` decides whether that is permitted.
-  It defaults to on for the pull beta, so every M0-M4 result keeps working
-  unchanged, and the M4.5 exit gate is what flips it off by default.
-- With it off, actor calls without a credential are refused; read-only tools
-  and the human CLI still work.
+  **It is off by default** (decided 2026-09-04, before M5): dispatch is built
+  on identity, so the base cannot be a bus where agents may wear each other's
+  names. Turning it on is a human choice at `serve` time and nothing an agent
+  can ask for.
+- With it off, acting calls without a credential are refused; read-only
+  tools, `agent_whoami` and the human CLI still work. Spending a human
+  approval needs a binding whatever the flag says, and managed dispatch will
+  join it there in M6: an unverified session must never consume consent.
+- Sessions already connected with the shared token cannot be upgraded in
+  place; they reconnect or restart.
 - Worktree binding keeps its M3 job, which is exclusion, not identity: one
   writer per checkout. Two guarantees, not one restated.
 
@@ -216,6 +244,14 @@ cooperative agents, not against a hostile process running as the same user.
 A process with the user's privileges can read a credential out of the
 provider's environment or configuration exactly as it can read the daemon
 token, and the daemon cannot tell that apart from the legitimate session.
+What is in scope is casual exposure to *other* users of the machine, which
+is why no credential is ever written to argv: `ps` shows a command line to
+everyone by default, while the environment and a `0600` file do not.
+
+Liveness is checked on the authentication path, so it fails closed: if the
+process table cannot be read, the credential is refused rather than trusted.
+The process start time is cached for a few seconds, which bounds how long a
+reused pid could be mistaken for the bound one.
 Session credentials raise the cost of an accidental impersonation to zero
 plausibility and make every impersonation attempt visible in the event log;
 they do not make the loopback endpoint a trust boundary between processes.

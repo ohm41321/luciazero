@@ -79,7 +79,10 @@ class ServerCase(unittest.TestCase):
         self.db = str(Path(self._tmp.name) / "bus.sqlite3")
         with Store.open(self.db) as store:
             store.migrate()
-        self.server = BusServer(self.db, TOKEN, port=0).start()
+        # The shipped default refuses acting calls from an unverified session;
+        # this suite is about protocol conformance, so it opts into the legacy
+        # mode on purpose. tests/test_identity.py covers the default.
+        self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=True).start()
         self.client = Http(self.server.url)
 
     def tearDown(self) -> None:
@@ -294,7 +297,7 @@ class ToolsContract(ServerCase):
         names = {t["name"] for t in listed}
         expected = {"agent_register", "agent_list", "agent_heartbeat", "message_send", "message_inbox", "message_ack",
                     "task_create", "task_list", "task_claim", "task_complete", "artifact_publish", "artifact_get",
-                    "worktree_bind", "worktree_get", "approval_consume"}
+                    "worktree_bind", "worktree_get", "approval_consume", "agent_whoami"}
         self.assertEqual(names, expected)
 
     def test_full_pull_beta_flow_through_tools(self) -> None:

@@ -141,6 +141,10 @@ class Daemon:
         self.url = ""
         self.token = ""
         self.pids: list[int] = []
+        # One session credential per agent (ADR 0004). The daemon now refuses
+        # acting calls from an unverified session, so the slice runs the way a
+        # user's machine does: every turn speaks as a bound session.
+        self.credentials: dict[str, str] = {}
 
     def start(self) -> None:
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(ROOT / "agentd"))
@@ -184,8 +188,21 @@ class Daemon:
             raise E2EError("endpoint.json survived a clean stop")
         self.start()
 
-    def session(self) -> McpClient:
-        client = McpClient(self.url, self.token)
+    def bind(self, agent_id: str, provider: str) -> str:
+        """Mint the credential the user's `attach` or `run` would mint. This
+        driver is not a terminal, so it writes the binding directly; the human
+        commands themselves are covered by agentd/tests/test_identity.py."""
+        with Store.open(self.state_dir / "bus.sqlite3") as store:
+            store.migrate()
+            store.trust = "human"
+            _, credential = store.bind_terminal(agent_id, provider=provider, by="human:e2e", cwd=str(self.state_dir))
+        self.credentials[agent_id] = credential
+        return credential
+
+    def session(self, agent_id: Optional[str] = None) -> McpClient:
+        """A fresh MCP session for one agent, speaking with that agent's own
+        credential; the bare daemon token is left for read-only checks."""
+        client = McpClient(self.url, self.credentials.get(agent_id, self.token) if agent_id else self.token)
         client.initialize()
         return client
 
@@ -203,11 +220,15 @@ class Daemon:
     def roster(self) -> list[str]:
         """The user names the team once, so the architect can address peers
         whose sessions the user has not started yet."""
-        return [
+        lines = [
             self.cli("roster", "add", ARCHITECT, "codex", "architect", "--capability", "plan"),
             self.cli("roster", "add", REVIEWER, "claude", "reviewer", "--capability", "review", "--capability", "verify"),
             self.cli("roster", "add", IMPLEMENTER, "codex", "implementer", "--capability", "edit"),
         ]
+        for agent_id, provider in ((ARCHITECT, "codex"), (REVIEWER, "claude"), (IMPLEMENTER, "codex")):
+            self.bind(agent_id, provider)
+            lines.append(f"terminal for {agent_id} is bound; its session speaks with its own credential")
+        return lines
 
 
 # --------------------------------------------------------------- fake turns
@@ -413,13 +434,16 @@ class LiveRunner:
         cwd = worktree or self.ws.repo
         if self.dry_run:
             return f"[dry-run] {provider} turn {index} for {agent_id} in {cwd}:\n{prompt[:400]}..."
+        # The provider speaks with this agent's own credential, exactly as it
+        # would after `luciazero-agentd run`, so the daemon names the actor.
+        credential = self.daemon.credentials.get(agent_id, self.daemon.token)
         if provider == "codex":
-            return self.codex_turn(prompt, cwd)
-        return self.claude_turn(prompt, cwd)
+            return self.codex_turn(prompt, cwd, credential)
+        return self.claude_turn(prompt, cwd, credential)
 
-    def codex_turn(self, prompt: str, cwd: Path) -> str:
+    def codex_turn(self, prompt: str, cwd: Path, credential: str) -> str:
         assert self.codex
-        env = dict(os.environ, **{TOKEN_ENV: self.daemon.token})
+        env = dict(os.environ, **{TOKEN_ENV: credential})
         overrides = [f'mcp_servers.{SERVER_NAME}.url="{self.daemon.url}"', f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="{TOKEN_ENV}"']
         with spike.rpc_process(self.codex, env, overrides) as process:
             started = process.request("thread/start", {"cwd": str(cwd), "sandbox": "workspace-write", "approvalPolicy": "on-request"})
@@ -430,9 +454,9 @@ class LiveRunner:
             raise E2EError("Codex turn did not report DONE: " + text[:800])
         return text
 
-    def claude_turn(self, prompt: str, cwd: Path) -> str:
+    def claude_turn(self, prompt: str, cwd: Path, credential: str) -> str:
         assert self.claude
-        mcp_config = json.dumps({"mcpServers": {SERVER_NAME: {"type": "http", "url": self.daemon.url, "headers": {"Authorization": f"Bearer {self.daemon.token}"}}}})
+        mcp_config = json.dumps({"mcpServers": {SERVER_NAME: {"type": "http", "url": self.daemon.url, "headers": {"Authorization": f"Bearer {credential}"}}}})
         # `--allowedTools` is variadic: keep a single-value option between it and the prompt.
         result = spike.run([self.claude, "-p", "--permission-mode", "bypassPermissions", "--mcp-config", mcp_config, "--strict-mcp-config", "--output-format", "json", prompt], cwd=cwd, timeout=600)
         text = spike.claude_result_text(result)
@@ -457,6 +481,9 @@ def snapshot(db: Path) -> dict[str, Any]:
             "deliveries": [{"id": d["id"], "state": d["state"]} for d in deliveries],
             "artifacts": [{"id": a["id"], "kind": a["kind"], "ref": a["ref"], "by": a["produced_by_agent_id"]} for a in artifacts],
             "event_kinds": [e["kind"] for e in events],
+            # ADR 0004: "asserted" means nobody proved who wrote it. The user's
+            # own commands are "human", a bound session is "bound".
+            "asserted_writes": [e["kind"] for e in events if e["payload"].get("trust") == "asserted"],
             "worktrees": [store.get_worktree(a) for a in (REVIEWER, IMPLEMENTER)],
         }
 
@@ -528,6 +555,12 @@ def assert_outcome(snap: dict[str, Any], daemon: Daemon, ws: Workspace, first_me
         failures.append(f"writers must hold their own worktrees: {[w['path'] for w in snap['worktrees']]} != {expected_worktrees}")
     if snap["counts"]["approvals"] != 0:
         failures.append("no approval should have been needed")
+    if snap["event_kinds"].count("binding.created") < 3:
+        failures.append("every agent must act from a bound terminal (ADR 0004)")
+    if "session.identity_refused" in snap["event_kinds"]:
+        failures.append("a session named an agent it was not bound to")
+    if snap["asserted_writes"]:
+        failures.append(f"unverified writes reached the bus: {sorted(set(snap['asserted_writes']))}")
     if failures:
         raise E2EError("outcome flow did not reach the roadmap state:\n  " + "\n  ".join(failures))
     return {
@@ -598,7 +631,7 @@ def main() -> int:
                     with Store.open(daemon.state_dir / "bus.sqlite3") as store:
                         first_message = next(e["entity_id"] for e in store.events(limit=50) if e["kind"] == "message.sent")
             else:
-                bus = daemon.session()
+                bus = daemon.session(agent_id)
                 result = turn(bus, ws, run)
                 report["turns"].append({"turn": index, "agent": agent_id, **result})
                 if index == 1:

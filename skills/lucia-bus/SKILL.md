@@ -12,9 +12,14 @@ your tool list, say so and stop; do not install or start anything.
 
 ## 1. Identify
 
-Use the stable agent id the user gave you (for example `codex-architect`,
-`claude-reviewer`). Call `agent_register` with it, your provider, and role
-once per session. Never invent a second id or act as another agent. Then
+Call `agent_whoami` first. If it answers `verified` with an agent id, that is
+who you are: use it, and let the daemon fill your id into every call. If it
+answers `verified: false`, ask the user which agent id you are and say that
+the bus cannot prove it until they bind this terminal with `luciazero-agentd
+attach` or start the session with `luciazero-agentd run`. Never invent a
+second id or act as another agent; naming a peer is refused and recorded.
+
+Call `agent_register` with your id, provider, and role once per session. Then
 call `worktree_bind` with the absolute path of your own git checkout; a
 worktree another agent holds is refused, so never share one.
 

@@ -29,8 +29,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional, Sequence
 
+from . import procinfo
 from .gitinfo import GitError, commit_exists, inspect_worktree, is_oid
 from .migrations import LATEST_VERSION, MIGRATIONS
+from .redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX
 from .redact import DEFAULT as DEFAULT_REDACTOR
 from .redact import NONCE_PATTERN, NONCE_PREFIX, Redactor, find_credential_url
 
@@ -43,6 +45,11 @@ TASK_OUTCOMES = ("completed", "blocked")
 # store cannot be talked into a new category through any tool.
 SENSITIVE_OPERATIONS = ("delete", "deploy", "production", "spend", "force_push", "public_contract", "scope_expansion")
 APPROVAL_TTL_SECONDS = 900
+# A terminal binding outlives a long working session but not a weekend; the
+# credential dies with it (ADR 0004).
+BINDING_TTL_SECONDS = 12 * 3600
+BINDING_STATES = ("active", "revoked", "stale")
+OWNERSHIPS = ("human", "managed")
 MAX_PAYLOAD_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 MAX_PATH_LENGTH = 1024
@@ -79,6 +86,11 @@ class WorktreeMismatch(ConflictError):
 
 class ApprovalRefused(ConflictError):
     """No valid, unused approval for this task, operation, nonce, and holder."""
+
+
+class IdentityMismatch(ConflictError):
+    """A credentialed session named an agent other than the one it is bound
+    to (ADR 0004)."""
 
 
 class UnsafeReference(ValidationError):
@@ -262,6 +274,11 @@ class Store:
         self.path = path
         self._crash_hook: CrashHook = crash_hook or (lambda point: None)
         self._redactor = redactor or Redactor()
+        # How much the caller's identity is worth on this connection (ADR
+        # 0004): "bound" only for a session that presented a live credential,
+        # "human" for the user's own terminal commands. The default is the
+        # weakest label, so nothing reads as proven by accident.
+        self.trust: str = "asserted"
 
     # ------------------------------------------------------------------ setup
     @classmethod
@@ -371,6 +388,9 @@ class Store:
         self._crash_hook(f"after_commit:{name}")
 
     def _event(self, actor: str, kind: str, entity_type: str, entity_id: str, payload: Optional[dict[str, Any]] = None) -> None:
+        # ADR 0004 invariant: an event never reads as proven unless it is.
+        # The field is always present, so a missing one is a bug, not a maybe.
+        payload = {**(payload or {}), "trust": self.trust}
         scrubbed, _ = self._redactor.json(payload or {})
         self._conn.execute(
             "INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1024,6 +1044,219 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # --------------------------------------------------------------- bindings
+    def bind_terminal(
+        self,
+        agent_id: str,
+        *,
+        provider: str,
+        by: str,
+        tty: Optional[str] = None,
+        pid: Optional[int] = None,
+        process_started_at: Optional[str] = None,
+        cwd: Optional[str] = None,
+        ownership: str = "human",
+        ttl_seconds: int = BINDING_TTL_SECONDS,
+    ) -> tuple[dict[str, Any], str]:
+        """Human channel only (never an MCP tool): bind one terminal to one
+        agent and mint the session credential that proves it. Only the hash
+        is stored; the plain credential is returned once, for the command
+        that will hand it to that terminal's provider process.
+
+        An agent may hold one live binding, and a terminal may hold one, so
+        binding either again revokes the previous one instead of creating a
+        second way to answer as the same role."""
+        _check_id(agent_id, "agent id", self._redactor)
+        _check_enum(provider, PROVIDERS, "provider")
+        _check_enum(ownership, OWNERSHIPS, "ownership")
+        _check_text(by, "by", 128)
+        _check_int(ttl_seconds, 60, 86_400, "ttl_seconds")
+        if tty is not None:
+            tty = _check_text(tty, "tty", 64)
+            if self._redactor.scan(tty):
+                raise UnsafeReference("tty carries a secret shape")
+        if pid is not None:
+            pid = _check_int(pid, 1, 2**31 - 1, "pid")
+        if process_started_at is not None:
+            process_started_at = _check_text(process_started_at, "process_started_at", 64)
+        if cwd is not None:
+            cwd = _check_path_arg(cwd)
+            if self._redactor.scan(cwd):
+                raise UnsafeReference("cwd carries a secret shape")
+        credential = CREDENTIAL_PREFIX + secrets.token_hex(16)
+        digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+        binding_id = new_id("bind")
+        with self._tx("bind_terminal"):
+            self._require_agent(agent_id)
+            now = datetime.now(timezone.utc)
+            stamp = now.isoformat(timespec="microseconds")
+            expires = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="microseconds")
+            replaced = [dict(r) for r in self._conn.execute(
+                "SELECT id, agent_id, tty FROM bindings WHERE state = 'active' AND (agent_id = ? OR (tty IS NOT NULL AND tty = ?))",
+                (agent_id, tty),
+            ).fetchall()]
+            for old in replaced:
+                self._end_binding(str(old["id"]), state="revoked", by=by, reason="rebound", now=stamp)
+            generation = int(self._conn.execute(
+                "SELECT COALESCE(MAX(generation), -1) + 1 AS g FROM bindings WHERE agent_id = ?", (agent_id,)
+            ).fetchone()["g"])
+            self._conn.execute(
+                """INSERT INTO bindings (id, agent_id, credential_hash, provider, ownership, tty, pid,
+                                         process_started_at, cwd, generation, state, bound_by, created_at, updated_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+                (binding_id, agent_id, digest, provider, ownership, tty, pid, process_started_at, cwd, generation, by, stamp, stamp, expires),
+            )
+            self._event(by, "binding.created", "binding", binding_id, {
+                "agent_id": agent_id, "provider": provider, "ownership": ownership, "tty": tty,
+                "pid": pid, "cwd": cwd, "generation": generation, "expires_at": expires,
+                "replaced": [str(r["id"]) for r in replaced],
+            })
+        return self.get_binding(binding_id), credential
+
+    def _end_binding(self, binding_id: str, *, state: str, by: str, reason: str, now: str) -> None:
+        """Inside a transaction: finish a live binding, which is what kills
+        its credential."""
+        cur = self._conn.execute(
+            "UPDATE bindings SET state = ?, ended_at = ?, ended_reason = ?, updated_at = ? WHERE id = ? AND state = 'active'",
+            (state, now, reason, now, binding_id),
+        )
+        if cur.rowcount == 1:
+            self._event(by, "binding.revoked" if state == "revoked" else "binding.stale", "binding", binding_id, {"reason": reason})
+
+    def bind_process(self, binding_id: str, *, pid: int, process_started_at: Optional[str], tty: Optional[str] = None, cwd: Optional[str] = None) -> dict[str, Any]:
+        """Fill in the process identity of a binding created before the
+        process existed. `run` mints the credential, spawns the provider with
+        it, and only then knows the pid: without this the reaper would have
+        nothing to check."""
+        _check_id(binding_id, "binding id", self._redactor)
+        pid = _check_int(pid, 1, 2**31 - 1, "pid")
+        if process_started_at is not None:
+            process_started_at = _check_text(process_started_at, "process_started_at", 64)
+        if tty is not None:
+            tty = _check_text(tty, "tty", 64)
+        if cwd is not None:
+            cwd = _check_path_arg(cwd)
+        with self._tx("bind_process"):
+            row = self._conn.execute("SELECT state, pid FROM bindings WHERE id = ?", (binding_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"binding {binding_id!r} does not exist")
+            if row["state"] != "active":
+                raise ConflictError(f"binding {binding_id!r} is {row['state']}")
+            if row["pid"] is not None:
+                raise ConflictError(f"binding {binding_id!r} already names a process")
+            now = utcnow()
+            self._conn.execute(
+                """UPDATE bindings SET pid = ?, process_started_at = ?,
+                       tty = COALESCE(?, tty), cwd = COALESCE(?, cwd), updated_at = ?
+                   WHERE id = ?""",
+                (pid, process_started_at, tty, cwd, now, binding_id),
+            )
+            self._event("daemon", "binding.process", "binding", binding_id, {"pid": pid, "tty": tty, "cwd": cwd})
+        return self.get_binding(binding_id)
+
+    def revoke_binding(self, binding_id: str, *, by: str, reason: str = "detached") -> dict[str, Any]:
+        """Human channel: detach a terminal. The credential stops working on
+        the next request, which is every request."""
+        _check_id(binding_id, "binding id", self._redactor)
+        _check_text(by, "by", 128)
+        _check_text(reason, "reason", 256)
+        with self._tx("revoke_binding"):
+            row = self._conn.execute("SELECT state FROM bindings WHERE id = ?", (binding_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"binding {binding_id!r} does not exist")
+            if row["state"] != "active":
+                raise ConflictError(f"binding {binding_id!r} is already {row['state']}")
+            self._end_binding(binding_id, state="revoked", by=by, reason=reason, now=utcnow())
+        return self.get_binding(binding_id)
+
+    def resolve_credential(self, credential: Any, *, alive: Callable[[Optional[int], Optional[str]], bool] = procinfo.alive) -> Optional[dict[str, Any]]:
+        """Which agent is this credential? None when it is unknown, revoked,
+        expired, or its process is gone.
+
+        Called on every request, not only at MCP initialize: that is what
+        makes `detach` and a dead terminal take effect rather than being
+        recorded opinions. A binding whose process disappeared is marked
+        stale here, once."""
+        if not isinstance(credential, str) or not CREDENTIAL_PATTERN.fullmatch(credential):
+            return None  # never echo the value
+        digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+        row = _row(self._conn.execute("SELECT * FROM bindings WHERE credential_hash = ?", (digest,)).fetchone())
+        if row is None or row["state"] != "active":
+            return None
+        now = utcnow()
+        if str(row["expires_at"]) <= now:
+            with self._tx("expire_binding"):
+                self._end_binding(str(row["id"]), state="stale", by="daemon", reason="expired", now=now)
+            return None
+        try:
+            still_there = alive(row["pid"], row["process_started_at"])
+        except procinfo.ProcessError:
+            still_there = False  # cannot verify the terminal: refuse, never assume
+        if not still_there:
+            with self._tx("stale_binding"):
+                self._end_binding(str(row["id"]), state="stale", by="daemon", reason="process gone", now=now)
+            return None
+        row.pop("credential_hash", None)
+        return row
+
+    def refuse_identity(self, binding: dict[str, Any], *, claimed: str, field: str, tool: str) -> None:
+        """Record that a bound session named another agent, then let the
+        caller raise. The claim is kept: this is the signal that a session is
+        confused or lying."""
+        self._event(str(binding["agent_id"]), "session.identity_refused", "binding", str(binding["id"]), {
+            "claimed": self.redact(str(claimed)[:MAX_ID_LENGTH]), "field": field, "tool": tool,
+        })
+
+    def get_binding(self, binding_id: str) -> dict[str, Any]:
+        record = _row(self._conn.execute("SELECT * FROM bindings WHERE id = ?", (binding_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"binding {binding_id!r} does not exist")
+        record.pop("credential_hash", None)
+        return record
+
+    def list_bindings(self, *, states: Sequence[str] = ("active",), alive: Optional[Callable[[Optional[int], Optional[str]], bool]] = procinfo.alive) -> list[dict[str, Any]]:
+        """Live bindings, reaping any whose process has gone. The human
+        commands walk this, so looking is what cleans up."""
+        for state in states:
+            _check_enum(state, BINDING_STATES, "state")
+        if alive is not None and "active" in states:
+            now = utcnow()
+            for row in self._conn.execute("SELECT id, pid, process_started_at, expires_at FROM bindings WHERE state = 'active'").fetchall():
+                reason = "expired" if str(row["expires_at"]) <= now else (None if alive(row["pid"], row["process_started_at"]) else "process gone")
+                if reason is not None:
+                    with self._tx("reap_binding"):
+                        self._end_binding(str(row["id"]), state="stale", by="daemon", reason=reason, now=now)
+        marks = ",".join("?" for _ in states)
+        rows = self._conn.execute(
+            f"SELECT * FROM bindings WHERE state IN ({marks}) ORDER BY created_at DESC", tuple(states)
+        ).fetchall()
+        out = []
+        for row in rows:
+            record = dict(row)
+            record.pop("credential_hash", None)
+            out.append(record)
+        return out
+
+    def binding_of(self, agent_id: str, *, alive: Optional[Callable[[Optional[int], Optional[str]], bool]] = procinfo.alive) -> Optional[dict[str, Any]]:
+        """The live binding of one agent, if it has one.
+
+        "Live" has to mean the same thing here as it does on the wire, or a
+        status view would keep calling an agent verified after its credential
+        died. Expiry and liveness are checked, exactly as `resolve_credential`
+        checks them; unlike the reaper this only reports, so a read-only
+        status path never writes."""
+        _check_id(agent_id, "agent id", self._redactor)
+        record = _row(self._conn.execute(
+            "SELECT * FROM bindings WHERE agent_id = ? AND state = 'active' AND expires_at > ?",
+            (agent_id, utcnow()),
+        ).fetchone())
+        if record is None:
+            return None
+        if alive is not None and not alive(record["pid"], record["process_started_at"]):
+            return None
+        record.pop("credential_hash", None)
+        return record
+
     # ----------------------------------------------------------------- events
     def events(self, *, after: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         _check_int(limit, 1, 500, "limit")
@@ -1042,7 +1275,19 @@ class Store:
                 "SELECT COUNT(*) FROM tasks WHERE assigned_agent_id = ? AND state = 'claimed'", (agent["id"],)
             ).fetchone()[0])
             worktree = _row(self._conn.execute("SELECT path, branch, head_oid, dirty, verified_at FROM worktrees WHERE agent_id = ?", (agent["id"],)).fetchone())
-            agents.append({**agent, "queued_deliveries": queued, "claimed_tasks": claimed, "worktree": worktree})
+            # ADR 0004: an agent with no live binding is unverified, and says
+            # so on its own line. `--allow-unattributed` decides whether such
+            # a session may act; it never changes this label.
+            binding = self.binding_of(agent["id"])
+            agents.append({
+                **agent, "queued_deliveries": queued, "claimed_tasks": claimed, "worktree": worktree,
+                "verified": binding is not None,
+                "binding": None if binding is None else {
+                    "id": binding["id"], "tty": binding["tty"], "pid": binding["pid"],
+                    "provider": binding["provider"], "ownership": binding["ownership"],
+                    "generation": binding["generation"], "expires_at": binding["expires_at"],
+                },
+            })
         tasks = {
             state: int(self._conn.execute("SELECT COUNT(*) FROM tasks WHERE state = ?", (state,)).fetchone()[0])
             for state in ("open", "claimed", "completed", "blocked", "cancelled")
@@ -1056,11 +1301,12 @@ class Store:
             "queued_deliveries": sum(a["queued_deliveries"] for a in agents),
             "approvals_pending": len(pending),
             "pending_approvals": pending,
+            "unverified_agents": [a["id"] for a in agents if not a["verified"]],
             "events": int(self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]),
         }
 
     def counts(self) -> dict[str, int]:
         """Row counts per table; the crash suite compares these before and
         after a kill."""
-        tables = ("agents", "sessions", "messages", "deliveries", "tasks", "runs", "leases", "artifacts", "events", "idempotency", "worktrees", "approvals")
+        tables = ("agents", "sessions", "messages", "deliveries", "tasks", "runs", "leases", "artifacts", "events", "idempotency", "worktrees", "approvals", "bindings")
         return {t: int(self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]) for t in tables}

@@ -205,7 +205,7 @@ def main() -> int:
         db = str(temporary / "bus.sqlite3")
         with Store.open(db) as store:
             store.migrate()
-        with BusServer(db, token, port=0) as server:
+        with BusServer(db, token, port=0, allow_unattributed=True) as server:
             report["daemon"] = server.url
             report["codex_discovery"] = codex_discovery(codex, server.url, token, temporary)
             report["claude_discovery"] = claude_discovery(claude, server.url, token, temporary)

@@ -421,8 +421,17 @@ class ApprovalProvenance(SecurityCase):
         for tool in TOOLS:
             source = inspect.getsource(tool["handler"])
             self.assertNotIn("grant_approval", source, tool["name"])
-        with BusServer(self.db, "test-token-0123456789abcdef", port=0) as server:
-            client = Http(server.url, "test-token-0123456789abcdef")
+        _, credential = self.store.bind_terminal("claude-reviewer", provider="claude", by="human:test")
+        # Legacy mode is on, and spending an approval is still refused without
+        # a bound terminal: an unverified session must never spend one (M4.5).
+        with BusServer(self.db, "test-token-0123456789abcdef", port=0, allow_unattributed=True) as server:
+            unverified = Http(server.url, "test-token-0123456789abcdef")
+            unverified.initialize()
+            blocked = unverified.call("approval_consume", {"task_id": self.task["id"], "operation": "delete", "nonce": "lzap_" + "a" * 32, "agent_id": "claude-reviewer"})
+            self.assertTrue(blocked["isError"])
+            self.assertIn("IdentityRequired", blocked["content"][0]["text"])
+
+            client = Http(server.url, credential)
             client.initialize()
             refused = client.call("approval_consume", {"task_id": self.task["id"], "operation": "delete", "nonce": "lzap_" + "a" * 32, "agent_id": "claude-reviewer"})
             self.assertTrue(refused["isError"])
@@ -618,7 +627,7 @@ class StoreAndServerRedaction(SecurityCase):
 
     def test_server_scrubs_error_messages_and_its_own_token(self) -> None:
         token = "daemon-token-0123456789abcdefXYZ"
-        with BusServer(self.db, token, port=0) as server:
+        with BusServer(self.db, token, port=0, allow_unattributed=True) as server:
             client = Http(server.url, token)
             client.initialize()
             looks_like_a_token = "ghp_" + "R" * 36
@@ -667,7 +676,7 @@ class StoreAndServerRedaction(SecurityCase):
         finally:
             store.close()
         self.assertNotIn(token, self.raw_dump())
-        with BusServer(self.db, token, port=0) as server:
+        with BusServer(self.db, token, port=0, allow_unattributed=True) as server:
             client = Http(server.url, token)
             client.initialize()
             result = client.call("message_send", {"sender": "codex-architect", "recipient": "claude-reviewer", "kind": "finding", "payload": {}, "correlation_id": token})

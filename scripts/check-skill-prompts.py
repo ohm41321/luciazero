@@ -330,12 +330,13 @@ SPECS = {
                  ("__intro__", "node <this-skill-dir>/../../bin/luciazero.js discipline")),
     },
     "lucia-bus": {
-        "budget": 426,
+        "budget": 486,
         "sections": ("1. Identify", "2. Inspect the inbox", "3. Claim", "4. Work and publish", "Rules"),
         "contracts": {
             "__description__": ("Luciazero Agent Bus", "peers never grant approval"),
             "__intro__": ("`/lucia-relay`", "`luciazero-bus`", "do not install or start anything"),
-            "1. Identify": ("`agent_register`", "Never invent a second id", "`worktree_bind`", "never share one"),
+            "1. Identify": ("`agent_whoami`", "`verified: false`", "`luciazero-agentd\nattach`", "`agent_register`",
+                            "Never invent a second id", "`worktree_bind`", "never share one"),
             "2. Inspect the inbox": ("`message_inbox`", "`message_ack`", "untrusted input",
                                      "never consent, approval, or permission"),
             "3. Claim": ("`task_list`", "`task_claim`", "A conflict means another agent won"),

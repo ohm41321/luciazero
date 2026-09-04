@@ -36,6 +36,11 @@ from typing import Any, Iterable, NamedTuple, Pattern
 
 NONCE_PREFIX = "lzap_"
 NONCE_PATTERN = re.compile(r"^lzap_[0-9a-f]{32}$")
+# Session credential of a terminal binding (ADR 0004). Same handling as an
+# approval nonce: minted in the human channel, stored as a sha256, and
+# refused in every channel an agent can write to.
+CREDENTIAL_PREFIX = "lzsc_"
+CREDENTIAL_PATTERN = re.compile(r"^lzsc_[0-9a-f]{32}$")
 SECRET_WORD = r"(?:api[_-]?key|secret|password|passwd|token)"
 # The secret word may sit mid-name (AWS_SECRET_ACCESS_KEY, token_v2); the
 # trailing run is short so "token_type" style names still qualify but a
@@ -61,6 +66,7 @@ RULES: tuple[Rule, ...] = (
     Rule("bearer", re.compile(r"(?i)\bauthorization\s*[:=]\s*bearer\s+[A-Za-z0-9._~+/=-]{8,}"), "Authorization: Bearer [redacted]", True),
     Rule("bearer", re.compile(r"(?i)\bbearer\s+(?=[A-Za-z0-9._~+/=-]{0,256}\d)[A-Za-z0-9._~+/=-]{8,}"), "Bearer [redacted]", True),
     Rule("approval-nonce", re.compile(r"\blzap_[A-Za-z0-9_-]{16,}"), "[redacted:approval-nonce]", True),
+    Rule("session-credential", re.compile(r"\blzsc_[A-Za-z0-9_-]{16,}"), "[redacted:session-credential]", True),
     Rule("aws-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[redacted:aws-key]", True),
     Rule("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "[redacted:github-token]", True),
     Rule("github-token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[redacted:github-token]", True),

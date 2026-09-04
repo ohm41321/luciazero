@@ -8,7 +8,7 @@
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
 # the provider CLIs). `--agent-bus-store` runs only the M1-M4 daemon suite.
 # `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
-# `--agent-bus-security` runs only the M3 safety fixtures. `--agent-bus-e2e`
+# `--agent-bus-security` runs the M3 and M4.5 safety fixtures. `--agent-bus-e2e`
 # runs the M4 pull-beta flow with the fake provider (also part of `--full`).
 # Exits non-zero on the first failure.
 set -euo pipefail
@@ -93,16 +93,19 @@ if [ "${TIER}" = agent-bus-store ]; then
   exit 0
 fi
 
-# M3 exit gate on its own: worktree isolation, stale-identity refusal,
-# approval provenance, path containment, secret redaction, bounded input.
-# The same module also runs inside agent_bus_store, so --fast covers it.
+# The M3 and M4.5 exit gates on their own: worktree isolation, stale-identity
+# refusal, approval provenance, path containment, secret redaction, bounded
+# input, terminal bindings, session credentials, the actor-field matrix, and
+# the invariant that an unattributed session is never labelled as proven.
+# Both modules also run inside agent_bus_store, so --fast covers them.
 if [ "${TIER}" = agent-bus-security ]; then
-  (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_security >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
-    || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M3 security suite"; }
+  (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_security tests.test_identity >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
+    || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M3+M4.5 security suite"; }
   rm -f "${ROOT}/agentd/.last-store-run.log"
-  echo "ok  agent bus M3 security fixtures (worktree isolation, stale identity, approval provenance, path containment, redaction, bounded input)"
+  echo "ok  agent bus safety fixtures (worktree isolation, stale identity, approval provenance, path containment, redaction, bounded input)"
+  echo "ok  agent bus identity fixtures (terminal bindings, session credentials, actor-field matrix, unattributed is never proven)"
   echo
-  echo "PASS  agent bus M3 security gate green"
+  echo "PASS  agent bus M3+M4.5 security gate green"
   exit 0
 fi
 

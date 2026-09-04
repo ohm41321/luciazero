@@ -62,14 +62,22 @@ async function status(json) {
   for (const agent of body.agents) {
     const wt = agent.worktree;
     const where = wt ? `  on ${clean(wt.branch)}${wt.dirty ? " (dirty)" : ""}` : "";
+    // ADR 0004: an agent with no terminal binding says so on its own line.
+    const who = agent.binding ? `  ${clean(agent.binding.tty || "no tty")}` : "  unverified";
     console.log(
       `  ${clean(agent.id).padEnd(24)} ${clean(agent.provider).padEnd(7)} ${clean(agent.role).padEnd(14)} ` +
-      `inbox ${String(Number(agent.queued_deliveries)).padStart(3)}  claimed ${String(Number(agent.claimed_tasks)).padStart(3)}  seen ${clean(agent.last_seen_at)}${where}`
+      `inbox ${String(Number(agent.queued_deliveries)).padStart(3)}  claimed ${String(Number(agent.claimed_tasks)).padStart(3)}  seen ${clean(agent.last_seen_at)}${where}${who}`
     );
   }
   for (const task of body.open_tasks) {
     const needs = task.requires_worktree ? "  needs worktree" : "";
     console.log(`  open task ${clean(task.id)}  p${Number(task.priority)}  ${clean(task.assigned_to || "unassigned")}: ${clean(task.title)}${needs}`);
+  }
+  const unverified = Array.isArray(body.unverified_agents) ? body.unverified_agents : [];
+  if (unverified.length > 0) {
+    console.log(
+      `unverified: ${unverified.map(clean).join(", ")} (no terminal binding; these sessions act as whoever they claim to be)`
+    );
   }
   if (Number(body.approvals_pending) > 0) {
     console.log(`approvals pending: ${Number(body.approvals_pending)} (unused nonces; each is bound to one task and operation)`);

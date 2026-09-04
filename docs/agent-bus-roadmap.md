@@ -553,7 +553,7 @@ recorded before M5 starts:
 If that evidence does not exist, the release decision is "stop at the pull
 beta"; "it feels used" is not a gate.
 
-### M4.5 — Terminal binding and session credentials (proposed)
+### M4.5 — Terminal binding and session credentials (accepted 2026-09-03, in progress)
 
 The last identity the model still asserts is its own: the user tells it "you
 are `claude-reviewer`" and every tool call repeats that string. ADR 0004
@@ -564,41 +564,97 @@ credential, because the daemon serves one shared token over HTTP and
 otherwise cannot tell which terminal a request came from. Worktree binding
 stays as the fallback for writers, so nothing in M4 has to change.
 
-- [ ] Accept ADR 0004 (needs the user's decision; Codex reviewed the design).
-- [ ] `luciazero-agentd terminal list`: provider processes with tty, pid,
-  start time, cwd, and the agent bound to each (read-only).
-- [ ] `attach` and `run` (spawn with the binding in place; `run` is reused by
-  the M6 dispatcher), plus `detach`, `whoami`, and `sessions`.
-- [ ] Schema v3: session credentials (`lzsc_<32hex>`, sha256 at rest) bound
+- [x] Accept ADR 0004 (accepted 2026-09-03 after two review rounds: four
+  contract gaps closed, then the actor matrix, the legacy mode, invalidation,
+  the wire format, attach ambiguity and the binding lifecycle confirmed).
+- [x] `luciazero-agentd terminal list`: provider processes with tty, pid,
+  start time, cwd, and the agent bound to each (read-only). New module
+  `procinfo.py`: `ps` everywhere, `lsof -d cwd` on macOS and `/proc` on
+  Linux. It keeps the top-level provider process per terminal by walking the
+  whole ancestor chain, because `codex` spawns a code-mode host which spawns
+  further `codex` processes on the same tty -- one level of parent was not
+  enough and showed one window four times.
+- [x] `attach` and `run` (spawn with the binding in place; `run` is reused by
+  the M6 dispatcher), plus `detach`, `whoami`, and `sessions`. `attach`
+  prints a credential so it refuses a pipe, as `approve` does; `run` never
+  prints one, which is why automation uses it. Note for anyone extending
+  `run`: its command is an `argparse.REMAINDER`, so every flag must precede
+  the `--` and the separator itself has to be stripped.
+- [x] Schema v3: session credentials (`lzsc_<32hex>`, sha256 at rest) bound
   to one `binding_id` and one `agent_id`, presented in `Authorization:
   Bearer` in place of the daemon token, resolved at MCP `initialize` and
-  re-read on every request.
-- [ ] Enforce the actor-field matrix of ADR 0004: the daemon fills and checks
+  re-read on every request. Bindings live in their own table: SQLite cannot
+  widen the `state` CHECK of the reserved `sessions` table by ALTER, and that
+  table keeps its M5/M6 job of naming provider sessions for resume. Partial
+  unique indexes give one live binding per agent and one per terminal.
+- [x] Enforce the actor-field matrix of ADR 0004: the daemon fills and checks
   `agent_id`, `sender`, `created_by` and `produced_by`, leaves `recipient`,
   `assigned_to` and read-only queries alone (`worktree_get` on a peer must
   keep working), and refuses a contradiction with `IdentityMismatch` plus a
-  `session.identity_refused` event; add the `lzsc_` shape to the strict
-  redaction tier.
-- [ ] Binding lifecycle: `detach`, revoked and stale states, invalidation of
+  `session.identity_refused` event; the `lzsc_` shape joined the strict
+  redaction tier. `tools/list` drops the actor field from `required` on a
+  verified session, so a bound model is not asked for what the daemon
+  supplies.
+- [x] Binding lifecycle: `detach`, revoked and stale states, invalidation of
   the pinned `Mcp-Session-Id`, reaping by pid plus start time on every
-  resolve and human command, absolute credential expiry.
-- [ ] `--allow-unattributed` (default on for the pull beta): without a
-  credential a session is `unverified`, its events record `trust: asserted`,
-  and `bus status` says so. The gate below is what turns the default off.
-- [ ] Read-only `agent_whoami` tool and a `/lucia-bus` step that asks the
-  daemon who it is instead of being told.
-- [ ] Document the reconnect limit: a session already running on the shared
-  token cannot be remapped in place.
+  resolve and human command, absolute credential expiry. A credential that
+  was revoked, expired, rebound or swapped for another one gets 401 on the
+  next request, not at the next initialize.
+- [x] `--allow-unattributed`: without a credential a session is `unverified`,
+  every event records `trust` (`bound`, `human` or `asserted`, never absent),
+  and both status printers say so on the agent's own line.
+  `test_the_flag_changes_what_is_permitted_not_what_is_claimed` asserts the
+  invariant on both settings.
+- [x] Read-only `agent_whoami` tool (16 tools now) and a `/lucia-bus` step
+  that asks the daemon who it is instead of being told. On an unverified
+  session it answers `verified: false` with the reason and the command that
+  fixes it, and never guesses -- not from the worktree, not from the process
+  table, not from the only registered agent.
+- [x] Document the reconnect limit: a session already running on the shared
+  token cannot be remapped in place (`docs/agent-bus.md`, the attach output
+  itself, and ADR 0004).
+- [x] Independent adversarial review of the implementation (two `reviewer`
+  agents, security and contract routes; 5 distinct majors, 1 minor, all
+  fixed): `status()` called an agent verified from a binding row alone, so a
+  dead or expired terminal stayed "verified" until some other path happened
+  to reap it -- `binding_of` now applies the same expiry and liveness test as
+  the wire, and reports without writing so a read-only status view stays
+  read-only; the claude branch of `run` put the credential in the child's
+  argv, readable through `ps` by any local user for the life of a session, so
+  it now writes a `0600` config file and removes it on exit; a provider that
+  failed to spawn left a live credential for its whole TTL; a `SIGTERM` to
+  `run` skipped cleanup entirely and orphaned the child with a working
+  credential (both now revoke, and the child is terminated then killed); the
+  liveness check shelled out to `ps` on every authenticated request and a
+  missing or slow `ps` raised through the auth path instead of refusing, so
+  it now fails closed and caches the start time for five seconds. The ADR's
+  event names (`session.stale`) did not match the code (`binding.stale`); the
+  ADR follows the code. Four regressions added, suite 152 -> 156 tests.
+- [x] The user's decision on whether a binding is required by default: yes,
+  taken 2026-09-04, before M5, because dispatch is built on identity and the
+  base cannot be a bus where agents may wear each other's names. The daemon
+  now refuses acting calls from unverified sessions, `serve
+  --allow-unattributed` is the human opt-in for the old behaviour, and
+  spending an approval needs a binding whatever that flag says (M6's managed
+  dispatch joins it there). The M4 slice runs on the new default: the driver
+  binds all three agents and its outcome assertion now fails if any write
+  carries `trust: asserted`, if fewer than three terminals were bound, or if
+  any session was refused for naming a peer. Suites that exercise the
+  protocol rather than identity opt into the legacy mode explicitly. Sessions
+  already connected with the shared token must reconnect or restart.
 
 Exit gate:
 
 ```bash
-./test.sh --agent-bus-store
-./test.sh --agent-bus-security
+./test.sh --agent-bus-store       # 161 tests, includes the identity suite
+./test.sh --agent-bus-security    # M3 + M4.5 fixtures on their own
 ```
 
 Two sessions on one machine must not be able to act as each other, and a
-model that names a peer's id must be refused with the event recorded.
+model that names a peer's id must be refused with the event recorded. The
+invariant that outranks the rest: `--allow-unattributed` decides only whether
+an unattributed request is permitted, never how it is labelled, so an
+unverified session must never be reported as having a proven identity.
 
 ### M5 — Task orchestration and artifacts
 

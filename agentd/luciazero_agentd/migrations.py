@@ -5,7 +5,9 @@ the database's ``PRAGMA user_version`` in order, one transaction per version.
 Never edit a shipped entry; append a new one.
 
 Reserved-only structures (no logic behind them until the milestone named in
-the comment): ``sessions.generation``, ``deliveries.attempts``,
+the comment): ``sessions`` (provider session identity for resume, M5/M6 --
+terminal bindings live in their own table because SQLite cannot widen its
+``state`` CHECK by ALTER), ``deliveries.attempts``,
 ``deliveries.max_attempts``, ``tasks.depends_on``, ``runs``, ``leases``.
 """
 
@@ -182,9 +184,37 @@ CREATE TABLE approvals (
 CREATE INDEX approvals_task ON approvals (task_id, operation);
 """
 
+SCHEMA_V3 = """
+CREATE TABLE bindings (
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL REFERENCES agents(id),
+    credential_hash     TEXT NOT NULL UNIQUE,
+    provider            TEXT NOT NULL CHECK (provider IN ('codex', 'claude', 'other')),
+    ownership           TEXT NOT NULL CHECK (ownership IN ('human', 'managed')),
+    tty                 TEXT,
+    pid                 INTEGER,
+    process_started_at  TEXT,
+    cwd                 TEXT,
+    generation          INTEGER NOT NULL DEFAULT 0,
+    state               TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'revoked', 'stale')),
+    bound_by            TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    expires_at          TEXT NOT NULL,
+    ended_at            TEXT,
+    ended_reason        TEXT
+);
+-- One live binding per agent, and one per terminal: the user cannot end up
+-- with two windows answering as the same role, or one window as two roles.
+CREATE UNIQUE INDEX bindings_one_live_per_agent ON bindings (agent_id) WHERE state = 'active';
+CREATE UNIQUE INDEX bindings_one_live_per_tty ON bindings (tty) WHERE state = 'active' AND tty IS NOT NULL;
+CREATE INDEX bindings_live ON bindings (state, expires_at);
+"""
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
+    (3, SCHEMA_V3),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

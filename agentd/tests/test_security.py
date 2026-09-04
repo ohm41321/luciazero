@@ -36,6 +36,7 @@ from luciazero_agentd import (
 from luciazero_agentd import __main__ as cli
 from luciazero_agentd import store as store_module
 from luciazero_agentd.redact import Redactor, find_credential_url
+import luciazero_agentd.server as server_module
 from luciazero_agentd.server import TOOLS, BusServer
 from tests.fixtures import commit_file, git, make_repo
 from tests.test_mcp import Http
@@ -419,7 +420,12 @@ class ApprovalProvenance(SecurityCase):
         names = {t["name"] for t in TOOLS}
         self.assertEqual({n for n in names if "approv" in n}, {"approval_consume"})
         for tool in TOOLS:
-            source = inspect.getsource(tool["handler"])
+            # A handler of None means the daemon answers the tool itself
+            # rather than through the store (agent_whoami, agent_claim_begin);
+            # those are read from the server module instead of skipped, or the
+            # rule would stop covering the newest tools.
+            source = inspect.getsource(tool["handler"]) if tool["handler"] is not None \
+                else inspect.getsource(server_module)
             self.assertNotIn("grant_approval", source, tool["name"])
         _, credential = self.store.bind_terminal("claude-reviewer", provider="claude", by="human:test")
         # Legacy mode is on, and spending an approval is still refused without

@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 332 tests, includes the dispatch, adapter and watcher suites
+./test.sh --agent-bus-store      # 367 tests, includes the dispatch, adapter, watcher and claim suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
@@ -982,6 +982,29 @@ themselves, transcript rendered by the watcher's own renderer.
   access; Codex took implementation and asked for review from a published
   patch artifact "so the handoff stays immutable"; both checked the task queue
   independently and reported it empty. The dispatcher stopped at the cap.
+
+### M7c — Identity without `run` (done 2026-09-04)
+
+An MCP client sends its headers once, so a session started as an ordinary
+`claude` or `codex` could never present a credential and stayed unverified.
+That made the honest path the inconvenient one, which is how an identity
+system gets switched off.
+
+- [x] `agent_claim_begin(agent_id)` pins the request to the MCP session that
+  made it before the id exists, so the id is a reference and not a bearer
+  token, and only an agent already on the roster can be asked for.
+- [x] `luciazero-agentd claim list|approve|deny` decides it from another
+  terminal: refuses a pipe, and refuses to run from inside a provider session,
+  because both CLIs can run shell commands.
+- [x] The session becomes verified in place with no reconnect, its writes are
+  recorded as `bound`, and it loses the identity the moment the binding is
+  revoked or expires.
+- [x] ADR 0004 amended, including the single-phase design that was rejected
+  for being a bearer token in disguise and the terminal-possession variant
+  that would need its own weaker label.
+- [x] Regressions (24), red-first on the three that matter: approving from
+  inside the asking session, an approval binding some other session, and an
+  identity change in any direction but unverified-to-bound.
 
 ### M7 — Managed-dispatch vertical slice
 

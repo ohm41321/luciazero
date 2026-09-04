@@ -65,6 +65,20 @@ APPROVAL_TTL_SECONDS = 900
 # A terminal binding outlives a long working session but not a weekend; the
 # credential dies with it (ADR 0004).
 BINDING_TTL_SECONDS = 12 * 3600
+# M7c: how long a session's request to be an agent waits for a human. Long
+# enough to switch to another window and read what is being asked, short
+# enough that an unattended request is not still approvable an hour later.
+CLAIM_TTL_SECONDS = 300
+CLAIM_STATES = ("open", "approved", "denied", "superseded", "expired")
+# The binding a claim mints lives as long as an idle session plausibly does,
+# not as long as a terminal the user is sitting at: nothing revokes it when
+# the MCP session goes away by itself, so a long one strands a phantom
+# terminal that blocks both a new claim and managed dispatch for that agent.
+CLAIM_BINDING_TTL_SECONDS = 3600
+# Guesses allowed at the approval code before the request is dead. The code is
+# 8 hex characters; without a limit a shell loop is a feasible attack, and a
+# person typing it in gets far more than five tries' worth of patience.
+CLAIM_CODE_ATTEMPTS = 5
 # ADR 0006 adds "system": the dispatcher's own bookkeeping is neither a human's
 # command nor a bound session's claim, and borrowing "human" for it would make
 # the log say a person did what a machine did.
@@ -317,6 +331,12 @@ def _split_statements(sql: str) -> list[str]:
     if buffer.strip():
         raise StoreError("migration script ends with an incomplete statement")
     return statements
+
+
+def _code_matches(code: Optional[str], expected_hash: str) -> bool:
+    """Constant-time comparison of an approval code against its stored hash."""
+    given = hashlib.sha256((code or "").strip().lower().encode("utf-8")).hexdigest()
+    return secrets.compare_digest(given, expected_hash)
 
 
 def _elapsed_seconds(since: str, now: str) -> float:
@@ -1695,45 +1715,72 @@ class Store:
             cwd = _check_path_arg(cwd)
             if self._redactor.scan(cwd):
                 raise UnsafeReference("cwd carries a secret shape")
+        with self._tx("bind_terminal"):
+            return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=tty, pid=pid,
+                                              process_started_at=process_started_at, cwd=cwd,
+                                              ownership=ownership, ttl_seconds=ttl_seconds, checked=True)
+
+    def _bind_terminal_locked(
+        self,
+        agent_id: str,
+        *,
+        provider: str,
+        by: str,
+        tty: Optional[str] = None,
+        pid: Optional[int] = None,
+        process_started_at: Optional[str] = None,
+        cwd: Optional[str] = None,
+        ownership: str = "human",
+        ttl_seconds: int = BINDING_TTL_SECONDS,
+        checked: bool = False,
+    ) -> tuple[dict[str, Any], str]:
+        """The body of `bind_terminal`, inside a transaction the caller owns:
+        `decide_claim` binds as part of approving, and a second transaction
+        would let an approval commit with no binding behind it."""
+        if not checked:
+            _check_id(agent_id, "agent id", self._redactor)
+            _check_enum(provider, PROVIDERS, "provider")
+            _check_enum(ownership, OWNERSHIPS, "ownership")
+            _check_text(by, "by", 128)
+            _check_int(ttl_seconds, 60, 86_400, "ttl_seconds")
         credential = CREDENTIAL_PREFIX + secrets.token_hex(16)
         digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
         binding_id = new_id("bind")
-        with self._tx("bind_terminal"):
-            self._require_agent(agent_id)
-            # ADR 0001: a human-owned session is out of the dispatcher's reach.
-            # Binding replaces whatever the agent had, so without this the
-            # dispatcher could take an agent away from the terminal the user is
-            # sitting in front of, which is the one thing ownership promises.
-            if ownership == "managed":
-                current = self.binding_of(agent_id)
-                if current is not None and current["ownership"] == "human":
-                    raise ConflictError(
-                        f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
-                        "the dispatcher never takes over a session the user owns"
-                    )
-            now = datetime.now(timezone.utc)
-            stamp = now.isoformat(timespec="microseconds")
-            expires = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="microseconds")
-            replaced = [dict(r) for r in self._conn.execute(
-                "SELECT id, agent_id, tty FROM bindings WHERE state = 'active' AND (agent_id = ? OR (tty IS NOT NULL AND tty = ?))",
-                (agent_id, tty),
-            ).fetchall()]
-            for old in replaced:
-                self._end_binding(str(old["id"]), state="revoked", by=by, reason="rebound", now=stamp)
-            generation = int(self._conn.execute(
-                "SELECT COALESCE(MAX(generation), -1) + 1 AS g FROM bindings WHERE agent_id = ?", (agent_id,)
-            ).fetchone()["g"])
-            self._conn.execute(
-                """INSERT INTO bindings (id, agent_id, credential_hash, provider, ownership, tty, pid,
-                                         process_started_at, cwd, generation, state, bound_by, created_at, updated_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
-                (binding_id, agent_id, digest, provider, ownership, tty, pid, process_started_at, cwd, generation, by, stamp, stamp, expires),
-            )
-            self._event(by, "binding.created", "binding", binding_id, {
-                "agent_id": agent_id, "provider": provider, "ownership": ownership, "tty": tty,
-                "pid": pid, "cwd": cwd, "generation": generation, "expires_at": expires,
-                "replaced": [str(r["id"]) for r in replaced],
-            })
+        self._require_agent(agent_id)
+        # ADR 0001: a human-owned session is out of the dispatcher's reach.
+        # Binding replaces whatever the agent had, so without this the
+        # dispatcher could take an agent away from the terminal the user is
+        # sitting in front of, which is the one thing ownership promises.
+        if ownership == "managed":
+            current = self.binding_of(agent_id)
+            if current is not None and current["ownership"] == "human":
+                raise ConflictError(
+                    f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
+                    "the dispatcher never takes over a session the user owns"
+                )
+        now = datetime.now(timezone.utc)
+        stamp = now.isoformat(timespec="microseconds")
+        expires = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="microseconds")
+        replaced = [dict(r) for r in self._conn.execute(
+            "SELECT id, agent_id, tty FROM bindings WHERE state = 'active' AND (agent_id = ? OR (tty IS NOT NULL AND tty = ?))",
+            (agent_id, tty),
+        ).fetchall()]
+        for old in replaced:
+            self._end_binding(str(old["id"]), state="revoked", by=by, reason="rebound", now=stamp)
+        generation = int(self._conn.execute(
+            "SELECT COALESCE(MAX(generation), -1) + 1 AS g FROM bindings WHERE agent_id = ?", (agent_id,)
+        ).fetchone()["g"])
+        self._conn.execute(
+            """INSERT INTO bindings (id, agent_id, credential_hash, provider, ownership, tty, pid,
+                                     process_started_at, cwd, generation, state, bound_by, created_at, updated_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+            (binding_id, agent_id, digest, provider, ownership, tty, pid, process_started_at, cwd, generation, by, stamp, stamp, expires),
+        )
+        self._event(by, "binding.created", "binding", binding_id, {
+            "agent_id": agent_id, "provider": provider, "ownership": ownership, "tty": tty,
+            "pid": pid, "cwd": cwd, "generation": generation, "expires_at": expires,
+            "replaced": [str(r["id"]) for r in replaced],
+        })
         return self.get_binding(binding_id), credential
 
     def _end_binding(self, binding_id: str, *, state: str, by: str, reason: str, now: str) -> None:
@@ -1879,6 +1926,238 @@ class Store:
             return None
         record.pop("credential_hash", None)
         return record
+
+    # ---------------------------------------------------------- claims (M7c)
+    #
+    # How an ordinary `claude` or `codex` session gets an identity. An MCP
+    # client sends its headers once, at connect time, so a session that opened
+    # with the shared token cannot present a credential afterwards -- which is
+    # why binding a terminal meant starting the provider through `run`.
+    #
+    # Two phases, because one is not safe. The session asks
+    # (`open_claim`) and is pinned to the request before the request id
+    # exists; a human approves it from a different terminal (`decide_claim`).
+    # The id is therefore a reference, not a bearer token: stealing it buys
+    # nothing, because approving binds the session that asked, never the one
+    # that presents the id. And the model does not choose who it is -- it
+    # proposes, and a person at another keyboard decides.
+
+    def open_claim(self, agent_id: str, *, session_hash: str, provider: str,
+                   client: Optional[str] = None, ttl_seconds: int = CLAIM_TTL_SECONDS) -> tuple[dict[str, Any], str]:
+        """A session asks to be an agent. Nothing is granted here.
+
+        Returns the request and its approval code. The code is returned once,
+        for the daemon to print on its own console, and only its hash is
+        stored -- the session that asked must not be able to read it, and
+        neither must anything it can run.
+        """
+        _check_id(agent_id, "agent id", self._redactor)
+        _check_enum(provider, PROVIDERS, "provider")
+        session_hash = _check_text(session_hash, "session_hash", 64)
+        if client is not None:
+            client = _check_text(client, "client", 128)
+        _check_int(ttl_seconds, 30, 3600, "ttl_seconds")
+        request_id = new_id("clm")
+        code = secrets.token_hex(4)
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        with self._tx("open_claim"):
+            self._require_agent(agent_id)
+            live = _row(self._conn.execute(
+                "SELECT id, tty, ownership FROM bindings WHERE agent_id = ? AND state = 'active' AND expires_at > ?",
+                (agent_id, utcnow())).fetchone())
+            if live is not None:
+                # One live binding per agent is the invariant; saying so here
+                # is the difference between a clear refusal and a human
+                # approving something that cannot be granted.
+                raise ConflictError(
+                    f"agent {agent_id!r} is already bound to {live['tty'] or 'a session with no tty'}; "
+                    "detach it first if this session should take that identity")
+            now = datetime.now(timezone.utc)
+            stamp = now.isoformat(timespec="microseconds")
+            expires = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="microseconds")
+            superseded = [str(r["id"]) for r in self._conn.execute(
+                "SELECT id FROM claim_requests WHERE session_hash = ? AND state = 'open'", (session_hash,)).fetchall()]
+            for old in superseded:
+                self._conn.execute(
+                    "UPDATE claim_requests SET state = 'superseded', decided_at = ? WHERE id = ?", (stamp, old))
+                self._event("system", "claim.superseded", "claim", old, {"by": request_id})
+            self._conn.execute(
+                """INSERT INTO claim_requests (id, agent_id, session_hash, provider, client, state,
+                                               code_hash, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
+                (request_id, agent_id, session_hash, provider, client, code_hash, stamp, expires))
+            self._event("system", "claim.opened", "claim", request_id,
+                        {"agent_id": agent_id, "provider": provider, "client": client, "expires_at": expires})
+        return self.get_claim(request_id), code
+
+    def get_claim(self, request_id: str) -> dict[str, Any]:
+        _check_id(request_id, "claim id", self._redactor)
+        record = _row(self._conn.execute(
+            "SELECT * FROM claim_requests WHERE id = ?", (request_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"no claim request {request_id!r}")
+        return self._presented(record)
+
+    def _presented(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Never hand back the session hash: `claim list` is read by a human,
+        and its reader must not be given the key to that session."""
+        record = dict(record)
+        # A fingerprint, not the key: enough to tell two pending requests
+        # apart on screen, useless for reaching the session it belongs to.
+        record["session_fingerprint"] = str(record.get("session_hash", ""))[:12]
+        record.pop("session_hash", None)
+        record.pop("code_hash", None)
+        if record["state"] == "open" and str(record["expires_at"]) <= utcnow():
+            record["state"] = "expired"
+        return record
+
+    def list_claims(self, *, state: Optional[str] = "open", limit: int = 50) -> list[dict[str, Any]]:
+        _check_int(limit, 1, 500, "limit")
+        if state is None:
+            rows = self._conn.execute(
+                "SELECT * FROM claim_requests ORDER BY seq DESC LIMIT ?", (limit,)).fetchall()
+        else:
+            _check_enum(state, CLAIM_STATES, "state")
+            rows = self._conn.execute(
+                "SELECT * FROM claim_requests WHERE state = ? ORDER BY seq DESC LIMIT ?", (state, limit)).fetchall()
+        return [self._presented(dict(r)) for r in rows]
+
+    def decide_claim(self, request_id: str, *, approve: bool, by: str, code: Optional[str] = None,
+                     tty: Optional[str] = None, pid: Optional[int] = None,
+                     ttl_seconds: int = CLAIM_BINDING_TTL_SECONDS) -> dict[str, Any]:
+        """The human channel decides. Approving mints the binding the session
+        will be read as -- and throws its credential away unread, because the
+        only thing entitled to use it is the MCP session that asked, which the
+        daemon recognises by the request itself."""
+        _check_id(request_id, "claim id", self._redactor)
+        _check_text(by, "by", 128)
+        if tty is not None:
+            tty = _check_text(tty, "tty", 64)
+        if pid is not None:
+            pid = _check_int(pid, 1, 2**31 - 1, "pid")
+        if approve:
+            # Counted before the deciding transaction, and committed on its
+            # own: a wrong code raises, and a raise rolls back, so recording
+            # the attempt inside would leave the counter at zero forever and
+            # the code open to a shell loop.
+            self._count_code_attempt(request_id, code, by)
+        with self._tx("decide_claim"):
+            record = _row(self._conn.execute(
+                "SELECT * FROM claim_requests WHERE id = ?", (request_id,)).fetchone())
+            if record is None:
+                raise NotFound(f"no claim request {request_id!r}")
+            now = utcnow()
+            if record["state"] != "open":
+                raise ConflictError(f"claim {request_id!r} is {record['state']}, not open")
+            if str(record["expires_at"]) <= now:
+                self._conn.execute("UPDATE claim_requests SET state = 'expired', decided_at = ? WHERE id = ?",
+                                   (now, request_id))
+                self._event(by, "claim.expired", "claim", request_id, {})
+                raise ConflictError(f"claim {request_id!r} expired at {record['expires_at']}")
+            if approve:
+                # Checked again inside the transaction, so the decision is
+                # atomic with the binding it mints.
+                if not _code_matches(code, str(record["code_hash"])):
+                    raise ValidationError("wrong approval code")
+                # The live-binding check belongs here as well as at the ask:
+                # a request opened while the agent was free must not, five
+                # minutes later, revoke the terminal the user has since bound.
+                live = _row(self._conn.execute(
+                    "SELECT id, tty FROM bindings WHERE agent_id = ? AND state = 'active' AND expires_at > ?",
+                    (str(record["agent_id"]), now)).fetchone())
+                if live is not None:
+                    raise ConflictError(
+                        f"agent {record['agent_id']!r} was bound to {live['tty'] or 'another session'} "
+                        "after this request was made; detach that one first")
+            binding_id = None
+            if approve:
+                binding, _credential = self._bind_for_claim(str(record["agent_id"]), str(record["provider"]),
+                                                            by=by, ttl_seconds=ttl_seconds)
+                binding_id = str(binding["id"])
+            self._conn.execute(
+                """UPDATE claim_requests SET state = ?, binding_id = ?, decided_at = ?, decided_by = ?,
+                                             decided_tty = ?, decided_pid = ? WHERE id = ?""",
+                ("approved" if approve else "denied", binding_id, now, by, tty, pid, request_id))
+            self._event(by, "claim.approved" if approve else "claim.denied", "claim", request_id,
+                        {"agent_id": record["agent_id"], "binding_id": binding_id, "tty": tty, "pid": pid})
+        return self.get_claim(request_id)
+
+    def _count_code_attempt(self, request_id: str, code: Optional[str], by: str) -> None:
+        """Spend one of the guesses, durably, before anything can roll back.
+
+        The request dies at the limit: the code is eight hex characters, which
+        is only out of reach if a loop cannot keep trying.
+        """
+        record = _row(self._conn.execute(
+            "SELECT state, code_hash, code_attempts FROM claim_requests WHERE id = ?", (request_id,)).fetchone())
+        if record is None or record["state"] != "open" or _code_matches(code, str(record["code_hash"])):
+            return
+        attempts = int(record["code_attempts"]) + 1
+        dead = attempts >= CLAIM_CODE_ATTEMPTS
+        with self._tx("claim_code_refused"):
+            self._conn.execute(
+                "UPDATE claim_requests SET code_attempts = ?, state = ?, decided_at = ? WHERE id = ? AND state = 'open'",
+                (attempts, "denied" if dead else "open", utcnow() if dead else None, request_id))
+            self._event(by, "claim.code_refused", "claim", request_id, {"attempts": attempts, "dead": dead})
+        raise ValidationError(
+            f"wrong approval code ({attempts} of {CLAIM_CODE_ATTEMPTS} tries used); it is printed in the "
+            "window where the daemon is running" + (" -- this request is now dead" if dead else ""))
+
+    def _bind_for_claim(self, agent_id: str, provider: str, *, by: str, ttl_seconds: int) -> tuple[dict[str, Any], str]:
+        """Inside `decide_claim`'s transaction: the same binding `attach`
+        makes, without a terminal to attach to."""
+        return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=None, pid=None,
+                                          process_started_at=None, cwd=None, ownership="human",
+                                          ttl_seconds=ttl_seconds)
+
+    def claim_binding(self, session_hash: str) -> Optional[dict[str, Any]]:
+        """Which agent this MCP session was approved to be, if any.
+
+        Read fresh on every request, like a credential: revoking the binding
+        or letting it expire takes the identity away immediately."""
+        session_hash = _check_text(session_hash, "session_hash", 64)
+        record = _row(self._conn.execute(
+            "SELECT binding_id FROM claim_requests WHERE session_hash = ? AND state = 'approved' "
+            "ORDER BY seq DESC LIMIT 1", (session_hash,)).fetchone())
+        if record is None or not record["binding_id"]:
+            return None
+        binding = _row(self._conn.execute(
+            "SELECT * FROM bindings WHERE id = ? AND state = 'active' AND expires_at > ?",
+            (str(record["binding_id"]), utcnow())).fetchone())
+        if binding is None:
+            return None
+        binding.pop("credential_hash", None)
+        return binding
+
+    def end_claim_session(self, session_hash: str, *, by: str = "daemon", reason: str = "mcp session ended") -> Optional[str]:
+        """The MCP session is gone, so the identity it was given goes with it.
+
+        Nothing else would end it: the binding a claim mints has no terminal
+        and no pid, so the reaper that clears a closed window cannot see it,
+        and it would sit `active` for its whole TTL -- blocking a fresh claim
+        for that agent and, because it is human-owned, blocking managed
+        dispatch too.
+        """
+        session_hash = _check_text(session_hash, "session_hash", 64)
+        with self._tx("end_claim_session"):
+            record = _row(self._conn.execute(
+                "SELECT id, binding_id FROM claim_requests WHERE session_hash = ? AND state = 'approved' "
+                "ORDER BY seq DESC LIMIT 1", (session_hash,)).fetchone())
+            if record is None or not record["binding_id"]:
+                return None
+            self._end_binding(str(record["binding_id"]), state="revoked", by=by, reason=reason, now=utcnow())
+            return str(record["binding_id"])
+
+    def pending_claim(self, session_hash: str) -> Optional[dict[str, Any]]:
+        """The request this session is waiting on, for `agent_whoami` to name."""
+        session_hash = _check_text(session_hash, "session_hash", 64)
+        record = _row(self._conn.execute(
+            "SELECT * FROM claim_requests WHERE session_hash = ? AND state = 'open' "
+            "ORDER BY seq DESC LIMIT 1", (session_hash,)).fetchone())
+        if record is None:
+            return None
+        presented = self._presented(record)
+        return None if presented["state"] != "open" else presented
 
     # ------------------------------------------------- managed dispatch (M6)
     def enrol_worker(

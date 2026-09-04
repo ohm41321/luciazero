@@ -136,6 +136,30 @@ def _descends_from_provider(pid: int, parent: dict[int, int], providers: dict[in
     return False
 
 
+def provider_above(pid: int) -> Optional[dict[str, Any]]:
+    """The provider session this process is running inside, if any.
+
+    M7c uses it to refuse a claim approval that came from inside the session
+    asking for it: both CLIs can run shell commands, so without this the model
+    approves its own request and the second phase proves nothing. Returns the
+    nearest provider process above this one -- pid, tty and provider -- or
+    None when the caller is an ordinary shell.
+    """
+    table = _table()
+    parent = {row["pid"]: row["ppid"] for row in table}
+    rows = {row["pid"]: row for row in table}
+    seen = {pid}
+    current = parent.get(pid)  # above, so a provider asking about itself is not the answer
+    while current is not None and current > 1 and current not in seen:
+        row = rows.get(current)
+        if row is not None and _provider_of(row["command"]):
+            return {"pid": current, "tty": row["tty"], "provider": _provider_of(row["command"]),
+                    "command": row["command"]}
+        seen.add(current)
+        current = parent.get(current)
+    return None
+
+
 def identity(pid: int) -> Optional[dict[str, Any]]:
     """Everything a binding records about one process, or None if it is gone
     or belongs to another user."""

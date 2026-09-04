@@ -20,6 +20,10 @@ watch          follow the traffic live in its own pane, read-only (M7a)
 chat           set two agents talking: pick who, get the terminal-by-terminal
                commands, and the pane that shows what they say
 next           what is waiting on whom, as the command that unblocks it
+claim          approve or deny a session asking to be an agent (M7c): an
+               ordinary `claude` or `codex` session asks with
+               agent_claim_begin, and a human decides here, from another
+               terminal
 """
 
 from __future__ import annotations
@@ -323,6 +327,92 @@ def _pick(prompt: str, choices: list[dict[str, Any]], taken: Optional[str] = Non
     if answer.isdigit() and 1 <= int(answer) <= len(choices):
         return str(choices[int(answer) - 1]["id"])
     return answer if any(str(a["id"]) == answer for a in choices) else None
+
+
+def cmd_claim(args: argparse.Namespace) -> int:
+    """Decide who a session is (M7c, human channel).
+
+    The second phase of the claim, and the reason the first one is safe. Both
+    CLIs can run shell commands, so a session able to approve its own request
+    would prove nothing at all -- the model would choose its own identity, and
+    a prompt injection would choose it for them. So this refuses to run from
+    inside a provider session, and refuses a pipe: it wants a person, at a
+    different keyboard, reading what is being asked.
+    """
+    state_dir = resolve_state_dir(args.state_dir)
+    store = _open_store("claim", state_dir)
+    if store is None:
+        return 2
+    try:
+        if args.claim_command == "list":
+            requests = store.list_claims(state=None if args.all else "open")
+            if not requests:
+                print("no session is asking to be an agent")
+                return 0
+            for record in requests:
+                print(f"  {clean(record['id'])}  {clean(record['state']):<10} {clean(record['agent_id']):<24} "
+                      f"{clean(record['provider']):<7} session #{clean(record['session_fingerprint'])}  "
+                      f"expires {clean(record['expires_at'])}")
+            return 0
+
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print("claim: refusing non-interactive input; a person decides this, in a terminal", file=sys.stderr)
+            return 2
+        # Defense in depth, not the boundary: a forked, orphaned process
+        # under a pty passes this and the isatty check above. What actually
+        # stops the asking session is the code, which only the daemon's own
+        # console ever saw.
+        inside = procinfo.provider_above(os.getpid())
+        if inside is not None:
+            # The whole point of the second phase: the session that asked must
+            # not be the one that answers.
+            print(f"claim: this shell is running inside a {clean(inside['provider'])} session "
+                  f"(pid {inside['pid']}{', ' + clean(inside['tty']) if inside['tty'] else ''}). "
+                  "Approve from a terminal of your own, not from the session that is asking.", file=sys.stderr)
+            return 2
+        record = store.get_claim(args.request_id)
+        if record["state"] != "open":
+            print(f"claim: {clean(record['id'])} is {clean(record['state'])}, not open", file=sys.stderr)
+            return 1
+        print(f"Agent:    {clean(record['agent_id'])}")
+        print(f"Provider: {clean(record['provider'])}  ({clean(record['client'] or 'client did not say')})")
+        print(f"Session:  #{clean(record['session_fingerprint'])}  asked at {clean(record['created_at'])}")
+        print(f"Expires:  {clean(record['expires_at'])}")
+        print("This binds that session to that agent id. Everything it writes will be recorded as that agent.")
+        decision = args.claim_command == "approve"
+        code = args.code if decision else None
+        if decision and not code:
+            try:
+                code = input("Approval code (printed in the daemon's own window): ").strip()
+            except EOFError:
+                code = ""
+            if not code:
+                print("no change")
+                return 1
+        else:
+            try:
+                answer = input(f"{'Approve' if decision else 'Deny'} this claim? [y/N] ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes"):
+                print("no change")
+                return 1
+        record = store.decide_claim(args.request_id, approve=decision, by=f"human:{getpass.getuser()}",
+                                    code=code, tty=_own_tty(), pid=os.getpid())
+    except NotFound as exc:
+        print(f"claim: {clean(exc)}", file=sys.stderr)
+        return 2
+    except StoreError as exc:
+        print(f"claim: {clean(exc)}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+    if record["state"] == "approved":
+        print(f"{clean(record['agent_id'])} is now that session's identity (binding {clean(record['binding_id'])}).")
+        print("Go back to it and ask again: it becomes verified on its next bus call, without reconnecting.")
+    else:
+        print(f"denied; that session stays unverified")
+    return 0
 
 
 def cmd_next(args: argparse.Namespace) -> int:
@@ -989,6 +1079,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     watcher.add_argument("--once", action="store_true", help="one pass and exit instead of following")
     watcher.add_argument("--state-dir", default=None)
     watcher.set_defaults(func=cmd_watch)
+    claim = sub.add_parser("claim", help="approve or deny a session asking to be an agent (interactive terminal only)")
+    claim_sub = claim.add_subparsers(dest="claim_command", required=True)
+    claim_list = claim_sub.add_parser("list", help="requests waiting for a decision")
+    claim_list.add_argument("--all", action="store_true", help="include decided and expired requests")
+    claim_list.add_argument("--state-dir", default=None)
+    claim_list.set_defaults(func=cmd_claim)
+    for name, help_text in (("approve", "bind that session to the agent it asked for"),
+                            ("deny", "refuse the request; the session stays unverified")):
+        entry = claim_sub.add_parser(name, help=help_text)
+        entry.add_argument("request_id")
+        if name == "approve":
+            entry.add_argument("--code", default=None,
+                               help="the one-time code the daemon printed in its own window; asked for if omitted")
+        entry.add_argument("--state-dir", default=None)
+        entry.set_defaults(func=cmd_claim)
     nxt = sub.add_parser("next", help="what is waiting on whom, as the command that unblocks it")
     nxt.add_argument("--state-dir", default=None)
     nxt.add_argument("--json", action="store_true")

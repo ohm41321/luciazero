@@ -359,6 +359,54 @@ ALTER TABLE runs ADD COLUMN approval_policy TEXT;
 """
 
 
+# M7c: how a session that was started as an ordinary `claude` or `codex` gets
+# an identity. An MCP client sends its headers once, at connect time, so a
+# session that opened with the shared token can never present a credential
+# afterwards -- which is why binding a terminal used to mean starting the
+# provider through `run`. The request is pinned to the MCP session that opened
+# it before the request id exists, so the id is a reference and not a bearer
+# token: stealing it buys nothing, because approving it binds the session that
+# asked, never the one that presents it.
+#
+# The session id itself is stored as a sha256, like every other credential
+# here: `claim list` shows the request to a human, and must not hand its
+# reader the key to that session.
+#
+# The approval code is what makes the second phase a boundary rather than a
+# speed bump. Process ancestry cannot be one: both CLIs can run shell
+# commands, and one `( cmd & )` orphans the process so no ancestry check sees
+# the session it came from, while `script` supplies the pty that satisfies an
+# isatty gate. So the code is emitted on the daemon's own console -- the one
+# place a process on this machine cannot read without being that process --
+# and never through MCP, never into the store in the clear, never into a file
+# the daemon writes.
+SCHEMA_V8 = """
+CREATE TABLE claim_requests (
+    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              TEXT NOT NULL UNIQUE,
+    agent_id        TEXT NOT NULL,
+    session_hash    TEXT NOT NULL,
+    provider        TEXT NOT NULL CHECK (provider IN ('codex', 'claude', 'other')),
+    client          TEXT,
+    state           TEXT NOT NULL CHECK (state IN ('open', 'approved', 'denied', 'superseded', 'expired')),
+    code_hash       TEXT NOT NULL,
+    code_attempts   INTEGER NOT NULL DEFAULT 0,
+    binding_id      TEXT REFERENCES bindings(id),
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    decided_at      TEXT,
+    decided_by      TEXT,
+    decided_tty     TEXT,
+    decided_pid     INTEGER
+);
+-- One request in flight per session: a second ask supersedes the first rather
+-- than leaving two ids a human could approve for two different agents.
+CREATE UNIQUE INDEX claim_requests_one_open_per_session
+    ON claim_requests (session_hash) WHERE state = 'open';
+CREATE INDEX claim_requests_live ON claim_requests (state, expires_at);
+"""
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
@@ -367,6 +415,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (5, SCHEMA_V5),
     (6, SCHEMA_V6),
     (7, SCHEMA_V7),
+    (8, SCHEMA_V8),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

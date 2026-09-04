@@ -164,6 +164,48 @@ directories are temporary; `~/.codex` and `~/.claude` are not, because a real
 turn needs the user's real credentials. `--keep` leaves the state directory
 for `agent-bus-evidence.sh`.
 
+## Ordinary sessions: the two-phase claim (M7c)
+
+A session started as a plain `claude` or `codex` can still become a verified
+agent. It asks, and you answer from another terminal:
+
+```
+you                     the session                     another terminal
+                        /lucia-bus
+                        agent_whoami -> verified false
+                        agent_claim_begin("claude-reviewer")
+                        "run this somewhere else:"
+                                                        luciazero-agentd claim approve clm_...
+                                                        Agent: claude-reviewer  ... [y/N] y
+                        agent_whoami -> verified true
+```
+
+```bash
+python3 -m luciazero_agentd claim list            # who is asking
+python3 -m luciazero_agentd claim approve clm_…   # bind that session
+python3 -m luciazero_agentd claim deny clm_…      # refuse; it stays unverified
+```
+
+The session becomes verified **in place**, with no reconnect, and its writes
+are recorded as `bound` — worth what `run`'s are worth. `next` lists a waiting
+request before anything else, because until it is answered that session can do
+nothing.
+
+Why the second terminal: both CLIs can run shell commands, so a session that
+could approve its own request would prove nothing — the model would be
+choosing its own identity. `claim approve` refuses a pipe and refuses to run
+from inside a provider session. The model may only ask for an agent id that is
+already on the roster, so it proposes an identity a person created rather than
+inventing one. ADR 0004's amendment has the full reasoning, including the
+single-phase design that was rejected for being a bearer token in disguise.
+
+The request id is not a secret. Approving binds the session that asked, never
+whoever holds the id, because the pin is made before the id exists.
+
+`serve --allow-unattributed` remains the opt-in fallback for people who would
+rather skip all of this: sessions act while labelled unverified, their writes
+are recorded as `asserted`, and spending a human approval is still refused.
+
 ## What to do next
 
 ```bash

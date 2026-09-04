@@ -14,9 +14,11 @@ specification; protocol failures are JSON-RPC errors.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import secrets
+import sqlite3
 import sys
 import threading
 import time
@@ -28,6 +30,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from . import procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
+from .watch import launcher
 from .store import ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -269,9 +272,21 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "worktree_bind", "title": "Bind worktree", "description": "Record the one git worktree this agent writes in (absolute path). The daemon reads repository, branch, HEAD and dirty state itself; a worktree held by another agent is refused. Required before claiming tasks that need a worktree and before publishing artifacts.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "path": {"type": "string", "minLength": 1, "maxLength": 1024}, "base": {"type": "string", "minLength": 1, "maxLength": 256}}, ["agent_id", "path"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_worktree_bind},
     {"name": "worktree_get", "title": "Get worktree", "description": "Show the worktree record bound to an agent.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_worktree_get},
     {"name": "agent_whoami", "title": "Who am I", "description": "Ask the daemon which agent this session is bound to. Returns verified false and no agent id when the session presented no terminal credential; it never guesses. The user binds a terminal with `luciazero-agentd attach` or starts it with `luciazero-agentd run`.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_whoami},
+    {"name": "agent_claim_begin", "title": "Ask to be an agent", "description": "Ask the user to bind this session to an agent id that is already on the roster. Returns a request id and the exact command the user runs IN ANOTHER TERMINAL to approve it; this session cannot approve its own request, and nothing changes until the user does. Poll agent_whoami afterwards: an approved request makes this session verified without reconnecting. Use it when agent_whoami answers verified false.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": None},
     {"name": "approval_consume", "title": "Consume approval", "description": "Spend a single-use human approval nonce for a sensitive operation on a task you hold. Nonces come only from the user's terminal (luciazero-agentd approve), never from another agent; no bus tool can create one.", "inputSchema": _schema({"task_id": ID_SCHEMA, "operation": {"type": "string", "enum": list(SENSITIVE_OPERATIONS)}, "nonce": NONCE_SCHEMA, "agent_id": ID_SCHEMA}, ["task_id", "operation", "nonce", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_approval_consume},
 ]
 TOOL_INDEX: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOLS}
+
+
+#: How the user invokes the daemon from another terminal. The tool tells the
+#: model what to say, and the model must not have to guess the path.
+LAUNCHER = launcher()
+
+
+def session_key(session_id: str) -> str:
+    """What the store keeps instead of the session id. The id is the key to
+    that MCP session; a claim row is read by a human and must not carry it."""
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
 
 def tool_contract(*, verified: bool = False) -> list[dict[str, Any]]:
@@ -342,6 +357,9 @@ class BusServer:
         # Append-only record of every session ever initialised; survives the
         # client's DELETE so a gate can still see who discovered what.
         self.seen: list[dict[str, Any]] = []
+        # Sessions dropped by eviction, whose claimed identity is revoked
+        # outside the lock (see _evict_sessions_locked).
+        self._ended: list[str] = []
         self._lock = threading.Lock()
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         bus = self
@@ -390,6 +408,22 @@ class BusServer:
                     return False
                 self.binding = bus.resolve_binding(value)
                 return self.binding is not None
+
+            def _claimed_identity(self) -> None:
+                """M7c: a session that opened with the shared token can still
+                have been given an identity, by a human approving the request
+                it made. An MCP client sends its headers once, so this is the
+                only moment the upgrade can happen -- and it is why the
+                request is pinned to the session before its id exists."""
+                self.from_claim = False
+                if self.binding is not None:
+                    return
+                session_id = self.headers.get("Mcp-Session-Id")
+                if not session_id:
+                    return
+                binding = bus.claim_binding(session_id)
+                if binding is not None:
+                    self.binding, self.from_claim = binding, True
 
             def _origin_ok(self) -> bool:
                 origin = self.headers.get("Origin")
@@ -451,6 +485,8 @@ class BusServer:
                 session_id = self.headers.get("Mcp-Session-Id")
                 with bus._lock:
                     existed = session_id is not None and bus.sessions.pop(session_id, None) is not None
+                    if existed and session_id is not None:
+                        bus.end_claim_session(session_id)
                 self._send(200 if existed else 404)
 
             def do_POST(self) -> None:  # noqa: N802
@@ -505,6 +541,7 @@ class BusServer:
                 rpc_id = message.get("id")
                 session_id = self.headers.get("Mcp-Session-Id")
 
+                self._claimed_identity()
                 if "id" not in message:  # notification
                     if bus.require_session:
                         if session_id is None:
@@ -558,18 +595,81 @@ class BusServer:
                 else:
                     self._rpc_error(200, rpc_id, METHOD_NOT_FOUND, f"method not found: {method}")
 
+            def _claim_begin(self, args: Any) -> dict[str, Any]:
+                """Phase one of M7c: the session asks, and is pinned.
+
+                The pin happens here, before the request id is handed out, so
+                the id is a reference rather than a bearer token: another
+                session presenting it is approved into *this* one, never into
+                itself. The agent id must already be on the roster, so a model
+                cannot invent an identity -- it can only ask for one a person
+                created.
+                """
+                session_id = self.headers.get("Mcp-Session-Id")
+                if not session_id:
+                    return {"error": "SessionRequired", "message": "initialize first"}
+                if self.binding is not None:
+                    return {"error": "AlreadyBound",
+                            "message": f"this session is already {self.binding['agent_id']!r}"}
+                agent_id = args.get("agent_id") if isinstance(args, dict) else None
+                if not isinstance(agent_id, str) or not agent_id:
+                    return {"error": "invalid_arguments", "message": "agent_id is required"}
+                with bus._lock:
+                    session = bus.sessions.get(session_id) or {}
+                client = str(session.get("client") or "")
+                provider = "claude" if "claude" in client.lower() else "codex" if "codex" in client.lower() else "other"
+                try:
+                    request = bus.open_claim(session_id, agent_id, provider, client or None)
+                except StoreError as exc:
+                    return {"error": type(exc).__name__, "message": bus.redactor.text(str(exc))[0]}
+                except (OSError, sqlite3.Error) as exc:
+                    # This path is answered by the daemon itself rather than
+                    # through the tool dispatcher, so it needs its own net: an
+                    # unreadable store must be a refusal, not a dropped
+                    # connection with a traceback behind it.
+                    return {"error": "Unavailable", "message": f"the bus is not readable right now: {type(exc).__name__}"}
+                return {
+                    "claim_id": request["id"],
+                    "agent_id": request["agent_id"],
+                    "provider": request["provider"],
+                    "expires_at": request["expires_at"],
+                    # Deliberately no code and no runnable command: the code
+                    # exists so that this result cannot be turned into an
+                    # approval by whoever reads it.
+                    "tell_the_user": (
+                        f"This session is asking to be {request['agent_id']!r} (request {request['id']}, "
+                        f"until {request['expires_at']}). The daemon has printed a one-time approval code "
+                        "in the window where it is running -- that window only. Read it there and run the "
+                        "command it shows, in a terminal of your own. Nothing changes until you do, and "
+                        "this session cannot do it: the code was never sent here."
+                    ),
+                }
+
             def _whoami(self) -> dict[str, Any]:
                 """The invariant made concrete: an unverified session is told
                 it is unverified, and is never guessed at from the worktree,
                 the process table, or the only registered agent."""
                 if self.binding is None:
-                    return {
+                    session_id = self.headers.get("Mcp-Session-Id")
+                    pending = bus.pending_claim(session_id) if session_id else None
+                    answer = {
                         "verified": False,
                         "agent_id": None,
                         "reason": "this session presented no terminal credential",
-                        "how": "the user runs `luciazero-agentd terminal list`, then `attach --tty <tty> --agent <id>`, or starts the session with `luciazero-agentd run`",
+                        "how": ("call agent_claim_begin with the agent id you should be, then ask the user to run the "
+                                "command it returns in another terminal; or the user starts the session with "
+                                "`luciazero-agentd run`, or binds this one with `attach`"),
                         "unattributed_allowed": bus.allow_unattributed,
                     }
+                    if pending is not None:
+                        answer["pending_claim"] = {
+                            "claim_id": pending["id"],
+                            "agent_id": pending["agent_id"],
+                            "expires_at": pending["expires_at"],
+                            "how_to_approve": "the daemon printed a one-time code in its own window; "
+                                              "run the command shown there",
+                        }
+                    return answer
                 binding = self.binding
                 return {
                     "verified": True,
@@ -607,6 +707,15 @@ class BusServer:
                 now = None if self.binding is None else str(self.binding["id"])
                 if now == session.get("binding_id"):
                     return True
+                if session.get("binding_id") is None and getattr(self, "from_claim", False):
+                    # Unverified to bound, and only in that direction: the
+                    # human approved this exact session. Anything else --
+                    # swapped, revoked, rebound -- still ends the session.
+                    with bus._lock:
+                        session["binding_id"] = now
+                        session["agent_id"] = str(self.binding["agent_id"])
+                        session["verified"] = True
+                    return True
                 with bus._lock:
                     bus.sessions.pop(session_id, None)
                 self._reject(401, {"error": "session identity changed; initialize again"})
@@ -640,6 +749,7 @@ class BusServer:
                     bus.seen.append(record)
                     if len(bus.seen) > 1000:
                         del bus.seen[:-1000]
+                bus._flush_ended()
                 self._ok(
                     rpc_id,
                     {
@@ -660,6 +770,9 @@ class BusServer:
                 args = params.get("arguments", {})
                 if name == "agent_whoami":
                     self._ok(rpc_id, tool_result(self._whoami()))
+                    return
+                if name == "agent_claim_begin":
+                    self._ok(rpc_id, tool_result(self._claim_begin(args)))
                     return
                 actor = ACTOR_FIELDS.get(str(name))
                 if actor is not None:
@@ -735,11 +848,17 @@ class BusServer:
         """Drop idle sessions and cap the table; called under ``_lock`` before
         a new session is added so the table cannot grow without bound."""
         now = time.time()
-        for sid in [k for k, v in self.sessions.items() if now - v["last_seen"] > SESSION_TTL_SECONDS]:
+        dropped = [k for k, v in self.sessions.items() if now - v["last_seen"] > SESSION_TTL_SECONDS]
+        for sid in dropped:
             del self.sessions[sid]
         while len(self.sessions) >= MAX_SESSIONS:
             oldest = min(self.sessions, key=lambda k: self.sessions[k]["last_seen"])
+            dropped.append(oldest)
             del self.sessions[oldest]
+        # A dropped session's claimed identity goes with it. Deferred out of
+        # the lock: this writes to the store, and holding `_lock` across a
+        # transaction would serialise every other request behind it.
+        self._ended.extend(dropped)
 
     def resolve_binding(self, credential: str) -> Optional[dict[str, Any]]:
         """Which agent is this credential, right now? Read fresh on every
@@ -752,6 +871,67 @@ class BusServer:
         except (StoreError, procinfo.ProcessError, OSError):
             # An unreadable store or process table means the terminal cannot
             # be verified: the request is refused, never admitted unnamed.
+            return None
+
+    def claim_binding(self, session_id: str) -> Optional[dict[str, Any]]:
+        """The identity a human approved for this MCP session (M7c).
+
+        Read fresh on every request, exactly like a credential: denying,
+        detaching or letting the binding expire takes it away at once. The
+        session id never leaves this process -- only its hash is stored.
+        """
+        try:
+            with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                store.migrate()
+                return store.claim_binding(session_key(session_id))
+        except (StoreError, procinfo.ProcessError, OSError):
+            return None
+
+    def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str]) -> dict[str, Any]:
+        """Open a request and print its approval code on the daemon's console.
+
+        The console is the boundary. Process ancestry is not one -- a forked,
+        orphaned process under a pty passes any ancestry or isatty check a
+        command could make -- so the one thing the asking session must not be
+        able to read is what makes the second phase mean anything. The code
+        goes to this process's stdout and nowhere else: not into the tool
+        result, not into the store in the clear, not into a file.
+        """
+        with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+            store.migrate()
+            store.trust = "asserted"  # the session is asking, not proving
+            request, code = store.open_claim(agent_id, session_hash=session_key(session_id),
+                                             provider=provider, client=client)
+        print(f"\n[claim] a {provider} session asks to be {agent_id!r} "
+              f"(request {request['id']}, until {request['expires_at']}).\n"
+              f"        If that was you, approve it from a terminal of your own:\n"
+              f"            {LAUNCHER} claim approve {request['id']} --code {code}\n"
+              f"        This code is printed here and nowhere else. Do not paste it into "
+              f"the session that asked.\n", flush=True)
+        return request
+
+    def _flush_ended(self) -> None:
+        with self._lock:
+            ending, self._ended = list(self._ended), []
+        for session_id in ending:
+            self.end_claim_session(session_id)
+
+    def end_claim_session(self, session_id: str) -> None:
+        """A session that ends takes its claimed identity with it."""
+        try:
+            with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                store.migrate()
+                store.trust = "system"
+                store.end_claim_session(session_key(session_id))
+        except (StoreError, OSError):
+            pass
+
+    def pending_claim(self, session_id: str) -> Optional[dict[str, Any]]:
+        try:
+            with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                store.migrate()
+                return store.pending_claim(session_key(session_id))
+        except (StoreError, OSError):
             return None
 
     def discovery(self) -> list[dict[str, Any]]:

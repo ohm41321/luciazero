@@ -303,7 +303,7 @@ class ToolsContract(ServerCase):
         expected = {"agent_register", "agent_list", "agent_heartbeat", "message_send", "message_inbox", "message_ack",
                     "task_create", "task_list", "task_claim", "task_complete", "task_get", "task_graph_create",
                     "task_record_usage", "artifact_publish", "artifact_get", "artifact_list",
-                    "worktree_bind", "worktree_get", "approval_consume", "agent_whoami"}
+                    "worktree_bind", "worktree_get", "approval_consume", "agent_whoami", "agent_claim_begin"}
         self.assertEqual(names, expected)
 
     def test_full_pull_beta_flow_through_tools(self) -> None:

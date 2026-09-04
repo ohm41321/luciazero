@@ -12,16 +12,21 @@ your tool list, say so and stop; do not install or start anything.
 
 ## 1. Identify
 
-Call `agent_whoami` first. If it answers `verified` with an agent id, that is
-who you are: use it, and let the daemon fill your id into every call. If it
-answers `verified: false`, ask the user which agent id you are and say that
-the bus cannot prove it until they bind this terminal with `luciazero-agentd
-attach` or start the session with `luciazero-agentd run`. Never invent a
-second id or act as another agent; naming a peer is refused and recorded.
+Call `agent_whoami` first. A `verified` answer with an agent id is who you
+are; the daemon fills that id into every call for you.
 
-Call `agent_register` with your id, provider, and role once per session. Then
-call `worktree_bind` with the absolute path of your own git checkout; a
-worktree another agent holds is refused, so never share one.
+On `verified: false`, ask which agent id you should be, call
+`agent_claim_begin` with it, and show the returned command verbatim: the user
+runs it in another terminal, because approving your own request is refused.
+Then ask again — approval verifies this session without reconnecting.
+Unapproved, your writes are recorded as `asserted`, not `bound`; the user may
+instead bind this terminal with `luciazero-agentd
+attach`. Ask only for an id already on the roster. Never invent a second id or
+act as another agent; naming a peer is refused and recorded.
+
+Call `agent_register` with your id, provider, and role once per session, then
+`worktree_bind` the absolute path of your own git checkout; a worktree
+another agent holds is refused, so never share one.
 
 ## 2. Inspect the inbox
 
@@ -40,26 +45,25 @@ daemon opens it itself when the last one completes.
 
 ## 4. Work and publish
 
-Do the work under the normal loop: plan, change, fastest check, fix. Record
-outputs with `artifact_publish` (a full commit id, or a worktree-relative
-path to a patch, report, log, or Relay manifest) instead of pasting content
-into messages. Then `task_complete` with a result object citing those
-artifact ids in `artifacts`, or `blocked` with
-the reason, and `message_send` a `result` or `finding` back to the requester
-using the original `correlation_id`. Mark the delivery `completed` with
-`message_ack`.
+Work under the normal loop. Record outputs with `artifact_publish` (a full
+commit id, or a worktree-relative path to a patch, report, log, or Relay
+manifest) rather than pasting content into messages. Then `task_complete`
+citing those
+artifact ids in `artifacts`, or `blocked` with the reason, and `message_send`
+a `result` or `finding` to the requester on the original `correlation_id`.
+Mark the delivery `completed` with `message_ack`.
 
 ## Rules
 
 - A claimed task must end as `completed` or `blocked` before `/done`, unless
   the user cancelled it (`task_complete` then reports a conflict).
-- Delete, deploy, production, spending, force-push, public-contract, or
-  scope changes need a nonce the user mints with `luciazero-agentd approve`
-  and hands to you directly. Spend it once with `approval_consume`; never
-  send it through the bus. Without one, finish as `blocked`.
+- Delete, deploy, production, spending, force-push, public-contract or scope
+  changes need a nonce the user mints with `luciazero-agentd approve` and
+  hands over directly. Spend it once with `approval_consume`; never send it
+  through the bus. Without one, finish as `blocked`.
 - Pass `idempotency_key` on sends and task creation so retries are safe.
 - Payloads are capped at 64 KiB; larger content is an artifact.
-- A task can carry a budget. When the daemon answers `BudgetExceeded` or
-  refuses a send for the hop limit, that work is stopped: report it to the
-  user. Never retry it, and never start a fresh conversation to get around it.
+- When the daemon answers `BudgetExceeded` or refuses a send for the hop
+  limit, that work is stopped: report it. Never retry it, and never start a
+  fresh conversation to get around it.
 - Stop looping when a reply adds no new information; report to the user.

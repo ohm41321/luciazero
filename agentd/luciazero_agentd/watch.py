@@ -504,12 +504,23 @@ def owed(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     agents = {str(a["id"]): a for a in roster(conn)}
     actions: list[dict[str, Any]] = []
 
+    # M7c: a session sitting there unverified, waiting for a person. First,
+    # because until it is answered that session cannot do anything at all.
+    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    for row in conn.execute(
+            "SELECT id, agent_id, provider FROM claim_requests WHERE state = 'open' AND expires_at > ? "
+            "ORDER BY seq", (now,)):
+        actions.append({"priority": 0, "agent": str(row["agent_id"]), "kind": "claim",
+                        "why": f"a {row['provider']} session is asking to be this agent — needs you, from another terminal",
+                        "do": f"{launcher()} claim approve {row['id']}"})
+
     for row in conn.execute(
             "SELECT recipient_agent_id AS agent, COUNT(*) AS n FROM deliveries "
             "WHERE state = 'dead_letter' GROUP BY recipient_agent_id ORDER BY recipient_agent_id"):
         actions.append({"priority": 0, "agent": str(row["agent"]), "kind": "dead_letter",
                         "why": f"{row['n']} delivery(ies) nobody could deliver — needs you, not a turn",
                         "do": None})
+
 
     marks = ", ".join("?" * len(STUCK_TASK_STATES))
     for row in conn.execute(

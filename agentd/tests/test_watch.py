@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 import sys
 import tempfile
 import unittest
@@ -320,6 +321,23 @@ class NextTests(WatchCase):
         self.assertEqual([a["kind"] for a in actions], ["inbox"])
         self.assertEqual(actions[0]["agent"], IMPLEMENTER)
         self.assertIn(f"run --agent {IMPLEMENTER} -- claude", actions[0]["do"])
+
+    def test_a_session_waiting_to_be_verified_comes_first_of_all(self) -> None:
+        """Until somebody answers it, that session cannot do anything at all,
+        and the person it is waiting for is the one reading this."""
+        self.say(ARCHITECT, IMPLEMENTER, "queued for later")
+        request, _code = self.store.open_claim(BYSTANDER, session_hash="a" * 64, provider="claude")
+        actions = self.owed()
+        self.assertEqual([a["kind"] for a in actions], ["claim", "inbox"])
+        self.assertIn(f"claim approve {request['id']}", actions[0]["do"])
+        self.assertIn("another terminal", actions[0]["why"])
+
+    def test_an_expired_request_is_not_still_offered(self) -> None:
+        request, _code = self.store.open_claim(BYSTANDER, session_hash="b" * 64, provider="claude")
+        gone = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE claim_requests SET expires_at = ? WHERE id = ?", (gone, request["id"]))
+        self.store._conn.commit()
+        self.assertEqual(self.owed(), [])
 
     def test_what_needs_a_person_outranks_what_only_needs_a_turn(self) -> None:
         self.say(ARCHITECT, IMPLEMENTER, "still queued")

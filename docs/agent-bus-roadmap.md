@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 367 tests, includes the dispatch, adapter, watcher and claim suites
+./test.sh --agent-bus-store      # 379 tests, includes the dispatch, adapter, watcher and claim suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
@@ -1005,6 +1005,33 @@ system gets switched off.
 - [x] Regressions (24), red-first on the three that matter: approving from
   inside the asking session, an approval binding some other session, and an
   identity change in any direction but unverified-to-bound.
+
+### M7d — Answering without a third terminal (done 2026-09-04)
+
+The console code closed the hole M7c's first version left, but it charged the
+user a second window and a copied code for every session they start, which is
+the kind of toll that ends with the identity system switched off.
+
+- [x] The daemon asks on screen instead, and the user clicks Allow: one
+  backend per desktop, first installed wins — `osascript` (macOS), `zenity`
+  then `kdialog` (Linux/BSD, needs a display), PowerShell `MessageBox`
+  (Windows, passed as `-EncodedCommand` so no shell parses the text).
+- [x] `serve --approve-with auto|dialog|console` and
+  `LUCIAZERO_AGENT_BUS_NO_DIALOG=1`; the console code stays the fallback and
+  the only route on a headless box.
+- [x] A dialog that times out or is killed decides nothing; only Allow
+  approves. zenity and kdialog answer with an exit code and no output, which a
+  parser written for `osascript` alone reads as a refusal — proven red first.
+- [x] Peer-supplied text is escaped per backend, with a regression each.
+- [x] The suite arms the kill switch in `tests/__init__.py`: a test that can
+  open a modal on the developer's screen eventually will, and this one did
+  before it was armed.
+
+ADR 0002 still scopes the daemon itself to macOS, Linux and WSL2; the Windows
+backend here is the dialog, not a claim that the daemon runs natively on
+Windows. `procinfo` (`ps`, `lsof`), the tty/pid identity checks and the
+process-group termination in M6 are what a real Windows port has to answer,
+and that is its own milestone.
 
 ### M7 — Managed-dispatch vertical slice
 

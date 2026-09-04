@@ -123,7 +123,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     with Store.open(db_path(state_dir)) as store:
         store.migrate()
     server = BusServer(str(db_path(state_dir)), token, host=args.host, port=args.port, allow_remote=args.allow_remote,
-                       allow_unattributed=bool(getattr(args, "allow_unattributed", False)))
+                       allow_unattributed=bool(getattr(args, "allow_unattributed", False)),
+                       approve_with=getattr(args, "approve_with", "auto"))
     write_endpoint(state_dir, server.url, os.getpid(), server.started_at)
     print(f"luciazero-agentd listening on {server.url} (state: {state_dir})", flush=True)
 
@@ -965,6 +966,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--allow-remote", action="store_true", help="permit a non-loopback --host (token still required)")
+    serve.add_argument("--approve-with", choices=("auto", "dialog", "console"), default="auto",
+                       dest="approve_with",
+                       help="how a session's claim is put to you: dialog (a window this daemon raises; macOS), "
+                            "console (a one-time code printed here), auto (dialog where possible)")
     serve.add_argument("--allow-unattributed", action="store_true", help="permit acting calls from sessions with no terminal credential (ADR 0004 legacy mode; approvals still need one, and unverified sessions are labelled either way)")
     serve.set_defaults(func=cmd_serve)
     status = sub.add_parser("status", help="show pending inbox items and tasks")

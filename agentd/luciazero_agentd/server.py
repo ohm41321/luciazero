@@ -28,10 +28,10 @@ from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
 from . import __version__
-from . import procinfo
+from . import approval, procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
 from .watch import launcher
-from .store import ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
+from .store import CLAIM_DIALOG_SECONDS, ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "luciazero-agentd", "version": __version__}
@@ -336,6 +336,9 @@ class BusServer:
         allow_remote: bool = False,
         require_session: bool = True,
         allow_unattributed: bool = False,
+        approve_with: str = "auto",
+        dialog_seconds: int = CLAIM_DIALOG_SECONDS,
+        dialog_runner: Optional[Callable[[list[str], int], Any]] = None,
     ) -> None:
         if not token or len(token) < 16:
             raise ValueError("a capability token of at least 16 chars is required")
@@ -343,6 +346,11 @@ class BusServer:
             raise ValueError(f"refusing to bind {host!r}: non-loopback exposure needs allow_remote=True and a token")
         self.db_path = db_path
         self.token = token
+        # How a claim is put to the user: a dialog the daemon raises, or a
+        # code on this console. "auto" is the dialog where one is possible.
+        self.approve_with = approve_with
+        self.dialog_seconds = dialog_seconds
+        self.dialog_runner = dialog_runner
         # Everything that leaves the daemon (tool results, errors, status)
         # passes through this scrubber; the token is its first literal.
         self.redactor = Redactor((token,))
@@ -887,6 +895,30 @@ class BusServer:
         except (StoreError, procinfo.ProcessError, OSError):
             return None
 
+    def _ask_on_screen(self, request: dict[str, Any], code: str) -> bool:
+        """Put the claim on screen, if that is how this daemon asks.
+
+        Returns whether the dialog was raised: the console line is printed
+        either way when it was not, so the user is never left with a request
+        and no way to answer it.
+        """
+        if self.approve_with == "console" or not (self.dialog_runner or approval.dialog_available()):
+            return False
+
+        def decided(allow: bool) -> None:
+            try:
+                with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                    store.migrate()
+                    store.trust = "human"  # a person clicked it, on their own screen
+                    store.decide_claim(str(request["id"]), approve=allow, by="human:dialog",
+                                       code=code if allow else None)
+            except StoreError:
+                pass  # expired, superseded, or already decided: all fine
+
+        approval.prompt(request, decide=decided, seconds=self.dialog_seconds,
+                        runner=self.dialog_runner)
+        return True
+
     def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str]) -> dict[str, Any]:
         """Open a request and print its approval code on the daemon's console.
 
@@ -902,6 +934,10 @@ class BusServer:
             store.trust = "asserted"  # the session is asking, not proving
             request, code = store.open_claim(agent_id, session_hash=session_key(session_id),
                                              provider=provider, client=client)
+        if self._ask_on_screen(request, code):
+            print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
+                  f"Asked on screen; answer the dialog.\n", flush=True)
+            return request
         print(f"\n[claim] a {provider} session asks to be {agent_id!r} "
               f"(request {request['id']}, until {request['expires_at']}).\n"
               f"        If that was you, approve it from a terminal of your own:\n"

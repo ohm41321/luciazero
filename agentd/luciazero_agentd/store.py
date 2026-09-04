@@ -79,6 +79,9 @@ CLAIM_BINDING_TTL_SECONDS = 3600
 # 8 hex characters; without a limit a shell loop is a feasible attack, and a
 # person typing it in gets far more than five tries' worth of patience.
 CLAIM_CODE_ATTEMPTS = 5
+# How long the on-screen question stays up. Shorter than the request itself,
+# so a dialog nobody answered leaves the console route still usable.
+CLAIM_DIALOG_SECONDS = 120
 # ADR 0006 adds "system": the dispatcher's own bookkeeping is neither a human's
 # command nor a bound session's claim, and borrowing "human" for it would make
 # the log say a person did what a machine did.

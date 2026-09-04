@@ -21,19 +21,21 @@ binding.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import re
 import json
 import os
 import tempfile
+import time
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from luciazero_agentd import procinfo
+from luciazero_agentd import approval, procinfo
 from luciazero_agentd.__main__ import main
 from luciazero_agentd.server import BusServer, session_key
 from luciazero_agentd.store import ConflictError, NotFound, Store, ValidationError, utcnow
@@ -256,7 +258,10 @@ class ThroughTheDaemonTests(ClaimCase):
         super().setUp()
         # The shipped default: an unverified session may not act. The claim is
         # how a session started as plain `claude` stops being unverified.
-        self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False).start()
+        # Console mode: this class is about the claim itself, and the
+        # on-screen route has its own tests with an injected runner.
+        self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False,
+                                approve_with="console").start()
         self.addCleanup(self.server.stop)
         self.client = Http(self.server.url)
         self.client.initialize()
@@ -390,6 +395,182 @@ class ThroughTheDaemonTests(ClaimCase):
         self.client.call("message_send", {"recipient": ARCHITECT, "kind": "question", "payload": {"text": "hello"}})
         sent = [e for e in self.store.events(limit=200) if e["kind"] == "message.sent"]
         self.assertEqual([e["payload"]["trust"] for e in sent], ["bound"])
+
+
+class OnScreenTests(ClaimCase):
+    """M7d: the same decision, asked somewhere that costs the user nothing.
+
+    No test opens a real window: the runner is injected, which is also what
+    lets these assert the shape of what the daemon would have run.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.asked: list[list[str]] = []
+
+    @contextmanager
+    def env(self, **values: Optional[str]):
+        previous = {k: os.environ.get(k) for k in values}
+        for key, value in values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        try:
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def runner(self, answer: str, *, returncode: int = 0):
+        class Result:
+            def __init__(self, code: int, out: str) -> None:
+                self.returncode, self.stdout = code, out
+
+        def run(argv: list[str], timeout: int) -> Result:
+            self.asked.append(argv)
+            return Result(returncode, answer)
+        return run
+
+    def server_with(self, answer: str, *, returncode: int = 0, approve_with: str = "dialog") -> Any:
+        server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False,
+                           approve_with=approve_with, dialog_seconds=1,
+                           dialog_runner=self.runner(answer, returncode=returncode)).start()
+        self.addCleanup(server.stop)
+        return server
+
+    def claim_through(self, server: Any, agent: str = REVIEWER) -> tuple[Http, dict[str, Any], str]:
+        client = Http(server.url)
+        client.initialize()
+        console = io.StringIO()
+        with redirect_stdout(console):
+            asked = client.call("agent_claim_begin", {"agent_id": agent})["structuredContent"]
+        # The dialog is raised on a thread; give it its moment.
+        for _ in range(200):
+            if self.asked or self.store.get_claim(asked["claim_id"])["state"] != "open":
+                break
+            time.sleep(0.01)
+        time.sleep(0.05)
+        return client, asked, console.getvalue()
+
+    def test_clicking_allow_verifies_the_session_with_nothing_typed(self) -> None:
+        server = self.server_with("button returned:Allow\n")
+        client, asked, console = self.claim_through(server)
+        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "approved")
+        who = client.call("agent_whoami", {})["structuredContent"]
+        self.assertTrue(who["verified"])
+        self.assertEqual(who["agent_id"], REVIEWER)
+        self.assertIn("answer the dialog", console)
+        self.assertNotIn("--code", console, "no code is printed when the question was asked on screen")
+
+    def test_the_question_names_what_is_being_approved(self) -> None:
+        server = self.server_with("button returned:Allow\n")
+        _, asked, _ = self.claim_through(server)
+        script = self.asked[0][-1]
+        self.assertIn(REVIEWER, script)
+        self.assertIn(asked["claim_id"], script)
+        self.assertIn("Allow", script)
+        self.assertIn("Deny", script)
+
+    def test_clicking_deny_leaves_it_unverified(self) -> None:
+        server = self.server_with("button returned:Deny\n")
+        client, asked, _ = self.claim_through(server)
+        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "denied")
+        self.assertFalse(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_a_dialog_nobody_answers_decides_nothing(self) -> None:
+        server = self.server_with("gave up:true\n")
+        client, asked, _ = self.claim_through(server)
+        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "open")
+        self.assertFalse(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_a_machine_with_no_dialog_falls_back_to_the_console_code(self) -> None:
+        server = self.server_with("", approve_with="console")
+        _, asked, console = self.claim_through(server)
+        self.assertEqual(self.asked, [], "console mode must not raise a window")
+        self.assertRegex(console, r"--code [0-9a-f]{8}")
+        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "open")
+
+    def test_no_approval_code_exists_in_anything_the_session_can_see(self) -> None:
+        server = self.server_with("button returned:Allow\n")
+        _, asked, console = self.claim_through(server)
+        self.assertNotRegex(json.dumps(asked), r"\b[0-9a-f]{8}\b")
+        self.assertNotIn("--code", console)
+
+    def test_peer_text_cannot_escape_the_script_it_is_quoted_into(self) -> None:
+        """The client name reaches this from the session that is asking. A
+        quote in it would end the AppleScript string and start running
+        whatever followed."""
+        hostile = 'x" & (do shell script "touch /tmp/pwned") & "'
+        script = approval.applescript("title", f"client: {hostile}", "Allow", "Deny", 10)
+        # With every escaped quote removed, no unescaped quote may still be
+        # followed by AppleScript's concatenation operator.
+        self.assertNotIn('" & (', script.replace('\\"', ""))
+        self.assertIn('\\"', script)
+        self.assertTrue(script.startswith("display dialog "))
+
+    def test_every_desktop_gets_a_backend_and_a_headless_one_gets_none(self) -> None:
+        """One question, four ways to ask it, and no way to pretend a machine
+        that cannot show a window has answered."""
+        self.assertEqual([b.name for b in approval.backends_for("darwin")], ["osascript"])
+        self.assertEqual([b.name for b in approval.backends_for("linux")], ["zenity", "kdialog"])
+        self.assertEqual([b.name for b in approval.backends_for("win32")], ["powershell"])
+        self.assertEqual([b.name for b in approval.backends_for("freebsd13")], ["zenity", "kdialog"])
+        installed = {"zenity": "/usr/bin/zenity", "kdialog": "/usr/bin/kdialog"}
+        # The suite arms the kill switch; this test is about what happens when
+        # it is not armed.
+        with self.env(DISPLAY=":0", **{approval.NO_DIALOG_ENV: None}):
+            self.assertEqual(approval.pick("linux", installed.get).name, "zenity")
+            self.assertEqual(approval.pick("linux", lambda b: installed["kdialog"] if b == "kdialog" else None).name,
+                             "kdialog")
+            self.assertIsNone(approval.pick("linux", lambda _: None), "neither installed: no dialog")
+        with self.env(DISPLAY=None, WAYLAND_DISPLAY=None, **{approval.NO_DIALOG_ENV: None}):
+            self.assertIsNone(approval.pick("linux", installed.get), "no display: nothing to draw on")
+
+    def test_the_windows_command_carries_the_text_where_no_shell_can_read_it(self) -> None:
+        """PowerShell quoting is not a boundary anyone should have to reason
+        about, so the command is base64 UTF-16LE and nothing parses it."""
+        hostile = "'; Start-Process calc; '"
+        argv = approval._powershell("title", f"client: {hostile}", "Allow", "Deny", 10)
+        self.assertEqual(argv[:4], ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        decoded = base64.b64decode(argv[4]).decode("utf-16-le")
+        self.assertIn("MessageBox", decoded)
+        # With the doubled quotes removed -- PowerShell's only escape inside a
+        # single-quoted string -- the two delimiters are the only quotes left,
+        # so the peer's text contributed none of its own.
+        argument = decoded.split("MessageBox]::Show(")[1].split(", 'title'")[0]
+        stripped = argument.replace("''", "")
+        self.assertEqual(stripped.count("'"), 2, stripped)
+        self.assertTrue(stripped.startswith("'") and stripped.endswith("'"))
+        self.assertIn("''; Start-Process calc; ''", decoded)
+
+    def test_the_linux_backends_pass_text_as_arguments_not_as_a_command_line(self) -> None:
+        body = "--fake-option $(touch /tmp/pwned)"
+        for argv in (approval._zenity("t", body, "Allow", "Deny", 10),
+                     approval._kdialog("t", body, "Allow", "Deny", 10)):
+            self.assertIn(body, argv, "the text is one argument, so no shell ever sees it")
+            self.assertEqual(argv.count(body), 1)
+
+    def test_a_yes_that_prints_nothing_still_reads_as_yes(self) -> None:
+        """zenity and kdialog answer with the exit code and no output; a
+        parser written for osascript alone would read that as a refusal."""
+        for name in ("zenity", "kdialog"):
+            backend = next(b for b in approval.BACKENDS if b.name == name)
+            self.assertIs(approval.ask("t", "b", seconds=1, backend=backend,
+                                       runner=self.runner("", returncode=0)), True)
+            self.assertIs(approval.ask("t", "b", seconds=1, backend=backend,
+                                       runner=self.runner("", returncode=1)), False)
+            self.assertIsNone(approval.ask("t", "b", seconds=1, backend=backend,
+                                           runner=self.runner("", returncode=5)),
+                              "a backend that could not run has not answered")
+
+    def test_the_kill_switch_stops_any_window_being_raised(self) -> None:
+        """Armed by the test suite itself; also the answer for a headless or
+        remote macOS session."""
+        self.assertFalse(approval.dialog_available())
 
 
 class TheOtherTerminalTests(ClaimCase):

@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 288 tests, includes the dispatch and adapter suites
+./test.sh --agent-bus-store      # 322 tests, includes the dispatch, adapter and watcher suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
@@ -930,6 +930,29 @@ credential cleanup.
 
 The live proof of one managed turn per provider is the smoke gate above, green
 on 2026-09-04. The multi-turn, multi-agent proof belongs to M7.
+
+### M7a — Watching the conversation (done 2026-09-04)
+
+Built before the vertical slice because the slice cannot be observed without
+it: in the pull beta there is no third place where an exchange between two
+agents can be seen, which is also why the wait a user-started turn costs was
+being reconstructed from memory instead of watched.
+
+- [x] `luciazero-agentd watch` follows messages and delivery transitions live,
+  opening the database `mode=ro` and acknowledging nothing.
+- [x] `luciazero-agentd chat` picks the pair and prints the command for each
+  terminal, skipping bindings whose terminal has already been closed.
+- [x] `--auto` prints the managed-dispatch version instead, and
+  `dispatch --max-turns N` caps the spend in turns rather than in passes.
+- [x] Regressions (32): the read-only handle refuses to write, a full watch
+  cycle leaves every row of `messages`, `deliveries` and `events` byte-identical,
+  a restarted follower repeats rather than skips, a poll that fails reconnects,
+  the follower keeps reading across a writer restart of a live WAL database,
+  and peer text cannot repaint the pane. Proven red first by opening `mode=rw`
+  and by disabling the priming pass.
+
+The watcher shows traffic; it cannot wake a session. That limitation is the
+reason M7 exists.
 
 ### M7 — Managed-dispatch vertical slice
 

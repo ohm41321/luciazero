@@ -16,6 +16,9 @@ run            start a provider with the binding already in place; never
 detach         end a binding, which is what stops its credential working
 whoami         which agent this terminal is bound to
 sessions       every live binding
+watch          follow the traffic live in its own pane, read-only (M7a)
+chat           set two agents talking: pick who, get the terminal-by-terminal
+               commands, and the pane that shows what they say
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-from . import procinfo
+from . import procinfo, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .statedir import (
@@ -303,6 +306,126 @@ def cmd_worker(args: argparse.Namespace) -> int:
         return 1
 
 
+def _pick(prompt: str, choices: list[dict[str, Any]], taken: Optional[str] = None) -> Optional[str]:
+    """One numbered choice from a list, or a typed agent id."""
+    for index, agent in enumerate(choices, start=1):
+        if agent["id"] == taken:
+            continue
+        where = f"on {clean(agent['tty'])}" if agent.get("tty") else "no terminal bound"
+        print(f"  {index:>2}. {clean(agent['id']):<24} {clean(agent['provider']):<7} {clean(agent['role']):<14} {where}")
+    try:
+        answer = input(f"{prompt} [number or id] ").strip()
+    except EOFError:
+        return None
+    if not answer:
+        return None
+    if answer.isdigit() and 1 <= int(answer) <= len(choices):
+        return str(choices[int(answer) - 1]["id"])
+    return answer if any(str(a["id"]) == answer for a in choices) else None
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Set up a conversation between two agents (M7a, human channel).
+
+    Reads the roster read-only and writes nothing: choosing who talks is not
+    an act on the bus, and this command must stay safe to run while a real
+    conversation is in flight.
+    """
+    state_dir = resolve_state_dir(args.state_dir)
+    try:
+        conn = watch.open_read_only(db_path(state_dir))
+    except watch.WatchError as exc:
+        print(f"chat: {clean(exc)}", file=sys.stderr)
+        return 2
+    try:
+        agents = watch.roster(conn)
+    finally:
+        conn.close()
+    if len(agents) < 2:
+        print("chat: this bus has fewer than two agents; add them with: luciazero-agentd roster add ID PROVIDER ROLE",
+              file=sys.stderr)
+        return 2
+    known = {str(a["id"]) for a in agents}
+    first, second = args.between if args.between else (None, None)
+    if first is None:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print("chat: name the pair with --between A B when this is not run in a terminal", file=sys.stderr)
+            return 2
+        print(f"agents on this bus ({state_dir}):")
+        first = _pick("who starts?", agents)
+        second = _pick("who answers?", agents, taken=first) if first else None
+    unknown = [a for a in (first, second) if a is None or a not in known]
+    if unknown or first == second:
+        print(f"chat: pick two different agents that exist (see: luciazero-agentd status)", file=sys.stderr)
+        return 2
+    where = state_dir if args.state_dir else None
+    if args.auto:
+        # Printed, never run: each of these turns starts a real provider
+        # process against the user's own credentials.
+        print(f"\nManaged dispatch for {clean(first)} and {clean(second)}. "
+              f"Every turn below spends real quota; nothing here has been run.\n")
+        for label, command in watch.auto_turn_plan(agents, str(first), str(second), state_dir=where):
+            print(f"  {label}")
+            print(f"    {command}\n")
+        print("Each side needs its own worktree, and a sensitive operation still needs an approval nonce")
+        print("from you. A dispatched agent cannot also hold a human terminal: the turn opens its own session.")
+        return 0
+    plan = watch.conversation_plan(agents, str(first), str(second), state_dir=where)
+    print(f"\n{clean(first)} and {clean(second)}, in three terminals:\n")
+    for label, command in plan:
+        print(f"  {label}")
+        print(f"    {command}\n")
+    print(f"Then in {clean(first)}'s session: /lucia-bus (Codex: $lucia-bus), and send {clean(second)} a message.")
+    print("Terminal 1 shows every message either of them sends, and when the other one opens it.")
+    print("Neither session is woken by this: each agent reads its inbox when its own turn starts.")
+    print(f"To have them answer each other without you: {watch.launcher()} chat "
+          f"--between {clean(first)} {clean(second)} --auto")
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Follow the bus in a pane of its own (M7a).
+
+    The one command here that never writes: it opens the database read-only
+    and acknowledges nothing, because `deliveries.acknowledged_at` has to keep
+    meaning "an agent opened this in its own session". Seeing a message is not
+    receiving it, and the decision log measures the difference.
+    """
+    if args.between and args.agent:
+        # Two different questions -- "these two talking" and "anything this
+        # agent touched" -- and silently letting one win prints a filtered
+        # transcript that looks complete.
+        print("watch: --between and --agent ask for different things; pick one", file=sys.stderr)
+        return 2
+    state_dir = resolve_state_dir(args.state_dir)
+    colour = args.color == "always" or (args.color == "auto" and sys.stdout.isatty() and not os.environ.get("NO_COLOR"))
+    try:
+        watched = list(args.between) if args.between else list(args.agent or [])
+        follower = watch.Follower(db_path(state_dir), agents=watched or None, pair=bool(args.between))
+        conn = follower.connect()
+        for agent in watched:
+            if conn.execute("SELECT 1 FROM agents WHERE id = ?", (agent,)).fetchone() is None:
+                print(f"watch: no agent {clean(agent)!r} on this bus (see: luciazero-agentd status)", file=sys.stderr)
+                return 2
+        renderer = watch.Renderer(colour=colour, payload=args.payload)
+        who = (f"{clean(watched[0])} and {clean(watched[1])} only" if args.between
+               else ", ".join(clean(a) for a in watched) + " only" if watched else "every agent")
+        print(f"watching {state_dir} read-only, {who}. Nothing here acknowledges anything; Ctrl-C to stop.", flush=True)
+        for event in follower.tail(args.tail):
+            print(renderer.line({"what": "message", **event}), flush=True)
+        for event in follower.follow(interval=args.interval, passes=1 if args.once else None,
+                                     on_error=lambda exc: print(f"watch: {clean(exc)}; reconnecting", file=sys.stderr)):
+            print(renderer.line(event), flush=True)
+    except watch.WatchError as exc:
+        print(f"watch: {clean(exc)}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("", flush=True)
+    finally:
+        follower.close()
+    return 0
+
+
 def cmd_dispatch(args: argparse.Namespace) -> int:
     """Start managed turns. Runs in its own process: it spawns models, and a
     crash here must not take the bus down with it."""
@@ -318,7 +441,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     if args.watch and args.once:
         print("dispatch: --once and --watch ask for different things; pick one", file=sys.stderr)
         return 2
-    passes = None if args.watch else 1
+    # A cap counted in turns, not in passes: turns are what spend quota, and
+    # "keep going until I notice" is not a budget.
+    passes = None if (args.watch or args.max_turns) else 1
 
     def _stop_dispatch(*_: object) -> None:
         # Without this a SIGTERM skips every cleanup below and leaves the turn
@@ -329,6 +454,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     previous = signal.signal(signal.SIGTERM, _stop_dispatch)
     try:
+        started = 0
         for summary in _dispatch_passes(engine, passes=passes, interval=args.interval):
             line = f"{clean(summary['agent_id'])}  delivery {clean(summary['delivery_id'])}  {clean(summary['outcome'])}"
             if summary.get("delivery_state"):
@@ -336,6 +462,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             if summary.get("error"):
                 line += f"  ({clean(summary['error'])})"
             print(line, flush=True)
+            started += 1
+            if args.max_turns and started >= args.max_turns:
+                print(f"dispatch: stopping at the {args.max_turns}-turn cap", file=sys.stderr)
+                break
     except KeyboardInterrupt:
         print("dispatch: stopped", file=sys.stderr)
     finally:
@@ -788,9 +918,31 @@ def main(argv: Optional[list[str]] = None) -> int:
     dispatch.add_argument("--once", action="store_true", help="one pass and exit (the default; the docs name it)")
     dispatch.add_argument("--watch", action="store_true", help="keep polling instead of one pass")
     dispatch.add_argument("--interval", type=float, default=2.0)
+    dispatch.add_argument("--max-turns", type=int, default=0, dest="max_turns",
+                          help="stop after this many turns have run (0: no cap). Each turn spends provider quota.")
     dispatch.add_argument("--lease-ttl", type=int, default=LEASE_TTL_SECONDS, dest="lease_ttl")
     dispatch.add_argument("--state-dir", default=None)
     dispatch.set_defaults(func=cmd_dispatch)
+    watcher = sub.add_parser("watch", help="follow the traffic live, read-only (M7a)")
+    watcher.add_argument("--agent", action="append", default=None,
+                         help="only messages this agent sent or received; repeatable (default: all)")
+    watcher.add_argument("--between", nargs=2, metavar=("A", "B"), default=None,
+                         help="only what these two said to each other")
+    watcher.add_argument("--tail", type=int, default=10, help="messages of history to show first (default 10)")
+    watcher.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
+    watcher.add_argument("--payload", choices=("preview", "full", "none"), default="preview",
+                         help="how much of each message body to show (default: one redacted line)")
+    watcher.add_argument("--color", choices=("auto", "always", "never"), default="auto")
+    watcher.add_argument("--once", action="store_true", help="one pass and exit instead of following")
+    watcher.add_argument("--state-dir", default=None)
+    watcher.set_defaults(func=cmd_watch)
+    chat = sub.add_parser("chat", help="set two agents talking, and show where to type what")
+    chat.add_argument("--between", nargs=2, metavar=("A", "B"), default=None,
+                      help="skip the questions and name the pair")
+    chat.add_argument("--auto", action="store_true",
+                      help="print the managed-dispatch setup instead: turns started by the dispatcher, which spends quota")
+    chat.add_argument("--state-dir", default=None)
+    chat.set_defaults(func=cmd_chat)
     args = parser.parse_args(argv)
     # argparse's own subcommand dest is also "command", so the tail is handed
     # only to the parsers that declared they take one.

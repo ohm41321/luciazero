@@ -8,6 +8,7 @@ bisect
 done
 lucia-relay
 lucia-bus
+lucia-chat
 experiment
 discipline-report
 retro

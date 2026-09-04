@@ -2262,12 +2262,12 @@ actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.
 assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
-assert len(skills) == 12, f"expected 12 cataloged skills, found {len(skills)}"
+assert len(skills) == 13, f"expected 13 cataloged skills, found {len(skills)}"
 assert aliases == [], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
-    assert "12 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+    assert "13 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
 publishing = open(os.path.join(root, "docs/publishing.md")).read()
-assert "carries the 12 skills" in publishing, "publishing channel skill count drift"
+assert "carries the 13 skills" in publishing, "publishing channel skill count drift"
 release_workflow = open(os.path.join(root, ".github/workflows/release.yml")).read()
 gate = release_workflow.find("- name: Validate release versions")
 publish = release_workflow.find("- name: Publish GitHub Release")

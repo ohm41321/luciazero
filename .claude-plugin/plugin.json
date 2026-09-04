@@ -2,7 +2,7 @@
   "name": "luciazero",
   "displayName": "Luciazero",
   "version": "2.4.3",
-  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 12 skills, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
+  "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 13 skills, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "athit", "email": "athitfkm@gmail.com" },
   "license": "MIT",
   "homepage": "https://github.com/ohm41321/luciazero",

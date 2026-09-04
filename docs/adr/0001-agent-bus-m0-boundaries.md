@@ -59,6 +59,16 @@ Null results recorded on 2026-09-02 with `codex-cli 0.152.1`:
    `on-request` with the adapter answering any approval request per the
    user's configured policy.
 
+4. Recorded 2026-09-04, and recorded because it was first misread: opening a
+   database with the URI `file:<path>?mode=ro` reports a path that does not
+   exist as `unable to open database file (14)`, which reads exactly like a
+   permission or WAL problem. It is neither. `mode=ro` refuses to create what
+   is missing, by design. Reading a live WAL database read-only, with the
+   daemon attached and writing, works from both the `sqlite3` CLI and Python's
+   `sqlite3.connect(..., uri=True)`. Every read-only reader here therefore
+   checks the path itself first and names it in the error
+   (`scripts/agent_bus_evidence.py`, `luciazero_agentd/watch.py`).
+
 Consequently resume is provable only after an inference turn. The offline
 spike proves `thread/start` and asserts that resume-before-turn is rejected
 with that distinct error, which the dispatcher must classify as permanent

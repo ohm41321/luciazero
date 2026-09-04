@@ -99,6 +99,50 @@ Sessions that were already connected with the shared token keep the header
 they connected with, so after binding a terminal that session must reconnect
 `luciazero-bus` or restart.
 
+## Watching a conversation (M7a)
+
+The pull beta pushes nothing. A message waits in its delivery until a human
+opens that agent's session, so two agents can hold a whole exchange while both
+terminals show nothing at all. `watch` is the third pane that shows it:
+
+```bash
+python3 -m luciazero_agentd chat                    # pick the pair, get the commands
+python3 -m luciazero_agentd watch --between codex-architect claude-implementer
+```
+
+```
+17:42:22  codex-architect -> claude-implementer  [task]    M7a: read-only inbox watcher
+17:53:22  claude-implementer opened it after 11m
+```
+
+The second line is the number the decision log measures: nothing acknowledges
+a delivery until an agent opens it in its own turn, so the gap between the
+message and the acknowledgement is what a user-started turn costs.
+
+`chat` lists the agents with the terminal each one currently holds, asks which
+two are talking, and prints the command for each terminal — the watcher first,
+then a `run` line per side. `--between A B` skips the questions. Both commands
+read the database **read-only**: they acknowledge nothing, write nothing, and
+never migrate, because `deliveries.acknowledged_at` has to keep meaning "an
+agent opened this in its own session". A watcher that marked messages read
+would destroy the evidence it exists to show.
+
+Options: `--agent X` (repeatable) is wider than `--between` — anything that
+agent touched; `--payload full` prints whole bodies and `--payload none`
+prints only who spoke to whom; `--tail N` sets how much history comes first;
+`--once` prints and exits. Every payload is redacted again on the way to the
+screen and stripped of control characters: the pane shows text other agents
+wrote.
+
+**It cannot wake a session.** A terminal sitting at its prompt stays there;
+the agent reads its inbox when its next turn starts. Turns that start
+themselves are managed dispatch, and they spend quota:
+
+```bash
+python3 -m luciazero_agentd chat --between A B --auto   # prints the setup, runs nothing
+python3 -m luciazero_agentd dispatch --max-turns 4      # a cap counted in turns
+```
+
 ## Status inspection
 
 Before starting a turn, look at what is waiting on whom:

@@ -17,6 +17,7 @@ The rules being defended (ADR 0006):
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import signal
@@ -25,6 +26,7 @@ import sys
 import time
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from luciazero_agentd import procinfo
@@ -34,6 +36,7 @@ from luciazero_agentd.dispatcher import DispatchError, Dispatcher
 from luciazero_agentd.runlog import RunLog
 from luciazero_agentd.statedir import pid_alive as _pid_alive
 from luciazero_agentd.statedir import write_endpoint
+from luciazero_agentd.__main__ import main
 from luciazero_agentd.store import (
     LEASE_TTL_SECONDS,
     GenerationFenced,
@@ -445,6 +448,36 @@ class ProcessAdapterTests(DispatchCase):
         # The log scrubs it, but the child received it: argv never carries it.
         self.assertNotIn("lzsc_", body.replace("[redacted]", ""))
         self.assertNotIn(request.credential, " ".join(request.command))
+
+
+class TurnCapTests(DispatchCase):
+    """`--max-turns` is the quota budget: turns are what cost money, and
+    "keep going until somebody notices" is not a budget."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_endpoint(self.root, "http://127.0.0.1:9/mcp", os.getpid(), utcnow())
+        (self.root / "token").write_text("shared-token-value", encoding="utf-8")
+
+    def dispatch(self, *argv: str) -> tuple[int, str]:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = main(["dispatch", "--state-dir", str(self.root), "--interval", "0", *argv])
+        return code, err.getvalue()
+
+    def test_the_cap_stops_the_run_at_the_turn_it_names(self) -> None:
+        self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=9)
+        self.queued()
+        code, err = self.dispatch("--max-turns", "2")
+        self.assertEqual(code, 0)
+        self.assertIn("2-turn cap", err)
+        self.assertEqual(len(self.store.list_runs(agent_id="claude-reviewer")), 2)
+
+    def test_without_a_cap_one_pass_is_still_one_pass(self) -> None:
+        self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=9)
+        self.queued()
+        self.assertEqual(self.dispatch("--once")[0], 0)
+        self.assertEqual(len(self.store.list_runs(agent_id="claude-reviewer")), 1)
 
 
 class DispatcherTests(DispatchCase):

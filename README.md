@@ -18,7 +18,7 @@
 **English** · [ภาษาไทย](https://github.com/ohm41321/luciazero/blob/main/README.th.md)
 
 <p align="center">
-  <strong>12 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
+  <strong>13 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
 
@@ -163,7 +163,7 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 12 skills: no doctrine, reviewer, or hooks.
+This installs the 13 skills: no doctrine, reviewer, or hooks.
 
 </details>
 

@@ -208,8 +208,12 @@ the approval answer only refuses leaving it.
 - The exit gate is `./test.sh --agent-bus-dispatch`, offline, with the fake
   adapter: kill the dispatcher during a run, restart, and show one completed
   logical outcome, an expired lease recovered, and a stale generation fenced.
-- Real provider turns stay out of CI, as in M4: the live proof of managed
-  dispatch is M7's slice.
+- Real provider turns stay out of CI, as in M4. The live proof that the argv
+  and the credential path are the ones these CLIs actually accept is
+  `./test.sh --agent-bus-live --spend-quota`, one turn per provider, green on
+  2026-09-04; it refuses to run without that flag, and `--rehearse` runs the
+  identical gate against the offline worker for nothing. The multi-turn,
+  multi-agent proof is M7's slice.
 
 ## Threat model
 

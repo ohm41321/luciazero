@@ -336,7 +336,7 @@ itself moved: the delivery completed, the task completed by the worker under
 its own bound session, and no credential, lease, or turn directory left behind.
 The provider homes are not redirected -- a real turn needs the user's real
 credentials -- so each CLI writes its own session transcript where it always
-does.
+does. Green for both providers on 2026-09-04.
 
 The demo runs the roadmap's outcome flow: the architect opens a review
 task, the reviewer reports a finding as a report artifact, the architect

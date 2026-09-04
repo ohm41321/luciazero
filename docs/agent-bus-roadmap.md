@@ -742,17 +742,18 @@ the commit the implementer published still names the implementer after the
 reviewer cites it. It also fails if any write in the run carries
 `trust: asserted`, so M4.5's invariant keeps holding here.
 
-### M6 — Dispatcher and provider adapters (dispatcher core and adapters
-complete 2026-09-04; live provider smoke gate outstanding)
+### M6 — Dispatcher and provider adapters (complete 2026-09-04)
 
 The bus stops being a queue somebody reads and becomes a thing that runs
 models. ADR 0006 states the constraint before the design: managed dispatch
 adds no path around terminal binding, identity, or approval provenance, and a
 task M5 stopped stays stopped. The dispatcher core, its records, the offline
-gate, and both provider adapters are done. What is not done, and is what keeps
-the milestone open, is the one thing an offline suite cannot prove: a real
-`codex` and a real `claude` turn started by the dispatcher end to end. That
-gate spends quota, so it runs only when the user asks for it.
+gate, both provider adapters, and the live smoke gate are done: on 2026-09-04
+a real `codex` turn and a real `claude` turn were started by the dispatcher and
+each did the whole bus procedure with its own bound session. One item is
+carried forward rather than claimed: the kill-at-commit matrix for the new
+delivery transitions (the gate kills the dispatcher mid-turn, but not at every
+commit point).
 
 - [x] Define one adapter contract for start, resume, cancel, status, and event
   streaming (`adapters.py`: `TurnRequest`, `TurnResult`, `Adapter`, and
@@ -829,23 +830,20 @@ gate spends quota, so it runs only when the user asks for it.
   because a write inside the workspace raises no approval at all).
 - [x] The policy a turn ran under is recorded on the run, so re-enrolling the
   worker later cannot rewrite what governed a turn that already ended.
-- [ ] One live smoke gate: a real Codex turn and a real Claude turn started by
-  the dispatcher, each reaching one completed logical outcome, with the
-  credential revoked and the workspace gone afterwards. Written and wired as
-  `./test.sh --agent-bus-live --spend-quota`, refusing to run without that
-  flag, and rehearsable against the offline worker with `--rehearse`, which
-  spends nothing and proves every assertion is satisfiable.
-  - [x] **Claude, green 2026-09-04**: one managed turn, one attempt, the worker
-    itself acknowledged the delivery, claimed and completed the task, and
-    messaged the architect back; no credential, lease, or turn directory
-    outlived the turn.
-  - [ ] **Codex**: the real turn ran and did the whole procedure -- the App
-    Server handshake, the bus calls, `turn/completed` in 127s, and a reply
-    saying the bus works -- but the gate itself failed on an assertion of its
-    own that could never have passed: it filtered events on `actor_agent_id`,
-    a column the events table does not have. That is what `--rehearse` now
-    exists to catch before quota is spent. A green Codex line needs one more
-    turn, which is the user's to approve.
+- [x] One live smoke gate, green for both providers on 2026-09-04: a real
+  Codex turn and a real Claude turn started by the dispatcher, each reaching
+  one completed logical outcome in one attempt, with the worker itself
+  acknowledging the delivery, claiming and completing the task, and messaging
+  the architect back -- and no credential, lease, or turn directory outliving
+  the turn. `./test.sh --agent-bus-live --spend-quota` refuses to run without
+  that flag and is never part of `--full`; `--rehearse` runs the identical gate
+  against the offline worker and spends nothing.
+
+  The first Codex run cost a turn for nothing: the gate failed on an assertion
+  of its own that could never have passed -- it filtered events on
+  `actor_agent_id`, a column the events table does not have -- while the turn
+  itself had completed the whole procedure. `--rehearse` exists because of
+  that: a gate that costs money proves its own assertions first.
 - [ ] Test process crash and restart during every delivery transition,
   including `dispatched` and `processing` (the gate kills the dispatcher
   mid-turn; the kill-at-commit matrix for the new transitions is still to
@@ -874,7 +872,7 @@ Exit gate:
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
 ./test.sh --agent-bus-store      # 272 tests, includes the dispatch and adapter suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
-./test.sh --agent-bus-live --spend-quota   # green for claude 2026-09-04; codex needs one re-run
+./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
 
 The suite must kill the dispatcher during a run, restart it, and show that the
@@ -916,7 +914,8 @@ App Server path dropped the worker's own arguments without saying so, and a
 `prepare` that failed in a way other than `OSError` would have skipped the
 credential cleanup.
 
-The live proof of a managed turn belongs to the smoke gate above and to M7.
+The live proof of one managed turn per provider is the smoke gate above, green
+on 2026-09-04. The multi-turn, multi-agent proof belongs to M7.
 
 ### M7 — Managed-dispatch vertical slice
 

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
+import shutil
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -371,25 +373,54 @@ class Renderer:
 PROVIDER_COMMAND = {"codex": "codex", "claude": "claude"}
 
 
-def launcher() -> str:
+#: The name install.sh puts on PATH. Everything printed for a human to run
+#: prefers it, and falls back to the module form when it is not installed --
+#: a printed command that does not run is worse than a long one.
+LAUNCHER_NAME = "luciazero-agentd"
+
+
+def installed_launcher(which: Optional[Callable[[str], Optional[str]]] = None) -> Optional[str]:
+    """`luciazero-agentd` when it is on PATH, otherwise None.
+
+    Looked up on every call rather than once: a daemon outlives the install
+    that puts the launcher on PATH, and `shutil.which` is resolved here rather
+    than in the signature so a test can replace it.
+    """
+    lookup = shutil.which if which is None else which
+    return LAUNCHER_NAME if lookup(LAUNCHER_NAME) else None
+
+
+def launcher(which: Optional[Callable[[str], Optional[str]]] = None) -> str:
     """How to invoke the daemon from another terminal.
 
-    There is no installed `luciazero-agentd` executable -- the package is run
-    with `python3 -m` from the `agentd` directory -- so a plan that leaves the
-    `cd` out prints commands that do not run.
+    Without the installed launcher the package is run with `python3 -m` from
+    the `agentd` directory, so a plan that leaves the `cd` out prints commands
+    that do not run.
     """
-    return launcher_in(Path(__file__).resolve().parents[2])
+    return installed_launcher(which) or module_launcher(Path(__file__).resolve().parents[2])
 
 
-def launcher_in(checkout: Any) -> str:
+def launcher_in(checkout: Any, which: Optional[Callable[[str], Optional[str]]] = None) -> str:
     """The same, from one agent's own checkout.
 
     An agent's session must start inside its own worktree or the binding
     records the main checkout as its working directory and the isolation is
     gone -- the mistake is invisible until two agents are found editing one
     tree, so the `cd` is part of the command rather than a note under it.
+
+    With the launcher installed the `cd` lands in the worktree itself rather
+    than in its `agentd/` subdirectory, which is what `attach` should record.
     """
-    return f"cd {Path(checkout) / 'agentd'} && python3 -m luciazero_agentd"
+    found = installed_launcher(which)
+    if found is not None:
+        return f"cd {shlex.quote(str(checkout))} && {found}"
+    return module_launcher(checkout)
+
+
+def module_launcher(checkout: Any) -> str:
+    """The fallback form: no installed executable, so the package is imported
+    from the checkout by being the working directory."""
+    return f"cd {shlex.quote(str(Path(checkout) / 'agentd'))} && python3 -m luciazero_agentd"
 
 
 def roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:

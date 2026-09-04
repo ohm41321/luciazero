@@ -20,6 +20,8 @@ watch          follow the traffic live in its own pane, read-only (M7a)
 chat           set two agents talking: pick who, get the terminal-by-terminal
                commands, and the pane that shows what they say
 next           what is waiting on whom, as the command that unblocks it
+service        install, inspect or remove the per-user background service
+               that keeps the daemon running (launchd / systemd --user)
 claim          approve or deny a session asking to be an agent (M7c): an
                ordinary `claude` or `codex` session asks with
                agent_claim_begin, and a human decides here, from another
@@ -45,7 +47,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-from . import procinfo, watch
+from . import procinfo, service as service_mod, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .statedir import (
@@ -945,6 +947,77 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _service_plan(args: argparse.Namespace) -> "service_mod.Plan":
+    return service_mod.plan(state_dir=args.state_dir,
+                            root=Path(args.root).expanduser() if getattr(args, "root", None) else None,
+                            host=getattr(args, "host", "127.0.0.1"),
+                            port=getattr(args, "port", 8765),
+                            approve_with=getattr(args, "approve_with", "auto"))
+
+
+def cmd_service(args: argparse.Namespace) -> int:
+    """The daemon without a dedicated window.
+
+    Every path is printed before anything is written: a service is a file that
+    keeps running commands after the person who installed it has forgotten
+    about it, so what it will be is shown first and asked for by name in
+    `service uninstall`.
+    """
+    try:
+        plan = _service_plan(args)
+    except service_mod.ServiceError as exc:
+        print(f"service: {exc}", file=sys.stderr)
+        return 2
+
+    if args.service_command == "status":
+        report = service_mod.status(plan)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True, default=str))
+            return 0 if report["installed"] else 1
+        print(f"service {clean(report['label'])} ({report['kind']})")
+        for path, state in report["files"]:
+            print(f"  {'ok  ' if state == 'ours' else 'MISS'}  {clean(path)} ({state})")
+        running = "running" if report["active"] else "not running (or the manager cannot say)"
+        print(f"  --    {running}")
+        print(f"  --    state {clean(report['state_dir'])}")
+        print(f"  --    log   {clean(report['log'])}")
+        for note in report["notes"]:
+            print(f"  --    {note}")
+        return 0 if report["installed"] else 1
+
+    print(f"service {args.service_command} ({plan.kind}, {clean(plan.label)})")
+    for path, _ in plan.files:
+        print(f"  file    {clean(str(path))}")
+    if args.service_command == "install":
+        print(f"  runs    {' '.join(clean(part) for part in plan.command)}")
+        print(f"  log     {clean(str(plan.log))}")
+        for note in plan.notes:
+            print(f"  note    {note}")
+    for step in (plan.install_steps if args.service_command == "install" else plan.uninstall_steps):
+        print(f"  then    {' '.join(step.argv)}")
+    if args.dry_run:
+        print("  --      dry run: nothing was written and nothing was started")
+        return 0
+    try:
+        if args.service_command == "install":
+            result = service_mod.install(plan)
+        else:
+            result = service_mod.uninstall(plan)
+    except service_mod.ServiceError as exc:
+        print(f"service: {exc}", file=sys.stderr)
+        return 2
+    for path, action in result["files"]:
+        print(f"  ok      {action} {clean(path)}")
+    for argv, code, message in result["steps"]:
+        mark = "ok    " if code == 0 else "--    "
+        detail = f" ({clean(message)})" if code != 0 and message else ""
+        print(f"  {mark}  {' '.join(argv)}{detail}")
+    if args.service_command == "install":
+        print(f"\nThe bus now starts with your session. Check it with: "
+              f"{watch.launcher()} service status")
+    return 0
+
+
 def split_command(argv: list[str]) -> tuple[list[str], list[str]]:
     """Take everything after the first `--` as the provider command, before
     argparse sees it. argparse's REMAINDER swallows any of our own flags that
@@ -1099,6 +1172,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                                help="the one-time code the daemon printed in its own window; asked for if omitted")
         entry.add_argument("--state-dir", default=None)
         entry.set_defaults(func=cmd_claim)
+    service = sub.add_parser("service", help="run the daemon as a per-user background service")
+    service_sub = service.add_subparsers(dest="service_command", required=True)
+    service_install = service_sub.add_parser("install", help="write the service file and start the daemon")
+    service_install.add_argument("--host", default="127.0.0.1")
+    service_install.add_argument("--port", type=int, default=8765)
+    service_install.add_argument("--approve-with", choices=("auto", "dialog", "console"),
+                                 default="auto", dest="approve_with")
+    service_uninstall = service_sub.add_parser("uninstall", help="stop the service and remove only the files this wrote")
+    for entry in (service_install, service_uninstall):
+        entry.add_argument("--dry-run", action="store_true", dest="dry_run",
+                           help="print what would happen and change nothing")
+    service_status = service_sub.add_parser("status", help="whether the service is installed and running")
+    service_status.add_argument("--json", action="store_true")
+    for entry in (service_install, service_uninstall, service_status):
+        entry.add_argument("--state-dir", default=None)
+        entry.add_argument("--root", default=None,
+                           help="where the service file goes (default: your home directory)")
+        entry.set_defaults(func=cmd_service)
     nxt = sub.add_parser("next", help="what is waiting on whom, as the command that unblocks it")
     nxt.add_argument("--state-dir", default=None)
     nxt.add_argument("--json", action="store_true")

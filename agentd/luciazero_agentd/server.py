@@ -279,8 +279,10 @@ TOOL_INDEX: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOLS}
 
 
 #: How the user invokes the daemon from another terminal. The tool tells the
-#: model what to say, and the model must not have to guess the path.
-LAUNCHER = launcher()
+#: model what to say, and the model must not have to guess the path. Asked at
+#: each use rather than at import: a daemon outlives the install that puts
+#: `luciazero-agentd` on PATH, and a stale long form is a command the user
+#: copies and then has to fix.
 
 
 def session_key(session_id: str) -> str:
@@ -339,6 +341,7 @@ class BusServer:
         approve_with: str = "auto",
         dialog_seconds: int = CLAIM_DIALOG_SECONDS,
         dialog_runner: Optional[Callable[[list[str], int], Any]] = None,
+        has_console: Optional[bool] = None,
     ) -> None:
         if not token or len(token) < 16:
             raise ValueError("a capability token of at least 16 chars is required")
@@ -351,6 +354,9 @@ class BusServer:
         self.approve_with = approve_with
         self.dialog_seconds = dialog_seconds
         self.dialog_runner = dialog_runner
+        # None: ask stdout when the question is actually asked. A service has
+        # no console, and that changes what a claim is allowed to do.
+        self.has_console = has_console
         # Everything that leaves the daemon (tool results, errors, status)
         # passes through this scrubber; the token is its first literal.
         self.redactor = Redactor((token,))
@@ -626,8 +632,22 @@ class BusServer:
                     session = bus.sessions.get(session_id) or {}
                 client = str(session.get("client") or "")
                 provider = "claude" if "claude" in client.lower() else "codex" if "codex" in client.lower() else "other"
+                channel = bus.approval_channel()
+                if channel == "none":
+                    return {
+                        "error": "NoApprovalChannel",
+                        "message": (
+                            "this daemon has no screen and no terminal -- it is running as a "
+                            "service or with its output redirected -- so there is nowhere to put "
+                            "an approval code that you can read and this session cannot. Ask the "
+                            "user for one of: `luciazero-agentd run --agent <id> -- <provider>`, "
+                            "which binds a terminal and needs no claim; or stopping the service "
+                            "and running `luciazero-agentd serve` in a window, where the code is "
+                            "printed and approved with `luciazero-agentd claim approve <id> "
+                            "--code <code>`."),
+                    }
                 try:
-                    request = bus.open_claim(session_id, agent_id, provider, client or None)
+                    request = bus.open_claim(session_id, agent_id, provider, client or None, channel)
                 except StoreError as exc:
                     return {"error": type(exc).__name__, "message": bus.redactor.text(str(exc))[0]}
                 except (OSError, sqlite3.Error) as exc:
@@ -646,10 +666,15 @@ class BusServer:
                     # approval by whoever reads it.
                     "tell_the_user": (
                         f"This session is asking to be {request['agent_id']!r} (request {request['id']}, "
-                        f"until {request['expires_at']}). The daemon has printed a one-time approval code "
-                        "in the window where it is running -- that window only. Read it there and run the "
-                        "command it shows, in a terminal of your own. Nothing changes until you do, and "
-                        "this session cannot do it: the code was never sent here."
+                        f"until {request['expires_at']}). "
+                        + ("A window has opened on the user's screen asking them to allow or deny it; "
+                           "this session cannot read it or press its buttons."
+                           if channel == "dialog" else
+                           "The daemon has printed a one-time approval code in the window where it is "
+                           "running -- that window only. Read it there and run the command it shows, in "
+                           "a terminal of your own.")
+                        + " Nothing changes until the user answers, and this session cannot answer for "
+                          "them: the code was never sent here."
                     ),
                 }
 
@@ -895,14 +920,38 @@ class BusServer:
         except (StoreError, procinfo.ProcessError, OSError):
             return None
 
-    def _ask_on_screen(self, request: dict[str, Any], code: str) -> bool:
+    def _console_available(self) -> bool:
+        if self.has_console is not None:
+            return bool(self.has_console)
+        try:
+            return bool(sys.stdout.isatty())
+        except (ValueError, OSError):
+            return False
+
+    def approval_channel(self) -> str:
+        """Where a claim can be answered: "dialog", "console", or "none".
+
+        "none" is a real answer, and it is why a service fails closed. The
+        one-time code is worth something only because the asking session
+        cannot read it; a daemon with no terminal would be writing it to a log
+        file that same session can open, which would turn the second phase
+        into a formality. There is no safe channel left, so the claim is
+        refused rather than quietly downgraded.
+        """
+        if self.approve_with != "console" and (self.dialog_runner or approval.dialog_available()):
+            return "dialog"
+        return "console" if self._console_available() else "none"
+
+    def _ask_on_screen(self, request: dict[str, Any], code: str, channel: str) -> bool:
         """Put the claim on screen, if that is how this daemon asks.
 
-        Returns whether the dialog was raised: the console line is printed
-        either way when it was not, so the user is never left with a request
-        and no way to answer it.
+        The channel is decided once, by the caller, and passed in. Asking
+        `dialog_available()` a second time here would open a window between
+        the two answers: a daemon with no console that lost its dialog in
+        between would fall through to printing the code on a stdout nobody
+        private is reading.
         """
-        if self.approve_with == "console" or not (self.dialog_runner or approval.dialog_available()):
+        if channel != "dialog":
             return False
 
         def decided(allow: bool) -> None:
@@ -919,7 +968,8 @@ class BusServer:
                         runner=self.dialog_runner)
         return True
 
-    def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str]) -> dict[str, Any]:
+    def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str],
+                   channel: Optional[str] = None) -> dict[str, Any]:
         """Open a request and print its approval code on the daemon's console.
 
         The console is the boundary. Process ancestry is not one -- a forked,
@@ -934,14 +984,14 @@ class BusServer:
             store.trust = "asserted"  # the session is asking, not proving
             request, code = store.open_claim(agent_id, session_hash=session_key(session_id),
                                              provider=provider, client=client)
-        if self._ask_on_screen(request, code):
+        if self._ask_on_screen(request, code, channel or self.approval_channel()):
             print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
                   f"Asked on screen; answer the dialog.\n", flush=True)
             return request
         print(f"\n[claim] a {provider} session asks to be {agent_id!r} "
               f"(request {request['id']}, until {request['expires_at']}).\n"
               f"        If that was you, approve it from a terminal of your own:\n"
-              f"            {LAUNCHER} claim approve {request['id']} --code {code}\n"
+              f"            {launcher()} claim approve {request['id']} --code {code}\n"
               f"        This code is printed here and nowhere else. Do not paste it into "
               f"the session that asked.\n", flush=True)
         return request

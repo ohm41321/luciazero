@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install the Luciazero doctrine + skills into ~/.claude/
 # Idempotent. Backs up CLAUDE.md (and settings.json when --with-hooks)
-# before editing. Writes nothing outside ~/.claude/.
+# before editing. Writes nothing outside ~/.claude/ unless LUCIAZERO_BIN_DIR
+# names another directory for the Agent Bus launcher.
 #
 #   ./install.sh               doctrine + skills + reviewer agent
 #   ./install.sh --with-hooks  also wire the enforcement pack: verify-tracking
@@ -9,6 +10,10 @@
 #                              (Claude Code only; requires python3)
 #   ./install.sh --status      read-only health check of an existing install;
 #                              exits non-zero if a core piece is missing
+#
+#   LUCIAZERO_BIN_DIR=<dir>    where `luciazero-agentd` goes (default
+#                              ~/.claude/bin; a checkout only -- the daemon
+#                              is not in the npm payload)
 set -euo pipefail
 
 WITH_HOOKS=0
@@ -27,6 +32,34 @@ DOCTRINE="luciazero.md"
 IMPORT_LINE="@${DOCTRINE}"
 MANAGED_DIR="${CLAUDE_DIR}/.luciazero-managed"
 BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
+# Agent Bus launcher (checkouts only -- ADR 0002 keeps the daemon out of the
+# npm payload). Default target stays inside CLAUDE_DIR so this script keeps
+# its promise to write nowhere else; LUCIAZERO_BIN_DIR points it at a PATH
+# directory such as ~/.local/bin when the user wants one.
+AGENTD_MARKER="luciazero-managed: agentd-launcher"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
+AGENTD_HOME_FILE="${CLAUDE_DIR}/.luciazero-agentd-home"
+
+# Ours, someone else's, or absent. A launcher we did not write is never
+# replaced: it is on PATH under a name we chose, and it may be a symlink the
+# user made to a checkout of their own.
+launcher_kind() {
+  if [ -L "$1" ]; then
+    if grep -qF "${AGENTD_MARKER}" "$1" 2>/dev/null; then echo symlink; else echo foreign; fi
+  elif [ -e "$1" ]; then
+    if [ -f "$1" ] && grep -qF "${AGENTD_MARKER}" "$1" 2>/dev/null; then echo ours; else echo foreign; fi
+  else
+    echo absent
+  fi
+}
+
+on_path() {
+  case ":${PATH}:" in
+    *":$1:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 skill_inventory() {
@@ -63,6 +96,24 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   while IFS= read -r AGENT_NAME; do
     check -f "${CLAUDE_DIR}/agents/${AGENT_NAME}.md" "agent ${AGENT_NAME}"
   done < <(catalog "${SRC}/claude/agents/catalog.txt")
+  if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ]; then
+    case "$(launcher_kind "${AGENTD_LAUNCHER}")" in
+      ours|symlink)
+        echo "  ok    agent bus launcher ${AGENTD_LAUNCHER}"
+        on_path "${AGENTD_BIN_DIR}" \
+          || echo "        (not on PATH: export PATH=\"${AGENTD_BIN_DIR}:\$PATH\")"
+        if [ -f "${AGENTD_HOME_FILE}" ] && [ -d "$(cat "${AGENTD_HOME_FILE}")/luciazero_agentd" ]; then
+          echo "  ok    agentd package recorded at $(cat "${AGENTD_HOME_FILE}")"
+        else
+          echo "  MISS  ${AGENTD_HOME_FILE} does not point at an agentd package — re-run ./install.sh"; STATUS_RC=1
+        fi
+        ;;
+      foreign)
+        echo "  MISS  ${AGENTD_LAUNCHER} is not the Luciazero launcher (left untouched)"; STATUS_RC=1 ;;
+      *)
+        echo "  --    agent bus launcher not installed (optional; ./install.sh installs it)" ;;
+    esac
+  fi
   GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
   N="$(grep -cxF "${IMPORT_LINE}" "${GLOBAL_MD}" 2>/dev/null || true)"
   if [ "${N:-0}" = 1 ]; then
@@ -253,6 +304,36 @@ while IFS= read -r AGENT_NAME; do
   echo "  ok  agents/${AGENT_NAME}.md"
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
 
+# 3b. Agent Bus launcher, so the daemon has a public command instead of
+# `cd agentd && python3 -m luciazero_agentd`. Only from a checkout: the npm
+# payload ships this shim but not the package it runs.
+if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -f "${SRC}/bin/luciazero-agentd" ]; then
+  AGENTD_KIND="$(launcher_kind "${AGENTD_LAUNCHER}")"
+  case "${AGENTD_KIND}" in
+    foreign)
+      echo "  !!  ${AGENTD_LAUNCHER} exists and is not the Luciazero launcher; left untouched" >&2
+      echo "      install it elsewhere with: LUCIAZERO_BIN_DIR=<dir> ./install.sh" >&2 ;;
+    symlink)
+      echo "  ok  bin/luciazero-agentd (symlink to a Luciazero launcher; left as is)" ;;
+    *)
+      mkdir -p "${AGENTD_BIN_DIR}"
+      if [ "${AGENTD_KIND}" = ours ] && cmp -s "${SRC}/bin/luciazero-agentd" "${AGENTD_LAUNCHER}"; then
+        echo "  ok  bin/luciazero-agentd (unchanged)"
+      else
+        cp "${SRC}/bin/luciazero-agentd" "${AGENTD_LAUNCHER}"
+        echo "  ok  bin/luciazero-agentd -> ${AGENTD_LAUNCHER}"
+      fi
+      chmod +x "${AGENTD_LAUNCHER}" ;;
+  esac
+  if [ "${AGENTD_KIND}" != foreign ]; then
+    # The installed copy is no longer next to the package, so it is told
+    # where the package went. Nothing here depends on the caller's cwd.
+    printf '%s\n' "${SRC}/agentd" > "${AGENTD_HOME_FILE}"
+    on_path "${AGENTD_BIN_DIR}" \
+      || echo "      add to PATH:  export PATH=\"${AGENTD_BIN_DIR}:\$PATH\""
+  fi
+fi
+
 # 4. version sidecar — lets --status and future installs tell what is installed
 V_NEW="$(version_of)"
 V_OLD="$(cat "${CLAUDE_DIR}/.luciazero-version" 2>/dev/null || true)"
@@ -368,6 +449,10 @@ echo
 SKILL_SUMMARY="$(catalog "${SRC}/skills/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") "/" $0} END{print s}')"
 AGENT_SUMMARY="$(catalog "${SRC}/claude/agents/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") $0} END{print s}')"
 echo "Skills: ${SKILL_SUMMARY}. Agents: ${AGENT_SUMMARY}."
+if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -x "${AGENTD_LAUNCHER}" ] \
+  && [ "$(launcher_kind "${AGENTD_LAUNCHER}")" != foreign ]; then
+  echo "Agent Bus: luciazero-agentd next | watch | chat | run (${AGENTD_LAUNCHER})."
+fi
 if [ "${WITH_HOOKS}" = 1 ]; then
   echo "Enforcement pack installed: verify-tracking hooks + statusline (see settings.json)."
 else

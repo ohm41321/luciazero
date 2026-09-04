@@ -260,8 +260,12 @@ class ThroughTheDaemonTests(ClaimCase):
         # how a session started as plain `claude` stops being unverified.
         # Console mode: this class is about the claim itself, and the
         # on-screen route has its own tests with an injected runner.
+        # has_console: this stands for a daemon serving in a window. The
+        # suite captures stdout, which is not a tty, and a daemon with no
+        # console now refuses claims outright (there is nowhere private to
+        # print the code) -- that refusal has its own tests below.
         self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False,
-                                approve_with="console").start()
+                                approve_with="console", has_console=True).start()
         self.addCleanup(self.server.stop)
         self.client = Http(self.server.url)
         self.client.initialize()
@@ -437,7 +441,7 @@ class OnScreenTests(ClaimCase):
 
     def server_with(self, answer: str, *, returncode: int = 0, approve_with: str = "dialog") -> Any:
         server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False,
-                           approve_with=approve_with, dialog_seconds=1,
+                           approve_with=approve_with, dialog_seconds=1, has_console=True,
                            dialog_runner=self.runner(answer, returncode=returncode)).start()
         self.addCleanup(server.stop)
         return server
@@ -648,3 +652,102 @@ class TheOtherTerminalTests(ClaimCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisplayTests(unittest.TestCase):
+    """Where a window can actually appear."""
+
+    def test_a_mac_reached_over_ssh_has_no_screen(self) -> None:
+        """osascript over SSH has no Aqua session to draw into. Answering
+        "there is a screen" would open a claim whose dialog never appears and
+        whose code went nowhere -- open, unanswerable, and waiting."""
+        self.assertFalse(approval.has_display("darwin", {"SSH_CONNECTION": "10.0.0.1 22 10.0.0.2 22"}))
+        self.assertFalse(approval.has_display("darwin", {"SSH_TTY": "/dev/ttys003"}))
+        self.assertTrue(approval.has_display("darwin", {}))
+
+    def test_linux_still_needs_a_display_variable(self) -> None:
+        self.assertTrue(approval.has_display("linux", {"DISPLAY": ":0"}))
+        self.assertFalse(approval.has_display("linux", {}))
+        # X11 forwarding over SSH is a real display, so the variable decides.
+        self.assertTrue(approval.has_display("linux", {"DISPLAY": ":0", "SSH_TTY": "/dev/pts/1"}))
+
+
+class NoApprovalChannelTests(ClaimCase):
+    """A daemon with no screen and no terminal (M7e: the background service).
+
+    The one-time code is worth something only because the session that asked
+    cannot read it. A service's stdout is a log file in the state directory --
+    a file that same session can open -- so printing the code there would turn
+    the second phase into a formality. There is no safe channel left, so the
+    claim is refused, and the refusal has to say how to get a channel back.
+    """
+
+    def server(self, **kwargs: Any) -> Any:
+        server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False,
+                           has_console=False, **kwargs).start()
+        self.addCleanup(server.stop)
+        return server
+
+    def ask(self, server: Any) -> tuple[Http, dict[str, Any], str]:
+        client = Http(server.url)
+        client.initialize()
+        console = io.StringIO()
+        with redirect_stdout(console):
+            result = client.call("agent_claim_begin", {"agent_id": REVIEWER})
+        answer = (result.get("structuredContent")
+                  or json.loads(result["content"][0]["text"]))
+        return client, answer, console.getvalue()
+
+    def test_a_claim_with_nowhere_to_be_answered_is_refused(self) -> None:
+        _, answer, console = self.ask(self.server(approve_with="console"))
+        self.assertEqual("NoApprovalChannel", answer.get("error"))
+        self.assertNotRegex(console, r"[0-9a-f]{8}",
+                            "no code may be written where the asking session could read it")
+
+    def test_nothing_is_left_open_for_someone_to_approve_later(self) -> None:
+        """Fail closed, not fail pending: a request nobody can answer would
+        still be sitting there for whoever finds a way to answer it."""
+        self.ask(self.server(approve_with="console"))
+        self.assertEqual([], self.store.list_claims(state="open"))
+
+    def test_the_refusal_names_both_ways_out(self) -> None:
+        _, answer, _ = self.ask(self.server(approve_with="console"))
+        message = answer["message"]
+        self.assertIn("luciazero-agentd run", message)
+        self.assertIn("luciazero-agentd serve", message)
+
+    def test_a_service_that_can_still_raise_a_dialog_is_not_refused(self) -> None:
+        """The macOS case: a LaunchAgent has no console but does have a
+        screen, and clicking Allow is a channel the session cannot reach."""
+        asked: list[list[str]] = []
+
+        class Result:
+            returncode, stdout = 0, "button returned:Allow\n"
+
+        def run(argv: list[str], timeout: int) -> Result:
+            asked.append(argv)
+            return Result()
+
+        client, answer, console = self.ask(
+            self.server(approve_with="auto", dialog_seconds=1, dialog_runner=run))
+        self.assertNotIn("error", answer)
+        # The channel is decided once and passed down: a daemon with no
+        # console must never fall through to printing the code anyway.
+        self.assertNotIn("--code", console)
+        for _ in range(200):
+            if self.store.get_claim(answer["claim_id"])["state"] != "open":
+                break
+            time.sleep(0.01)
+        self.assertEqual("approved", self.store.get_claim(answer["claim_id"])["state"])
+        self.assertTrue(client.call("agent_whoami", {})["structuredContent"]["verified"])
+        self.assertEqual(1, len(asked))
+
+    def test_the_session_is_told_the_dialog_is_on_screen_not_that_a_code_was_printed(self) -> None:
+        class Result:
+            returncode, stdout = 0, "gave up:true\n"
+
+        _, answer, _ = self.ask(self.server(
+            approve_with="auto", dialog_seconds=1,
+            dialog_runner=lambda argv, timeout: Result()))
+        self.assertIn("window has opened", answer["tell_the_user"])
+        self.assertNotIn("code", answer["tell_the_user"].split("the code was never sent")[0])

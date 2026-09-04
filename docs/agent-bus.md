@@ -7,10 +7,18 @@ through MCP tools; you start each agent turn yourself. Design and evidence:
 [the roadmap](agent-bus-roadmap.md) and the ADRs under [`adr/`](adr/).
 
 The bus is beta and separate from the core install: `npx luciazero` never
-starts a daemon. Everything below runs from a checkout of this repository,
-and every `python3 -m luciazero_agentd ...` command runs from its `agentd/`
-directory (or with `PYTHONPATH=agentd` from the repository root). The
-daemon needs Python 3.10+ and `git`; nothing is installed with pip.
+starts a daemon. Everything below runs from a checkout of this repository.
+The daemon needs Python 3.10+ and `git`; nothing is installed with pip.
+
+`./install.sh` puts a `luciazero-agentd` launcher in `~/.claude/bin`
+(`LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh` to choose somewhere already on
+your PATH), so **every `python3 -m luciazero_agentd X` below can be typed as
+`luciazero-agentd X`**. Without it, run the module form from the `agentd/`
+directory (or with `PYTHONPATH=agentd` from the repository root). The launcher
+finds the package from where it was installed, so it works from any directory,
+and it leaves your working directory alone — which matters, because `attach`
+records it. Commands the bus prints for you switch between the two forms
+depending on which one will actually run.
 
 ## Setup
 
@@ -49,6 +57,44 @@ daemon needs Python 3.10+ and `git`; nothing is installed with pip.
    refuses two agents on one checkout. Bind the terminal first (below) so the
    model does not have to be told its id, or tell it the id and accept that
    the bus cannot prove it.
+
+## Keeping the daemon running (M7e)
+
+The daemon is only useful while it runs, and a terminal dedicated to it is the
+first window closed by accident. Install it as a per-user service instead:
+
+```bash
+luciazero-agentd service install --dry-run   # exactly what it would write and run
+luciazero-agentd service install
+luciazero-agentd service status
+luciazero-agentd service uninstall
+```
+
+macOS gets a LaunchAgent in `~/Library/LaunchAgents`; Linux and WSL2 get a
+systemd `--user` unit in `~/.config/systemd/user`. Both run as you, not as
+root, and Windows is refused by name (ADR 0002 scopes v1 to macOS, Linux and
+WSL2). The unit always serves with strict binding — a service is never
+installed with `--allow-unattributed` — and its output goes to
+`daemon.log` in the state directory.
+
+Every file carries an ownership marker. A service file that is not ours is
+reported and left exactly as it is, never backed up and replaced, and
+`service uninstall` deletes only files carrying that marker. `uninstall.sh`
+stops the service before it removes the launcher — otherwise the manager
+would keep restarting a file that is gone — and leaves the launcher in place,
+loudly, if it could not.
+
+The unit names its Python interpreter absolutely (a service manager's PATH is
+not yours: a LaunchAgent gets `/usr/bin:/bin:/usr/sbin:/sbin`, where `python3`
+is the system 3.9) and carries your PATH forward so the dispatcher can still
+find `codex` and `claude`.
+
+One consequence to know before you install it: a service has no console, so
+the approval code has nowhere private to go (see below). On macOS the dialog
+still works, because a LaunchAgent runs in your GUI session. On Linux the
+install captures your current `DISPLAY` into the unit; if there is none, a
+session asking to be an agent is refused rather than approved through a log
+file, and told to use `run` or a daemon in a window.
 
 ## Choosing which terminal is which agent
 
@@ -201,6 +247,36 @@ single-phase design that was rejected for being a bearer token in disguise.
 
 The request id is not a secret. Approving binds the session that asked, never
 whoever holds the id, because the pin is made before the id exists.
+
+### Clicking Allow instead of copying a code (M7d)
+
+Where the daemon can put a window on screen it does, and there is nothing to
+copy: it names the agent, the client and the request, and you press Allow or
+Deny. `osascript` on macOS, `zenity` then `kdialog` on Linux and BSD (a
+display is required), a PowerShell `MessageBox` on Windows. The daemon raises
+it, so the session that asked cannot read it or press its buttons; a dialog
+that times out or is killed decides nothing.
+
+```bash
+luciazero-agentd serve --approve-with auto      # dialog where possible (default)
+luciazero-agentd serve --approve-with console   # always the printed code
+LUCIAZERO_AGENT_BUS_NO_DIALOG=1                 # kill switch: never raise a window
+```
+
+**What the dialog assumes.** Clicking Allow proves a person answered only
+while the local desktop is intact. A process that can drive another process's
+user interface can answer it — macOS Accessibility permission granted to the
+terminal the model runs in, any X11 client on the same display, UI Automation
+on Windows — and the same permission can read the window that shows the
+console code, so neither route survives it. That is the same boundary as the
+rest of the bus: a hostile process running as you is out of scope (ADR 0004).
+If you need to hold that line, revoke the permission and use `run`, where the
+identity comes from a terminal you opened.
+
+If there is no screen **and** no terminal — the daemon running as a service —
+the claim is refused outright with `NoApprovalChannel` rather than printing a
+code into a log the asking session can read. The refusal names the way out:
+`run`, or `serve` in a window.
 
 `serve --allow-unattributed` remains the opt-in fallback for people who would
 rather skip all of this: sessions act while labelled unverified, their writes

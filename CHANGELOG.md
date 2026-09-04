@@ -9,6 +9,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Agent Bus (beta, opt-in, checkout only): `./install.sh` now installs a
+  `luciazero-agentd` launcher into `~/.claude/bin` (`LUCIAZERO_BIN_DIR` picks
+  another directory), so the daemon has a public command instead of
+  `cd agentd && python3 -m luciazero_agentd`. The module form keeps working
+  unchanged, and everything the bus prints for a human uses whichever form
+  will actually run. An executable that is not ours is refused, never
+  replaced; `uninstall.sh` removes only a file carrying the ownership marker.
+- Agent Bus: `luciazero-agentd service install|status|uninstall` runs the
+  daemon as a per-user service — launchd on macOS, systemd `--user` on Linux
+  and WSL2, refused by name on Windows. `--dry-run` prints every file and
+  command first, the unit always serves with strict binding, and a foreign
+  service file is reported rather than overwritten.
+- Agent Bus: a daemon with no screen and no terminal now refuses
+  `agent_claim_begin` with `NoApprovalChannel` instead of printing the
+  one-time code into a log the asking session could read.
+
 - Canonical Claude Sonnet campaign `claude-sonnet-2026-08-21`: ten tasks, five
   valid runs in every cell, no invalid rows, one pinned repository commit and
   CLI build. Sonnet passes every criterion in 39/50 runs against 23/50 bare.

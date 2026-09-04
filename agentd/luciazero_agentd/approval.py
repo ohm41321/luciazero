@@ -142,11 +142,21 @@ def backends_for(platform: str = sys.platform) -> tuple[Backend, ...]:
     return tuple(b for b in BACKENDS if b.name in wanted)
 
 
-def has_display(platform: str = sys.platform) -> bool:
-    """A Linux session with no display cannot be asked anything."""
+def has_display(platform: str = sys.platform,
+                environ: Optional[dict[str, str]] = None) -> bool:
+    """Whether this process can put a window in front of a person.
+
+    A Linux session with no display cannot be asked anything. Neither can a
+    macOS session reached over SSH: `osascript` there has no Aqua session to
+    draw into, and answering "yes, there is a screen" would open a claim whose
+    dialog never appears and whose code was printed nowhere -- a request left
+    open with no way to answer it, which is the one outcome M7e refuses.
+    """
+    env = os.environ if environ is None else environ
+    remote = bool(env.get("SSH_CONNECTION") or env.get("SSH_TTY") or env.get("SSH_CLIENT"))
     if platform in ("darwin", "win32", "cygwin"):
-        return True
-    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        return not remote
+    return bool(env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"))
 
 
 def pick(platform: str = sys.platform, which: Callable[[str], Optional[str]] = shutil.which) -> Optional[Backend]:

@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 from pathlib import Path
 
 from tests.fixtures import make_repo
@@ -459,3 +460,51 @@ class CommandTests(WatchCase):
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
+
+
+class LauncherTests(WatchCase):
+    """Which form of the command a human is shown (M7e).
+
+    Everything `chat` and `next` print is meant to be pasted into another
+    terminal, so the only property that matters is that what is printed runs.
+    `luciazero-agentd` runs only once install.sh has put it on PATH; before
+    that the package is reached with `python3 -m` from the `agentd` directory,
+    and printing the short form early would print a command not found.
+    """
+
+    def test_the_short_form_is_used_once_the_launcher_is_installed(self) -> None:
+        self.assertEqual("luciazero-agentd", watch.launcher(which=lambda name: "/opt/bin/" + name))
+
+    def test_without_it_the_module_form_carries_its_own_cd(self) -> None:
+        printed = watch.launcher(which=lambda name: None)
+        self.assertTrue(printed.endswith("agentd && python3 -m luciazero_agentd"), printed)
+        self.assertTrue(Path(printed.split(" && ")[0][len("cd "):]).is_dir(),
+                        "the fallback names a directory that exists")
+
+    def test_an_agent_is_still_started_from_inside_its_own_worktree(self) -> None:
+        """The `cd` exists so the binding records the worktree. With the
+        launcher it lands in the worktree itself; without it, in the `agentd`
+        directory under it, which is where the module has to be imported."""
+        self.assertEqual("cd /tmp/wt && luciazero-agentd",
+                         watch.launcher_in("/tmp/wt", which=lambda name: "/opt/bin/" + name))
+        self.assertEqual("cd /tmp/wt/agentd && python3 -m luciazero_agentd",
+                         watch.launcher_in("/tmp/wt", which=lambda name: None))
+
+    def test_a_worktree_with_a_space_stays_one_argument(self) -> None:
+        """`cd /tmp/my tree && ...` is a command that cds somewhere else."""
+        for which in (lambda name: "/opt/bin/" + name, lambda name: None):
+            printed = watch.launcher_in("/tmp/my tree", which=which)
+            self.assertIn("'/tmp/my tree", printed, printed)
+
+    def test_next_prints_the_short_form_when_it_is_available(self) -> None:
+        self.say(ARCHITECT, IMPLEMENTER, "please look at this")
+        with mock.patch("shutil.which", lambda name: "/opt/bin/" + name):
+            actions = watch.owed(self.follower().connect())
+        self.assertTrue(actions[0]["do"].startswith("luciazero-agentd run --agent"),
+                        actions[0]["do"])
+
+    def test_next_falls_back_to_the_python_form_when_it_is_not(self) -> None:
+        self.say(ARCHITECT, IMPLEMENTER, "please look at this")
+        with mock.patch("shutil.which", lambda name: None):
+            actions = watch.owed(self.follower().connect())
+        self.assertIn("python3 -m luciazero_agentd run --agent", actions[0]["do"])

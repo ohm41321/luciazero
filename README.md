@@ -299,6 +299,12 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
 - Node.js 18+ for the CLI and discipline report.
 - Bash for classic installers; Python 3.9+ for hooks and Lucia Relay
   (`install.sh --with-hooks` refuses anything older).
+- The Agent Bus daemon (beta, opt-in) needs Python 3.10+ and a checkout: it is
+  not in the npm payload and `npx luciazero` never starts it. From a checkout,
+  `./install.sh` adds the `luciazero-agentd` launcher to `~/.claude/bin`
+  (`LUCIAZERO_BIN_DIR` chooses another directory), and
+  `luciazero-agentd service install` runs the daemon under launchd or systemd
+  `--user`. macOS, Linux and WSL2 only. See [docs/agent-bus.md](docs/agent-bus.md).
 - Core installers, hooks, helpers, and graders are offline. Real behavioral
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.

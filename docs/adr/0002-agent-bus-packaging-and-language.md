@@ -100,6 +100,21 @@ published package.
   shim accepts the first interpreter reporting 3.10 or newer. The package
   enforces this in `luciazero_agentd/__init__.py`.
 
+- 2026-09-04, the bin shim exists and `install.sh` installs it. `npx
+  luciazero` never had a daemon to run, so the shim shipped in the npm payload
+  would have been a command with no package behind it; instead `install.sh`
+  writes `bin/luciazero-agentd` into `~/.claude/bin` (or `LUCIAZERO_BIN_DIR`)
+  from a checkout, and records the package location in
+  `~/.claude/.luciazero-agentd-home`. The shim resolves its own path through
+  symlinks and never uses the caller's working directory, which the daemon
+  records; the interpreter order in the Decision above is what it implements.
+  An executable it does not own is refused, never replaced.
+- 2026-09-04, `luciazero-agentd service install|status|uninstall` writes a
+  launchd LaunchAgent on macOS and a systemd `--user` unit on Linux and WSL2 —
+  the same platform scope as this ADR, per-user rather than system-wide, and
+  refused by name on Windows. It is the packaging decision applied to running
+  the daemon: still no pip, still no root, still nothing outside the user.
+
 ## Decision record
 
 Both option-2 choices were accepted on 2026-09-02. This unblocks M1. Reopening

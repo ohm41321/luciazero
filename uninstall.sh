@@ -92,6 +92,59 @@ done < <(catalog "${SRC}/claude/agents/catalog.txt")
 
 rmdir "${MANAGED_DIR}/skills" "${MANAGED_DIR}/agents" "${MANAGED_DIR}" 2>/dev/null || true
 
+# Agent Bus launcher. Only a regular file carrying the ownership marker is
+# ours to delete: a symlink is something the user made, and anything without
+# the marker is another program that happens to share the name.
+AGENTD_MARKER="luciazero-managed: agentd-launcher"
+AGENTD_SERVICE_MARKER="luciazero-managed: agentd-service"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
+
+# The background service outlives this script unless it is stopped first.
+# Removing the launcher while a LaunchAgent or a systemd unit still points at
+# it leaves either a daemon serving after an uninstall or a service manager
+# restarting a file that is gone, so the service is dealt with first and the
+# launcher stays put if it could not be.
+AGENTD_KEEP=0
+AGENTD_SERVICE_ROOT="${LUCIAZERO_SERVICE_ROOT:-$HOME}"
+for AGENTD_SVC in "${AGENTD_SERVICE_ROOT}/Library/LaunchAgents/com.luciazero.agentd.plist" \
+  "${AGENTD_SERVICE_ROOT}/.config/systemd/user/luciazero-agentd.service"; do
+  [ -f "${AGENTD_SVC}" ] || continue
+  grep -qF "${AGENTD_SERVICE_MARKER}" "${AGENTD_SVC}" 2>/dev/null || continue
+  AGENTD_RUN=""
+  if [ -f "${AGENTD_LAUNCHER}" ] && grep -qF "${AGENTD_MARKER}" "${AGENTD_LAUNCHER}" 2>/dev/null; then
+    AGENTD_RUN="${AGENTD_LAUNCHER}"
+  fi
+  if [ -n "${AGENTD_RUN}" ] && "${AGENTD_RUN}" service uninstall >/dev/null 2>&1; then
+    echo "  ok  agent bus service stopped and removed"
+  elif [ -d "${SRC}/agentd/luciazero_agentd" ] && command -v python3 >/dev/null 2>&1 \
+    && PYTHONPATH="${SRC}/agentd" python3 -m luciazero_agentd service uninstall >/dev/null 2>&1; then
+    echo "  ok  agent bus service stopped and removed"
+  else
+    echo "  !!  the Agent Bus service is still installed (${AGENTD_SVC})" >&2
+    echo "      stop it first:  luciazero-agentd service uninstall" >&2
+    echo "      the launcher is left in place so the service does not restart a missing file" >&2
+    AGENTD_KEEP=1
+  fi
+done
+
+if [ "${AGENTD_KEEP}" = 0 ]; then
+  if [ -L "${AGENTD_LAUNCHER}" ]; then
+    echo "  !!  ${AGENTD_LAUNCHER} is a symlink you made; left untouched" >&2
+  elif [ -f "${AGENTD_LAUNCHER}" ]; then
+    if grep -qF "${AGENTD_MARKER}" "${AGENTD_LAUNCHER}" 2>/dev/null; then
+      rm -f "${AGENTD_LAUNCHER}"
+      rmdir "${AGENTD_BIN_DIR}" 2>/dev/null || true
+      echo "  ok  bin/luciazero-agentd"
+    else
+      echo "  !!  ${AGENTD_LAUNCHER} is not the Luciazero launcher; left untouched" >&2
+    fi
+  elif [ -e "${AGENTD_LAUNCHER}" ]; then
+    echo "  !!  ${AGENTD_LAUNCHER} is not a regular file; left untouched" >&2
+  fi
+  rm -f "${CLAUDE_DIR}/.luciazero-agentd-home"
+fi
+
 LEGACY_HANDOFF="${CLAUDE_DIR}/skills/handoff"
 if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then
   if cmp -s "${SRC}/migrations/handoff-v1.5.0.SKILL.md" "${LEGACY_HANDOFF}/SKILL.md"; then
@@ -208,3 +261,4 @@ fi
 
 echo
 echo "Done. Other CLAUDE.md content was left untouched."
+echo "The Agent Bus state directory (~/.luciazero/agent-bus) is data and was not touched."

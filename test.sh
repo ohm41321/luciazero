@@ -43,6 +43,17 @@ case "${1:-}" in
   *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-chat|--agent-bus-live]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# Where anything in this suite would look for a launchd or systemd service
+# file. Pointed away from $HOME for the whole run: uninstall.sh now stops the
+# Agent Bus service before removing its launcher, and a suite that read the
+# real $HOME would stop a service the developer is using.
+#
+# Built from shell expansions only, and never created: section 2a re-runs this
+# script with a forged PATH holding almost nothing, so a `mktemp` here would
+# fail there. Nothing writes under it -- the paths are only ever read.
+LUCIAZERO_SERVICE_ROOT="${TMPDIR:-/tmp}/luciazero-suite-no-service-$$"
+export LUCIAZERO_SERVICE_ROOT
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 skill_inventory() {
   catalog "${ROOT}/skills/catalog.txt"
@@ -2235,7 +2246,7 @@ echo "ok  installers reject unknown options"
 
 # 4h. npm wrapper package: parseable, complete payload, no lifecycle scripts
 python3 - "${ROOT}" <<'PY' || fail "package.json check failed"
-import json, os, sys
+import json, os, re, sys
 root = sys.argv[1]
 pkg = json.load(open(os.path.join(root, "package.json")))
 assert pkg["name"] == "luciazero", "package name"
@@ -2261,6 +2272,16 @@ for base in ("bin", "agents", "claude", "skills", "migrations"):
 with open(os.path.join(root, pkg["bin"]["luciazero"])) as f:
     assert f.readline().startswith("#!/usr/bin/env node"), "bin shebang"
 assert os.access(os.path.join(root, pkg["bin"]["luciazero"]), os.X_OK), "bin must be executable"
+shim = os.path.join(root, "bin", "luciazero-agentd")
+assert os.access(shim, os.X_OK), "the agentd launcher must be executable"
+with open(shim) as f:
+    head = f.read(4096)
+assert head.startswith("#!/bin/sh"), "the agentd launcher must be POSIX sh, not bash"
+assert "luciazero-managed: agentd-launcher" in head, "the launcher must carry its ownership marker"
+assert not any(line.lstrip().startswith("cd ") for line in head.splitlines()), \
+    "the launcher must not change the caller's directory (attach records it)"
+assert not any(re.match(r"\s*(export\s+)?PYTHONPATH=", line) for line in head.splitlines()), \
+    "PYTHONPATH is colon-separated: a checkout path containing ':' would split into two entries"
 def catalog(rel):
     return [x.strip() for x in open(os.path.join(root, rel)) if x.strip() and not x.lstrip().startswith("#")]
 skills = catalog("skills/catalog.txt")
@@ -2332,7 +2353,8 @@ readmes = [path for path in paths if os.path.basename(path).upper().startswith("
 assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
-for required in ("bin/luciazero.js", "install.sh", "install-codex.sh", "claude/luciazero.md"):
+for required in ("bin/luciazero.js", "bin/luciazero-agentd", "install.sh",
+                 "install-codex.sh", "claude/luciazero.md"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
   NP_VERSION="$(node -p "require('${NP_DIR}/package.json').version")"
@@ -2790,6 +2812,125 @@ CLAUDE_CONFIG_DIR="${SB6}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
 [ ! -f "${SB6}/hooks/luciazero-verify.sh" ] || { rm -rf "${SB6R}"; fail "non-ASCII-path uninstall left hook files"; }
 rm -rf "${SB6R}"
 echo "ok  non-ASCII config dir install + status + uninstall"
+
+# 5g. Agent Bus launcher: the public `luciazero-agentd` command. Everything
+# here runs in a temporary home whose paths contain a space, from outside the
+# repository, because that is where the two ways a shim breaks live: an
+# unquoted expansion, and a package found relative to the caller's cwd.
+if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  LB_ROOT="$(mktemp -d)"
+  LB_HOME="${LB_ROOT}/home dir"
+  LB_BIN="${LB_ROOT}/path bin"
+  LB_STATE="${LB_ROOT}/bus state"
+  mkdir -p "${LB_HOME}" "${LB_STATE}"
+  lb_fail() { rm -rf "${LB_ROOT}"; fail "$1"; }
+
+  CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+    "${ROOT}/install.sh" >/dev/null || lb_fail "install.sh failed with LUCIAZERO_BIN_DIR"
+  [ -x "${LB_BIN}/luciazero-agentd" ] || lb_fail "launcher not installed as an executable"
+  grep -qF 'luciazero-managed: agentd-launcher' "${LB_BIN}/luciazero-agentd" \
+    || lb_fail "installed launcher carries no ownership marker"
+  [ "$(cat "${LB_HOME}/.claude/.luciazero-agentd-home")" = "${ROOT}/agentd" ] \
+    || lb_fail "the launcher was not told where the agentd package is"
+
+  # The store is created here rather than by a daemon: this section is about
+  # the shim, and a live daemon would make it about ports and timing.
+  PYTHONPATH="${ROOT}/agentd" python3 -c '
+import sys
+from luciazero_agentd.store import Store
+with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
+    store.migrate()
+' "${LB_STATE}" || lb_fail "could not create a temporary bus database"
+
+  # From / with nothing but PATH: no cwd, no repository, no PYTHONPATH.
+  ( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
+      luciazero-agentd roster add lb-architect codex architect --state-dir "${LB_STATE}" >/dev/null ) \
+    || lb_fail "the installed launcher cannot run from outside the checkout"
+
+  # `next` renders the short command when the launcher is on PATH...
+  LB_NEXT="$( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
+    luciazero-agentd next --state-dir "${LB_STATE}" )" \
+    || lb_fail "next failed through the installed launcher"
+  printf '%s' "${LB_NEXT}" | grep -q '^    luciazero-agentd ' \
+    || lb_fail "next did not render the short command with the launcher installed: ${LB_NEXT}"
+  # ...and falls back to the module form when it is not, so a user who has not
+  # installed it is never handed a command that is not on their PATH.
+  # A PATH with a python3 on it and provably no launcher anywhere: the
+  # directory holding the real python3 may itself be ~/.local/bin, which is
+  # exactly where install.sh's help tells people to put the launcher.
+  LB_PYBIN="${LB_ROOT}/python only"
+  mkdir -p "${LB_PYBIN}"
+  ln -s "$(command -v python3)" "${LB_PYBIN}/python3"
+  LB_NEXT_BARE="$( cd / && PATH="${LB_PYBIN}" PYTHONPATH="${ROOT}/agentd" \
+    CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
+    python3 -m luciazero_agentd next --state-dir "${LB_STATE}" )" \
+    || lb_fail "next failed without the launcher"
+  printf '%s' "${LB_NEXT_BARE}" | grep -q 'python3 -m luciazero_agentd' \
+    || lb_fail "next did not fall back to the python form: ${LB_NEXT_BARE}"
+
+  # A directory of the caller's must never be able to supply the package.
+  # `python -m pkg` puts the working directory first on sys.path, ahead of
+  # PYTHONPATH, so a decoy next to the caller would shadow the real daemon.
+  mkdir -p "${LB_ROOT}/decoy/luciazero_agentd"
+  printf 'print("HIJACKED")\n' > "${LB_ROOT}/decoy/luciazero_agentd/__main__.py"
+  # A regular package (one with __init__.py) beats a namespace portion found
+  # earlier on sys.path, so the decoy needs one to be a real threat.
+  : > "${LB_ROOT}/decoy/luciazero_agentd/__init__.py"
+  LB_DECOY="$( cd "${LB_ROOT}/decoy" && PATH="${LB_BIN}:${PATH}" \
+    CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" luciazero-agentd sessions --state-dir "${LB_STATE}" )" \
+    || lb_fail "the launcher failed next to a decoy package"
+  printf '%s' "${LB_DECOY}" | grep -q HIJACKED \
+    && lb_fail "the caller's working directory supplied the package"
+
+  # A ':' in the package path must not split it into two PYTHONPATH entries,
+  # the tail of which resolves against the caller's directory.
+  mkdir -p "${LB_ROOT}/co:lon" "${LB_ROOT}/split/lon/agentd/luciazero_agentd"
+  ln -s "${ROOT}/agentd" "${LB_ROOT}/co:lon/agentd"
+  printf 'print("HIJACKED")\n' > "${LB_ROOT}/split/lon/agentd/luciazero_agentd/__main__.py"
+  : > "${LB_ROOT}/split/lon/agentd/luciazero_agentd/__init__.py"
+  LB_COLON="$( cd "${LB_ROOT}/split" && LUCIAZERO_AGENTD_HOME="${LB_ROOT}/co:lon/agentd" \
+    "${LB_BIN}/luciazero-agentd" sessions --state-dir "${LB_STATE}" )" \
+    || lb_fail "the launcher failed with a ':' in the package path"
+  printf '%s' "${LB_COLON}" | grep -q HIJACKED \
+    && lb_fail "a ':' in the package path let the caller's directory supply the package"
+
+  # An executable somebody else put there is never replaced, and never removed.
+  printf '#!/bin/sh\nexit 3\n' > "${LB_BIN}/luciazero-agentd"
+  LB_OUT="$(CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+    "${ROOT}/install.sh" 2>&1)" || lb_fail "install.sh must not fail on a foreign launcher"
+  printf '%s' "${LB_OUT}" | grep -q 'not the Luciazero launcher' \
+    || lb_fail "install.sh replaced or ignored a foreign luciazero-agentd silently"
+  grep -qF 'exit 3' "${LB_BIN}/luciazero-agentd" || lb_fail "install.sh overwrote a foreign launcher"
+  CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+    "${ROOT}/uninstall.sh" >/dev/null 2>&1
+  grep -qF 'exit 3' "${LB_BIN}/luciazero-agentd" || lb_fail "uninstall.sh deleted a foreign luciazero-agentd"
+
+  # Ours is removed, together with the record of where the package was.
+  rm -f "${LB_BIN}/luciazero-agentd"
+  CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+    "${ROOT}/install.sh" >/dev/null
+  CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+    "${ROOT}/uninstall.sh" >/dev/null
+  [ ! -e "${LB_BIN}/luciazero-agentd" ] || lb_fail "uninstall.sh left its own launcher behind"
+  [ ! -e "${LB_HOME}/.claude/.luciazero-agentd-home" ] || lb_fail "uninstall.sh left the package pointer behind"
+
+  # The service subcommand must be inspectable without installing anything:
+  # this suite may never leave a launchd or systemd unit on the machine.
+  LB_SVC="$( cd / && PYTHONPATH="${ROOT}/agentd" python3 -m luciazero_agentd service install \
+    --dry-run --root "${LB_ROOT}/svc root" --state-dir "${LB_STATE}" )" \
+    || lb_fail "service install --dry-run failed"
+  printf '%s' "${LB_SVC}" | grep -q 'dry run' || lb_fail "service dry run did not say so"
+  if printf '%s' "${LB_SVC}" | grep -q -- '--allow-unattributed'; then
+    lb_fail "a service must never be planned with --allow-unattributed"
+  fi
+  [ -z "$(find "${LB_ROOT}/svc root" -type f 2>/dev/null)" ] \
+    || lb_fail "service install --dry-run wrote a file"
+
+  rm -rf "${LB_ROOT}"
+  echo "ok  luciazero-agentd launcher installs, runs from anywhere, and stays ownership-safe"
+else
+  echo "skip  luciazero-agentd launcher (python3 is older than 3.10)"
+fi
 
 # 6. sandbox Codex install cycle — never touches the real ~/.codex
 printf '# pre-existing codex rules\n' > "${CX}/AGENTS.md"

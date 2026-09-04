@@ -9,10 +9,11 @@ description: "Set two agent sessions talking through the Luciazero Agent Bus and
 conversation between two other sessions and watches it happen: three terminals,
 one of them a read-only pane showing every message as it lands.
 
-Every command below runs from the repository's `agentd/` directory: there is no
-installed `luciazero-agentd` executable. Run them in the user's terminal, or
-hand them over to paste. Never start a provider session on their behalf
-without being asked to.
+Every command below runs from the repository's `agentd/` directory. If the
+user has run `./install.sh`, `luciazero-agentd X` is the same command from
+anywhere, and that is the form the bus itself prints. Run them in the user's
+terminal, or hand them over to paste. Never start a provider session on their
+behalf without being asked to.
 
 ## 1. Start here, always
 

@@ -1033,6 +1033,82 @@ Windows. `procinfo` (`ps`, `lsof`), the tty/pid identity checks and the
 process-group termination in M6 are what a real Windows port has to answer,
 and that is its own milestone.
 
+### M7e — A public command, and a daemon that outlives the window (done 2026-09-04)
+
+Two chores were left between the user and the bus: a command nobody could
+type (`cd agentd && python3 -m luciazero_agentd ...`) and a window nobody
+should have to keep open.
+
+- [x] `bin/luciazero-agentd`: a POSIX-sh shim installed by `install.sh`, which
+  resolves its own path through symlinks and finds the package next to itself
+  or through `~/.claude/.luciazero-agentd-home` — never from the caller's
+  working directory, which the daemon records (`attach`) and must not move.
+  Interpreter order is ADR 0002's: `python3`, `python`, `py -3`, first at
+  3.10+.
+- [x] The default target is `~/.claude/bin`, so `install.sh` keeps its promise
+  to write nowhere else and no test run can install into a real PATH;
+  `LUCIAZERO_BIN_DIR` points it at `~/.local/bin` for people who want it
+  there. An executable that is not ours is refused loudly and never replaced
+  or backed up, and `uninstall.sh` removes only a regular file carrying the
+  marker.
+- [x] Everything printed for a human — `next`, `chat`, the claim instructions
+  — renders `luciazero-agentd ...` when it is on PATH and falls back to the
+  module form when it is not, because a printed command that does not run is
+  worse than a long one. Looked up per call: a daemon outlives the install.
+- [x] `service install|status|uninstall`: launchd `~/Library/LaunchAgents` on
+  macOS, systemd `--user` on Linux and WSL2. Every file carries an ownership
+  marker and a foreign one is refused, `--dry-run` prints the exact files and
+  commands first, and the unit always serves with strict binding —
+  `--allow-unattributed` is refused by the planner itself.
+- [x] The suite installs nothing: service files go under a temporary root and
+  every `launchctl`/`systemctl` call goes to a fake runner. A test asserts the
+  planned paths stay inside that root.
+- [x] A daemon with no screen and no terminal fails the claim closed. The code
+  is worth something only because the asking session cannot read it, and a
+  service's stdout is a log file in the state directory that the same session
+  can open — so `agent_claim_begin` refuses with `NoApprovalChannel` and names
+  the two ways back (`run`, or `serve` in a window). Proven red first.
+
+A macOS LaunchAgent runs in the GUI session, so the M7d dialog still works
+there; a systemd unit gets the display captured into its own `Environment=`
+at install time, scoped to that unit rather than imported into the whole user
+environment. Where neither holds, claims fail closed rather than downgrade.
+
+Found by the adversarial review of this milestone, each with a regression:
+
+- **A service manager's PATH is not yours.** The unit first ran the installed
+  launcher, which searches PATH for a Python at 3.10+; a LaunchAgent gets
+  `/usr/bin:/bin:/usr/sbin:/sbin`, where `python3` is the system 3.9, so the
+  daemon exited 127 on every restart while `launchctl bootstrap` returned 0
+  and `service status` reported it active. The unit now names the interpreter
+  absolutely, and carries the user's PATH forward for the dispatcher, which
+  starts providers by name.
+- **`PYTHONPATH` is colon-separated.** A checkout at a path containing `:`
+  split into two entries, the tail resolving against the caller's working
+  directory — the one thing the shim exists to prevent. Worse, `python -m pkg`
+  puts the working directory *first* on `sys.path`, ahead of `PYTHONPATH`, so
+  a `luciazero_agentd/` directory next to the caller shadowed the real package
+  outright. The shim now passes the path in an environment variable and lets
+  the interpreter put it on `sys.path` ahead of everything, with the working
+  directory removed. Both are regressions with a decoy package that prints if
+  it is ever imported.
+- **A newline ends a systemd directive.** A state directory containing one
+  produced a unit with a live `ExecStartPre=` line; `%` in a path reached
+  systemd as a specifier and silently retargeted the daemon. Newlines are
+  refused before a file is generated and `%` is doubled everywhere, including
+  `StandardOutput=`, which was interpolated raw.
+- **`uninstall.sh` removed the launcher and left the service.** Either a
+  daemon kept serving after an uninstall, or the manager kept restarting a
+  file that was gone. It now stops and removes the service first, and keeps
+  the launcher in place (loudly) if it could not. `LUCIAZERO_SERVICE_ROOT`
+  redirects where both it and the daemon look, which is what keeps the shell
+  suite off the developer's real LaunchAgents directory.
+- **A Mac reached over SSH is not a Mac with a screen.** `has_display` said
+  yes unconditionally on darwin, so a claim over SSH picked the dialog,
+  `osascript` failed with nothing on screen, and the request sat open with its
+  code printed nowhere. SSH now counts as no display, which routes it to the
+  console code.
+
 ### M7 — Managed-dispatch vertical slice
 
 - [ ] Register the three agents from M4 as managed workers.

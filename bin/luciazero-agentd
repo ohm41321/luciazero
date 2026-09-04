@@ -1,0 +1,100 @@
+#!/bin/sh
+# luciazero-agentd -- run the Agent Bus daemon from anywhere.
+#
+# luciazero-managed: agentd-launcher
+#
+# The daemon is a Python package that is neither on PATH nor pip-installed: it
+# lives in `agentd/` inside a checkout (ADR 0002 keeps it out of the npm
+# payload). This shim finds it from where the shim itself is, never from the
+# caller's working directory -- the working directory is meaningful to the
+# daemon, since `attach` records it as the session's, so this must not change
+# it the way `cd agentd && python3 -m luciazero_agentd` did.
+set -eu
+
+fail() { printf 'luciazero-agentd: %s\n' "$*" >&2; exit 127; }
+
+# Resolve this script through any symlinks. `readlink -f` is GNU-only, so the
+# loop is hand-rolled; every expansion is quoted, so a path with spaces (and
+# an installed copy reached through a symlink) resolves correctly.
+self="$0"
+hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  [ "$hops" -le 40 ] || fail "symlink loop while resolving $0"
+  target="$(readlink "$self")"
+  case "$target" in
+    /*) self="$target" ;;
+    *) self="$(dirname "$self")/$target" ;;
+  esac
+done
+here="$(cd "$(dirname "$self")" && pwd -P)"
+
+config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+home_file="${config_dir}/.luciazero-agentd-home"
+
+# Checkout layout wins over the recorded one: running `bin/luciazero-agentd`
+# out of a second clone must use that clone, not whichever one was installed.
+package_home=""
+if [ -n "${LUCIAZERO_AGENTD_HOME:-}" ]; then
+  package_home="${LUCIAZERO_AGENTD_HOME}"
+elif [ -d "${here}/../agentd/luciazero_agentd" ]; then
+  package_home="$(cd "${here}/.." && pwd -P)/agentd"
+elif [ -f "${home_file}" ]; then
+  package_home="$(cat "${home_file}")"
+fi
+
+if [ -z "${package_home}" ]; then
+  fail "cannot find the luciazero_agentd package.
+  It ships in a checkout of https://github.com/ohm41321/luciazero, not in the
+  npm package. Clone it and run ./install.sh from the checkout, or point
+  LUCIAZERO_AGENTD_HOME at its agentd/ directory."
+fi
+case "${package_home}" in
+  *"
+"*) fail "the package path contains a newline: ${package_home}" ;;
+esac
+if [ ! -d "${package_home}/luciazero_agentd" ]; then
+  fail "no luciazero_agentd package in ${package_home} (moved or deleted checkout?).
+  Re-run ./install.sh from the checkout, or set LUCIAZERO_AGENTD_HOME."
+fi
+
+# ADR 0002: try python3, then python, then the Windows launcher, and take the
+# first one that reports 3.10 or newer. A wrong pick here is worse than none:
+# the daemon would fail deep inside the package instead of at the door.
+usable() {
+  "$@" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+python=""
+for candidate in python3 python; do
+  if command -v "${candidate}" >/dev/null 2>&1 && usable "${candidate}"; then
+    python="${candidate}"
+    break
+  fi
+done
+if [ -z "${python}" ] && command -v py >/dev/null 2>&1 && usable py -3; then
+  python="py -3"
+fi
+[ -n "${python}" ] || fail "needs Python 3.10 or newer; tried python3, python and py -3"
+
+# The package path travels in an environment variable and is put on sys.path
+# by the interpreter itself. Two things this avoids, both of which let code
+# from the caller's working directory run instead of the daemon:
+#
+#   * PYTHONPATH is colon-separated, so a checkout at a path containing ":"
+#     would split into two entries, the tail of which resolves relative to the
+#     caller's directory.
+#   * `python -m pkg` puts the working directory FIRST on sys.path, ahead of
+#     PYTHONPATH, so a directory named luciazero_agentd next to the caller
+#     would shadow the real package.
+#
+# The variable is popped before the daemon does anything, so no provider
+# subprocess inherits it, and the -c program below is a fixed literal: nothing
+# a caller supplies is ever parsed as code.
+LUCIAZERO_AGENTD_PACKAGE="${package_home}"
+export LUCIAZERO_AGENTD_PACKAGE
+# ${python} is unquoted on purpose -- "py -3" is two words. The value is one of
+# this script's own literals, never anything a caller supplied.
+exec ${python} -c 'import os, sys, runpy
+sys.path = [entry for entry in sys.path if entry not in ("", ".", os.getcwd())]
+sys.path.insert(0, os.environ.pop("LUCIAZERO_AGENTD_PACKAGE"))
+runpy.run_module("luciazero_agentd", run_name="__main__", alter_sys=True)' "$@"

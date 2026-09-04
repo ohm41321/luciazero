@@ -190,6 +190,61 @@ Delivery-level retry limits (`attempts`, `max_attempts`) stay reserved for
 the dispatcher in M6: nothing retries by itself in the pull beta, so a retry
 limit here would be a number nothing could reach.
 
+## Managed dispatch (beta, M6)
+
+By default nothing starts a turn but you. Enrolling a managed worker is what
+lets the machine start one, so it is a human command and no bus tool can do it:
+
+```bash
+python3 -m luciazero_agentd worker add claude-reviewer other \
+    --cwd /path/to/worktree --max-attempts 3 --timeout 600 -- my-worker-command
+python3 -m luciazero_agentd worker list
+python3 -m luciazero_agentd dispatch --watch     # its own process, not the daemon
+```
+
+`worker pause` stops starting turns for one worker without forgetting it;
+`worker resume` starts again; `worker remove` drops it back to the pull beta.
+
+Each turn is a bound session like any other: the dispatcher mints a `managed`
+binding, hands the credential to the child through the environment or a `0600`
+file, and revokes it when the turn ends. So a managed worker cannot act as a
+peer, cannot spend an approval it was not handed, and never sees the shared
+daemon token. An agent whose terminal a person has bound is skipped entirely --
+`bind_terminal` refuses a managed binding on a human-owned agent, so this holds
+even if a dispatcher tries.
+
+The dispatcher never acknowledges a delivery or completes a task for a worker:
+those are the worker's own claims, made with the worker's own credential. When
+a turn ends it looks at what the worker actually did. A turn that exits cleanly
+without touching the bus is a failed attempt, not a completed one.
+
+| The turn | What happens |
+| --- | --- |
+| the worker moved its delivery on | the run is `completed` |
+| the delivery is untouched, attempts left | `retryable_failed`, and the next pass tries again |
+| attempts exhausted | `dead_letter` |
+| the provider binary is missing, or no adapter ships for it | `dead_letter` at once: retrying a configuration error is a loop with a bill |
+| the task is finished, cancelled, or stopped on a budget | `dead_letter` without starting anything |
+
+One lease per session means two dispatchers cannot resume the same provider
+session; taking a lease bumps the session's generation and fences whoever held
+it. A lease dies when it expires *or* when the process holding it is gone, so a
+killed dispatcher is recovered in seconds rather than at the end of a TTL. On
+start, the dispatcher settles what a killed one left: the run is `abandoned`,
+the orphaned provider's credential is revoked, the orphan is stopped, and the
+delivery goes back for one more attempt.
+
+Provider output goes to `runs/<run_id>.log` in the state directory, `0600`,
+capped, and scrubbed through the redaction contract with the daemon token and
+the run's own credential as literals before anything is written.
+
+`bus status` names every managed worker and every turn in flight.
+
+Not yet shipped: the Codex and Claude adapters. The contract and the loop are
+here and the `other` provider (any command) runs today; a worker enrolled as
+`codex` or `claude` dead-letters its delivery with `no_adapter` until those
+land.
+
 ## Recovery
 
 - **Daemon restart.** Stop it with Ctrl-C or `kill <pid>` and start it
@@ -233,6 +288,7 @@ stores; the bus never touches them.
 bash docs/assets/agent-bus-demo.sh        # fake provider, no quota, ~10 s
 ./test.sh --agent-bus-e2e                 # the same flow as a gate (also in --full)
 ./test.sh --agent-bus-workflow            # M5: task graph, stoppers, provenance
+./test.sh --agent-bus-dispatch            # M6: dispatcher killed mid-turn, recovered
 LZ_AGENT_BUS_LIVE=1 bash docs/assets/agent-bus-demo.sh --live   # real models, 6 turns
 bash docs/assets/agent-bus-demo.sh --live --dry-run             # print the plan only
 ```

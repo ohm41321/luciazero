@@ -8,7 +8,7 @@ Reserved-only structures (no logic behind them until the milestone named in
 the comment): ``sessions`` (provider session identity for resume, M5/M6 --
 terminal bindings live in their own table because SQLite cannot widen its
 ``state`` CHECK by ALTER), ``deliveries.attempts``,
-``deliveries.max_attempts``, ``runs``, ``leases``.
+``deliveries.max_attempts`` (M6).
 """
 
 from __future__ import annotations
@@ -284,11 +284,68 @@ ALTER TABLE artifacts ADD COLUMN trust TEXT NOT NULL DEFAULT 'asserted';
 """
 
 
+# M6: managed dispatch. `workers` says which agents the dispatcher may start
+# and how; `runs` is rebuilt (it was reserved and empty since M1) to record one
+# provider turn with the lease and generation it held. `leases` and
+# `sessions.generation`, also reserved since M1, come into use unchanged.
+SCHEMA_V5 = """
+CREATE TABLE workers (
+    agent_id              TEXT PRIMARY KEY REFERENCES agents(id),
+    provider              TEXT NOT NULL CHECK (provider IN ('codex', 'claude', 'other')),
+    command               TEXT NOT NULL,
+    cwd                   TEXT,
+    max_attempts          INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 10),
+    turn_timeout_seconds  INTEGER NOT NULL DEFAULT 600 CHECK (turn_timeout_seconds BETWEEN 10 AND 7200),
+    enabled               INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    enrolled_by           TEXT NOT NULL,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
+DROP TABLE runs;
+
+CREATE TABLE runs (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           TEXT NOT NULL UNIQUE,
+    agent_id     TEXT NOT NULL REFERENCES agents(id),
+    session_id   TEXT REFERENCES sessions(id),
+    binding_id   TEXT REFERENCES bindings(id),
+    lease_id     TEXT,
+    generation   INTEGER NOT NULL DEFAULT 0,
+    delivery_id  TEXT REFERENCES deliveries(id),
+    task_id      TEXT REFERENCES tasks(id),
+    attempt      INTEGER NOT NULL DEFAULT 1,
+    state        TEXT NOT NULL CHECK (state IN ('running', 'completed', 'failed', 'abandoned')),
+    exit_state   TEXT,
+    error        TEXT,
+    output_ref   TEXT,
+    -- The provider process this run started: a killed dispatcher orphans it,
+    -- and recovery needs to know what to revoke and what to stop.
+    provider_pid         INTEGER,
+    provider_started_at  TEXT,
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT
+);
+CREATE INDEX runs_agent ON runs (agent_id, seq);
+-- Partial index on the only rows the dispatcher scans on every pass.
+CREATE INDEX runs_live ON runs (state, seq) WHERE state = 'running';
+CREATE INDEX runs_delivery ON runs (delivery_id);
+
+-- A lease is dead when it expires OR when the process holding it is gone. The
+-- second test is what lets a killed dispatcher be recovered from in seconds
+-- instead of at the end of a TTL nobody is waiting out.
+ALTER TABLE leases ADD COLUMN holder_pid INTEGER;
+
+ALTER TABLE leases ADD COLUMN holder_started_at TEXT;
+"""
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
     (4, SCHEMA_V4),
+    (5, SCHEMA_V5),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

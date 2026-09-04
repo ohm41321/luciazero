@@ -31,12 +31,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from . import procinfo
+from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .statedir import (
     clear_endpoint,
@@ -56,7 +58,7 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
+from .store import APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
@@ -169,6 +171,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     for task in status.get("stopped_tasks") or []:
         dimension = clean(task.get("dimension") or "budget")
         print(f"  stopped task {clean(task['id'])}  spent its {dimension} budget: {clean(task['title'])}")
+    for worker in status.get("workers") or []:
+        state = "enabled" if worker["enabled"] else "paused"
+        print(f"  managed worker {clean(worker['agent_id']):<20} {clean(worker['provider']):<7} {state}")
+    for run in status.get("running_runs") or []:
+        print(f"  turn running    {clean(run['agent_id']):<20} attempt {run['attempt']}  since {clean(run['started_at'])}")
     unverified = status.get("unverified_agents") or []
     if unverified:
         print(f"unverified: {', '.join(clean(a) for a in unverified)} (no terminal binding; these sessions act as whoever they claim to be)")
@@ -241,6 +248,105 @@ def cmd_roster(args: argparse.Namespace) -> int:
         return 1
     print(f"agent {clean(record['id'])} ({clean(record['provider'])}, {clean(record['role'])}) is on the roster")
     return 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    """Human channel: enrol, list, pause, or remove a managed worker. Letting a
+    machine start turns for an agent is a decision with a person behind it, so
+    no bus tool can make it (ADR 0006)."""
+    state_dir = resolve_state_dir(args.state_dir)
+    store = _open_store("worker", state_dir)
+    if store is None:
+        return 2
+    who = f"human:{getpass.getuser()}"
+    try:
+        with store:
+            if args.worker_command == "list":
+                workers = store.list_workers()
+                if not workers:
+                    print("no managed workers; the bus runs pull-beta only")
+                for worker in workers:
+                    state = "enabled" if worker["enabled"] else "paused"
+                    print(f"  {clean(worker['agent_id']):<24} {clean(worker['provider']):<7} {state:<8} "
+                          f"attempts {worker['max_attempts']}  timeout {worker['turn_timeout_seconds']}s  "
+                          f"{clean(' '.join(worker['command']))}")
+                return 0
+            if args.worker_command == "add":
+                command = list(args.command)
+                if command and command[0] == "--":
+                    command = command[1:]  # argparse keeps the separator in a REMAINDER list
+                if not command:
+                    print("worker add: name the provider command after --", file=sys.stderr)
+                    return 2
+                worker = store.enrol_worker(
+                    args.agent_id, provider=args.provider, command=command, cwd=args.cwd,
+                    max_attempts=args.max_attempts, turn_timeout_seconds=args.timeout, by=who,
+                )
+                print(f"agent {clean(worker['agent_id'])} is a managed {clean(worker['provider'])} worker "
+                      f"({worker['max_attempts']} attempts, {worker['turn_timeout_seconds']}s per turn)")
+                print("the dispatcher starts its turns: luciazero-agentd dispatch --watch")
+                return 0
+            if args.worker_command in ("pause", "resume"):
+                worker = store.set_worker_enabled(args.agent_id, args.worker_command == "resume", by=who)
+                print(f"agent {clean(worker['agent_id'])} is {'enabled' if worker['enabled'] else 'paused'}")
+                return 0
+            store.remove_worker(args.agent_id, by=who)
+            print(f"agent {clean(args.agent_id)} is no longer a managed worker")
+            return 0
+    except NotFound as exc:
+        print(f"worker: {clean(exc)}", file=sys.stderr)
+        return 2
+    except StoreError as exc:
+        print(f"worker: {clean(exc)}", file=sys.stderr)
+        return 1
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    """Start managed turns. Runs in its own process: it spawns models, and a
+    crash here must not take the bus down with it."""
+    state_dir = resolve_state_dir(args.state_dir)
+    try:
+        engine = Dispatcher(state_dir, lease_ttl_seconds=args.lease_ttl)
+    except DispatchError as exc:
+        print(f"dispatch: {clean(exc)}", file=sys.stderr)
+        return 2
+    recovered = engine.recover_all()
+    for run in recovered:
+        print(f"recovered run {clean(run['id'])} for {clean(run['agent_id'])}: {clean(run['delivery_state'])}", file=sys.stderr)
+    passes = None if args.watch else 1
+
+    def _stop_dispatch(*_: object) -> None:
+        # Without this a SIGTERM skips every cleanup below and leaves the turn
+        # in flight holding a live credential -- the same defect M4.5 fixed for
+        # `run`. The handler stops the provider; unwinding does the rest.
+        engine.cancel_in_flight()
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, _stop_dispatch)
+    try:
+        for summary in _dispatch_passes(engine, passes=passes, interval=args.interval):
+            line = f"{clean(summary['agent_id'])}  delivery {clean(summary['delivery_id'])}  {clean(summary['outcome'])}"
+            if summary.get("delivery_state"):
+                line += f" -> {clean(summary['delivery_state'])}"
+            if summary.get("error"):
+                line += f"  ({clean(summary['error'])})"
+            print(line, flush=True)
+    except KeyboardInterrupt:
+        print("dispatch: stopped", file=sys.stderr)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    return 0
+
+
+def _dispatch_passes(engine: "Dispatcher", *, passes: Optional[int], interval: float) -> Iterator[dict[str, Any]]:
+    done = 0
+    while passes is None or done < passes:
+        for summary in engine.tick():
+            yield summary
+        done += 1
+        if passes is not None and done >= passes:
+            return
+        time.sleep(interval)
 
 
 def _open_store(command: str, state_dir: Path) -> Optional[Store]:
@@ -562,7 +668,20 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+def split_command(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Take everything after the first `--` as the provider command, before
+    argparse sees it. argparse's REMAINDER swallows any of our own flags that
+    follow a positional, so `worker add A other --cwd X -- cmd` silently made
+    `--cwd` part of the command; splitting first makes the order irrelevant."""
+    if "--" in argv:
+        index = argv.index("--")
+        return argv[:index], argv[index + 1:]
+    return argv, []
+
+
 def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    argv, provider_command = split_command(argv)
     parser = argparse.ArgumentParser(prog="luciazero-agentd", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     serve = sub.add_parser("serve", help="run the daemon in the foreground")
@@ -613,7 +732,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     # REMAINDER swallows everything after the command, options included, so
     # every flag of `run` must come before the `--`.
     run.add_argument("command", nargs=argparse.REMAINDER, help="-- then the provider command, for example: run --agent x -- claude")
-    run.set_defaults(func=cmd_run)
+    run.set_defaults(func=cmd_run, takes_provider_command=True)
     detach = sub.add_parser("detach", help="end a binding (this terminal's by default)")
     detach.add_argument("--agent", default=None)
     detach.add_argument("--binding", default=None)
@@ -639,7 +758,35 @@ def main(argv: Optional[list[str]] = None) -> int:
     add.add_argument("--capability", action="append", default=[])
     add.add_argument("--state-dir", default=None)
     add.set_defaults(func=cmd_roster)
+    worker = sub.add_parser("worker", help="managed workers the dispatcher may start (human channel)")
+    worker_sub = worker.add_subparsers(dest="worker_command", required=True)
+    worker_add = worker_sub.add_parser("add", help="enrol an agent as a managed worker: luciazero-agentd worker add AGENT PROVIDER [flags] -- COMMAND")
+    worker_add.add_argument("agent_id")
+    worker_add.add_argument("provider", choices=("codex", "claude", "other"))
+    worker_add.add_argument("--cwd", default=None, help="absolute path the turn runs in")
+    worker_add.add_argument("--max-attempts", type=int, default=3, dest="max_attempts")
+    worker_add.add_argument("--timeout", type=int, default=600, help="seconds one turn may take")
+    worker_add.add_argument("--state-dir", default=None)
+    worker_add.add_argument("command", nargs="*", default=[], help="-- then the provider command")
+    worker_add.set_defaults(func=cmd_worker, takes_provider_command=True)
+    for name, help_text in (("list", "show managed workers"), ("pause", "stop starting turns for one worker"),
+                            ("resume", "start turns for one worker again"), ("remove", "drop a managed worker")):
+        entry = worker_sub.add_parser(name, help=help_text)
+        if name != "list":
+            entry.add_argument("agent_id")
+        entry.add_argument("--state-dir", default=None)
+        entry.set_defaults(func=cmd_worker)
+    dispatch = sub.add_parser("dispatch", help="start managed turns for queued work")
+    dispatch.add_argument("--watch", action="store_true", help="keep polling instead of one pass")
+    dispatch.add_argument("--interval", type=float, default=2.0)
+    dispatch.add_argument("--lease-ttl", type=int, default=LEASE_TTL_SECONDS, dest="lease_ttl")
+    dispatch.add_argument("--state-dir", default=None)
+    dispatch.set_defaults(func=cmd_dispatch)
     args = parser.parse_args(argv)
+    # argparse's own subcommand dest is also "command", so the tail is handed
+    # only to the parsers that declared they take one.
+    if provider_command and getattr(args, "takes_provider_command", False):
+        args.command = provider_command
     return int(args.func(args))
 
 

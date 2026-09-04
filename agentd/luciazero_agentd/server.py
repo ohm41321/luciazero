@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from . import procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
-from .store import ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
+from .store import ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "luciazero-agentd", "version": __version__}
@@ -145,7 +145,11 @@ def _t_message_send(store: Store, a: dict[str, Any]) -> Any:
 
 
 def _t_message_inbox(store: Store, a: dict[str, Any]) -> Any:
-    return store.inbox(a["agent_id"], states=tuple(a.get("states", ["queued"])), limit=a.get("limit", 50), after=a.get("after", 0))
+    # The default is every unread state, which includes the two a managed turn
+    # passes through: a worker the dispatcher started has to see the work it
+    # was started for.
+    states = tuple(a["states"]) if a.get("states") else PENDING_DELIVERY_STATES
+    return store.inbox(a["agent_id"], states=states, limit=a.get("limit", 50), after=a.get("after", 0))
 
 
 def _t_message_ack(store: Store, a: dict[str, Any]) -> Any:
@@ -250,7 +254,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "agent_list", "title": "List agents", "description": "List registered agents with their last heartbeat.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_list},
     {"name": "agent_heartbeat", "title": "Heartbeat", "description": "Refresh an agent's last-seen time.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_agent_heartbeat},
     {"name": "message_send", "title": "Send message", "description": "Send one typed message to another agent. Large content goes into an artifact; payload is capped at 64 KiB. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"sender": ID_SCHEMA, "recipient": ID_SCHEMA, "kind": {"type": "string", "enum": list(MESSAGE_KINDS)}, "payload": OBJECT_SCHEMA, "correlation_id": ID_SCHEMA, "reply_to": ID_SCHEMA, "idempotency_key": ID_SCHEMA}, ["sender", "recipient", "kind", "payload"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_send},
-    {"name": "message_inbox", "title": "Read inbox", "description": "List deliveries addressed to an agent in stable order. Pass the returned next_after back as after to page.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "states": {"type": "array", "items": {"type": "string", "enum": list(DELIVERY_STATES)}, "maxItems": 8}, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_message_inbox},
+    {"name": "message_inbox", "title": "Read inbox", "description": "List deliveries addressed to an agent in stable order. Unread work by default, which includes a delivery a dispatcher has started a turn for. Pass the returned next_after back as after to page.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "states": {"type": "array", "items": {"type": "string", "enum": list(DELIVERY_STATES)}, "maxItems": 8}, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_message_inbox},
     {"name": "message_ack", "title": "Acknowledge delivery", "description": "Move a delivery from queued to acknowledged (read), or from acknowledged to completed (handled). Only the recipient may do this.", "inputSchema": _schema({"delivery_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "outcome": {"type": "string", "enum": ["acknowledged", "completed"]}}, ["delivery_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_ack},
     {"name": "task_create", "title": "Create task", "description": "Create a task, optionally pre-assigned. depends_on names tasks that already exist; a task with an unfinished prerequisite starts waiting and the daemon opens it when the last prerequisite completes. budget sets per-task limits (seconds, turns, tokens, cost_usd) the daemon stops the task on. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"title": {"type": "string", "minLength": 1, "maxLength": 500}, "created_by": ID_SCHEMA, "payload": OBJECT_SCHEMA, "assigned_to": ID_SCHEMA, "priority": {"type": "integer", "minimum": -100, "maximum": 100}, "idempotency_key": ID_SCHEMA, "requires_worktree": {"type": "boolean"}, "depends_on": DEPENDS_SCHEMA, "budget": BUDGET_SCHEMA}, ["title", "created_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_create},
     {"name": "task_list", "title": "List tasks", "description": "List tasks in stable order, filtered by state and assignee.", "inputSchema": _schema({"state": {"type": "string", "enum": list(TASK_STATES)}, "assigned_to": ID_SCHEMA, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, []), "annotations": {"readOnlyHint": True}, "handler": _t_task_list},

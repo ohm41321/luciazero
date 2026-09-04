@@ -73,6 +73,14 @@ async function status(json) {
     const needs = task.requires_worktree ? "  needs worktree" : "";
     console.log(`  open task ${clean(task.id)}  p${Number(task.priority)}  ${clean(task.assigned_to || "unassigned")}: ${clean(task.title)}${needs}`);
   }
+  const workers = Array.isArray(body.workers) ? body.workers : [];
+  for (const worker of workers) {
+    console.log(`  managed worker ${clean(worker.agent_id).padEnd(20)} ${clean(worker.provider).padEnd(7)} ${worker.enabled ? "enabled" : "paused"}`);
+  }
+  const running = Array.isArray(body.running_runs) ? body.running_runs : [];
+  for (const run of running) {
+    console.log(`  turn running    ${clean(run.agent_id).padEnd(20)} attempt ${Number(run.attempt)}  since ${clean(run.started_at)}`);
+  }
   const stopped = Array.isArray(body.stopped_tasks) ? body.stopped_tasks : [];
   for (const task of stopped) {
     console.log(`  stopped task ${clean(task.id)}  spent its ${clean(task.dimension || "budget")} budget: ${clean(task.title)}`);

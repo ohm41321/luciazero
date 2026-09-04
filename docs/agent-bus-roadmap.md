@@ -742,10 +742,18 @@ the commit the implementer published still names the implementer after the
 reviewer cites it. It also fails if any write in the run carries
 `trust: asserted`, so M4.5's invariant keeps holding here.
 
-### M6 — Dispatcher and provider adapters
+### M6 — Dispatcher and provider adapters (core complete 2026-09-04, adapters in progress)
 
-- [ ] Define one adapter contract for start, resume, cancel, status, and event
-  streaming.
+The bus stops being a queue somebody reads and becomes a thing that runs
+models. ADR 0006 states the constraint before the design: managed dispatch
+adds no path around terminal binding, identity, or approval provenance, and a
+task M5 stopped stays stopped. The dispatcher core, its records, and the
+offline gate are done; the two provider adapters are the remaining slice.
+
+- [x] Define one adapter contract for start, resume, cancel, status, and event
+  streaming (`adapters.py`: `TurnRequest`, `TurnResult`, `Adapter`, and
+  `ProcessAdapter`, which runs any command and is what the offline gate uses).
+  An adapter never touches the database, so it cannot invent progress.
 - [ ] Codex adapter: start threads with `approvalPolicy: "on-request"` and
   answer approval requests per the user's configured policy; `"never"` fails
   MCP tool calls before they reach the bus (ADR 0001 null result 3).
@@ -755,30 +763,88 @@ reviewer cites it. It also fails if any write in the run carries
 - [ ] Implement the Codex App Server adapter.
 - [ ] Add `codex exec resume` as a tested fallback.
 - [ ] Implement the Claude print-mode resume adapter.
-- [ ] Stream provider output into bounded run logs, routed through
-  `luciazero_agentd.redact.Redactor` with the daemon token as a literal
-  before anything is written (ADR 0003: provider output is in the redaction
-  contract, and no adapter exists before this milestone).
-- [ ] Add lease acquisition, renewal, expiry, and generation fencing on the
-  columns reserved in M1.
-- [ ] Renew the session lease only while the owned process is alive.
-- [ ] Prevent concurrent resume of the same provider session.
-- [ ] Add retry limits and dead-letter transitions.
-- [ ] Distinguish retryable provider errors from permanent configuration
-  failures.
-- [ ] Recover orphaned `processing` deliveries after daemon restart.
+- [x] Stream provider output into bounded run logs (`runlog.py`), routed
+  through `luciazero_agentd.redact.Redactor` with the daemon token and the
+  run's own credential as literals before anything is written, `0600`, head
+  and tail kept with the dropped byte count named.
+- [x] Add lease acquisition, renewal, expiry, and generation fencing on the
+  columns reserved in M1. Taking a session lease bumps the session's
+  generation; a write from a stale generation is refused with
+  `GenerationFenced`.
+- [x] Renew the session lease only while the owned process is alive, with the
+  same fail-closed liveness test M4.5 uses. A lease also dies when the process
+  holding it is gone, which is what makes a killed dispatcher recoverable in
+  seconds instead of at the end of a TTL.
+- [x] Prevent concurrent resume of the same provider session: the lease is the
+  record, not the dispatcher's care, and a second holder is refused.
+- [x] Add retry limits and dead-letter transitions: `attempts` is counted
+  before the provider starts, so a killed dispatcher costs one attempt rather
+  than none, and the delivery reaches exactly one outcome.
+- [x] Distinguish retryable provider errors from permanent configuration
+  failures: a missing binary, an unusable command, or a provider with no
+  adapter dead-letters at once; a non-zero exit or a timeout retries.
+- [x] Recover orphaned `dispatched`/`processing` deliveries after a restart,
+  and revoke the credential the orphaned provider still holds -- a killed
+  dispatcher skips its own cleanup, which is the same defect the M4.5 review
+  found in `run`.
+- [x] Managed turns are bound sessions: the dispatcher mints a `managed`
+  binding per turn and revokes it when the turn ends, and `bind_terminal`
+  refuses a managed binding on an agent a human terminal holds, so ADR 0001's
+  ownership rule is a property of the records.
+- [x] The dispatcher never acknowledges a delivery or completes a task for a
+  worker. A turn that exits cleanly without touching the bus is a failed
+  attempt, which is what stops a dispatched turn from manufacturing a result
+  nobody produced.
+- [x] `trust` gains `system` for the dispatcher's own bookkeeping: borrowing
+  `human` would make the log say a person did what a machine did.
+- [x] Human commands: `worker add|list|pause|resume|remove` and `dispatch`
+  (`--once`/`--watch`), plus worker and running-turn lines on both status
+  printers. Enrolling a worker is the decision to let a machine start turns,
+  so no bus tool can make it.
 - [ ] Test process crash and restart during every delivery transition,
-  including `dispatched` and `processing`.
+  including `dispatched` and `processing` (the gate kills the dispatcher
+  mid-turn; the kill-at-commit matrix for the new transitions is still to
+  come).
+- [x] Independent adversarial review of the dispatcher core (two `reviewer`
+  agents, semantics and security routes; 2 blockers, 3 majors, 1 minor, all
+  fixed with regressions): counting the attempt and recording the run were two
+  transactions, so a kill between them stranded the delivery in `dispatched`
+  where neither recovery nor dispatch could see it, with an attempt spent --
+  they are now one transaction, and a sweep settles any delivery left mid-turn
+  with no live run; the lease TTL was a fixed five minutes while a turn may run
+  for up to two hours, so a second dispatcher could reclaim the session
+  mid-turn and run a concurrent one -- the lease now outlives the turn it
+  covers and settlement is fenced on it; a `SIGTERM` to `dispatch` skipped
+  every cleanup and left an orphaned provider holding a live credential, the
+  same defect M4.5 fixed in `run`; an exception anywhere in a turn took the
+  whole loop down and left the run `running`; run-log redaction was applied per
+  chunk, so a secret printed across two lines survived in the clear. The minor:
+  `hasattr(args, "command")` is always true because argparse's own subcommand
+  dest is `command`, so the provider-command override was scoped by accident
+  rather than by design.
 
 Exit gate:
 
 ```bash
-./test.sh --agent-bus-dispatch
+./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
+./test.sh --agent-bus-store      # 240 tests, includes the dispatch suite
 ```
 
 The suite must kill the dispatcher during a run, restart it, and show that the
 message reaches one completed logical outcome without concurrent session use.
-Expired leases must be recoverable and stale generations must be fenced.
+Expired leases must be recoverable and stale generations must be fenced. The
+gate run does all of it: a turn is killed with `SIGKILL` while its provider is
+running, a second dispatcher is refused the lease while the turn is in flight,
+the next dispatcher abandons the run and revokes the orphan's credential, the
+work completes on the retry at exactly two attempts, a turn that exits cleanly
+without touching the bus is recorded as a failed attempt, a stale generation is
+fenced, and a lease whose holder is gone is reclaimed rather than waited out.
+It also fails if any write carries `trust: asserted`, if the worker's writes
+are not `bound`, or if a lease or managed credential outlives its turn.
+
+The milestone closes when the Codex and Claude adapters ship under the same
+contract; until then a worker enrolled as either provider dead-letters with
+`no_adapter`, and only the `other` provider runs.
 
 ### M7 — Managed-dispatch vertical slice
 

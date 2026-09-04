@@ -64,6 +64,23 @@ APPROVAL_TTL_SECONDS = 900
 # A terminal binding outlives a long working session but not a weekend; the
 # credential dies with it (ADR 0004).
 BINDING_TTL_SECONDS = 12 * 3600
+# ADR 0006 adds "system": the dispatcher's own bookkeeping is neither a human's
+# command nor a bound session's claim, and borrowing "human" for it would make
+# the log say a person did what a machine did.
+TRUST_LABELS = ("bound", "human", "system", "asserted")
+LEASE_KINDS = ("session", "task")
+LEASE_TTL_SECONDS = 300
+RUN_STATES = ("running", "completed", "failed", "abandoned")
+# A delivery the dispatcher may still start: never started, or a failed attempt
+# with tries left.
+DISPATCHABLE_DELIVERY_STATES = ("queued", "retryable_failed")
+RUNNING_DELIVERY_STATES = ("dispatched", "processing")
+# Everything the recipient has not read yet. A dispatched or processing
+# delivery is still unread work: the dispatcher marks that a turn is running
+# for it, which must not hide it from the worker that turn started.
+PENDING_DELIVERY_STATES = ("queued", "dispatched", "processing")
+MAX_WORKER_COMMAND = 32
+DEFAULT_TURN_TIMEOUT_SECONDS = 600
 BINDING_STATES = ("active", "revoked", "stale")
 OWNERSHIPS = ("human", "managed")
 MAX_PAYLOAD_BYTES = 64 * 1024
@@ -119,6 +136,16 @@ class BudgetExceeded(ConflictError):
 
 class ConversationLimit(ConflictError):
     """The conversation hit its hop cap or outlived its TTL."""
+
+
+class GenerationFenced(ConflictError):
+    """A run holding a stale generation tried to write; a newer lease owns the
+    session now."""
+
+
+class MootWork(ConflictError):
+    """The work behind a delivery is finished, cancelled, or stopped, so there
+    is nothing to start."""
 
 
 class UnsafeReference(ValidationError):
@@ -370,8 +397,9 @@ class Store:
         self._redactor = redactor or Redactor()
         # How much the caller's identity is worth on this connection (ADR
         # 0004): "bound" only for a session that presented a live credential,
-        # "human" for the user's own terminal commands. The default is the
-        # weakest label, so nothing reads as proven by accident.
+        # "human" for the user's own terminal commands, "system" for the
+        # dispatcher's own bookkeeping (ADR 0006). The default is the weakest
+        # label, so nothing reads as proven by accident.
         self.trust: str = "asserted"
 
     # ------------------------------------------------------------------ setup
@@ -733,12 +761,16 @@ class Store:
         self,
         agent_id: str,
         *,
-        states: Sequence[str] = ("queued",),
+        states: Sequence[str] = PENDING_DELIVERY_STATES,
         limit: int = 50,
         after: int = 0,
     ) -> dict[str, Any]:
         """Deliveries for ``agent_id`` in stable ``seq`` order with cursor
-        pagination: pass the returned ``next_after`` back as ``after``."""
+        pagination: pass the returned ``next_after`` back as ``after``.
+
+        The default is everything unread, which includes the two states a
+        managed turn passes through: a worker the dispatcher started must see
+        the work it was started for."""
         _check_id(agent_id, "agent id", self._redactor)
         _check_int(limit, 1, 500, "limit")
         _check_int(after, 0, 2**62, "after")
@@ -762,9 +794,10 @@ class Store:
             "has_more": len(rows) > limit,
         }
 
-    def _transition_delivery(self, delivery_id: str, agent_id: str, *, from_state: str, to_state: str, stamp: str, event: str) -> dict[str, Any]:
+    def _transition_delivery(self, delivery_id: str, agent_id: str, *, from_state: Sequence[str], to_state: str, stamp: str, event: str) -> dict[str, Any]:
         _check_id(delivery_id, "delivery id", self._redactor)
         _check_id(agent_id, "agent id", self._redactor)
+        allowed = (from_state,) if isinstance(from_state, str) else tuple(from_state)
         with self._tx(f"delivery_{to_state}"):
             row = self._conn.execute("SELECT state, recipient_agent_id FROM deliveries WHERE id = ?", (delivery_id,)).fetchone()
             if row is None:
@@ -772,24 +805,26 @@ class Store:
             now = utcnow()
             cur = self._conn.execute(
                 f"""UPDATE deliveries SET state = ?, {stamp} = ?, acknowledged_by = COALESCE(acknowledged_by, ?), updated_at = ?
-                    WHERE id = ? AND state = ? AND recipient_agent_id = ?""",
-                (to_state, now, agent_id, now, delivery_id, from_state, agent_id),
+                    WHERE id = ? AND state IN ({', '.join('?' * len(allowed))}) AND recipient_agent_id = ?""",
+                (to_state, now, agent_id, now, delivery_id, *allowed, agent_id),
             )
             if cur.rowcount != 1:
                 raise ConflictError(
                     f"delivery {delivery_id!r} is {row['state']} for {row['recipient_agent_id']!r}; "
-                    f"{agent_id!r} cannot move it from {from_state} to {to_state}"
+                    f"{agent_id!r} cannot move it from {' or '.join(allowed)} to {to_state}"
                 )
             self._event(agent_id, event, "delivery", delivery_id, {"from": from_state, "to": to_state})
         return self.get_delivery(delivery_id)
 
     def ack_delivery(self, delivery_id: str, agent_id: str) -> dict[str, Any]:
-        """queued -> acknowledged: the recipient has read the message."""
-        return self._transition_delivery(delivery_id, agent_id, from_state="queued", to_state="acknowledged", stamp="acknowledged_at", event="delivery.acknowledged")
+        """unread -> acknowledged: the recipient has read the message. A
+        delivery a dispatcher is running a turn for is still unread, and the
+        worker acknowledges it exactly as it would in the pull beta."""
+        return self._transition_delivery(delivery_id, agent_id, from_state=PENDING_DELIVERY_STATES, to_state="acknowledged", stamp="acknowledged_at", event="delivery.acknowledged")
 
     def complete_delivery(self, delivery_id: str, agent_id: str) -> dict[str, Any]:
         """acknowledged -> completed: the recipient has finished handling it."""
-        return self._transition_delivery(delivery_id, agent_id, from_state="acknowledged", to_state="completed", stamp="completed_at", event="delivery.completed")
+        return self._transition_delivery(delivery_id, agent_id, from_state=("acknowledged",), to_state="completed", stamp="completed_at", event="delivery.completed")
 
     def get_delivery(self, delivery_id: str) -> dict[str, Any]:
         record = _row(self._conn.execute("SELECT * FROM deliveries WHERE id = ?", (delivery_id,)).fetchone())
@@ -1660,6 +1695,17 @@ class Store:
         binding_id = new_id("bind")
         with self._tx("bind_terminal"):
             self._require_agent(agent_id)
+            # ADR 0001: a human-owned session is out of the dispatcher's reach.
+            # Binding replaces whatever the agent had, so without this the
+            # dispatcher could take an agent away from the terminal the user is
+            # sitting in front of, which is the one thing ownership promises.
+            if ownership == "managed":
+                current = self.binding_of(agent_id)
+                if current is not None and current["ownership"] == "human":
+                    raise ConflictError(
+                        f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
+                        "the dispatcher never takes over a session the user owns"
+                    )
             now = datetime.now(timezone.utc)
             stamp = now.isoformat(timespec="microseconds")
             expires = (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="microseconds")
@@ -1829,6 +1875,613 @@ class Store:
         record.pop("credential_hash", None)
         return record
 
+    # ------------------------------------------------- managed dispatch (M6)
+    def enrol_worker(
+        self,
+        agent_id: str,
+        *,
+        provider: str,
+        command: Sequence[str],
+        cwd: Optional[str] = None,
+        max_attempts: int = 3,
+        turn_timeout_seconds: int = DEFAULT_TURN_TIMEOUT_SECONDS,
+        enabled: bool = True,
+        by: str,
+    ) -> dict[str, Any]:
+        """Record that an agent may be started by the dispatcher, and how.
+        Enrolling is a human act (ADR 0006): nothing on the bus can add a
+        worker, because that is the decision to let a machine start turns."""
+        _check_id(agent_id, "agent id", self._redactor)
+        _check_enum(provider, PROVIDERS, "provider")
+        by = self.redact(_check_text(by, "by", 128))
+        if not isinstance(command, (list, tuple)) or not command:
+            raise ValidationError("command must be a non-empty array of arguments")
+        if len(command) > MAX_WORKER_COMMAND:
+            raise ValidationError(f"command carries at most {MAX_WORKER_COMMAND} arguments, got {len(command)}")
+        argv = [_check_text(part, "command argument", 1024) for part in command]
+        for part in argv:
+            leaked = self._redactor.scan(part)
+            if leaked:
+                # A command is executed verbatim, so it cannot be scrubbed
+                # without changing what runs; it is refused instead.
+                raise UnsafeReference(f"worker command carries a secret-shaped value ({', '.join(sorted(set(leaked)))}); pass it through the environment instead")
+        if cwd is not None:
+            cwd = _check_path_arg(cwd)
+        _check_int(max_attempts, 1, 10, "max_attempts")
+        _check_int(turn_timeout_seconds, 10, 7200, "turn_timeout_seconds")
+        if not isinstance(enabled, bool):
+            raise ValidationError("enabled must be a boolean")
+        with self._tx("enrol_worker"):
+            self._require_agent(agent_id)
+            now = utcnow()
+            self._conn.execute(
+                """INSERT INTO workers (agent_id, provider, command, cwd, max_attempts, turn_timeout_seconds, enabled, enrolled_by, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (agent_id) DO UPDATE SET
+                       provider = excluded.provider, command = excluded.command, cwd = excluded.cwd,
+                       max_attempts = excluded.max_attempts, turn_timeout_seconds = excluded.turn_timeout_seconds,
+                       enabled = excluded.enabled, enrolled_by = excluded.enrolled_by, updated_at = excluded.updated_at""",
+                (agent_id, provider, json.dumps(argv), cwd, max_attempts, turn_timeout_seconds, int(enabled), by, now, now),
+            )
+            self._event(by, "worker.enrolled", "worker", agent_id, {"provider": provider, "enabled": enabled, "max_attempts": max_attempts})
+        return self.get_worker(agent_id)
+
+    def get_worker(self, agent_id: str) -> dict[str, Any]:
+        record = _row(self._conn.execute("SELECT * FROM workers WHERE agent_id = ?", (agent_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"agent {agent_id!r} is not a managed worker")
+        record["command"] = json.loads(record["command"])
+        record["enabled"] = bool(record["enabled"])
+        return record
+
+    def list_workers(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
+        clause = " WHERE enabled = 1" if enabled_only else ""
+        rows = self._conn.execute(f"SELECT agent_id FROM workers{clause} ORDER BY agent_id").fetchall()
+        return [self.get_worker(row["agent_id"]) for row in rows]
+
+    def set_worker_enabled(self, agent_id: str, enabled: bool, *, by: str) -> dict[str, Any]:
+        """The user's stop button: a disabled worker keeps its enrolment and
+        its queue, and nothing starts it."""
+        if not isinstance(enabled, bool):
+            raise ValidationError("enabled must be a boolean")
+        by = self.redact(_check_text(by, "by", 128))
+        with self._tx("set_worker_enabled"):
+            cur = self._conn.execute("UPDATE workers SET enabled = ?, updated_at = ? WHERE agent_id = ?", (int(enabled), utcnow(), agent_id))
+            if cur.rowcount != 1:
+                raise NotFound(f"agent {agent_id!r} is not a managed worker")
+            self._event(by, "worker.enabled" if enabled else "worker.disabled", "worker", agent_id, {})
+        return self.get_worker(agent_id)
+
+    def remove_worker(self, agent_id: str, *, by: str) -> None:
+        by = self.redact(_check_text(by, "by", 128))
+        with self._tx("remove_worker"):
+            cur = self._conn.execute("DELETE FROM workers WHERE agent_id = ?", (agent_id,))
+            if cur.rowcount != 1:
+                raise NotFound(f"agent {agent_id!r} is not a managed worker")
+            self._event(by, "worker.removed", "worker", agent_id, {})
+
+    # ----------------------------------------------------- managed sessions
+    def ensure_session(self, agent_id: str, *, provider: str, ownership: str = "managed", cwd: Optional[str] = None) -> dict[str, Any]:
+        """The provider session a managed worker resumes into. One open row per
+        agent and ownership: ADR 0001 keeps human sessions out of the
+        dispatcher's reach, so the two never share a record."""
+        _check_id(agent_id, "agent id", self._redactor)
+        _check_enum(provider, PROVIDERS, "provider")
+        _check_enum(ownership, OWNERSHIPS, "ownership")
+        with self._tx("ensure_session"):
+            self._require_agent(agent_id)
+            row = self._conn.execute(
+                "SELECT id FROM sessions WHERE agent_id = ? AND ownership = ? AND state != 'closed' ORDER BY created_at LIMIT 1",
+                (agent_id, ownership),
+            ).fetchone()
+            if row is not None:
+                session_id = str(row["id"])
+            else:
+                session_id = new_id("ses")
+                now = utcnow()
+                self._conn.execute(
+                    """INSERT INTO sessions (id, agent_id, provider, ownership, cwd, state, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 'idle', ?, ?)""",
+                    (session_id, agent_id, provider, ownership, cwd, now, now),
+                )
+                self._event(agent_id, "session.created", "session", session_id, {"ownership": ownership, "provider": provider})
+        return self.get_session(session_id)
+
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        record = _row(self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"session {session_id!r} does not exist")
+        return record
+
+    def record_provider_session(self, session_id: str, *, provider_session_id: str, generation: int) -> dict[str, Any]:
+        """Keep the provider's own session id (a Codex thread, a Claude
+        session) so the next turn resumes instead of starting over. Fenced:
+        a run whose generation is stale no longer speaks for this session."""
+        _check_id(session_id, "session id", self._redactor)
+        provider_session_id = _check_text(provider_session_id, "provider session id", 256)
+        with self._tx("record_provider_session"):
+            self._fence_session(session_id, generation, action="record_provider_session")
+            self._conn.execute(
+                "UPDATE sessions SET provider_session_id = ?, state = 'active', updated_at = ? WHERE id = ?",
+                (provider_session_id, utcnow(), session_id),
+            )
+            self._event("dispatcher", "session.recorded", "session", session_id, {"generation": generation})
+        return self.get_session(session_id)
+
+    def _fence_session(self, session_id: str, generation: Any, *, action: str) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if row is None:
+            raise NotFound(f"session {session_id!r} does not exist")
+        _check_int(generation, 0, 2**62, "generation")
+        if int(row["generation"]) != int(generation):
+            raise GenerationFenced(
+                f"{action} refused: session {session_id!r} is at generation {row['generation']}, this run holds {generation}"
+            )
+        return dict(row)
+
+    # ---------------------------------------------------------------- leases
+    def _lease_dead(self, row: Any, now: str, alive: Optional[Callable[[Optional[int], Optional[str]], bool]]) -> Optional[str]:
+        """Why a lease no longer holds, or None. A lease dies when it expires
+        or when the process that took it is gone -- the second test is what
+        makes a killed dispatcher recoverable in seconds instead of at the end
+        of a TTL nobody is waiting out."""
+        if row["expires_at"] <= now:
+            return "expired"
+        if alive is not None and row["holder_pid"] is not None and not alive(int(row["holder_pid"]), row["holder_started_at"]):
+            return "holder gone"
+        return None
+
+    def acquire_lease(
+        self,
+        kind: str,
+        resource_id: str,
+        *,
+        holder: str,
+        ttl_seconds: int = LEASE_TTL_SECONDS,
+        holder_pid: Optional[int] = None,
+        holder_started_at: Optional[str] = None,
+        session_id: Optional[str] = None,
+        alive: Optional[Callable[[Optional[int], Optional[str]], bool]] = procinfo.alive,
+    ) -> dict[str, Any]:
+        """Take the one lease on a resource, or refuse. Taking a session lease
+        bumps that session's generation, which fences whatever held it before:
+        two dispatchers cannot resume one provider session, and the loser finds
+        out on its next write rather than by corrupting the first one's run."""
+        _check_enum(kind, LEASE_KINDS, "lease kind")
+        _check_id(resource_id, "resource id", self._redactor)
+        holder = self.redact(_check_text(holder, "holder", 128))
+        _check_int(ttl_seconds, 1, 86400, "ttl_seconds")
+        if holder_pid is not None:
+            _check_int(holder_pid, 1, 2**31, "holder_pid")
+        with self._tx("acquire_lease"):
+            now = utcnow()
+            row = self._conn.execute("SELECT * FROM leases WHERE kind = ? AND resource_id = ?", (kind, resource_id)).fetchone()
+            if row is not None:
+                dead = self._lease_dead(row, now, alive)
+                if dead is None:
+                    raise ConflictError(
+                        f"lease on {kind} {resource_id!r} is held by {row['holder']!r} until {row['expires_at']}"
+                    )
+                self._conn.execute("DELETE FROM leases WHERE id = ?", (row["id"],))
+                self._event(holder, "lease.reclaimed", "lease", str(row["id"]), {"kind": kind, "resource": resource_id, "was": row["holder"], "reason": dead})
+            generation = 0
+            if session_id is not None:
+                if self._conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone() is None:
+                    raise NotFound(f"session {session_id!r} does not exist")
+                self._conn.execute("UPDATE sessions SET generation = generation + 1, updated_at = ? WHERE id = ?", (now, session_id))
+                generation = int(self._conn.execute("SELECT generation FROM sessions WHERE id = ?", (session_id,)).fetchone()["generation"])
+            lease_id = new_id("lse")
+            self._conn.execute(
+                """INSERT INTO leases (id, kind, resource_id, holder, generation, expires_at, created_at, holder_pid, holder_started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (lease_id, kind, resource_id, holder, generation, _plus_seconds(now, ttl_seconds), now, holder_pid, holder_started_at),
+            )
+            self._event(holder, "lease.acquired", "lease", lease_id, {"kind": kind, "resource": resource_id, "generation": generation, "session_id": session_id})
+        return self.get_lease(lease_id)
+
+    def renew_lease(
+        self,
+        lease_id: str,
+        *,
+        ttl_seconds: int = LEASE_TTL_SECONDS,
+        pid: Optional[int] = None,
+        process_started_at: Optional[str] = None,
+        alive: Callable[[Optional[int], Optional[str]], bool] = procinfo.alive,
+    ) -> dict[str, Any]:
+        """Extend a lease only while the work it covers is still alive. A
+        renewal for a provider that has died is refused and the lease released,
+        so a dead worker cannot hold its own session hostage for a TTL."""
+        _check_id(lease_id, "lease id", self._redactor)
+        _check_int(ttl_seconds, 1, 86400, "ttl_seconds")
+        with self._tx("renew_lease"):
+            row = self._conn.execute("SELECT * FROM leases WHERE id = ?", (lease_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"lease {lease_id!r} does not exist")
+            now = utcnow()
+            if row["expires_at"] <= now:
+                raise ConflictError(f"lease {lease_id!r} expired at {row['expires_at']}; acquire a new one")
+            gone = pid is not None and not alive(pid, process_started_at)
+            if gone:
+                # The release has to survive the refusal, so it commits with
+                # this transaction and the caller is told afterwards.
+                self._conn.execute("DELETE FROM leases WHERE id = ?", (lease_id,))
+                self._event(str(row["holder"]), "lease.released", "lease", lease_id, {"reason": "owned process is gone", "pid": pid})
+            else:
+                self._conn.execute("UPDATE leases SET expires_at = ? WHERE id = ?", (_plus_seconds(now, ttl_seconds), lease_id))
+        if gone:
+            raise ConflictError(f"lease {lease_id!r} covers process {pid}, which is gone; the lease is released")
+        return self.get_lease(lease_id)
+
+    def release_lease(self, lease_id: str, *, by: str, reason: str = "released") -> None:
+        _check_id(lease_id, "lease id", self._redactor)
+        by = self.redact(_check_text(by, "by", 128))
+        with self._tx("release_lease"):
+            row = self._conn.execute("SELECT * FROM leases WHERE id = ?", (lease_id,)).fetchone()
+            if row is None:
+                return
+            self._conn.execute("DELETE FROM leases WHERE id = ?", (lease_id,))
+            self._event(by, "lease.released", "lease", lease_id, {"kind": row["kind"], "resource": row["resource_id"], "reason": self.redact(_check_text(reason, "reason", 200))})
+
+    def get_lease(self, lease_id: str) -> dict[str, Any]:
+        record = _row(self._conn.execute("SELECT * FROM leases WHERE id = ?", (lease_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"lease {lease_id!r} does not exist")
+        return record
+
+    def lease_on(self, kind: str, resource_id: str) -> Optional[dict[str, Any]]:
+        return _row(self._conn.execute("SELECT * FROM leases WHERE kind = ? AND resource_id = ?", (kind, resource_id)).fetchone())
+
+    def list_leases(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT * FROM leases ORDER BY created_at").fetchall()
+        return [r for r in (_row(x) for x in rows) if r is not None]
+
+    # ------------------------------------------------------------- dispatch
+    def _delivery_context(self, delivery_id: str) -> dict[str, Any]:
+        row = self._conn.execute(
+            """SELECT d.*, m.kind AS message_kind, m.payload AS message_payload, m.correlation_id AS correlation_id
+                 FROM deliveries d JOIN messages m ON m.id = d.message_id WHERE d.id = ?""",
+            (delivery_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"delivery {delivery_id!r} does not exist")
+        record = dict(row)
+        record["task_id"] = None
+        try:
+            payload = json.loads(record["message_payload"])
+        except (TypeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("task_id"), str):
+            record["task_id"] = payload["task_id"]
+        return record
+
+    def _moot_reason(self, task_id: Optional[str]) -> Optional[str]:
+        """Why starting a turn for this delivery would be wasted work. M5's
+        stop is honoured here: a task the daemon stopped is never started."""
+        if task_id is None:
+            return None
+        row = self._conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return f"task {task_id} does not exist"
+        if row["state"] in ("completed", "blocked", "cancelled", "exhausted"):
+            return f"task {task_id} is {row['state']}"
+        return None
+
+    def delivery_context(self, delivery_id: str) -> dict[str, Any]:
+        """The delivery with the message that carries it, the task it names,
+        and why (if at all) starting a turn for it would be wasted work."""
+        record = self._delivery_context(delivery_id)
+        record["moot"] = self._moot_reason(record["task_id"])
+        return record
+
+    def set_run_output(self, run_id: str, output_ref: str) -> dict[str, Any]:
+        """Point a run at its log. Kept separate from `finish_run` so the file
+        is recorded even when the turn ends in a way that skips settlement."""
+        _check_id(run_id, "run id", self._redactor)
+        output_ref = _check_text(output_ref, "output_ref", MAX_PATH_LENGTH)
+        with self._tx("set_run_output"):
+            cur = self._conn.execute("UPDATE runs SET output_ref = ? WHERE id = ?", (output_ref, run_id))
+            if cur.rowcount != 1:
+                raise NotFound(f"run {run_id!r} does not exist")
+        return self.get_run(run_id)
+
+    def dispatchable_deliveries(self, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Queued work addressed to an enabled managed worker, oldest first. A
+        failed attempt with tries left is dispatchable again; one that ran out
+        of them is not, and neither is anything addressed to a human-owned
+        agent, which the dispatcher may never resume."""
+        _check_int(limit, 1, 100, "limit")
+        rows = self._conn.execute(
+            f"""SELECT d.id AS id FROM deliveries d
+                  JOIN workers w ON w.agent_id = d.recipient_agent_id AND w.enabled = 1
+                 WHERE d.state IN ({', '.join('?' * len(DISPATCHABLE_DELIVERY_STATES))})
+                   AND d.attempts < d.max_attempts
+                 ORDER BY d.seq LIMIT ?""",
+            (*DISPATCHABLE_DELIVERY_STATES, limit),
+        ).fetchall()
+        out = []
+        for row in rows:
+            context = self._delivery_context(str(row["id"]))
+            context["moot"] = self._moot_reason(context["task_id"])
+            out.append(context)
+        return out
+
+    def dead_letter_delivery(self, delivery_id: str, *, by: str, reason: str) -> dict[str, Any]:
+        """Stop trying. Used for work that is moot and for a permanent failure;
+        a retry of a configuration error is a loop with a bill attached."""
+        by = self.redact(_check_text(by, "by", 128))
+        reason = self.redact(_check_text(reason, "reason", 500))
+        with self._tx("dead_letter_delivery"):
+            row = self._conn.execute("SELECT state FROM deliveries WHERE id = ?", (delivery_id,)).fetchone()
+            if row is None:
+                raise NotFound(f"delivery {delivery_id!r} does not exist")
+            if row["state"] in ("completed", "dead_letter"):
+                raise ConflictError(f"delivery {delivery_id!r} is {row['state']}")
+            self._conn.execute("UPDATE deliveries SET state = 'dead_letter', updated_at = ? WHERE id = ?", (utcnow(), delivery_id))
+            self._event(by, "delivery.dead_letter", "delivery", delivery_id, {"reason": reason, "was": row["state"]})
+        return self.get_delivery(delivery_id)
+
+    def _dispatch_locked(self, delivery_id: str, *, agent_id: str, lease_id: str, generation: int, session_id: str, max_attempts: Optional[int], now: str) -> dict[str, Any]:
+        """The dispatch decision itself; the caller owns the transaction."""
+        self._fence_session(session_id, generation, action="dispatch")
+        self._require_live_lease(lease_id, generation)
+        context = self._delivery_context(delivery_id)
+        if context["recipient_agent_id"] != agent_id:
+            raise ConflictError(f"delivery {delivery_id!r} is addressed to {context['recipient_agent_id']!r}, not {agent_id!r}")
+        if context["state"] not in DISPATCHABLE_DELIVERY_STATES:
+            raise ConflictError(f"delivery {delivery_id!r} is {context['state']}; only queued or retryable_failed work is dispatched")
+        moot = self._moot_reason(context["task_id"])
+        if moot is not None:
+            raise MootWork(f"delivery {delivery_id!r} needs no turn: {moot}")
+        attempts = int(context["attempts"]) + 1
+        limit = max_attempts if max_attempts is not None else int(context["max_attempts"])
+        self._conn.execute(
+            "UPDATE deliveries SET state = 'dispatched', attempts = ?, max_attempts = ?, updated_at = ? WHERE id = ?",
+            (attempts, limit, now, delivery_id),
+        )
+        self._event("dispatcher", "delivery.dispatched", "delivery", delivery_id, {"agent_id": agent_id, "attempt": attempts, "max_attempts": limit, "lease_id": lease_id, "generation": generation})
+        context["attempts"], context["max_attempts"], context["state"] = attempts, limit, "dispatched"
+        return context
+
+    def _start_run_locked(self, context: dict[str, Any], *, agent_id: str, session_id: str, lease_id: str, generation: int, binding_id: Optional[str], output_ref: Optional[str], now: str) -> str:
+        """The run row and the processing state; the caller owns the transaction."""
+        run_id = new_id("run")
+        self._conn.execute(
+            """INSERT INTO runs (id, agent_id, session_id, binding_id, lease_id, generation, delivery_id, task_id, attempt, state, output_ref, started_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
+            (run_id, agent_id, session_id, binding_id, lease_id, generation, context["id"], context["task_id"], int(context["attempts"]), output_ref, now),
+        )
+        self._conn.execute("UPDATE deliveries SET state = 'processing', updated_at = ? WHERE id = ?", (now, context["id"]))
+        self._event("dispatcher", "run.started", "run", run_id, {"agent_id": agent_id, "delivery_id": context["id"], "attempt": int(context["attempts"]), "generation": generation})
+        return run_id
+
+    def begin_turn(
+        self,
+        delivery_id: str,
+        *,
+        agent_id: str,
+        lease_id: str,
+        generation: int,
+        session_id: str,
+        binding_id: Optional[str] = None,
+        max_attempts: Optional[int] = None,
+        output_ref: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Count the attempt and record the run that covers it, together.
+
+        Review finding: as two calls, a kill (or a lease that expired) between
+        them left the delivery `dispatched` with no run -- invisible to
+        recovery, which scans runs, and to dispatch, which scans queued work --
+        with one attempt silently spent. One transaction removes the window."""
+        _check_id(delivery_id, "delivery id", self._redactor)
+        _check_id(agent_id, "agent id", self._redactor)
+        if max_attempts is not None:
+            _check_int(max_attempts, 1, 10, "max_attempts")
+        with self._tx("begin_turn"):
+            now = utcnow()
+            context = self._dispatch_locked(delivery_id, agent_id=agent_id, lease_id=lease_id, generation=generation,
+                                            session_id=session_id, max_attempts=max_attempts, now=now)
+            run_id = self._start_run_locked(context, agent_id=agent_id, session_id=session_id, lease_id=lease_id,
+                                            generation=generation, binding_id=binding_id, output_ref=output_ref, now=now)
+        return self.get_run(run_id)
+
+    def dispatch_delivery(self, delivery_id: str, *, agent_id: str, lease_id: str, generation: int, session_id: str, max_attempts: Optional[int] = None) -> dict[str, Any]:
+        """queued | retryable_failed -> dispatched, under a live lease and the
+        current generation. Counting the attempt here, before a provider is
+        started, is what makes a killed dispatcher cost one attempt rather than
+        none. Dispatchers use `begin_turn`, which does this and the run in one
+        transaction."""
+        _check_id(delivery_id, "delivery id", self._redactor)
+        _check_id(agent_id, "agent id", self._redactor)
+        if max_attempts is not None:
+            _check_int(max_attempts, 1, 10, "max_attempts")
+        with self._tx("dispatch_delivery"):
+            self._dispatch_locked(delivery_id, agent_id=agent_id, lease_id=lease_id, generation=generation,
+                                  session_id=session_id, max_attempts=max_attempts, now=utcnow())
+        return self.get_delivery(delivery_id)
+
+    def _require_live_lease(self, lease_id: str, generation: Any) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM leases WHERE id = ?", (lease_id,)).fetchone()
+        if row is None:
+            raise GenerationFenced(f"lease {lease_id!r} is gone; another dispatcher owns this work now")
+        if row["expires_at"] <= utcnow():
+            raise GenerationFenced(f"lease {lease_id!r} expired at {row['expires_at']}")
+        if int(row["generation"]) != int(generation):
+            raise GenerationFenced(f"lease {lease_id!r} is at generation {row['generation']}, this run holds {generation}")
+        return dict(row)
+
+    def start_run(
+        self,
+        *,
+        agent_id: str,
+        delivery_id: str,
+        session_id: str,
+        lease_id: str,
+        generation: int,
+        binding_id: Optional[str] = None,
+        output_ref: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """dispatched -> processing, with the run that covers it. The run keeps
+        the lease and generation it holds, so its later writes can be fenced."""
+        _check_id(agent_id, "agent id", self._redactor)
+        _check_id(delivery_id, "delivery id", self._redactor)
+        with self._tx("start_run"):
+            self._fence_session(session_id, generation, action="start_run")
+            self._require_live_lease(lease_id, generation)
+            context = self._delivery_context(delivery_id)
+            if context["state"] != "dispatched":
+                raise ConflictError(f"delivery {delivery_id!r} is {context['state']}; only a dispatched delivery starts a run")
+            run_id = self._start_run_locked(context, agent_id=agent_id, session_id=session_id, lease_id=lease_id,
+                                            generation=generation, binding_id=binding_id, output_ref=output_ref, now=utcnow())
+        return self.get_run(run_id)
+
+    def record_run_process(self, run_id: str, *, pid: int, started_at: Optional[str] = None) -> dict[str, Any]:
+        """Remember which process a run started. A dispatcher that is killed
+        orphans that process with a live credential, so recovery has to be able
+        to name it."""
+        _check_id(run_id, "run id", self._redactor)
+        _check_int(pid, 1, 2**31, "pid")
+        with self._tx("record_run_process"):
+            cur = self._conn.execute("UPDATE runs SET provider_pid = ?, provider_started_at = ? WHERE id = ?", (pid, started_at, run_id))
+            if cur.rowcount != 1:
+                raise NotFound(f"run {run_id!r} does not exist")
+        return self.get_run(run_id)
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        record = _row(self._conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone())
+        if record is None:
+            raise NotFound(f"run {run_id!r} does not exist")
+        return record
+
+    def list_runs(self, *, agent_id: Optional[str] = None, state: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+        _check_int(limit, 1, 500, "limit")
+        clauses, params = ["1 = 1"], []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(_check_id(agent_id, "agent id", self._redactor))
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(_check_enum(state, RUN_STATES, "state"))
+        rows = self._conn.execute(f"SELECT * FROM runs WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT ?", (*params, limit)).fetchall()
+        return [r for r in (_row(x) for x in rows) if r is not None]
+
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        exit_state: Optional[str] = None,
+        error: Optional[str] = None,
+        output_ref: Optional[str] = None,
+        permanent: bool = False,
+        state: str = "completed",
+        fenced: bool = False,
+    ) -> dict[str, Any]:
+        """End a run and settle its delivery by looking at what the worker
+        actually did. The dispatcher never acknowledges or completes a delivery
+        itself (ADR 0006): if the worker left it untouched, the attempt failed,
+        however cleanly the provider exited."""
+        _check_id(run_id, "run id", self._redactor)
+        _check_enum(state, ("completed", "failed", "abandoned"), "state")
+        if exit_state is not None:
+            exit_state = self.redact(_check_text(exit_state, "exit_state", 200))
+        if error is not None:
+            error = self.redact(_check_text(error, "error", 2000))
+        with self._tx("finish_run"):
+            run = self._conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+            if run is None:
+                raise NotFound(f"run {run_id!r} does not exist")
+            if run["state"] != "running":
+                raise ConflictError(f"run {run_id!r} is {run['state']}")
+            if fenced:
+                # A dispatcher settling its own turn proves it still owns the
+                # session: a run whose lease was reclaimed while it ran must not
+                # settle a delivery somebody else is now working.
+                self._fence_session(str(run["session_id"]), run["generation"], action="finish_run")
+                self._require_live_lease(str(run["lease_id"]), run["generation"])
+            now = utcnow()
+            context = self._delivery_context(str(run["delivery_id"]))
+            worker_moved_it = context["state"] not in RUNNING_DELIVERY_STATES
+            outcome = state if state != "completed" else ("completed" if worker_moved_it else "failed")
+            delivery_state = context["state"]
+            if not worker_moved_it:
+                attempts, limit = int(context["attempts"]), int(context["max_attempts"])
+                if permanent or attempts >= limit:
+                    delivery_state = "dead_letter"
+                    reason = error or ("permanent failure" if permanent else f"no progress after {attempts} attempt(s)")
+                    self._event("dispatcher", "delivery.dead_letter", "delivery", str(run["delivery_id"]), {"reason": reason, "attempts": attempts, "run_id": run_id})
+                else:
+                    delivery_state = "retryable_failed"
+                    self._event("dispatcher", "delivery.retryable_failed", "delivery", str(run["delivery_id"]), {"attempts": attempts, "max_attempts": limit, "run_id": run_id})
+                self._conn.execute("UPDATE deliveries SET state = ?, updated_at = ? WHERE id = ?", (delivery_state, now, str(run["delivery_id"])))
+            self._conn.execute(
+                "UPDATE runs SET state = ?, exit_state = ?, error = ?, output_ref = COALESCE(?, output_ref), ended_at = ? WHERE id = ?",
+                (outcome, exit_state, error, output_ref, now, run_id),
+            )
+            self._event("dispatcher", "run.finished", "run", run_id, {
+                "agent_id": run["agent_id"], "delivery_id": run["delivery_id"], "outcome": outcome,
+                "delivery_state": delivery_state, "exit_state": exit_state, "worker_moved_it": worker_moved_it,
+            })
+        record = self.get_run(run_id)
+        record["delivery_state"] = delivery_state
+        return record
+
+    def recover_deliveries(self, *, by: str = "dispatcher") -> list[dict[str, Any]]:
+        """Settle deliveries left mid-turn that no live run covers.
+
+        Review finding: a delivery could sit in `dispatched` or `processing`
+        with no run row -- recovery scans runs, dispatch scans queued work, so
+        nothing could see it and an attempt was spent for nothing. This sweep
+        is what makes "exactly one outcome" true however the turn was lost."""
+        stranded = self._conn.execute(
+            f"""SELECT d.id AS id FROM deliveries d
+                 WHERE d.state IN ({', '.join('?' * len(RUNNING_DELIVERY_STATES))})
+                   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.delivery_id = d.id AND r.state = 'running')
+                 ORDER BY d.seq""",
+            RUNNING_DELIVERY_STATES,
+        ).fetchall()
+        settled = []
+        for row in stranded:
+            delivery_id = str(row["id"])
+            with self._tx("recover_delivery"):
+                context = self._delivery_context(delivery_id)
+                if context["state"] not in RUNNING_DELIVERY_STATES:
+                    continue
+                attempts, limit = int(context["attempts"]), int(context["max_attempts"])
+                now = utcnow()
+                if attempts >= limit:
+                    state, kind = "dead_letter", "delivery.dead_letter"
+                else:
+                    state, kind = "retryable_failed", "delivery.retryable_failed"
+                self._conn.execute("UPDATE deliveries SET state = ?, updated_at = ? WHERE id = ?", (state, now, delivery_id))
+                self._event(by, kind, "delivery", delivery_id, {
+                    "reason": "the turn that was working this delivery left no live run",
+                    "attempts": attempts, "max_attempts": limit, "was": context["state"],
+                })
+            settled.append(self.get_delivery(delivery_id))
+        return settled
+
+    def recover_runs(self, *, alive: Optional[Callable[[Optional[int], Optional[str]], bool]] = procinfo.alive, by: str = "dispatcher") -> list[dict[str, Any]]:
+        """Settle runs whose dispatcher is gone. Called at startup: a kill at
+        any point leaves at most one attempt to account for, and the delivery
+        still reaches exactly one outcome."""
+        recovered = []
+        for run in self.list_runs(state="running", limit=500):
+            lease = _row(self._conn.execute("SELECT * FROM leases WHERE id = ?", (run["lease_id"],)).fetchone()) if run["lease_id"] else None
+            now = utcnow()
+            reason = "lease is gone" if lease is None else self._lease_dead(lease, now, alive)
+            if reason is None:
+                continue
+            if lease is not None:
+                self.release_lease(str(lease["id"]), by=by, reason=f"run {run['id']} abandoned: {reason}")
+            if run["binding_id"]:
+                # The orphaned provider still holds a working credential until
+                # this happens; revoking it is the first thing recovery does.
+                try:
+                    self.revoke_binding(str(run["binding_id"]), by=by, reason=f"run {run['id']} abandoned")
+                except StoreError:
+                    pass
+            recovered.append(self.finish_run(str(run["id"]), state="abandoned", exit_state="abandoned", error=f"the dispatcher that owned this run is gone ({reason})"))
+        return recovered
+
     # ----------------------------------------------------------------- events
     def events(self, *, after: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         _check_int(limit, 1, 500, "limit")
@@ -1878,6 +2531,18 @@ class Store:
             "tasks": tasks,
             "open_tasks": [{"id": t["id"], "title": t["title"], "assigned_to": t["assigned_agent_id"], "priority": t["priority"], "requires_worktree": t["requires_worktree"]} for t in open_tasks],
             "stopped_tasks": stopped,
+            # M6: who the machine may start, and what it is running now. A
+            # managed worker is the one thing on this view the user did not
+            # start by hand, so it says so on its own line.
+            "workers": [
+                {"agent_id": w["agent_id"], "provider": w["provider"], "enabled": w["enabled"],
+                 "max_attempts": w["max_attempts"]}
+                for w in self.list_workers()
+            ],
+            "running_runs": [
+                {"id": r["id"], "agent_id": r["agent_id"], "attempt": r["attempt"], "started_at": r["started_at"]}
+                for r in self.list_runs(state="running", limit=20)
+            ],
             "queued_deliveries": sum(a["queued_deliveries"] for a in agents),
             "approvals_pending": len(pending),
             "pending_approvals": pending,

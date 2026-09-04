@@ -11,13 +11,14 @@
 # `--agent-bus-security` runs the M3 and M4.5 safety fixtures. `--agent-bus-e2e`
 # runs the M4 pull-beta flow with the fake provider (also part of `--full`).
 # `--agent-bus-workflow` runs the M5 task-graph gate (also part of `--full`).
+# `--agent-bus-dispatch` runs the M6 dispatcher gate (also part of `--full`).
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
 if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow]" >&2
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch]" >&2
   exit 64
 fi
 case "${1:-}" in
@@ -29,7 +30,8 @@ case "${1:-}" in
   --agent-bus-security) TIER=agent-bus-security ;;
   --agent-bus-e2e) TIER=agent-bus-e2e ;;
   --agent-bus-workflow) TIER=agent-bus-workflow ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow]" >&2; exit 64 ;;
+  --agent-bus-dispatch) TIER=agent-bus-dispatch ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -50,6 +52,9 @@ fi
 if [ "${TIER}" = agent-bus-workflow ]; then
   exec "${ROOT}/scripts/agent-bus-workflow.sh"
 fi
+if [ "${TIER}" = agent-bus-dispatch ]; then
+  exec "${ROOT}/scripts/agent-bus-dispatch.sh"
+fi
 
 # M1 exit gate: migrations, atomic claims, idempotent replays, append-only
 # history, and kill-at-commit crash tests. Python only; no provider CLI.
@@ -59,7 +64,7 @@ agent_bus_store() {
   (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
     || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
   rm -f "${ROOT}/agentd/.last-store-run.log"
-  echo "ok  agent bus M1-M5 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures, task graph and budgets, e2e outcome assertion)"
+  echo "ok  agent bus M1-M6 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures, task graph and budgets, dispatch leases and recovery, e2e outcome assertion)"
 
   # `luciazero bus status` (Node, core package) against a real daemon on a
   # throwaway state directory: proves the human-facing queue view end to end
@@ -94,7 +99,7 @@ agent_bus_store() {
 if [ "${TIER}" = agent-bus-store ]; then
   agent_bus_store
   echo
-  echo "PASS  agent bus M1-M5 daemon gate green"
+  echo "PASS  agent bus M1-M6 daemon gate green"
   exit 0
 fi
 
@@ -138,6 +143,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/agent-bus-mcp.sh
          scripts/agent-bus-e2e.sh
          scripts/agent-bus-workflow.sh
+         scripts/agent-bus-dispatch.sh
          docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh
@@ -1462,6 +1468,16 @@ grep -q "^PASS  agent bus M5 workflow gate (fake provider)" "${ROOT}/agentd/.las
   || { rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M5 workflow gate printed no PASS line"; }
 rm -f "${ROOT}/agentd/.last-store-run.log"
 echo "ok  agent bus M5 workflow gate (task graph, cycle refused, loop stopped, budget stop, provenance)"
+
+# M6 exit gate (fake provider, deterministic): the dispatcher is killed
+# mid-turn, restarted, and the work still reaches exactly one outcome, with no
+# lease or credential outliving the turn that took it.
+"${ROOT}/scripts/agent-bus-dispatch.sh" >"${ROOT}/agentd/.last-store-run.log" 2>&1 \
+  || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M6 dispatch gate"; }
+grep -q "^PASS  agent bus M6 dispatch gate (fake provider)" "${ROOT}/agentd/.last-store-run.log" \
+  || { rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M6 dispatch gate printed no PASS line"; }
+rm -f "${ROOT}/agentd/.last-store-run.log"
+echo "ok  agent bus M6 dispatch gate (killed mid-turn, recovered, fenced, one outcome)"
 
 # 4d. eval graders stay honest — auto-discovered, so no task can ship without
 # its proofs: PROMPT.md present, grader executable and following the output

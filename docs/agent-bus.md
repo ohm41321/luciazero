@@ -276,6 +276,23 @@ operation on a task still needs a nonce the user mints in their own terminal.
 Codex runs `approvalPolicy: "on-request"` because ADR 0001 recorded that
 `"never"` fails a model-selected MCP tool call before it reaches the bus.
 
+## Evidence
+
+`scripts/agent-bus-evidence.sh` exports one workflow's whole record set from a
+state directory -- the messages of a conversation, the deliveries they created,
+the tasks they name, the artifacts published against those tasks, the worktrees
+their agents wrote from, the runs that carried them and the events that mention
+any of it -- as JSON, plus a ready ledger row for
+`docs/agent-bus-decision-log.md`:
+
+```bash
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero --list
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero --correlation <id> --out evidence.json
+```
+
+It opens the database read-only and never migrates it, and runs the redaction
+contract over what it writes.
+
 ## Recovery
 
 - **Daemon restart.** Stop it with Ctrl-C or `kill <pid>` and start it

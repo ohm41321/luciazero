@@ -117,12 +117,17 @@ def queue_work(daemon: Daemon, provider: str, run: str) -> dict[str, Any]:
                                     f"{ARCHITECT} with one sentence saying the bus works."},
         "idempotency_key": f"{run}-{provider}-task",
     })
-    bus.call("message_send", {"sender": ARCHITECT, "recipient": worker, "kind": "task",
-                              "payload": {"task_id": task["id"]},
-                              "idempotency_key": f"{run}-{provider}-msg"})
+    message = bus.call("message_send", {"sender": ARCHITECT, "recipient": worker, "kind": "task",
+                                        "payload": {"task_id": task["id"]},
+                                        "idempotency_key": f"{run}-{provider}-msg"})
     with store_of(daemon) as store:
         delivery = store.inbox(worker, states=("queued",))["items"][-1]
-    return {"task": task["id"], "delivery": delivery["delivery_id"]}
+        record = store.get_message(str(message["id"]))
+    # The correlation id is what makes a run auditable afterwards: with
+    # `--keep`, `scripts/agent-bus-evidence.sh` exports this conversation's
+    # whole record set for the M4 decision log.
+    return {"task": task["id"], "delivery": delivery["delivery_id"],
+            "correlation_id": record.get("correlation_id") or message["id"]}
 
 
 def dispatch_once(daemon: Daemon, timeout: int) -> str:
@@ -223,6 +228,7 @@ def one_provider(daemon: Daemon, provider: str, command: list[str], root: Path, 
     turn_dir = daemon.state_dir / "turns" / str(runs[0]["id"]) if runs else root / "missing"
     result = check_turn(daemon, provider, work, turn_dir)
     result["dispatch_output"] = output
+    result["correlation_id"] = work["correlation_id"]
     narrate(f"#   {provider}: {result['exit_state']}, {result['attempts']} attempt, "
             f"worker wrote {', '.join(result['kinds'])}")
     return result
@@ -305,6 +311,8 @@ def main() -> int:
     for result in results:
         print(f"{result['provider']}: {result['exit_state']} in {result['attempts']} attempt; "
               f"the worker itself wrote {', '.join(result['kinds'])}")
+        print(f"  correlation id {result['correlation_id']}"
+              + ("" if args.keep else " (records gone with the temporary state directory; use --keep to export them)"))
     print("no credential, lease, or turn directory outlived its turn")
     label = "rehearsal, no quota" if args.rehearse else ", ".join(r["provider"] for r in results)
     print(f"PASS  agent bus M6 live smoke gate ({label})")

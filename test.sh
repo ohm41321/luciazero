@@ -157,6 +157,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/agent-bus-workflow.sh
          scripts/agent-bus-dispatch.sh
          scripts/agent-bus-live.sh
+         scripts/agent-bus-evidence.sh
          docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh

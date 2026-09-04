@@ -556,6 +556,11 @@ recorded before M5 starts:
 If that evidence does not exist, the release decision is "stop at the pull
 beta"; "it feels used" is not a gate.
 
+Where that stands is `docs/agent-bus-decision-log.md`, which is also the
+ledger the workflows are recorded in. As of 2026-09-04 the gate is not met:
+no real workflow has been recorded, and M5 and M6 shipped without waiting for
+one. The log names the three ways out and leaves the choice to the user.
+
 ### M4.5 — Terminal binding and session credentials (complete 2026-09-04)
 
 The last identity the model still asserts is its own: the user tells it "you
@@ -870,7 +875,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 272 tests, includes the dispatch and adapter suites
+./test.sh --agent-bus-store      # 280 tests, includes the dispatch and adapter suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```

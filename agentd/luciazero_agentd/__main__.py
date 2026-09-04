@@ -455,7 +455,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     previous = signal.signal(signal.SIGTERM, _stop_dispatch)
     try:
         started = 0
-        for summary in _dispatch_passes(engine, passes=passes, interval=args.interval):
+        for summary in _dispatch_passes(engine, passes=passes, interval=args.interval,
+                                        stop_when_idle=args.stop_when_idle):
             line = f"{clean(summary['agent_id'])}  delivery {clean(summary['delivery_id'])}  {clean(summary['outcome'])}"
             if summary.get("delivery_state"):
                 line += f" -> {clean(summary['delivery_state'])}"
@@ -473,11 +474,20 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
-def _dispatch_passes(engine: "Dispatcher", *, passes: Optional[int], interval: float) -> Iterator[dict[str, Any]]:
+def _dispatch_passes(engine: "Dispatcher", *, passes: Optional[int], interval: float,
+                     stop_when_idle: bool = False) -> Iterator[dict[str, Any]]:
     done = 0
     while passes is None or done < passes:
+        started = 0
         for summary in engine.tick():
+            started += 1
             yield summary
+        # A pass is synchronous: a turn that queued a reply has already
+        # finished, so the next pass would find it. Nothing found means the
+        # work really has run out, which is how a watch that is waiting for
+        # more is told apart from one that is done.
+        if stop_when_idle and started == 0:
+            return
         done += 1
         if passes is not None and done >= passes:
             return
@@ -918,6 +928,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     dispatch.add_argument("--once", action="store_true", help="one pass and exit (the default; the docs name it)")
     dispatch.add_argument("--watch", action="store_true", help="keep polling instead of one pass")
     dispatch.add_argument("--interval", type=float, default=2.0)
+    dispatch.add_argument("--stop-when-idle", action="store_true", dest="stop_when_idle",
+                          help="exit when a pass finds nothing to start, instead of waiting for more")
     dispatch.add_argument("--max-turns", type=int, default=0, dest="max_turns",
                           help="stop after this many turns have run (0: no cap). Each turn spends provider quota.")
     dispatch.add_argument("--lease-ttl", type=int, default=LEASE_TTL_SECONDS, dest="lease_ttl")

@@ -119,7 +119,7 @@ no quota, which is what proves the gate's own assertions before money is spent.
 
 ### Offline gates standing green (2026-09-04)
 
-`./test.sh` — 322 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
+`./test.sh` — 323 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
 with a fake provider, the M5 workflow gate, the M6 dispatch gate (dispatcher
 killed mid-turn and recovered), and the M3/M4.5 safety fixtures.
 

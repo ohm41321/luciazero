@@ -11,6 +11,8 @@ answer the sender, and mark the delivery handled.
 It exists so the M6 gate can prove the dispatcher itself. Modes (LZ_WORKER_MODE):
 
     work   do the turn (default)
+    chat   the same, but reply to the peer named by --reply-to, not to the
+           sender, so two of these answer each other the way two models would
     hang   start and never finish, so a kill can be tested
     fail   exit non-zero without touching the bus
     idle   exit 0 without touching the bus, which must still count as a failed
@@ -37,6 +39,12 @@ AGENT_ENV = "LUCIAZERO_AGENT_BUS_AGENT"
 
 def main() -> int:
     mode = os.environ.get("LZ_WORKER_MODE", "work")
+    # `--reply-to PEER`: who to answer. The dispatcher passes no arguments of
+    # its own, so this comes from the enrolled worker command.
+    peer: str | None = None
+    argv = sys.argv[1:]
+    if "--reply-to" in argv:
+        peer = argv[argv.index("--reply-to") + 1]
     if mode == "hang":
         print("worker: hanging until killed", flush=True)
         while True:
@@ -72,8 +80,11 @@ def main() -> int:
         bus.call("task_claim", {"task_id": task_id, "agent_id": agent_id})
         bus.call("task_complete", {"task_id": task_id, "agent_id": agent_id, "result": {"handled_by": "managed turn"}})
     bus.call("message_send", {
-        "sender": agent_id, "recipient": item["sender"], "kind": "result",
-        "payload": {"task_id": task_id, "outcome": "done"},
+        "sender": agent_id, "recipient": peer or item["sender"],
+        "kind": "question" if peer else "result",
+        "payload": {"task_id": task_id, "outcome": "done",
+                    "text": f"{agent_id} here, answering {item['sender']}. Your turn."} if peer
+                   else {"task_id": task_id, "outcome": "done"},
         "reply_to": item["message_id"], "correlation_id": item["correlation_id"],
     })
     bus.call("message_ack", {"delivery_id": item["delivery_id"], "agent_id": agent_id, "outcome": "completed"})

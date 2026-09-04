@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 322 tests, includes the dispatch, adapter and watcher suites
+./test.sh --agent-bus-store      # 323 tests, includes the dispatch, adapter and watcher suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
@@ -953,6 +953,24 @@ being reconstructed from memory instead of watched.
 
 The watcher shows traffic; it cannot wake a session. That limitation is the
 reason M7 exists.
+
+### M7b — Two agents answering each other (mechanism proven 2026-09-04)
+
+`scripts/agent_bus_chat.py` closes the loop the watcher only observes: both
+sides are managed workers, so each reply queues the other's turn and nobody is
+at either keyboard. Rehearsed green against the offline worker
+(`./test.sh --agent-bus-chat`): four turns, four messages the agents sent
+themselves, transcript rendered by the watcher's own renderer.
+
+- [x] Both sides enrolled as managed workers in disposable directories, opened
+  by one message from a human-bound operator that is not part of the loop.
+- [x] Three independent stops on a loop that pays for itself: `--spend-quota`
+  is required, `--turns` becomes the dispatcher's `--max-turns`, and
+  `dispatch --stop-when-idle` ends the run when the conversation does.
+- [x] The offline worker learned `--reply-to`, so a rehearsal is a genuine
+  two-way exchange rather than one turn talking to a stub.
+- [ ] The live version. It needs the user's explicit quota approval and has
+  not been run.
 
 ### M7 — Managed-dispatch vertical slice
 

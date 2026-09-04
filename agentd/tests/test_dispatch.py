@@ -473,6 +473,16 @@ class TurnCapTests(DispatchCase):
         self.assertIn("2-turn cap", err)
         self.assertEqual(len(self.store.list_runs(agent_id="claude-reviewer")), 2)
 
+    def test_watching_can_be_told_to_stop_when_the_work_runs_out(self) -> None:
+        """Without this a `--watch` that has finished everything waits for
+        more forever, which is the wrong end of a conversation that is over."""
+        self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=1)
+        self.queued()
+        code, _ = self.dispatch("--watch", "--stop-when-idle")
+        self.assertEqual(code, 0)
+        # One attempt, dead-lettered, and then nothing left to do.
+        self.assertEqual(len(self.store.list_runs(agent_id="claude-reviewer")), 1)
+
     def test_without_a_cap_one_pass_is_still_one_pass(self) -> None:
         self.worker(command=[sys.executable, "-c", "raise SystemExit(3)"], max_attempts=9)
         self.queued()

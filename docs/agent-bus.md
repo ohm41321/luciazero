@@ -141,7 +141,28 @@ themselves are managed dispatch, and they spend quota:
 ```bash
 python3 -m luciazero_agentd chat --between A B --auto   # prints the setup, runs nothing
 python3 -m luciazero_agentd dispatch --max-turns 4      # a cap counted in turns
+python3 -m luciazero_agentd dispatch --watch --stop-when-idle
 ```
+
+### Two agents answering each other
+
+`scripts/agent-bus-chat.sh` is the whole loop in one command: both sides
+enrolled as managed workers in disposable directories, one opening message
+from the operator, and the exchange printed as it happens.
+
+```bash
+./scripts/agent-bus-chat.sh --rehearse            # the same loop, offline worker, no quota
+./test.sh --agent-bus-chat                        # the same, as a gate
+./scripts/agent-bus-chat.sh --spend-quota --turns 4
+```
+
+Each answer buys the next turn, so the loop has no natural end and is capped
+three ways: it refuses to start without `--spend-quota`, `--turns` becomes the
+dispatcher's own `--max-turns`, and the dispatcher stops as soon as a pass
+finds nothing left to start. The bus state directory and both working
+directories are temporary; `~/.codex` and `~/.claude` are not, because a real
+turn needs the user's real credentials. `--keep` leaves the state directory
+for `agent-bus-evidence.sh`.
 
 ## Status inspection
 

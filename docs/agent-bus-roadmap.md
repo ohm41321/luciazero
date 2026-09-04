@@ -831,8 +831,11 @@ gate spends quota, so it runs only when the user asks for it.
   worker later cannot rewrite what governed a turn that already ended.
 - [ ] One live smoke gate: a real Codex turn and a real Claude turn started by
   the dispatcher, each reaching one completed logical outcome, with the
-  credential revoked and the workspace gone afterwards. Spends quota; runs on
-  request only.
+  credential revoked and the workspace gone afterwards. Written and wired as
+  `./test.sh --agent-bus-live --spend-quota`, and refusing to run without that
+  flag; its plumbing is proven against stub binaries, but the gate itself has
+  not been run, because a run spends the user's quota and is theirs to
+  approve. This is the only thing keeping M6 open.
 - [ ] Test process crash and restart during every delivery transition,
   including `dispatched` and `processing` (the gate kills the dispatcher
   mid-turn; the kill-at-commit matrix for the new transitions is still to
@@ -860,6 +863,7 @@ Exit gate:
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
 ./test.sh --agent-bus-store      # 272 tests, includes the dispatch and adapter suites
+./test.sh --agent-bus-live --spend-quota   # the live smoke gate; not run yet
 ```
 
 The suite must kill the dispatcher during a run, restart it, and show that the

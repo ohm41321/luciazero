@@ -12,13 +12,18 @@
 # runs the M4 pull-beta flow with the fake provider (also part of `--full`).
 # `--agent-bus-workflow` runs the M5 task-graph gate (also part of `--full`).
 # `--agent-bus-dispatch` runs the M6 dispatcher gate (also part of `--full`).
+# `--agent-bus-live` runs the M6 live smoke gate: one real Codex turn and one
+# real Claude turn. It needs the provider CLIs, spends quota, and refuses to
+# run without --spend-quota, so it is never part of `--full`.
 # Exits non-zero on the first failure.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER=full
-if [ "$#" -gt 1 ]; then
-  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch]" >&2
+# One tier per run, except the live gate, which passes its own flags through
+# (--spend-quota is required, and belongs to that gate, not to this dispatcher).
+if [ "$#" -gt 1 ] && [ "${1:-}" != "--agent-bus-live" ]; then
+  echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-live]" >&2
   exit 64
 fi
 case "${1:-}" in
@@ -31,7 +36,8 @@ case "${1:-}" in
   --agent-bus-e2e) TIER=agent-bus-e2e ;;
   --agent-bus-workflow) TIER=agent-bus-workflow ;;
   --agent-bus-dispatch) TIER=agent-bus-dispatch ;;
-  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch]" >&2; exit 64 ;;
+  --agent-bus-live) TIER=agent-bus-live ;;
+  *) echo "usage: ./test.sh [--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-live]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -54,6 +60,12 @@ if [ "${TIER}" = agent-bus-workflow ]; then
 fi
 if [ "${TIER}" = agent-bus-dispatch ]; then
   exec "${ROOT}/scripts/agent-bus-dispatch.sh"
+fi
+if [ "${TIER}" = agent-bus-live ]; then
+  # Passes the remaining arguments through: --spend-quota is required, and
+  # without it the gate prints what it would spend and refuses.
+  shift || true
+  exec "${ROOT}/scripts/agent-bus-live.sh" "$@"
 fi
 
 # M1 exit gate: migrations, atomic claims, idempotent replays, append-only
@@ -144,6 +156,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/agent-bus-e2e.sh
          scripts/agent-bus-workflow.sh
          scripts/agent-bus-dispatch.sh
+         scripts/agent-bus-live.sh
          docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
          docs/assets/statusline-demo.sh

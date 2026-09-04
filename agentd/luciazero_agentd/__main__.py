@@ -315,6 +315,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     recovered = engine.recover_all()
     for run in recovered:
         print(f"recovered run {clean(run['id'])} for {clean(run['agent_id'])}: {clean(run['delivery_state'])}", file=sys.stderr)
+    if args.watch and args.once:
+        print("dispatch: --once and --watch ask for different things; pick one", file=sys.stderr)
+        return 2
     passes = None if args.watch else 1
 
     def _stop_dispatch(*_: object) -> None:
@@ -782,6 +785,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         entry.add_argument("--state-dir", default=None)
         entry.set_defaults(func=cmd_worker)
     dispatch = sub.add_parser("dispatch", help="start managed turns for queued work")
+    dispatch.add_argument("--once", action="store_true", help="one pass and exit (the default; the docs name it)")
     dispatch.add_argument("--watch", action="store_true", help="keep polling instead of one pass")
     dispatch.add_argument("--interval", type=float, default=2.0)
     dispatch.add_argument("--lease-ttl", type=int, default=LEASE_TTL_SECONDS, dest="lease_ttl")

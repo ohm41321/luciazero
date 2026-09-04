@@ -14,19 +14,28 @@ installed `luciazero-agentd` executable. Run them in the user's terminal, or
 hand them over to paste. Never start a provider session on their behalf
 without being asked to.
 
-## 1. Is the bus up
+## 1. Start here, always
 
 ```bash
-python3 -m luciazero_agentd status
+python3 -m luciazero_agentd next
 ```
 
-No daemon means nothing to watch. Start one in its own terminal:
+It reads the bus and answers the only question the user actually has — what is
+waiting on whom — as the command that unblocks it, most blocking first: a
+delivery nobody could deliver or a task that ran out of budget (both need a
+person to decide something), then each agent with unread messages and the
+command that opens that agent's session in its own worktree. If the daemon is
+down it says so and nothing else, because nothing else can happen first:
 
 ```bash
 python3 -m luciazero_agentd serve
 ```
 
-## 2. Pick who talks
+Read the answer back to the user and offer to run the command it names; do not
+paraphrase it into different commands. `status` is still there for the full
+picture, and `next` never writes anything.
+
+## 2. Pick who talks (when the user wants a new conversation)
 
 ```bash
 python3 -m luciazero_agentd chat

@@ -19,6 +19,7 @@ sessions       every live binding
 watch          follow the traffic live in its own pane, read-only (M7a)
 chat           set two agents talking: pick who, get the terminal-by-terminal
                commands, and the pane that shows what they say
+next           what is waiting on whom, as the command that unblocks it
 """
 
 from __future__ import annotations
@@ -322,6 +323,46 @@ def _pick(prompt: str, choices: list[dict[str, Any]], taken: Optional[str] = Non
     if answer.isdigit() and 1 <= int(answer) <= len(choices):
         return str(choices[int(answer) - 1]["id"])
     return answer if any(str(a["id"]) == answer for a in choices) else None
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    """What to do next, read-only (M7a).
+
+    `status` answers "what is the state of the bus". Everybody then works out
+    by hand which terminal that means opening. This answers the second
+    question directly, and writes the command out.
+    """
+    state_dir = resolve_state_dir(args.state_dir)
+    try:
+        conn = watch.open_read_only(db_path(state_dir))
+    except watch.WatchError as exc:
+        print(f"next: {clean(exc)}", file=sys.stderr)
+        return 2
+    try:
+        actions = watch.owed(conn)
+    finally:
+        conn.close()
+    if args.json:
+        print(json.dumps(actions, indent=2, sort_keys=True))
+        return 0
+    endpoint = read_endpoint(state_dir)
+    if endpoint is None or not (isinstance(endpoint.get("pid"), int) and pid_alive(endpoint["pid"])):
+        # Nothing else can happen while the daemon is down, so it is the whole
+        # answer rather than a warning above the real one.
+        print(f"the daemon is not running on {state_dir}. Start it, and everything below resumes:")
+        print(f"    {watch.launcher()} serve")
+        return 0
+    if not actions:
+        print(f"nothing is waiting on anybody ({state_dir}).")
+        print(f"    {watch.launcher()} chat        # set two agents talking")
+        return 0
+    for action in actions:
+        who = clean(action["agent"]) or "somebody"
+        print(f"  {who:<24} {clean(action['why'])}")
+        if action["do"]:
+            print(f"    {clean(action['do'])}")
+    print(f"\n  watch it happen:  {watch.launcher()} watch")
+    return 0
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
@@ -948,6 +989,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     watcher.add_argument("--once", action="store_true", help="one pass and exit instead of following")
     watcher.add_argument("--state-dir", default=None)
     watcher.set_defaults(func=cmd_watch)
+    nxt = sub.add_parser("next", help="what is waiting on whom, as the command that unblocks it")
+    nxt.add_argument("--state-dir", default=None)
+    nxt.add_argument("--json", action="store_true")
+    nxt.set_defaults(func=cmd_next)
     chat = sub.add_parser("chat", help="set two agents talking, and show where to type what")
     chat.add_argument("--between", nargs=2, metavar=("A", "B"), default=None,
                       help="skip the questions and name the pair")

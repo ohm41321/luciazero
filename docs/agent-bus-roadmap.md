@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 325 tests, includes the dispatch, adapter and watcher suites
+./test.sh --agent-bus-store      # 332 tests, includes the dispatch, adapter and watcher suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```
@@ -942,9 +942,13 @@ being reconstructed from memory instead of watched.
   opening the database `mode=ro` and acknowledging nothing.
 - [x] `luciazero-agentd chat` picks the pair and prints the command for each
   terminal, skipping bindings whose terminal has already been closed.
+- [x] `luciazero-agentd next` turns the state into the next action: what needs
+  a person before what needs a turn, one line per agent, the command written
+  out from that agent's own worktree, and the daemon being down as the whole
+  answer rather than a footnote. `/lucia-chat` starts there.
 - [x] `--auto` prints the managed-dispatch version instead, and
   `dispatch --max-turns N` caps the spend in turns rather than in passes.
-- [x] Regressions (32): the read-only handle refuses to write, a full watch
+- [x] Regressions (39): the read-only handle refuses to write, a full watch
   cycle leaves every row of `messages`, `deliveries` and `events` byte-identical,
   a restarted follower repeats rather than skips, a poll that fails reconnects,
   the follower keeps reading across a writer restart of a live WAL database,

@@ -484,3 +484,70 @@ def auto_turn_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     plan.append(("watch what they say to each other",
                  f"{run} watch --between {first} {second}{where}"))
     return plan
+
+
+# --- what to do next --------------------------------------------------------
+#
+# Every session so far has ended with somebody reading `status` and working out
+# by hand which terminal to open. `status` reports state; this reports the next
+# action, in the order that unblocks the most, with the command already
+# written. It reads the database and nothing else.
+
+#: Most blocking first. A dead letter and a stopped task need a person to
+#: decide something; a queued delivery only needs a turn.
+NEEDS_A_DECISION = ("dead_letter",)
+STUCK_TASK_STATES = ("exhausted", "blocked")
+
+
+def owed(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """What is waiting on whom, as actions rather than as state."""
+    agents = {str(a["id"]): a for a in roster(conn)}
+    actions: list[dict[str, Any]] = []
+
+    for row in conn.execute(
+            "SELECT recipient_agent_id AS agent, COUNT(*) AS n FROM deliveries "
+            "WHERE state = 'dead_letter' GROUP BY recipient_agent_id ORDER BY recipient_agent_id"):
+        actions.append({"priority": 0, "agent": str(row["agent"]), "kind": "dead_letter",
+                        "why": f"{row['n']} delivery(ies) nobody could deliver — needs you, not a turn",
+                        "do": None})
+
+    marks = ", ".join("?" * len(STUCK_TASK_STATES))
+    for row in conn.execute(
+            f"SELECT id, title, state, assigned_agent_id AS agent FROM tasks "
+            f"WHERE state IN ({marks}) ORDER BY seq", STUCK_TASK_STATES):
+        actions.append({"priority": 1, "agent": str(row["agent"] or ""), "kind": str(row["state"]),
+                        "why": f"task {row['id']} is {row['state']}: {row['title']}",
+                        "do": f"{launcher()} cancel {row['id']}  # or raise its budget and re-open it"})
+
+    for row in conn.execute(
+            "SELECT recipient_agent_id AS agent, COUNT(*) AS n FROM deliveries "
+            "WHERE state = 'queued' GROUP BY recipient_agent_id ORDER BY recipient_agent_id"):
+        agent_id = str(row["agent"])
+        actions.append({"priority": 2, "agent": agent_id, "kind": "inbox",
+                        "why": f"{row['n']} message(s) waiting, unread until its turn starts",
+                        "do": start_command(agents.get(agent_id, {"id": agent_id}))})
+
+    queued = {a["agent"] for a in actions if a["kind"] == "inbox"}
+    for row in conn.execute(
+            "SELECT id, title, assigned_agent_id AS agent FROM tasks WHERE state = 'claimed' ORDER BY seq"):
+        agent_id = str(row["agent"] or "")
+        if agent_id and agent_id not in queued:
+            actions.append({"priority": 3, "agent": agent_id, "kind": "claimed",
+                            "why": f"holding task {row['id']} with nothing queued: {row['title']}",
+                            "do": start_command(agents.get(agent_id, {"id": agent_id}))})
+
+    for row in conn.execute("SELECT id, title FROM tasks WHERE state = 'waiting' ORDER BY seq"):
+        actions.append({"priority": 4, "agent": "", "kind": "waiting",
+                        "why": f"task {row['id']} waits on its prerequisites: {row['title']}",
+                        "do": None})
+
+    actions.sort(key=lambda a: (a["priority"], a["agent"]))
+    return actions
+
+
+def start_command(agent: dict[str, Any]) -> str:
+    """How to give that agent a turn: its own worktree, its own provider."""
+    provider = str(agent.get("provider") or "other")
+    command = PROVIDER_COMMAND.get(provider, f"<your {provider} command>")
+    run = launcher_in(agent["worktree"]) if agent.get("worktree") else launcher()
+    return f"{run} run --agent {agent['id']} -- {command}"

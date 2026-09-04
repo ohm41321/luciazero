@@ -164,6 +164,19 @@ directories are temporary; `~/.codex` and `~/.claude` are not, because a real
 turn needs the user's real credentials. `--keep` leaves the state directory
 for `agent-bus-evidence.sh`.
 
+## What to do next
+
+```bash
+python3 -m luciazero_agentd next
+```
+
+`status` reports the state of the bus; this reports the next action, with the
+command written out and the most blocking first — a dead-lettered delivery or
+a task stopped on its budget (a person has to decide something), then each
+agent holding unread messages, with the command that opens that agent's
+session from its own worktree. A daemon that is not running is the whole
+answer rather than a warning above it. Read-only, like `watch` and `chat`.
+
 ## Status inspection
 
 Before starting a turn, look at what is waiting on whom:

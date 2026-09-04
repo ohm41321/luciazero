@@ -307,6 +307,70 @@ class ChatTests(WatchCase):
             self.assertIn("two different agents", err.getvalue())
 
 
+class NextTests(WatchCase):
+    """`next` answers the question everybody was answering by hand: `status`
+    says what the state is, this says which terminal that means opening."""
+
+    def owed(self) -> list[dict]:
+        return watch.owed(self.follower().connect())
+
+    def test_a_queued_message_names_the_agent_and_the_command_that_opens_it(self) -> None:
+        self.say(ARCHITECT, IMPLEMENTER, "please look at this")
+        actions = self.owed()
+        self.assertEqual([a["kind"] for a in actions], ["inbox"])
+        self.assertEqual(actions[0]["agent"], IMPLEMENTER)
+        self.assertIn(f"run --agent {IMPLEMENTER} -- claude", actions[0]["do"])
+
+    def test_what_needs_a_person_outranks_what_only_needs_a_turn(self) -> None:
+        self.say(ARCHITECT, IMPLEMENTER, "still queued")
+        self.say(ARCHITECT, BYSTANDER, "undeliverable")
+        delivery = self.store.inbox(BYSTANDER, states=("queued",))["items"][-1]
+        self.store._conn.execute("UPDATE deliveries SET state = 'dead_letter' WHERE id = ?",
+                                 (delivery["delivery_id"],))
+        self.store._conn.commit()
+        actions = self.owed()
+        self.assertEqual([a["kind"] for a in actions], ["dead_letter", "inbox"])
+        self.assertIsNone(actions[0]["do"], "a dead letter is a decision, not a command")
+
+    def test_a_task_somebody_is_holding_is_not_repeated_when_its_inbox_already_says_so(self) -> None:
+        task = self.store.create_task(title="the work", created_by=ARCHITECT, assigned_to=IMPLEMENTER)
+        self.store.send_message(sender=ARCHITECT, recipient=IMPLEMENTER, kind="task",
+                                payload={"task_id": task["id"]})
+        item = self.store.inbox(IMPLEMENTER, states=("queued",))["items"][-1]
+        self.store.ack_delivery(item["delivery_id"], IMPLEMENTER)
+        self.store.claim_task(task["id"], IMPLEMENTER)
+        self.assertEqual([a["kind"] for a in self.owed()], ["claimed"])
+        self.say(ARCHITECT, IMPLEMENTER, "and one more thing")
+        self.assertEqual([a["kind"] for a in self.owed()], ["inbox"],
+                         "one line per agent: the queued message already means open that session")
+
+    def test_a_stopped_task_is_offered_as_a_decision_with_the_command_written_out(self) -> None:
+        task = self.store.create_task(title="ran out", created_by=ARCHITECT, assigned_to=IMPLEMENTER)
+        self.store._conn.execute("UPDATE tasks SET state = 'exhausted' WHERE id = ?", (task["id"],))
+        self.store._conn.commit()
+        actions = self.owed()
+        self.assertEqual([a["kind"] for a in actions], ["exhausted"])
+        self.assertIn(f"cancel {task['id']}", actions[0]["do"])
+
+    def test_a_quiet_bus_owes_nothing(self) -> None:
+        self.assertEqual(self.owed(), [])
+
+    def test_the_command_says_what_to_start_when_the_daemon_is_down(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["next", "--state-dir", str(self.state_dir)])
+        self.assertEqual(code, 0)
+        # No endpoint.json in this fixture: nothing else can happen first.
+        self.assertIn("serve", out.getvalue())
+
+    def test_asking_what_to_do_next_changes_nothing(self) -> None:
+        self.say(ARCHITECT, IMPLEMENTER, "queued")
+        before = self.fingerprint()
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(["next", "--state-dir", str(self.state_dir), "--json"]), 0)
+        self.assertEqual(self.fingerprint(), before)
+
+
 class RenderTests(WatchCase):
     def test_a_task_message_shows_the_title_not_the_id(self) -> None:
         task = self.store.create_task(title="M7a: read-only inbox watcher",

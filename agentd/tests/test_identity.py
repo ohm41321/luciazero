@@ -444,6 +444,8 @@ class HumanCommands(unittest.TestCase):
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
         )
         self.addCleanup(cli.kill)
+        for stream in (cli.stdout, cli.stderr):
+            self.addCleanup(stream.close)
         child_pid = None
         for _ in range(100):  # wait for the binding to name its process
             live = [b for b in self._bindings(states=("active",)) if b["pid"]]

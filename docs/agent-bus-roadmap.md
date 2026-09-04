@@ -832,10 +832,20 @@ gate spends quota, so it runs only when the user asks for it.
 - [ ] One live smoke gate: a real Codex turn and a real Claude turn started by
   the dispatcher, each reaching one completed logical outcome, with the
   credential revoked and the workspace gone afterwards. Written and wired as
-  `./test.sh --agent-bus-live --spend-quota`, and refusing to run without that
-  flag; its plumbing is proven against stub binaries, but the gate itself has
-  not been run, because a run spends the user's quota and is theirs to
-  approve. This is the only thing keeping M6 open.
+  `./test.sh --agent-bus-live --spend-quota`, refusing to run without that
+  flag, and rehearsable against the offline worker with `--rehearse`, which
+  spends nothing and proves every assertion is satisfiable.
+  - [x] **Claude, green 2026-09-04**: one managed turn, one attempt, the worker
+    itself acknowledged the delivery, claimed and completed the task, and
+    messaged the architect back; no credential, lease, or turn directory
+    outlived the turn.
+  - [ ] **Codex**: the real turn ran and did the whole procedure -- the App
+    Server handshake, the bus calls, `turn/completed` in 127s, and a reply
+    saying the bus works -- but the gate itself failed on an assertion of its
+    own that could never have passed: it filtered events on `actor_agent_id`,
+    a column the events table does not have. That is what `--rehearse` now
+    exists to catch before quota is spent. A green Codex line needs one more
+    turn, which is the user's to approve.
 - [ ] Test process crash and restart during every delivery transition,
   including `dispatched` and `processing` (the gate kills the dispatcher
   mid-turn; the kill-at-commit matrix for the new transitions is still to
@@ -863,7 +873,8 @@ Exit gate:
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
 ./test.sh --agent-bus-store      # 272 tests, includes the dispatch and adapter suites
-./test.sh --agent-bus-live --spend-quota   # the live smoke gate; not run yet
+./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
+./test.sh --agent-bus-live --spend-quota   # green for claude 2026-09-04; codex needs one re-run
 ```
 
 The suite must kill the dispatcher during a run, restart it, and show that the

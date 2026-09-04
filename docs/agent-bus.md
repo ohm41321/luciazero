@@ -320,13 +320,17 @@ bash docs/assets/agent-bus-demo.sh        # fake provider, no quota, ~10 s
 ./test.sh --agent-bus-e2e                 # the same flow as a gate (also in --full)
 ./test.sh --agent-bus-workflow            # M5: task graph, stoppers, provenance
 ./test.sh --agent-bus-dispatch            # M6: dispatcher killed mid-turn, recovered
+./test.sh --agent-bus-live --rehearse     # M6: the same gate against the offline worker
 ./test.sh --agent-bus-live --spend-quota  # M6: one real Codex turn + one real Claude turn
 LZ_AGENT_BUS_LIVE=1 bash docs/assets/agent-bus-demo.sh --live   # real models, 6 turns
 bash docs/assets/agent-bus-demo.sh --live --dry-run             # print the plan only
 ```
 
 The live smoke gate is the only one that spends money, so it refuses to run
-without `--spend-quota` and never runs inside `--full`. It starts one managed
+without `--spend-quota` and never runs inside `--full`. `--rehearse` runs the
+identical gate against the offline worker, which is a real bus client and
+spends nothing: it is what proves the gate's own assertions are satisfiable
+before a provider is started. It starts one managed
 turn per provider on a disposable state directory and checks what the worker
 itself moved: the delivery completed, the task completed by the worker under
 its own bound session, and no credential, lease, or turn directory left behind.

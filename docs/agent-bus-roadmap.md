@@ -884,7 +884,7 @@ Exit gate:
 
 ```bash
 ./test.sh --agent-bus-dispatch   # green 2026-09-04 (dispatcher core, fake provider)
-./test.sh --agent-bus-store      # 323 tests, includes the dispatch, adapter and watcher suites
+./test.sh --agent-bus-store      # 325 tests, includes the dispatch, adapter and watcher suites
 ./test.sh --agent-bus-live --rehearse       # the same gate, offline worker, no quota
 ./test.sh --agent-bus-live --spend-quota   # green 2026-09-04 (codex and claude, real turns)
 ```

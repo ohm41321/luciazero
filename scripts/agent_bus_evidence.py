@@ -104,6 +104,25 @@ def record_set(conn: sqlite3.Connection, correlation_id: str) -> dict[str, Any]:
     marks = ", ".join("?" * len(agents))
     worktrees = rows(conn, f"SELECT * FROM worktrees WHERE agent_id IN ({marks})", tuple(agents))
 
+    # The first thing the recipient's session did after the message landed.
+    # A pull-beta turn has no `turn_started_at` -- nothing records the moment a
+    # person gave the session its turn -- so the wait to the acknowledgement is
+    # two unlabelled things at once. This splits off the part that is not in
+    # doubt: from the recipient's first bus call to its acknowledgement is the
+    # agent working. What comes before it stays ambiguous, and is a ceiling on
+    # the user-trigger delay rather than a measurement of it.
+    for delivery in deliveries:
+        sent = next((m["created_at"] for m in messages if str(m["id"]) == str(delivery["message_id"])), None)
+        if sent is None or not delivery.get("acknowledged_at"):
+            continue
+        # No upper bound on `at`: the acknowledgement's own event is written
+        # microseconds *after* the row it describes, so bounding by
+        # `acknowledged_at` throws away the very call being looked for.
+        touch = conn.execute(
+            "SELECT MIN(at) AS first FROM events WHERE actor = ? AND at > ?",
+            (str(delivery["recipient_agent_id"]), sent)).fetchone()
+        delivery["first_touch_at"] = touch["first"] if touch and touch["first"] else None
+
     delivery_ids = [str(d["id"]) for d in deliveries]
     runs: list[dict[str, Any]] = []
     if delivery_ids:
@@ -148,9 +167,24 @@ def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
         started, acknowledged = sent.get(str(delivery["message_id"])), _at(delivery.get("acknowledged_at"))
         if started is None or acknowledged is None:
             continue
-        measured.append({"delivery_id": str(delivery["id"]),
-                         "recipient": str(delivery["recipient_agent_id"]),
-                         "seconds": round((acknowledged - started).total_seconds(), 3)})
+        entry = {"delivery_id": str(delivery["id"]),
+                 "recipient": str(delivery["recipient_agent_id"]),
+                 "seconds": round((acknowledged - started).total_seconds(), 3),
+                 "silent_seconds": None, "agent_seconds": None}
+        touched = _at(delivery.get("first_touch_at"))
+        if touched is not None and touched > acknowledged:
+            # The acknowledgement was that session's first call: there is no
+            # working half to split off.
+            touched = acknowledged
+        if touched is not None:
+            # Named for what each half is, not for what it is assumed to be:
+            # `silent` is the stretch with no bus call from that agent at all
+            # (a person not yet at the keyboard, a model not yet at its first
+            # tool call, or both), `agent` is the part it was demonstrably
+            # working.
+            entry["silent_seconds"] = round((touched - started).total_seconds(), 3)
+            entry["agent_seconds"] = round((acknowledged - touched).total_seconds(), 3)
+        measured.append(entry)
     return measured
 
 
@@ -189,6 +223,10 @@ def summarise(record: dict[str, Any]) -> dict[str, Any]:
         "waits": measured,
         "user_started_turns": len(measured),
         "longest_wait_seconds": max((w["seconds"] for w in measured), default=None),
+        # The ceiling on the user-trigger delay: what a retro still has to
+        # attribute, and what it must not claim the records attributed for it.
+        "longest_silent_seconds": max((w["silent_seconds"] for w in measured
+                                       if w["silent_seconds"] is not None), default=None),
         "total_wait_seconds": round(sum(w["seconds"] for w in measured), 3) if measured else None,
     }
 
@@ -199,6 +237,13 @@ def ledger_row(summary: dict[str, Any], *, label: str, path: Optional[Path]) -> 
     if summary["user_started_turns"]:
         cost = (f", {summary['user_started_turns']} turn(s) waited, longest "
                 f"{human_gap(float(summary['longest_wait_seconds']))}")
+        # The ledger says how much of that is still unattributed, so a row can
+        # never be read as evidence of a wait nobody measured.
+        if summary.get("longest_silent_seconds") is not None:
+            silent = float(summary["longest_silent_seconds"])
+            # Seconds, not `human_gap`, under ten minutes: rounding 107s and
+            # 120s both to "2m" hides the very split this column exists for.
+            cost += f" (<={silent:.0f}s unattributed)" if silent < 600 else f" (<={human_gap(silent)} unattributed)"
     return (f"| {label} | `{summary['correlation_id']}` | {summary['started_at']} | "
             f"{', '.join(summary['agents'])} | {summary['tasks']} task(s) {'/'.join(summary['task_states'])}, "
             f"{summary['messages']} message(s), {summary['artifacts']} artifact(s) | {summary['turns']}{cost} | "

@@ -145,6 +145,52 @@ class LedgerTests(EvidenceCase):
         self.assertAlmostEqual(float(summary["longest_wait_seconds"]), 3600, delta=5)
         self.assertIn("longest 60m", evidence.ledger_row(summary, label="w", path=None))
 
+    def test_the_wait_is_split_at_the_recipients_first_bus_call(self) -> None:
+        """A pull-beta turn has no `turn_started_at`, so the wait is two
+        unlabelled things at once: nobody records the moment a person gave the
+        session its turn. What the records can separate is the stretch with no
+        call from that agent at all from the part it was demonstrably working,
+        and the first half is a ceiling on the user-trigger delay rather than a
+        measurement of it."""
+        correlation, task_id = self.conversation("the workflow being recorded")
+        opened = self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="finding",
+                                         payload={"task_id": task_id}, correlation_id=correlation)
+        delivery = self.store.inbox(REVIEWER, states=("queued",))["items"][-1]
+        sent = datetime.fromisoformat(str(opened["created_at"]))
+        conn = self.store._conn
+        # Acknowledged an hour later, and the session's first call 50 minutes
+        # in: written by hand because the point is the shape of a real turn,
+        # which no test can wait an hour for. Events are append-only -- the
+        # fixture adds one rather than rewriting the recipient's history.
+        conn.execute("UPDATE deliveries SET state = 'acknowledged', acknowledged_by = ?, acknowledged_at = ? WHERE id = ?",
+                     (REVIEWER, (sent + timedelta(hours=1)).isoformat(), delivery["delivery_id"]))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, ?, 'agent.registered', 'agent', ?, '{}')",
+                     ((sent + timedelta(minutes=50)).isoformat(), REVIEWER, REVIEWER))
+        conn.commit()
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        wait = [w for w in summary["waits"] if w["delivery_id"] == delivery["delivery_id"]][0]
+        self.assertAlmostEqual(wait["seconds"], 3600, delta=5)
+        self.assertAlmostEqual(wait["silent_seconds"], 3000, delta=5)
+        self.assertAlmostEqual(wait["agent_seconds"], 600, delta=5)
+        self.assertAlmostEqual(float(summary["longest_silent_seconds"]), 3000, delta=5)
+        self.assertIn("unattributed", evidence.ledger_row(summary, label="w", path=None))
+
+    def test_a_wait_with_nothing_to_split_it_reports_no_split_rather_than_a_guess(self) -> None:
+        correlation, _ = self.conversation("the workflow being recorded")
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        # The halves always add up to the whole, and where the record is
+        # missing the answer is "not known", never a made-up number.
+        for wait in summary["waits"]:
+            if wait["silent_seconds"] is None:
+                self.assertIsNone(wait["agent_seconds"])
+            else:
+                self.assertAlmostEqual(wait["silent_seconds"] + wait["agent_seconds"], wait["seconds"], delta=0.01)
+                self.assertGreaterEqual(wait["agent_seconds"], 0.0,
+                                        "an acknowledgement that was the session's first call splits at itself")
+
     def test_a_delivery_nobody_opened_yet_is_not_a_measured_wait(self) -> None:
         correlation, _ = self.conversation("the workflow being recorded")
         self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="finding",

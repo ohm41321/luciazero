@@ -34,6 +34,7 @@
       "acknowledged_by": "claude-implementer",
       "attempts": 0,
       "completed_at": "2026-09-04T10:53:26.739959+00:00",
+      "first_touch_at": "2026-09-04T10:44:10.363896+00:00",
       "id": "dlv_f6a76a3c6a8b4b2a931462c707b5334d",
       "max_attempts": 3,
       "message_id": "msg_a68fc39c3f284278a5cd45563e4b9fcb",

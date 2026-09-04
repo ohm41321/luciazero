@@ -70,17 +70,36 @@ redaction contract over what it writes, and prints the ledger row filled in.
 
 | Workflow | Correlation ID | Started | Agents | Records | Turns | Record set |
 | --- | --- | --- | --- | --- | --- | --- |
-| M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
+| M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m (<=107s unattributed) | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
 own worktree, against a task the architect created there -- and the task
 reached `completed` with two artifacts. What it does not show is a closed
 loop: the implementer's `result` message is still `queued`, because the
-architect's session was closed before anyone opened it. The 120.334s on the
-one delivery that was opened is measured from the records, but nothing yet
-says whether that was the person being away from the keyboard or the model
-working, so it is not one of the two retros the gate asks for.
+architect's session was closed before anyone opened it.
+
+The 120.334s is measured, and it is **not** a measurement of a human wait. The
+records split it at the recipient's first bus call:
+
+| From | To | Seconds | What it is |
+| --- | --- | --- | --- |
+| `message.sent` 10:42:22.924 | `agent.registered` 10:44:10.363 | 107.440 | no call from that session at all |
+| `agent.registered` 10:44:10.363 | `delivery.acknowledged` 10:44:23.258 | 12.894 | the agent working: register, bind worktree, acknowledge |
+
+The second half is settled by the timestamps. The first is not: 107s with no
+bus call covers both the time before a person gave the session its turn and
+the time a model spent before its first tool call, and nothing distinguishes
+them, because a pull-beta turn has no `turn_started_at` -- there is no record
+of the moment a person started one. Both terminals were already bound at
+10:40:30 and 10:40:41, so it is not the cost of opening a window.
+
+`agent-bus-evidence.sh` now reports the split (`silent_seconds`,
+`agent_seconds`) and the ledger carries the unattributed part as a **ceiling**,
+so no row can be read as a wait somebody measured. Attributing that 107s needs
+the user to say what actually happened, and a retro that claims the records did
+it would be false. This workflow therefore counts as 1 of 3, and as 0 of the 2
+retros.
 
 **Counts as a real workflow**: work the user would have done anyway, done
 through the bus, with more than one agent taking part.
@@ -146,7 +165,7 @@ which is dispatcher latency rather than somebody being away from the keyboard.
 
 ### Offline gates standing green (2026-09-04)
 
-`./test.sh` — 323 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
+`./test.sh` — 325 daemon tests, the M1–M6 daemon gate, the M4 pull-beta slice
 with a fake provider, the M5 workflow gate, the M6 dispatch gate (dispatcher
 killed mid-turn and recovered), and the M3/M4.5 safety fixtures.
 
@@ -174,9 +193,12 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   Nothing acknowledges a delivery until a human opens that agent's session, so
   the gap between the send and the acknowledgement is that cost exactly:
   `agent-bus-evidence.sh` reports it per delivery, with the count of turns
-  waited on and the longest wait, and puts both in the ledger row. What it
-  cannot see is how long the person was away from the keyboard versus how long
-  the model took, so a retro still has to say which of the two a long wait was.
+  waited on and the longest wait, and puts both in the ledger row. It also
+  splits that wait at the recipient's first bus call: after it, the agent was
+  demonstrably working; before it, nothing distinguishes a person who has not
+  started the turn from a model that has not yet made its first call, because
+  the pull beta records no `turn_started_at`. The ledger carries that half as
+  a ceiling, and attributing it is a retro's job, not the exporter's.
 
 ## Carry-over, not claimed as done
 

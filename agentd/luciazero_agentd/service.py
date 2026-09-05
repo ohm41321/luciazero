@@ -104,6 +104,11 @@ class Plan:
     log: Path
     command: list[str]
     notes: list[str] = field(default_factory=list)
+    #: Text the first status step must print for the service to count as
+    #: running. `launchctl print` exits 0 for a job that is merely loaded, so
+    #: on launchd the exit code is not an answer; `systemctl is-active` is,
+    #: and leaves this None.
+    active_marker: Optional[str] = None
 
     def paths(self) -> list[Path]:
         return [path for path, _ in self.files]
@@ -180,7 +185,7 @@ def launchd_plist(label: str, argv: list[str], env: dict[str, str],
     <false/>
   </dict>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Adaptive</string>
   <key>WorkingDirectory</key>
   <string>{xml_escape(str(workdir))}</string>
   <key>StandardOutPath</key>
@@ -286,12 +291,20 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
         path = home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
         content = launchd_plist(LABEL, argv, env, log, home)
         target = f"gui/{os.getuid() if uid is None else uid}"
+        # bootstrap loads the job; it does not necessarily start it. In a GUI
+        # domain that already exists, RunAtLoad is pended ("pended nondemand
+        # spawn = speculative") and the job sits at runs = 0 while bootstrap
+        # exits 0 -- an install that reports success and leaves nothing
+        # listening. kickstart starts it now, and exits 0 on a job that is
+        # already running, so reinstalling stays idempotent.
         install_steps = [Step(["launchctl", "bootout", f"{target}/{LABEL}"], optional=True),
-                         Step(["launchctl", "bootstrap", target, str(path)])]
+                         Step(["launchctl", "bootstrap", target, str(path)]),
+                         Step(["launchctl", "kickstart", f"{target}/{LABEL}"])]
         uninstall_steps = [Step(["launchctl", "bootout", f"{target}/{LABEL}"], optional=True)]
         status_steps = [Step(["launchctl", "print", f"{target}/{LABEL}"], optional=True)]
         notes.append("A LaunchAgent runs in your GUI session, so the claim dialog still works.")
         kind = "launchd"
+        active_marker: Optional[str] = "state = running"
     else:
         path = home / ".config" / "systemd" / "user" / UNIT
         for name in DISPLAY_VARS:
@@ -310,11 +323,13 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
             notes.append("No DISPLAY or WAYLAND_DISPLAY here, so the service will have no screen: "
                          "claims fail closed until you serve in a terminal or bind with `run`.")
         kind = "systemd"
+        active_marker = None
 
     return Plan(kind=kind, label=LABEL if kind == "launchd" else UNIT,
                 files=[(path, content)], install_steps=install_steps,
                 uninstall_steps=uninstall_steps, status_steps=status_steps,
-                state_dir=resolved, log=log, command=argv, notes=notes)
+                state_dir=resolved, log=log, command=argv, notes=notes,
+                active_marker=active_marker)
 
 
 def _owned(path: Path) -> bool:
@@ -419,6 +434,8 @@ def status(plan_: Plan, *, runner: Optional[Runner] = None) -> dict[str, Any]:
     if steps:
         argv, code, message = steps[0]
         active = code == 0
+        if active and plan_.active_marker is not None:
+            active = plan_.active_marker in message
     return {"kind": plan_.kind, "label": plan_.label, "files": files,
             "installed": all(state == "ours" for _, state in files),
             "active": active, "probe": [(argv, code, msg) for argv, code, msg in steps],

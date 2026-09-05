@@ -33,10 +33,16 @@ from luciazero_agentd.__main__ import main
 class FakeRunner:
     """Records the commands a real install would have run."""
 
-    def __init__(self, codes: Optional[dict[str, int]] = None, raises: Optional[str] = None) -> None:
+    #: What a healthy `launchctl print` says. The exit code is 0 whether the
+    #: job is running or merely loaded, so the state lives in stdout.
+    LAUNCHD_RUNNING = "\tstate = running\n\tpid = 4242\n\truns = 1\n"
+
+    def __init__(self, codes: Optional[dict[str, int]] = None, raises: Optional[str] = None,
+                 outputs: Optional[dict[str, str]] = None) -> None:
         self.calls: list[list[str]] = []
         self.codes = codes or {}
         self.raises = raises
+        self.outputs = {"launchctl print": self.LAUNCHD_RUNNING} if outputs is None else outputs
 
     def __call__(self, argv: list[str]) -> Any:
         self.calls.append(list(argv))
@@ -44,7 +50,8 @@ class FakeRunner:
         if self.raises is not None and self.raises in joined:
             raise OSError(2, "No such file or directory")
         code = next((c for key, c in self.codes.items() if key in joined), 0)
-        return mock.Mock(returncode=code, stdout="", stderr="boom" if code else "")
+        out = next((text for key, text in self.outputs.items() if key in joined), "")
+        return mock.Mock(returncode=code, stdout=out, stderr="boom" if code else "")
 
     @property
     def commands(self) -> list[str]:
@@ -153,6 +160,9 @@ class LaunchdTests(ServiceCase):
         self.assertEqual(service.LABEL, parsed["Label"])
         self.assertEqual(service.MARKER, parsed["LuciazeroManaged"])
         self.assertTrue(parsed["RunAtLoad"])
+        # Background gets the daemon jetsam priority 40 and background QoS; the
+        # bus answers a person waiting at a prompt, which is what Adaptive is for.
+        self.assertEqual("Adaptive", parsed["ProcessType"])
         self.assertEqual(plan.command, parsed["ProgramArguments"])
         self.assertEqual(str(self.state), parsed["EnvironmentVariables"]["LUCIAZERO_AGENT_BUS_HOME"])
         self.assertEqual(str(self.state / "daemon.log"), parsed["StandardOutPath"])
@@ -177,6 +187,17 @@ class LaunchdTests(ServiceCase):
         self.assertTrue(plan.install_steps[0].optional)
         self.assertEqual("bootstrap", plan.install_steps[1].argv[1])
         self.assertFalse(plan.install_steps[1].optional)
+
+    def test_install_starts_the_job_instead_of_trusting_bootstrap(self) -> None:
+        """`launchctl bootstrap` into a GUI domain that is already up leaves
+        RunAtLoad pended -- `pended nondemand spawn = speculative`, `runs = 0`
+        -- so the label loads, nothing ever listens, and bootstrap still exits
+        0. kickstart is what starts it, and it exits 0 on a job already
+        running, so the step stays idempotent."""
+        plan = self.plan(platform="darwin")
+        self.assertEqual(["launchctl", "kickstart", "gui/501/com.luciazero.agentd"],
+                         plan.install_steps[-1].argv)
+        self.assertFalse(plan.install_steps[-1].optional)
 
 
 class SystemdTests(ServiceCase):
@@ -245,7 +266,8 @@ class InstallTests(ServiceCase):
         self.assertTrue(path.is_file())
         self.assertEqual([(str(path), "created")], result["files"])
         self.assertEqual(["launchctl bootout gui/501/com.luciazero.agentd",
-                          f"launchctl bootstrap gui/501 {path}"], runner.commands)
+                          f"launchctl bootstrap gui/501 {path}",
+                          "launchctl kickstart gui/501/com.luciazero.agentd"], runner.commands)
 
     def test_installing_twice_changes_nothing_the_second_time(self) -> None:
         plan = self.plan()
@@ -369,6 +391,24 @@ class StatusTests(ServiceCase):
         report = service.status(plan, runner=FakeRunner())
         self.assertFalse(report["installed"])
         self.assertEqual([(str(path), "foreign")], report["files"])
+
+    def test_a_loaded_but_unstarted_launchd_job_is_not_running(self) -> None:
+        """`launchctl print` exits 0 for a job that is loaded and has never
+        run, so believing the exit code reported a dead bus as running."""
+        plan = self.plan()
+        service.install(plan, runner=FakeRunner())
+        idle = "\tstate = not running\n\truns = 0\n\tpended nondemand spawn = speculative\n"
+        report = service.status(plan, runner=FakeRunner(outputs={"print": idle}))
+        self.assertTrue(report["installed"])
+        self.assertFalse(report["active"])
+
+    def test_systemd_is_answered_by_its_exit_code(self) -> None:
+        """`systemctl --user is-active` does tell the truth in its exit code,
+        so the launchd text check must not be applied to it."""
+        plan = self.plan(platform="linux")
+        service.install(plan, runner=FakeRunner())
+        self.assertTrue(service.status(plan, runner=FakeRunner(outputs={}))["active"])
+        self.assertFalse(service.status(plan, runner=FakeRunner(codes={"is-active": 3}))["active"])
 
     def test_a_manager_that_says_no_means_not_running(self) -> None:
         plan = self.plan()

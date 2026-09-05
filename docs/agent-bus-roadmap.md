@@ -1109,6 +1109,42 @@ Found by the adversarial review of this milestone, each with a regression:
   code printed nowhere. SSH now counts as no display, which routes it to the
   console code.
 
+### M7f — Knocking on a session that is idle (done 2026-09-05)
+
+Two sessions traded messages correctly and neither noticed. MCP is request and
+response: the daemon cannot push, a session learns of a delivery only when it
+calls `message_inbox`, and it runs no code at all between turns. The
+conversation moved only when a person typed "check your inbox" into whichever
+side was waiting — the errand the bus exists to remove.
+
+- [x] `run` takes the provider's terminal: a pty, bytes copied both ways, and
+  one line typed into it when a delivery reaches the bound agent. To the
+  provider it is the user typing, because it is. Verified against Claude Code
+  through a pty before any of it was built.
+- [x] Only a literal defined in `nudge.py` is ever typed. Nothing from a
+  payload reaches a peer's prompt: a message that could would be writing that
+  session's instructions. Payloads still arrive through `message_inbox`,
+  where `/lucia-bus` treats them as untrusted.
+- [x] Nothing is typed until the agent has used the bus since `run` started —
+  a session may still be holding Claude Code's "is this folder trusted"
+  dialog, where the probe's first line landed.
+- [x] The backlog is not a nudge, and a cooldown caps the rate: every nudge
+  spends a turn of somebody's quota.
+- [x] No terminal to proxy — a pipe, a test, a dispatched turn — and `run`
+  behaves exactly as before. `--no-nudge` opts out.
+- [x] `/lucia-bus` reads the inbox unprompted and prints what crosses the bus,
+  so the wake-up turns into something the user can read in both panes.
+
+Exit gate: 18 regressions, including `run` end to end under a pty where a
+delivery arriving mid-session comes back out as keystrokes and the payload
+does not. Proven live on 2026-09-05: two sessions woke each other, read,
+replied and acknowledged with nobody typing.
+
+What it does not do: stop. Each reply nudges the other side, so a pair that
+keeps answering keeps going, bounded only by the cooldown, the hop limit, and
+the skill's own rule to stop when a reply adds nothing. A cap per session is
+open.
+
 ### M7 — Managed-dispatch vertical slice
 
 - [ ] Register the three agents from M4 as managed workers.

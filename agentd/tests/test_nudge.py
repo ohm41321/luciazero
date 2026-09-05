@@ -1,4 +1,4 @@
-"""M8: typing into the session that is already open.
+"""M7f: typing into the session that is already open.
 
 Every test here drives a real pty and a real store. What it never does is
 start a provider: the child is `cat`, which echoes what it is typed, so the

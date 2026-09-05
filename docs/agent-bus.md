@@ -282,7 +282,7 @@ code into a log the asking session can read. The refusal names the way out:
 rather skip all of this: sessions act while labelled unverified, their writes
 are recorded as `asserted`, and spending a human approval is still refused.
 
-## A message that arrives while you are not looking (M8)
+## A message that arrives while you are not looking (M7f)
 
 MCP is request and response. The daemon cannot push, so a session learns about
 a delivery only when it calls `message_inbox`, and it can call nothing while

@@ -1,4 +1,4 @@
-"""M8: waking the session that is already open.
+"""M7f: waking the session that is already open.
 
 MCP is request and response. The daemon cannot push, so a session learns about
 a delivery only when it calls `message_inbox`, and it can call nothing at all

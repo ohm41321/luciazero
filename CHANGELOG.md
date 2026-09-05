@@ -9,8 +9,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Agent Bus (beta): a delivery that arrives while a session sits idle now
-  knocks on it. `luciazero-agentd run` holds the provider's pty and types one
+- Agent Bus (beta, M7f): a delivery that arrives while a session sits idle
+  now knocks on it. `luciazero-agentd run` holds the provider's pty and types one
   fixed line — `check your bus inbox` — when a message reaches the bound
   agent, so two sessions carry a conversation without a person relaying it.
   Nothing from a payload is ever typed; the nudge waits until the agent has

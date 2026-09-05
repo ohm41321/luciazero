@@ -1147,6 +1147,10 @@ open.
 
 ### M7 — Managed-dispatch vertical slice
 
+Designed in ADR 0007, which states what has to be true before the live run
+starts — the M4 decision gate resolved first, the offline gate green, and the
+quota approved with a number attached.
+
 - [ ] Register the three agents from M4 as managed workers.
 - [ ] Run the outcome flow with no user-started turns.
 - [ ] Capture run records in addition to the M4 records.

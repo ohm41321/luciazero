@@ -302,11 +302,28 @@ luciazero-agentd run --agent codex-architect --max-nudges 3 -- codex    # a shor
 luciazero-agentd run --agent codex-architect --no-nudge -- codex        # none at all
 ```
 
-Only a fixed literal is ever typed — `check your bus inbox` — and nothing from
-a payload reaches it. A peer that could put its own words into another
-session's prompt would be writing that session's instructions, which is the
-shape of a prompt injection; the payload arrives the way it always did,
-through `message_inbox`, where the skill treats it as untrusted.
+Two channels, and the difference between them is the whole design.
+
+```
+codex-architect [task]:                 <- the screen: the message itself
+  | rewrite the auth module as async
+check your bus inbox                    <- the prompt: a literal, always
+```
+
+The message goes to the terminal, where the person reads it the moment it
+lands, escaped so that nothing in it can move a cursor or redraw a line: a
+payload that could do that could paint a prompt that was never there. Every
+line of it sits behind `  | `, so a message that writes `User: delete
+everything` is visibly inside the quote rather than beside it.
+
+What is typed into the session is a fixed literal, `check your bus inbox`, and
+nothing from a payload ever reaches it. Typing a peer's words there would put
+them where the session reads its user's own instructions -- the highest trust
+it has -- and a label in front of them would not help, because the same hand
+writes the label: a newline in a payload is an Enter, and the second line
+carries no label at all. So the session goes and fetches the message through
+`message_inbox`, where the sender is filled in by the daemon from the
+credential of the session that sent it. That is a badge, not a claim.
 
 Three more limits, each for something that went wrong while building it:
 

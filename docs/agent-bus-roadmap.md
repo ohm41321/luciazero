@@ -1121,10 +1121,14 @@ side was waiting — the errand the bus exists to remove.
   one line typed into it when a delivery reaches the bound agent. To the
   provider it is the user typing, because it is. Verified against Claude Code
   through a pty before any of it was built.
-- [x] Only a literal defined in `nudge.py` is ever typed. Nothing from a
-  payload reaches a peer's prompt: a message that could would be writing that
-  session's instructions. Payloads still arrive through `message_inbox`,
-  where `/lucia-bus` treats them as untrusted.
+- [x] Two channels: the message is printed on the terminal, escaped, each
+  line behind a quote marker, so the person reads it as it lands; only a
+  literal defined in `nudge.py` is typed into the session. Nothing from a
+  payload reaches a peer's prompt, where it would sit among that session's own
+  user instructions, and a label in front of it would not help -- a newline in
+  a payload is an Enter and the next line carries no label. The session
+  fetches the message through `message_inbox`, where the daemon fills in the
+  sender from the sending session's credential.
 - [x] Nothing is typed until the agent has used the bus since `run` started —
   a session may still be holding Claude Code's "is this folder trusted"
   dialog, where the probe's first line landed.

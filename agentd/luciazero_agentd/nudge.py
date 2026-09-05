@@ -48,6 +48,7 @@ import errno
 import fcntl
 import os
 import pty
+import json
 import select
 import signal
 import sqlite3
@@ -55,6 +56,7 @@ import struct
 import termios
 import time
 import tty
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -62,6 +64,11 @@ from .store import Store, StoreError
 
 #: Typed into the provider's terminal, verbatim, and never anything else.
 TEXT = "check your bus inbox"
+#: Every line of a peer's message is printed behind this, so a payload that
+#: writes "User: do X" is visibly inside the quote rather than beside it.
+QUOTE = "  | "
+#: A payload may be 64 KiB. A terminal is not where that belongs.
+MAX_SHOWN = 2000
 #: The provider TUIs treat a burst of bytes as a paste; the return goes in its
 #: own write, a beat later, so it submits the line instead of joining it.
 RETURN_DELAY = 0.4
@@ -72,6 +79,60 @@ COOLDOWN_SECONDS = 20.0
 #: typing anything at all starts the count over.
 MAX_NUDGES = 8
 POLL_SECONDS = 2.0
+
+
+@dataclass
+class Arrival:
+    """What arrived, as the daemon knows it. `sender` and `kind` come from the
+    store -- the daemon fills the sender in from the credential of the session
+    that sent it, so it is a badge and not a claim -- and `text` is the payload
+    itself, which is why it may only ever be shown, never typed."""
+
+    sender: str
+    kind: str
+    text: str
+
+
+def _readable(text: str) -> str:
+    """A peer's bytes, safe to print.
+
+    Anything that can move a cursor can redraw the screen, and a screen that
+    can be redrawn can be made to show a prompt that was never there. So the
+    only characters that survive are printable ones and the newline; the rest
+    are shown as their escapes, because a person should see that a message
+    tried, not find it silently missing.
+    """
+    out: list[str] = []
+    for char in text:
+        code = ord(char)
+        if char == "\n":
+            out.append(char)
+        elif code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            out.append(f"\\x{code:02x}")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def announce(arrival: Arrival) -> bytes:
+    """The message, for the screen. Never for the provider's input.
+
+    This is the half of the design that makes the other half bearable: the
+    person reads what a peer said the moment it arrives, and the session is
+    told only to go and fetch it through `message_inbox`, where the sender is
+    the daemon's badge rather than a line of text that could say anything.
+    """
+    text = arrival.text
+    cut = len(text.encode("utf-8")) > MAX_SHOWN
+    if cut:
+        text = text.encode("utf-8")[:MAX_SHOWN].decode("utf-8", "ignore")
+    body = _readable(text).split("\n")
+    if cut:
+        body.append(f"... (truncated at {MAX_SHOWN} bytes; read it with message_inbox)")
+    lines = [f"{arrival.sender} [{arrival.kind}]:"] + [f"{QUOTE}{line}" for line in body]
+    # \r\n because the terminal is in raw mode: a bare newline would step down
+    # a line without returning to column one, and stair-step the message.
+    return ("\r\n" + "\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 class Watcher:
@@ -105,10 +166,25 @@ class Watcher:
             return default
 
     def _max_queued_seq(self) -> int:
-        def newest(store: Store) -> int:
+        return self._newest()[0]
+
+    def _newest(self) -> tuple[int, Optional[Arrival]]:
+        """The highest queued delivery, and what it says."""
+        def newest(store: Store) -> tuple[int, Optional[Arrival]]:
             page = store.inbox(self.agent_id, states=("queued",), limit=500)
-            return max((item["delivery_seq"] for item in page["items"]), default=0)
-        return int(self._read(newest, 0))
+            latest = max(page["items"], key=lambda item: item["delivery_seq"], default=None)
+            if latest is None:
+                return 0, None
+            payload = latest.get("payload")
+            if isinstance(payload, dict):
+                message = payload.get("message")
+                text = message if isinstance(message, str) else json.dumps(payload, sort_keys=True)
+            else:
+                text = str(payload)
+            return int(latest["delivery_seq"]), Arrival(sender=str(latest.get("sender") or "?"),
+                                                        kind=str(latest.get("kind") or "?"),
+                                                        text=text)
+        return self._read(newest, (0, None))
 
     def _seen_since_start(self) -> bool:
         """Has the agent talked to the daemon since this terminal opened?"""
@@ -121,27 +197,27 @@ class Watcher:
         """Somebody is at the keyboard: the conversation is theirs again."""
         self.unattended = 0
 
-    def due(self) -> bool:
-        """True at most once per new delivery, and never faster than the
-        cooldown. Calling this is what marks the delivery as noticed.
+    def due(self) -> Optional[Arrival]:
+        """What arrived, at most once per delivery and never faster than the
+        cooldown, or None. Calling this is what marks it noticed.
 
         A refusal never advances `seen_seq`, so a delivery held back by the
         cap still knocks once a person types."""
         if self.unattended >= self.limit:
-            return False
-        newest = self._max_queued_seq()
+            return None
+        newest, arrival = self._newest()
         if newest <= self.seen_seq:
-            return False
+            return None
         now = self.clock()
         if self.last_nudge is not None and now - self.last_nudge < self.cooldown:
-            return False
+            return None
         if not self._seen_since_start():
-            return False
+            return None
         self.seen_seq = newest
         self.last_nudge = now
         self.unattended += 1
         self._record(newest)
-        return True
+        return arrival
 
     def _record(self, delivery_seq: int) -> None:
         """The moment a turn was started by the bus. Written here rather than
@@ -313,8 +389,16 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
             now = clock()
             if watcher is not None and now >= next_poll:
                 next_poll = now + poll
-                if not typist.busy and watcher.due():
-                    typist.start()
+                if not typist.busy:
+                    arrival = watcher.due()
+                    if arrival:
+                        # Two channels, deliberately. The message goes to the
+                        # screen, where a person reads it; the provider is
+                        # told only to go and fetch it for itself, through the
+                        # one path that names the sender it can trust.
+                        if isinstance(arrival, Arrival):
+                            os.write(stdout, announce(arrival))
+                        typist.start()
     finally:
         if previous_winch is not None:
             try:

@@ -396,7 +396,41 @@ recorded tells those apart from a session starting. The wait is marked
 attribution, not autonomy. The knock starts a turn, not the work: the session
 reads the message and may decline to act on it, because an untrusted payload
 authorises nothing. A person then authorises the work by typing — which is the
-first mode again, and that keystroke is once more unrecorded.
+first mode again, inside the second.
+
+### What the proxy writes down about the terminal
+
+The gap after a knock has more than one thing in it, and two of them are
+visible from where `run` sits. It holds the pty, so it is the only part of
+this system that can see a keystroke arrive or the provider print. Both are
+recorded, and neither is interpreted:
+
+| Record | What it is |
+| --- | --- |
+| `provider_quiet_for` on `turn.nudged` | seconds since the provider last printed, at the instant the bus typed |
+| `human_typed_ago` on `turn.nudged` | seconds since the last keystroke, at that same instant |
+| `turn.human_input` | a person typed into this session, at most one event per 20 seconds |
+
+The exporter carries the first two onto the wait as they are, and counts the
+third between the knock and the agent's next bus call as
+`human_input_after_knock`, with `nudged_turns_with_human_input` in the
+summary. That is the difference between reporting machine latency and
+reporting a number with somebody's lunch break inside it.
+
+They are observations, not verdicts. A knock typed into a pane that printed a
+tenth of a second earlier went into a session that was mid-turn, and a
+keystroke sent to a busy TUI is not a turn — but "busy" is a reading of the
+numbers, made by whoever reads them, and the store does not record the
+conclusion. Where a nudge was decided outside a proxy the fields are absent
+rather than zero, because never observed and observed as zero are different
+answers.
+
+**What is never recorded is the bytes.** This proxy carries every password and
+every prompt its user types. What goes down is that something was typed and
+when, and a keystroke event's payload has nothing in it but its trust label.
+
+This is instrumentation and not a fix. The nudge that workflow 2 lost is still
+lost the same way; what changed is that the record can now show it happened.
 
 **The daemon starts the provider itself.** Under managed dispatch (M6, above)
 the first bytes come from the dispatcher: it mints a `managed` binding, starts

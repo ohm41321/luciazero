@@ -40,6 +40,19 @@ Three more limits, each for a failure seen while building this:
   somebody is using may take messages all day and none of them is a runaway,
   while a pair left alone stops after `MAX_NUDGES` of them. The delivery is
   not lost when the cap holds; it knocks as soon as a person is back.
+
+The proxy also writes down what it can see of the terminal, because a knock
+is recorded when it is *typed* and that is not the same as a turn starting.
+Workflow 2 has both failures in it: one knock whose keystroke went into a pane
+already mid-turn and was swallowed, and one whose gap was a person deciding
+whether to authorise the work. Nothing recorded could tell those apart, or
+either from a session simply starting up, so the span between them had to be
+renamed for what it covers instead of what it was assumed to be. Two things
+are observable from here and are now kept: a keystroke, which says a person
+was present, and output from the provider, which says it was busy. Neither is
+interpreted here. What is never recorded is the bytes -- this proxy carries
+every password and every prompt the user types, so what goes down is that
+something was typed and when, and nothing more.
 """
 
 from __future__ import annotations
@@ -81,6 +94,11 @@ COOLDOWN_SECONDS = 20.0
 #: typing anything at all starts the count over.
 MAX_NUDGES = 8
 POLL_SECONDS = 2.0
+#: A person at the keyboard is recorded no more often than this. The question
+#: the record answers is "was somebody here around then", which one event per
+#: stretch of typing answers exactly as well as one per keystroke, at a
+#: thousandth of the writes -- and this loop is holding the user's terminal.
+HUMAN_INPUT_SECONDS = 20.0
 
 
 @dataclass
@@ -177,6 +195,12 @@ class Watcher:
         #: session opened; the skill reads those itself.
         self.seen_seq = self._max_queued_seq()
         self.last_nudge: Optional[float] = None
+        #: What the terminal looked like, as the proxy reports it. None means
+        #: not once since this session opened, which is a different answer
+        #: from zero and is kept as one.
+        self.last_output: Optional[float] = None
+        self.last_input: Optional[float] = None
+        self.last_input_event: Optional[float] = None
 
     def _read(self, call: Callable[[Store], Any], default: Any) -> Any:
         try:
@@ -220,9 +244,35 @@ class Watcher:
         stamp = self._read(last_seen, None)
         return bool(stamp and stamp > self.started_at)
 
+    def saw_output(self) -> None:
+        """The provider printed something. How much and what it said are not
+        looked at -- the pty carries the user's whole screen -- so the record
+        is that it printed, and when."""
+        self.last_output = self.clock()
+
     def human_typed(self) -> None:
         """Somebody is at the keyboard: the conversation is theirs again."""
         self.unattended = 0
+        now = self.clock()
+        # Rate-limited before the write, not inside it: the point is to keep
+        # this loop out of SQLite while somebody types, and a call that
+        # decides not to write must not open the database to find that out.
+        if self.last_input_event is None or now - self.last_input_event >= HUMAN_INPUT_SECONDS:
+            self.last_input_event = now
+            self._read(self._input_event, None)
+        self.last_input = now
+
+    def _input_event(self, store: Store) -> None:
+        store.trust = "system"  # the daemon saw this keystroke; nobody claimed it
+        store.record_human_input(self.agent_id)
+
+    def _since(self, stamp: Optional[float], now: float) -> Optional[float]:
+        """Seconds since something was last observed, or None if it never was.
+        Never negative: a clock that went backwards is unobserved, not a
+        measurement with a minus sign in front of it."""
+        if stamp is None:
+            return None
+        return max(0.0, now - stamp)
 
     def due(self) -> Optional[Arrival]:
         """What arrived, at most once per delivery and never faster than the
@@ -243,16 +293,27 @@ class Watcher:
         self.seen_seq = newest
         self.last_nudge = now
         self.unattended += 1
-        self._record(newest)
+        self._record(newest, provider_quiet_for=self._since(self.last_output, now),
+                     human_typed_ago=self._since(self.last_input, now))
         return arrival
 
-    def _record(self, delivery_seq: int) -> None:
-        """The moment a turn was started by the bus. Written here rather than
-        in the proxy because this is where the decision is made, and a nudge
-        that was decided and not written is a wait nobody can attribute."""
+    def _record(self, delivery_seq: int, *, provider_quiet_for: Optional[float] = None,
+                human_typed_ago: Optional[float] = None) -> None:
+        """The moment a turn was started by the bus, and what the terminal
+        looked like when it was. Written here rather than in the proxy because
+        this is where the decision is made, and a nudge that was decided and
+        not written is a wait nobody can attribute.
+
+        The two observations answer the question the knock cannot: a nudge is
+        recorded when it is *typed*, and a keystroke typed into a pane that is
+        mid-turn does not start one. Whether that happened is not knowable
+        from the nudge alone, so the state of the terminal goes down beside
+        it and the reading is left to whoever reads it."""
         def write(store: Store) -> None:
             store.trust = "system"  # a machine started this turn, not a person
-            store.record_nudge(self.agent_id, delivery_seq=delivery_seq)
+            store.record_nudge(self.agent_id, delivery_seq=delivery_seq,
+                               provider_quiet_for=provider_quiet_for,
+                               human_typed_ago=human_typed_ago)
         self._read(write, None)
 
 
@@ -401,6 +462,13 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                 if not data:
                     break
                 os.write(stdout, data)
+                # A pane that is streaming is a pane mid-turn. The proxy is
+                # the only thing that sees it, so it is the only thing that
+                # can say so; the bytes themselves are the user's screen and
+                # are neither inspected nor kept.
+                printed = getattr(watcher, "saw_output", None)
+                if printed is not None:
+                    printed()
             if stdin in ready:
                 try:
                     data = os.read(stdin, 65536)

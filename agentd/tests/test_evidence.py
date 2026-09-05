@@ -213,6 +213,67 @@ class LedgerTests(EvidenceCase):
         self.assertNotIn("startup_seconds", wait,
                          "the old name claimed the span was the session starting")
 
+    def test_the_gap_after_a_knock_says_whether_anybody_was_in_it(self) -> None:
+        """`next_bus_call_seconds` is one span with several possible causes in
+        it, and the two the proxy can see are now recorded: what the terminal
+        was doing when the bus typed, and whether a person touched it
+        afterwards. A gap with a keystroke in it is not machine latency."""
+        correlation, task_id = self.conversation("the workflow being recorded")
+        opened = self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="task",
+                                         payload={"task_id": task_id}, correlation_id=correlation)
+        delivery = self.store.inbox(REVIEWER, states=("queued",))["items"][-1]
+        sent = datetime.fromisoformat(str(opened["created_at"]))
+        conn = self.store._conn
+        conn.execute("UPDATE deliveries SET state = 'acknowledged', acknowledged_by = ?, acknowledged_at = ? WHERE id = ?",
+                     (REVIEWER, (sent + timedelta(hours=1)).isoformat(), delivery["delivery_id"]))
+        # A knock into a pane that had printed a tenth of a second earlier:
+        # the shape of the nudge workflow 2 lost.
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, 'bus', 'turn.nudged', 'agent', ?, ?)",
+                     ((sent + timedelta(seconds=2)).isoformat(), REVIEWER,
+                      '{"provider_quiet_for": 0.1, "human_typed_ago": 640.0, "trust": "system"}'))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, 'bus', 'turn.human_input', 'agent', ?, '{}')",
+                     ((sent + timedelta(minutes=40)).isoformat(), REVIEWER))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, ?, 'agent.registered', 'agent', ?, '{}')",
+                     ((sent + timedelta(minutes=50)).isoformat(), REVIEWER, REVIEWER))
+        conn.commit()
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        wait = [w for w in summary["waits"] if w["delivery_id"] == delivery["delivery_id"]][0]
+        self.assertEqual(0.1, wait["provider_quiet_for"])
+        self.assertEqual(640.0, wait["human_typed_ago"])
+        self.assertEqual(1, wait["human_input_after_knock"],
+                         "a keystroke inside the gap is what says a person was in it")
+        self.assertEqual(1, summary["nudged_turns_with_human_input"])
+
+    def test_a_knock_from_before_the_terminal_was_watched_gains_no_numbers(self) -> None:
+        """An old record set says exactly what it always said. Instrumentation
+        added later must not appear in evidence collected before it existed."""
+        correlation, task_id = self.conversation("the workflow being recorded")
+        opened = self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="task",
+                                         payload={"task_id": task_id}, correlation_id=correlation)
+        delivery = self.store.inbox(REVIEWER, states=("queued",))["items"][-1]
+        sent = datetime.fromisoformat(str(opened["created_at"]))
+        conn = self.store._conn
+        conn.execute("UPDATE deliveries SET state = 'acknowledged', acknowledged_by = ?, acknowledged_at = ? WHERE id = ?",
+                     (REVIEWER, (sent + timedelta(hours=1)).isoformat(), delivery["delivery_id"]))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, 'bus', 'turn.nudged', 'agent', ?, '{}')",
+                     ((sent + timedelta(seconds=2)).isoformat(), REVIEWER))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, ?, 'agent.registered', 'agent', ?, '{}')",
+                     ((sent + timedelta(minutes=50)).isoformat(), REVIEWER, REVIEWER))
+        conn.commit()
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        wait = [w for w in summary["waits"] if w["delivery_id"] == delivery["delivery_id"]][0]
+        self.assertIsNone(wait.get("provider_quiet_for"))
+        self.assertEqual(0, wait.get("human_input_after_knock"))
+        self.assertEqual(0, summary["nudged_turns_with_human_input"])
+        self.assertIn("next_bus_call_seconds", wait, "the row it always had is still the row")
+
     def test_a_wait_with_nothing_to_split_it_reports_no_split_rather_than_a_guess(self) -> None:
         correlation, _ = self.conversation("the workflow being recorded")
         with self.connect() as conn:

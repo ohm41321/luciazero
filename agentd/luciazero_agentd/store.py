@@ -223,6 +223,22 @@ def _check_int(value: Any, lo: int, hi: int, what: str) -> int:
     return value
 
 
+def _check_seconds(value: Any, what: str) -> float:
+    """An observed duration, rounded to milliseconds.
+
+    Instrumentation measures with `time.monotonic`, which has more digits than
+    the thing it is timing has meaning, and an evidence file is read by people.
+    NaN and Infinity are refused here rather than at the JSON encoder, so a
+    broken clock is a validation error naming the field and not a write that
+    fails later with nothing to point at."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(f"{what} must be a number of seconds, got {value!r}")
+    value = float(value)
+    if value != value or value in (float("inf"), float("-inf")) or not 0.0 <= value <= 1e9:
+        raise ValidationError(f"{what} must be a number of seconds within 0..1e9, got {value!r}")
+    return round(value, 3)
+
+
 def _check_json_object(value: Any, what: str) -> str:
     if not isinstance(value, dict):
         raise ValidationError(f"{what} must be a JSON object")
@@ -2795,7 +2811,9 @@ class Store:
         return recovered
 
     # ----------------------------------------------------------------- events
-    def record_nudge(self, agent_id: str, *, delivery_seq: Optional[int] = None) -> None:
+    def record_nudge(self, agent_id: str, *, delivery_seq: Optional[int] = None,
+                     provider_quiet_for: Optional[float] = None,
+                     human_typed_ago: Optional[float] = None) -> None:
         """Write down the moment a turn was started by the bus rather than by
         a person.
 
@@ -2807,13 +2825,49 @@ class Store:
         an unattributed ceiling. A nudged turn is started by a machine, at a
         moment that machine knows, so it says so and the gap becomes two spans
         that are each measured.
+
+        `provider_quiet_for` and `human_typed_ago` are what the proxy could
+        see about the terminal at the instant it typed: how long the provider
+        had printed nothing, and how long since a keystroke. Neither is a
+        verdict. A knock into a pane that has been streaming output for the
+        last second went to a session that was mid-turn, and a keystroke sent
+        to a busy TUI is not a turn -- but "busy" is an inference from the
+        numbers, made by whoever reads them, not a claim recorded here. Both
+        are omitted when the terminal was never observed at all, which is the
+        honest answer for a nudge decided outside a proxy.
         """
         _check_id(agent_id, "agent id", self._redactor)
         if delivery_seq is not None:
             delivery_seq = _check_int(delivery_seq, 0, 2**62, "delivery_seq")
+        payload: dict[str, Any] = {"delivery_seq": delivery_seq}
+        if provider_quiet_for is not None:
+            payload["provider_quiet_for"] = _check_seconds(provider_quiet_for, "provider_quiet_for")
+        if human_typed_ago is not None:
+            payload["human_typed_ago"] = _check_seconds(human_typed_ago, "human_typed_ago")
         with self._tx("record_nudge"):
-            self._event("bus", "turn.nudged", "agent", agent_id,
-                        {"delivery_seq": delivery_seq})
+            self._event("bus", "turn.nudged", "agent", agent_id, payload)
+
+    def record_human_input(self, agent_id: str) -> None:
+        """A person typed into this session's terminal.
+
+        Written because the gap after a knock has more than one thing in it.
+        Workflow 2 had a knock whose keystroke was swallowed by a busy pane
+        and another where a person spent the gap deciding whether to
+        authorise the work, and the records could not tell them apart -- which
+        is why the field measuring that gap had to be renamed for the span it
+        covers rather than the cause it was assumed to have. A keystroke is
+        the one thing that says a person was there, and the proxy holding the
+        terminal is the only part of this system that can see one.
+
+        What was typed is never read, never stored, and never inferred from:
+        this proxy carries every password and every prompt the user writes, so
+        the record is the fact and the moment, and nothing else. The caller
+        rate-limits, because the question is whether somebody was at the
+        keyboard around now, not how fast they type.
+        """
+        _check_id(agent_id, "agent id", self._redactor)
+        with self._tx("record_human_input"):
+            self._event("bus", "turn.human_input", "agent", agent_id, {})
 
     def events(self, *, after: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         _check_int(limit, 1, 500, "limit")

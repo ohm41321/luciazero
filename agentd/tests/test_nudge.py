@@ -61,6 +61,16 @@ class WatcherTests(unittest.TestCase):
         with make_store(self.db) as store:
             store.heartbeat(agent)
 
+    def events_of(self, kind: str) -> list[dict]:
+        with make_store(self.db) as store:
+            return [e for e in store.events(limit=500) if e["kind"] == kind]
+
+    def nudges(self) -> list[dict]:
+        return self.events_of("turn.nudged")
+
+    def typed(self) -> list[dict]:
+        return self.events_of("turn.human_input")
+
     def test_a_delivery_that_arrives_while_the_session_waits_is_a_nudge(self) -> None:
         watcher = self.watcher()
         self.seen()
@@ -167,6 +177,55 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(1, len(events), "the nudge left no record")
         self.assertEqual("codex-architect", events[0]["entity_id"])
         self.assertEqual("system", events[0]["payload"]["trust"])
+
+    def test_a_knock_writes_down_what_the_terminal_was_doing(self) -> None:
+        """A nudge is recorded when it is typed, and a keystroke typed into a
+        pane that is mid-turn does not start a turn. Workflow 2 lost one that
+        way and the records could not say so, because nothing wrote down what
+        the terminal looked like at the moment the bus typed into it."""
+        watcher = self.watcher()
+        self.seen()
+        watcher.saw_output()          # the provider printed
+        self.now += 30.0
+        watcher.human_typed()         # ...and 30s later a person typed
+        self.now += 5.0
+        self.send()
+        self.assertTrue(watcher.due())
+        payload = self.nudges()[0]["payload"]
+        self.assertAlmostEqual(35.0, payload["provider_quiet_for"], places=3)
+        self.assertAlmostEqual(5.0, payload["human_typed_ago"], places=3)
+
+    def test_a_terminal_nobody_watched_records_no_guess(self) -> None:
+        """`due()` is callable without a proxy behind it. Never observed is a
+        different answer from observed as zero, and is kept as one."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        self.assertTrue(watcher.due())
+        payload = self.nudges()[0]["payload"]
+        self.assertNotIn("provider_quiet_for", payload)
+        self.assertNotIn("human_typed_ago", payload)
+
+    def test_a_person_typing_is_one_record_per_stretch_not_one_per_key(self) -> None:
+        """This runs inside the loop holding the user's terminal, so a burst
+        of typing must not be a burst of writes to SQLite."""
+        watcher = self.watcher()
+        for _ in range(200):
+            watcher.human_typed()
+            self.now += 0.05
+        self.assertEqual(1, len(self.typed()))
+        self.now += nudge.HUMAN_INPUT_SECONDS
+        watcher.human_typed()
+        self.assertEqual(2, len(self.typed()))
+
+    def test_a_keystroke_is_recorded_as_a_fact_and_never_as_its_bytes(self) -> None:
+        """The proxy sees every password and every prompt the user types. What
+        goes down is that somebody typed and when."""
+        watcher = self.watcher()
+        watcher.human_typed()
+        event = self.typed()[0]
+        self.assertEqual({"trust": "system"}, event["payload"])
+        self.assertEqual("codex-architect", event["entity_id"])
 
     def test_a_nudge_that_is_refused_records_nothing(self) -> None:
         watcher = self.watcher(limit=0)
@@ -437,6 +496,27 @@ class ProxyTests(unittest.TestCase):
             os.write(self.terminal, b"a person is here\n")
             time.sleep(0.1)
         self.assertGreater(watcher.typed, 0)
+
+    def test_the_provider_printing_is_reported_to_the_watcher(self) -> None:
+        """A pane that is streaming output is a pane mid-turn, and the proxy
+        is the only thing that can see it."""
+
+        class Counting:
+            def __init__(self) -> None:
+                self.printed = 0
+
+            def due(self) -> bool:
+                return False
+
+            def saw_output(self) -> None:
+                self.printed += 1
+
+        watcher = Counting()
+        self.start(["sh", "-c", "printf x; sleep 5"], watcher=watcher, poll=0.05)
+        deadline = time.time() + 10
+        while time.time() < deadline and watcher.printed == 0:
+            time.sleep(0.05)
+        self.assertGreater(watcher.printed, 0)
 
     def test_a_peer_s_words_reach_the_log_and_neither_the_terminal_nor_the_provider(self) -> None:
         """The whole design in one assertion.

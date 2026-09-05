@@ -127,10 +127,26 @@ def record_set(conn: sqlite3.Connection, correlation_id: str) -> dict[str, Any]:
         # had not knocked yet; after it, a model was starting. Both halves are
         # then measurements, and neither is a person nobody timed.
         nudged = conn.execute(
-            "SELECT MIN(at) AS first FROM events WHERE kind = 'turn.nudged' "
-            "AND entity_id = ? AND at > ?",
+            "SELECT at, payload FROM events WHERE kind = 'turn.nudged' "
+            "AND entity_id = ? AND at > ? ORDER BY at, seq LIMIT 1",
             (str(delivery["recipient_agent_id"]), sent)).fetchone()
-        delivery["nudged_at"] = nudged["first"] if nudged and nudged["first"] else None
+        delivery["nudged_at"] = nudged["at"] if nudged else None
+        # ...and what the proxy could see of the terminal as it typed. Present
+        # only for a knock recorded by a version that observed it, so an older
+        # record set keeps exactly the fields it always had.
+        delivery["knock_observed"] = decode(dict(nudged), "payload")["payload"] if nudged else None
+        # A keystroke inside the gap is the one record that says a person was
+        # in it. Without this the gap after a knock is a single unlabelled
+        # span covering a session starting, a swallowed keystroke and somebody
+        # deciding whether to authorise the work -- the ambiguity that renamed
+        # the field measuring it.
+        if delivery["nudged_at"] and delivery["first_touch_at"]:
+            typed = conn.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE kind = 'turn.human_input' "
+                "AND entity_id = ? AND at > ? AND at <= ?",
+                (str(delivery["recipient_agent_id"]), delivery["nudged_at"],
+                 delivery["first_touch_at"])).fetchone()
+            delivery["human_input_after_knock"] = int(typed["n"]) if typed else 0
 
     delivery_ids = [str(d["id"]) for d in deliveries]
     runs: list[dict[str, Any]] = []
@@ -209,6 +225,18 @@ def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
                 entry["knock_seconds"] = round((knocked - started).total_seconds(), 3)
                 entry["next_bus_call_seconds"] = round((touched - knocked).total_seconds(), 3)
                 entry["attributed"] = True
+                # What the terminal looked like when the knock went in, and
+                # whether anybody touched it afterwards. Observations, not
+                # verdicts: a pane that had printed nothing for a minute was
+                # very likely idle and a pane printing a tenth of a second ago
+                # was very likely mid-turn, but which of those it was is the
+                # reader's call and this only supplies the numbers.
+                seen = delivery.get("knock_observed")
+                if isinstance(seen, dict):
+                    entry["provider_quiet_for"] = seen.get("provider_quiet_for")
+                    entry["human_typed_ago"] = seen.get("human_typed_ago")
+                if delivery.get("human_input_after_knock") is not None:
+                    entry["human_input_after_knock"] = int(delivery["human_input_after_knock"])
         measured.append(entry)
     return measured
 
@@ -257,6 +285,11 @@ def summarise(record: dict[str, Any]) -> dict[str, Any]:
                                        if w["silent_seconds"] is not None
                                        and not w.get("attributed")), default=None),
         "nudged_turns": sum(1 for w in measured if w.get("attributed")),
+        # How many of those gaps had a person typing in them. A gap with a
+        # keystroke in it is not the bus waiting on a model, and counting them
+        # is the difference between reporting machine latency and reporting a
+        # number with somebody's lunch break inside it.
+        "nudged_turns_with_human_input": sum(1 for w in measured if w.get("human_input_after_knock")),
         "total_wait_seconds": round(sum(w["seconds"] for w in measured), 3) if measured else None,
     }
 

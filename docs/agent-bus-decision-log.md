@@ -105,15 +105,36 @@ retros.
 unattributable because a pull-beta turn is started by a person and nothing
 records when. M7f starts turns with a machine: `run` holds the provider's
 terminal and types into it when a delivery arrives, and it now writes a
-`turn.nudged` event at that moment. For a nudged turn the silent stretch is no
-longer one ambiguous span but two measurements -- the bus deciding to knock,
-then the session starting -- and `agent-bus-evidence.sh` reports them as
-`knock_seconds` and `startup_seconds` and stops carrying a ceiling for that
-delivery. A workflow run this way can therefore be retro'd on its own records.
+`turn.nudged` event at that moment. For a nudged turn the silent stretch
+splits at the knock, and `agent-bus-evidence.sh` reports the two pieces as
+`knock_seconds` and `next_bus_call_seconds` and stops carrying a ceiling for
+that delivery.
 
 None of that reaches backwards. The row above was recorded before any of it
 existed and stays exactly as it is: unattributed, permanently, and not
 re-derivable.
+
+**What the first run of it showed (2026-09-05, `wf2-three-modes`).** Only the
+first piece is what its name says. The second was called `startup_seconds`, as
+if the session were starting, and the run produced two waits where it was
+something else: 671 seconds where a knock had been typed into a provider that
+was mid-turn, so the keystroke was swallowed and the span was a lost keystroke
+waiting for a person to notice, and 350 seconds where a person was deciding
+whether to authorise the work. Nothing recorded separates either from a
+session starting, so the field was renamed for the only thing it measures.
+Splitting it further would take boundaries nobody writes down yet: a
+keystroke the proxy saw, the provider beginning to consume the nudge, the
+first bus call of the turn that followed. Until those exist, a nudged wait is
+attributed to a knock and no further.
+
+That run also carried a `<=24m unattributed` ceiling of its own, from
+`dlv_1f9bed4d`: the delivery arrived while the recipient's `run` had died, so
+by the time a session was watching again it was backlog, and backlog is
+deliberately not nudged. The record set is kept as a diagnostic in
+`docs/assets/evidence/wf2-three-modes.json` and is **not** counted as a
+workflow that passed the attribution gate: it is not in the table above and
+the ledger stands where it stood. The rerun goes under a new correlation once
+the missing boundaries are recorded.
 
 **Asked and closed as unattributable (2026-09-04).** The user was asked whether
 the 107s was mostly the delay before they gave the implementer its turn, and

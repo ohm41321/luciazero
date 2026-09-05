@@ -195,11 +195,19 @@ def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
             entry["agent_seconds"] = round((acknowledged - touched).total_seconds(), 3)
             knocked = _at(delivery.get("nudged_at"))
             if knocked is not None and started <= knocked <= touched:
-                # The silent half splits in two, and both are measured: the
-                # bus deciding to knock, then the session starting its turn.
-                # Nothing here is a person, so nothing here is a ceiling.
+                # The silent half splits at the knock, and only the first
+                # piece is what its name says: the bus deciding to knock is a
+                # machine, start to finish. The second was called
+                # `startup_seconds`, as if a session were starting. It is not
+                # only that. In workflow 2 one knock was typed while the
+                # provider was mid-turn and the keystroke was swallowed, so
+                # the span was a lost keystroke waiting to be noticed; in
+                # another it was a person deciding to authorise the work.
+                # Nothing recorded separates those from a session starting, so
+                # the field is named for what it actually measures, and the
+                # split is not a claim that no person was in it.
                 entry["knock_seconds"] = round((knocked - started).total_seconds(), 3)
-                entry["startup_seconds"] = round((touched - knocked).total_seconds(), 3)
+                entry["next_bus_call_seconds"] = round((touched - knocked).total_seconds(), 3)
                 entry["attributed"] = True
         measured.append(entry)
     return measured

@@ -177,6 +177,42 @@ class LedgerTests(EvidenceCase):
         self.assertAlmostEqual(float(summary["longest_silent_seconds"]), 3000, delta=5)
         self.assertIn("unattributed", evidence.ledger_row(summary, label="w", path=None))
 
+    def test_the_half_after_a_knock_is_named_for_what_it_measures(self) -> None:
+        """A knock splits the silent half in two, and only the first of them
+        is what its name says.
+
+        The second was called `startup_seconds`, as if it were the session
+        starting. Workflow 2 showed what else it holds: one knock was typed
+        while the provider was mid-turn and the keystroke was swallowed, so
+        those 671 seconds were a lost keystroke waiting for a person to
+        notice; another 350 were the person deciding to authorise the work.
+        Nothing recorded tells those apart from a session starting, so the
+        field is named for the only thing it does measure -- the time until
+        that agent's next bus call.
+        """
+        correlation, task_id = self.conversation("the workflow being recorded")
+        opened = self.store.send_message(sender=ARCHITECT, recipient=REVIEWER, kind="task",
+                                         payload={"task_id": task_id}, correlation_id=correlation)
+        delivery = self.store.inbox(REVIEWER, states=("queued",))["items"][-1]
+        sent = datetime.fromisoformat(str(opened["created_at"]))
+        conn = self.store._conn
+        conn.execute("UPDATE deliveries SET state = 'acknowledged', acknowledged_by = ?, acknowledged_at = ? WHERE id = ?",
+                     (REVIEWER, (sent + timedelta(hours=1)).isoformat(), delivery["delivery_id"]))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, 'bus', 'turn.nudged', 'agent', ?, '{}')",
+                     ((sent + timedelta(seconds=2)).isoformat(), REVIEWER))
+        conn.execute("INSERT INTO events (at, actor, kind, entity_type, entity_id, payload) "
+                     "VALUES (?, ?, 'agent.registered', 'agent', ?, '{}')",
+                     ((sent + timedelta(minutes=50)).isoformat(), REVIEWER, REVIEWER))
+        conn.commit()
+        with self.connect() as conn:
+            summary = evidence.summarise(evidence.record_set(conn, correlation))
+        wait = [w for w in summary["waits"] if w["delivery_id"] == delivery["delivery_id"]][0]
+        self.assertAlmostEqual(wait["knock_seconds"], 2, delta=1)
+        self.assertAlmostEqual(wait["next_bus_call_seconds"], 2998, delta=5)
+        self.assertNotIn("startup_seconds", wait,
+                         "the old name claimed the span was the session starting")
+
     def test_a_wait_with_nothing_to_split_it_reports_no_split_rather_than_a_guess(self) -> None:
         correlation, _ = self.conversation("the workflow being recorded")
         with self.connect() as conn:

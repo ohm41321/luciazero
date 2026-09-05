@@ -44,16 +44,18 @@ case "${1:-}" in
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Where anything in this suite would look for a launchd or systemd service
-# file. Pointed away from $HOME for the whole run: uninstall.sh now stops the
-# Agent Bus service before removing its launcher, and a suite that read the
-# real $HOME would stop a service the developer is using.
-#
-# Built from shell expansions only, and never created: section 2a re-runs this
-# script with a forged PATH holding almost nothing, so a `mktemp` here would
-# fail there. Nothing writes under it -- the paths are only ever read.
-LUCIAZERO_SERVICE_ROOT="${TMPDIR:-/tmp}/luciazero-suite-no-service-$$"
-export LUCIAZERO_SERVICE_ROOT
+# Called before anything runs uninstall.sh. That script stops and deletes the
+# Agent Bus service it finds under LUCIAZERO_SERVICE_ROOT, falling back to
+# $HOME when the variable is gone -- which is how a suite run removed the
+# developer's own LaunchAgent. Assert the guard where it is spent, not only
+# where it is set.
+service_guard() {
+  [ -n "${LUCIAZERO_SERVICE_ROOT:-}" ] \
+    || fail "LUCIAZERO_SERVICE_ROOT is unset: uninstall.sh would look in \$HOME"
+  [ "${LUCIAZERO_SERVICE_ROOT}" != "${HOME}" ] \
+    || fail "LUCIAZERO_SERVICE_ROOT is \$HOME: uninstall.sh would remove the real service"
+}
+
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
 skill_inventory() {
   catalog "${ROOT}/skills/catalog.txt"
@@ -168,6 +170,23 @@ trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 # the exact implementation without adding a bypass to this entrypoint.
 # shellcheck source=scripts/sanitize-luciazero-env.sh
 source "${ROOT}/scripts/sanitize-luciazero-env.sh"
+
+# Where anything in this suite would look for a launchd or systemd service
+# file. Pointed away from $HOME for the whole run: uninstall.sh stops the
+# Agent Bus service before removing its launcher, and a suite that read the
+# real $HOME would stop -- and delete -- a service the developer is using.
+#
+# Set *after* the sanitation above, which unsets every LUCIAZERO_* variable it
+# finds and so wiped this guard when it was set earlier: the suite then ran
+# every uninstall.sh with the fallback, and the developer's own LaunchAgent
+# went with it. Nothing about the name is optional; uninstall.sh reads exactly
+# this variable.
+#
+# Built from shell expansions only, and never created: section 2a re-runs this
+# script with a forged PATH holding almost nothing, so a `mktemp` here would
+# fail there. Nothing writes under it -- the paths are only ever read.
+LUCIAZERO_SERVICE_ROOT="${TMPDIR:-/tmp}/luciazero-suite-no-service-$$"
+export LUCIAZERO_SERVICE_ROOT
 
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
@@ -898,6 +917,7 @@ SL="$(wc -l < "${SC}/luciazero-stats.log" | tr -d ' ')"
 [ "${SL}" -le 301 ] || fail "stats log not rotated (${SL} lines)"
 # uninstall keeps learned data and says so
 touch "${SC}/luciazero-heuristics.md" "${SC}/CLAUDE.md"
+service_guard  # the first uninstall.sh of the run: prove the guard is alive
 UOUT="$(CLAUDE_CONFIG_DIR="${SC}" "${ROOT}/uninstall.sh")"
 printf '%s\n' "${UOUT}" | grep -q 'kept luciazero-stats.log' || fail "uninstall must keep + mention the stats log"
 printf '%s\n' "${UOUT}" | grep -q 'kept luciazero-heuristics.md' || fail "uninstall must keep + mention the heuristics file"

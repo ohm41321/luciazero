@@ -21,7 +21,7 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 1 | **not met** |
+| Distinct real workflows on the pull beta, not the demo | 3 | 2 | **not met** |
 | Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 0 | **not met** |
 | Open M3 safety findings | 0 | 0 | met |
 
@@ -71,6 +71,7 @@ redaction contract over what it writes, and prints the ledger row filled in.
 | Workflow | Correlation ID | Started | Agents | Records | Turns | Record set |
 | --- | --- | --- | --- | --- | --- | --- |
 | M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m (<=107s unattributed) | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
+| Three agent-bus footguns in the lessons file | `wf3-quiet-gate` | 2026-09-05T16:37:40.701418+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 2 turn(s) waited, longest 20s, 2 bus-started | `docs/assets/evidence/wf3-quiet-gate.json` |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
@@ -135,6 +136,45 @@ deliberately not nudged. The record set is kept as a diagnostic in
 workflow that passed the attribution gate: it is not in the table above and
 the ledger stands where it stood. The rerun goes under a new correlation once
 the missing boundaries are recorded.
+
+**The rerun (2026-09-05, `wf3-quiet-gate`).** The missing boundaries were
+recorded first, then the knock was fixed, then the workflow was run again on
+the new code -- the second row above, and the first row in this ledger with no
+unattributed ceiling on it at all.
+
+| Delivery | Knock | Pane had been quiet | Knock to that agent's next bus call | Keystrokes in that gap |
+| --- | --- | --- | --- | --- |
+| `dlv_30a7e483` to claude-implementer | 0.044s after the send | 29.377s | 10.899s | 0 |
+| `dlv_351b267f` to codex-architect | 1.756s after the send | 110.841s | 18.352s | 0 |
+| `dlv_ca9d1150` to codex-architect (on `wf3-quiet-gate-fix`) | 0.334s after the send | 153.425s | 17.609s | 0 |
+
+The last column is the difference. `next_bus_call_seconds` covers a session
+starting, a model thinking, a swallowed keystroke and a person deciding, and
+naming it honestly was all the previous run could do. `turn.human_input` says
+which of those it was not: the proxy holds the pty, it sees every keystroke,
+and it recorded none inside any of these three gaps. They are machine time,
+and that is a record rather than an assumption. Nothing here promises the
+knock started a turn -- `turn.nudged` is still the moment the literal was
+typed -- but the wait after it is now accounted for on both sides.
+
+No knock was held: every pane had been quiet far longer than `QUIET_SECONDS`,
+so `held_for` is null on all three and no `turn.nudge_deferred` was written.
+The gate was exercised separately against the real TUI on a throwaway bus,
+where a knock arriving 1.628s after a paint was deferred and went in 2.031s
+later, held rather than lost.
+
+Two artifacts hang off the one task because the first commit carried an
+identity trailer that this project does not use. It was amended, and both are
+kept: `art_7752c8bf` (commit `20b970f`) and `art_2aa0ffcb` (commit
+`b1cf6d6`). Which supersedes which, and why, is a `result` message on a
+separate correlation, `wf3-quiet-gate-fix`, whose record set is exported
+beside this one -- the amend touched the message and nothing else, and
+`git diff 20b970f b1cf6d6` printing nothing is what says so.
+
+This counts as the second of three workflows. It does not count toward the
+second criterion, which asks for a retro naming the *user-started* turn as the
+blocking cost: these turns were not user-started. The criterion is not
+satisfied by removing the thing it measures, so it stays at 0 of 2.
 
 **Asked and closed as unattributable (2026-09-04).** The user was asked whether
 the 107s was mostly the delay before they gave the implementer its turn, and
@@ -261,11 +301,13 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** 1 of 3 workflows recorded; 0
+- **The three workflows and two retros above.** 2 of 3 workflows recorded; 0
   of 2 retros, and the first workflow can never supply one (see the
-  attribution note above). The remaining two workflows must have their waits
-  attributed while they are happening, by whoever starts the turn, or the
-  second criterion stays unmeetable.
+  attribution note above). `wf3-quiet-gate` attributes its waits from the
+  records rather than from memory, but it does so by taking the user-started
+  turn out of the loop, which is not what the second criterion asks for. A
+  retro that satisfies it needs a user-started turn whose cost somebody
+  attributes while it is happening.
 - **The M7-design workflow's open loop.** Its `result` delivery is still
   `queued`: closing it needs the architect's own terminal, not this log.
 

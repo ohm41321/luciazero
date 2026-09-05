@@ -94,6 +94,12 @@ COOLDOWN_SECONDS = 20.0
 #: typing anything at all starts the count over.
 MAX_NUDGES = 8
 POLL_SECONDS = 2.0
+#: How long the provider must have printed nothing before anything is typed
+#: into it. A TUI mid-turn streams: tokens, a spinner, an elapsed counter. A
+#: keystroke sent into that is not a turn -- it lands in a pane that is not
+#: reading its input, and workflow 2 lost one exactly so. Two polls' worth,
+#: so a pane has to be quiet at one poll and still quiet at the next.
+QUIET_SECONDS = 3.0
 #: A person at the keyboard is recorded no more often than this. The question
 #: the record answers is "was somebody here around then", which one event per
 #: stretch of typing answers exactly as well as one per keystroke, at a
@@ -182,12 +188,14 @@ class Watcher:
     def __init__(self, db_path: Path | str, agent_id: str, *, started_at: str,
                  clock: Callable[[], float] = time.monotonic,
                  cooldown: float = COOLDOWN_SECONDS,
+                 quiet: float = QUIET_SECONDS,
                  limit: int = MAX_NUDGES) -> None:
         self.db_path = str(db_path)
         self.agent_id = agent_id
         self.started_at = started_at
         self.clock = clock
         self.cooldown = cooldown
+        self.quiet = quiet
         self.limit = limit
         #: Nudges since the last keystroke, not since the session started.
         self.unattended = 0
@@ -201,6 +209,11 @@ class Watcher:
         self.last_output: Optional[float] = None
         self.last_input: Optional[float] = None
         self.last_input_event: Optional[float] = None
+        #: The delivery currently waiting for the pane to go quiet, and when
+        #: it first had to wait. One deferral is recorded per delivery, not
+        #: per poll, and the wait is reported when the knock finally goes in.
+        self.deferred_seq: Optional[int] = None
+        self.deferred_since: Optional[float] = None
 
     def _read(self, call: Callable[[Store], Any], default: Any) -> Any:
         try:
@@ -290,15 +303,42 @@ class Watcher:
             return None
         if not self._seen_since_start():
             return None
+        quiet_for = self._since(self.last_output, now)
+        if quiet_for is not None and quiet_for < self.quiet:
+            # The pane is still printing, so it is still mid-turn, and a
+            # keystroke typed into it is not a turn -- it is a keystroke a
+            # busy TUI never reads. Refusing here does not lose the delivery:
+            # `seen_seq` is untouched, exactly as when the cap holds, so this
+            # knocks the moment the pane goes quiet.
+            if self.deferred_seq != newest:
+                self.deferred_seq = newest
+                self.deferred_since = now
+                self._defer(newest, quiet_for)
+            return None
+        held_for = self._since(self.deferred_since, now) if self.deferred_seq == newest else None
+        self.deferred_seq = self.deferred_since = None
         self.seen_seq = newest
         self.last_nudge = now
         self.unattended += 1
-        self._record(newest, provider_quiet_for=self._since(self.last_output, now),
+        self._record(newest, provider_quiet_for=quiet_for, held_for=held_for,
                      human_typed_ago=self._since(self.last_input, now))
         return arrival
 
+    def _defer(self, delivery_seq: int, provider_quiet_for: float) -> None:
+        """Written once per delivery held back, never once per poll.
+
+        Without it a provider that never stops printing would be a bus that
+        silently stops knocking, and the records would show the same nothing
+        as a bus with no deliveries in it."""
+        def write(store: Store) -> None:
+            store.trust = "system"
+            store.record_nudge_deferred(self.agent_id, delivery_seq=delivery_seq,
+                                        provider_quiet_for=provider_quiet_for)
+        self._read(write, None)
+
     def _record(self, delivery_seq: int, *, provider_quiet_for: Optional[float] = None,
-                human_typed_ago: Optional[float] = None) -> None:
+                human_typed_ago: Optional[float] = None,
+                held_for: Optional[float] = None) -> None:
         """The moment a turn was started by the bus, and what the terminal
         looked like when it was. Written here rather than in the proxy because
         this is where the decision is made, and a nudge that was decided and
@@ -313,7 +353,7 @@ class Watcher:
             store.trust = "system"  # a machine started this turn, not a person
             store.record_nudge(self.agent_id, delivery_seq=delivery_seq,
                                provider_quiet_for=provider_quiet_for,
-                               human_typed_ago=human_typed_ago)
+                               human_typed_ago=human_typed_ago, held_for=held_for)
         self._read(write, None)
 
 

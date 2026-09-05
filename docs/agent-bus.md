@@ -409,6 +409,8 @@ recorded, and neither is interpreted:
 | --- | --- |
 | `provider_quiet_for` on `turn.nudged` | seconds since the provider last printed, at the instant the bus typed |
 | `human_typed_ago` on `turn.nudged` | seconds since the last keystroke, at that same instant |
+| `held_for` on `turn.nudged` | how long that knock waited for the pane to go quiet |
+| `turn.nudge_deferred` | a knock held back for a pane that was still printing, once per delivery |
 | `turn.human_input` | a person typed into this session, at most one event per 20 seconds |
 
 The exporter carries the first two onto the wait as they are, and counts the
@@ -429,8 +431,31 @@ answers.
 every prompt its user types. What goes down is that something was typed and
 when, and a keystroke event's payload has nothing in it but its trust label.
 
-This is instrumentation and not a fix. The nudge that workflow 2 lost is still
-lost the same way; what changed is that the record can now show it happened.
+### Nothing is typed into a pane that is still printing
+
+Workflow 2 lost a nudge because the pane was mid-turn when the bus typed into
+it. A TUI that is working streams — tokens, a spinner, an elapsed counter —
+and it is not reading its input while it does, so the keystroke went nowhere.
+`turn.nudged` still said a turn had started, because a nudge is recorded when
+it is typed, and the 671 seconds until somebody noticed were counted as a
+session starting up.
+
+So the provider must have printed nothing for `QUIET_SECONDS` (three, two
+polls' worth) before anything is typed. A knock into a busy pane is held, not
+dropped: `seen_seq` is untouched, exactly as when the cap holds, so it goes in
+the moment the pane goes quiet and `held_for` says how long it waited. Waiting
+spends neither the cap nor the cooldown — a refusal is not a nudge, and a busy
+provider must not exhaust the leash without one keystroke ever being typed.
+
+A provider that never stops printing would hold every knock forever, and that
+would look from the records exactly like a bus with nothing to deliver. It
+does not: the first time a delivery is held, `turn.nudge_deferred` says so,
+once per delivery rather than once per poll.
+
+This does not make the knock reliable. It stops the bus spending a keystroke
+on a terminal that is demonstrably not reading; a pane that is quiet and still
+swallows one is not covered, and nothing here confirms a turn actually
+started — `turn.nudged` remains the moment of typing, not of a turn.
 
 **The daemon starts the provider itself.** Under managed dispatch (M6, above)
 the first bytes come from the dispatcher: it mints a `managed` binding, starts

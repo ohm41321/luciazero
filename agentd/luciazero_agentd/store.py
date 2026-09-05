@@ -2813,7 +2813,8 @@ class Store:
     # ----------------------------------------------------------------- events
     def record_nudge(self, agent_id: str, *, delivery_seq: Optional[int] = None,
                      provider_quiet_for: Optional[float] = None,
-                     human_typed_ago: Optional[float] = None) -> None:
+                     human_typed_ago: Optional[float] = None,
+                     held_for: Optional[float] = None) -> None:
         """Write down the moment a turn was started by the bus rather than by
         a person.
 
@@ -2835,6 +2836,12 @@ class Store:
         numbers, made by whoever reads them, not a claim recorded here. Both
         are omitted when the terminal was never observed at all, which is the
         honest answer for a nudge decided outside a proxy.
+
+        `held_for` is how long this knock waited for the pane to go quiet
+        before it was typed. It is the part of the gap that used to look like
+        a session starting slowly and was neither that nor a model thinking:
+        it was the bus holding a keystroke back rather than spending it on a
+        terminal that was not reading.
         """
         _check_id(agent_id, "agent id", self._redactor)
         if delivery_seq is not None:
@@ -2844,8 +2851,30 @@ class Store:
             payload["provider_quiet_for"] = _check_seconds(provider_quiet_for, "provider_quiet_for")
         if human_typed_ago is not None:
             payload["human_typed_ago"] = _check_seconds(human_typed_ago, "human_typed_ago")
+        if held_for is not None:
+            payload["held_for"] = _check_seconds(held_for, "held_for")
         with self._tx("record_nudge"):
             self._event("bus", "turn.nudged", "agent", agent_id, payload)
+
+    def record_nudge_deferred(self, agent_id: str, *, delivery_seq: Optional[int] = None,
+                              provider_quiet_for: Optional[float] = None) -> None:
+        """A knock the bus decided not to type yet, because the pane was still
+        printing and a keystroke sent into a busy TUI is not a turn.
+
+        Recorded because the alternative is indistinguishable from silence. A
+        provider that never stops printing would hold every knock forever, and
+        without this the records would look exactly like a bus with nothing to
+        deliver. The delivery is not lost -- it knocks as soon as the pane goes
+        quiet, and `held_for` on that nudge says how long it waited.
+        """
+        _check_id(agent_id, "agent id", self._redactor)
+        payload: dict[str, Any] = {}
+        if delivery_seq is not None:
+            payload["delivery_seq"] = _check_int(delivery_seq, 0, 2**62, "delivery_seq")
+        if provider_quiet_for is not None:
+            payload["provider_quiet_for"] = _check_seconds(provider_quiet_for, "provider_quiet_for")
+        with self._tx("record_nudge_deferred"):
+            self._event("bus", "turn.nudge_deferred", "agent", agent_id, payload)
 
     def record_human_input(self, agent_id: str) -> None:
         """A person typed into this session's terminal.

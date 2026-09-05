@@ -195,6 +195,65 @@ class WatcherTests(unittest.TestCase):
         self.assertAlmostEqual(35.0, payload["provider_quiet_for"], places=3)
         self.assertAlmostEqual(5.0, payload["human_typed_ago"], places=3)
 
+    def test_a_knock_is_not_typed_into_a_pane_that_is_still_printing(self) -> None:
+        """The lost nudge of workflow 2, in one place.
+
+        The pane was mid-turn on a slash command when the bus typed. A TUI
+        that is working streams -- tokens, a spinner, an elapsed counter --
+        and it is not reading its input while it does. The keystroke went
+        nowhere, `turn.nudged` said a turn had started, and the 671 seconds
+        until somebody noticed were counted as a session starting up."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        watcher.saw_output()
+        self.assertIsNone(watcher.due(), "a keystroke into a streaming pane is not a turn")
+        self.assertEqual([], self.nudges())
+
+    def test_a_knock_held_back_for_a_busy_pane_is_not_lost(self) -> None:
+        """Held, not dropped -- the same promise the cap makes. It goes in as
+        soon as the pane stops printing, and says how long it waited."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        watcher.saw_output()
+        self.assertIsNone(watcher.due())
+        self.now += nudge.QUIET_SECONDS + 0.5
+        self.assertTrue(watcher.due(), "the delivery was still there and the pane went quiet")
+        payload = self.nudges()[0]["payload"]
+        self.assertAlmostEqual(3.5, payload["held_for"], places=3)
+
+    def test_a_pane_that_never_goes_quiet_is_a_record_and_not_a_silence(self) -> None:
+        """A provider that keeps printing holds every knock forever, which
+        without a record looks exactly like a bus with nothing to deliver.
+        One event per delivery held, never one per poll."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        for _ in range(50):
+            watcher.saw_output()
+            self.now += 0.1
+            self.assertIsNone(watcher.due())
+        held = self.events_of("turn.nudge_deferred")
+        self.assertEqual(1, len(held))
+        self.assertEqual("system", held[0]["payload"]["trust"])
+        self.assertLess(held[0]["payload"]["provider_quiet_for"], nudge.QUIET_SECONDS)
+
+    def test_holding_a_knock_back_spends_neither_the_cap_nor_the_cooldown(self) -> None:
+        """A refusal is not a nudge. If waiting for a quiet pane counted
+        against the cap, a busy provider would exhaust the leash without one
+        keystroke ever being typed."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        for _ in range(20):
+            watcher.saw_output()
+            self.assertIsNone(watcher.due())
+        self.assertEqual(0, watcher.unattended)
+        self.assertIsNone(watcher.last_nudge)
+        self.now += nudge.QUIET_SECONDS + 0.5
+        self.assertTrue(watcher.due())
+
     def test_a_terminal_nobody_watched_records_no_guess(self) -> None:
         """`due()` is callable without a proxy behind it. Never observed is a
         different answer from observed as zero, and is kept as one."""
@@ -691,6 +750,73 @@ class RunTests(unittest.TestCase):
         written = log.read_text(encoding="utf-8")
         self.assertIn("claude-implementer [finding]:", written)
         self.assertIn("while you were idle", written)
+
+    def test_a_knock_waits_for_a_provider_that_is_mid_turn(self) -> None:
+        """Workflow 2's lost nudge, end to end.
+
+        The stand-in prints for five seconds and then execs `cat`, which is
+        what a provider looks like from outside: a stream of bytes while it
+        works, then a prompt that reads its input. Before this was fixed the
+        literal went in during the stream, `turn.nudged` recorded a turn that
+        had not started, and the delivery sat unread until a person noticed.
+        """
+        busy = self.state / "busy.sh"
+        busy.write_text("#!/bin/sh\ni=0\n"
+                        "while [ $i -lt 50 ]; do printf .; sleep 0.1; i=$((i+1)); done\n"
+                        "exec cat\n")
+        busy.chmod(0o755)
+        package_root = str(Path(__file__).resolve().parents[1])
+        pid, master = nudge.spawn(
+            [sys.executable, "-m", "luciazero_agentd", "run", "--agent", "codex-architect",
+             "--provider", "claude", "--state-dir", str(self.state), "--", str(busy)],
+            {**os.environ, "PYTHONPATH": package_root, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.addCleanup(self._end, pid, master)
+        seen = bytearray()
+
+        def pump(seconds: float) -> None:
+            import select
+
+            deadline = time.time() + seconds
+            while time.time() < deadline:
+                ready, _, _ = select.select([master], [], [], 0.1)
+                if not ready:
+                    continue
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                seen.extend(chunk)
+
+        def wait_for(needle: bytes, seconds: float = 30.0) -> bool:
+            deadline = time.time() + seconds
+            while time.time() < deadline:
+                if needle in seen:
+                    return True
+                pump(0.2)
+            return needle in seen
+
+        self.assertTrue(wait_for(b"bound as"), bytes(seen))
+        time.sleep(0.05)
+        with make_store(self.db) as store:
+            store.heartbeat("codex-architect")
+            store.send_message(sender="claude-implementer", recipient="codex-architect",
+                               kind="finding", payload={"message": "while you were busy"})
+        # Mid-stream: the pane is printing, so nothing may be typed into it.
+        pump(3.0)
+        self.assertIn(b".", bytes(seen), "the stand-in should be printing by now")
+        self.assertNotIn(nudge.TEXT.encode(), bytes(seen),
+                         "the bus typed into a provider that was mid-turn")
+        # ...and once it stops, the delivery that was held knocks by itself.
+        self.assertTrue(wait_for(nudge.TEXT.encode()), bytes(seen))
+        with make_store(self.db) as store:
+            knocks = [e for e in store.events(limit=500) if e["kind"] == "turn.nudged"]
+            held = [e for e in store.events(limit=500) if e["kind"] == "turn.nudge_deferred"]
+        self.assertEqual(1, len(knocks), "one delivery, one knock, typed once")
+        self.assertGreaterEqual(knocks[0]["payload"]["provider_quiet_for"], nudge.QUIET_SECONDS)
+        self.assertTrue(held, "the wait for the pane is a record, not a silence")
 
     def _end(self, pid: int, master: int) -> None:
         import signal as _signal

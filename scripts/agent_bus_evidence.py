@@ -235,6 +235,11 @@ def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
                 if isinstance(seen, dict):
                     entry["provider_quiet_for"] = seen.get("provider_quiet_for")
                     entry["human_typed_ago"] = seen.get("human_typed_ago")
+                    # How much of the gap was the bus holding the keystroke
+                    # back rather than spending it on a pane that was not
+                    # reading. Measured, and no longer inside the span that
+                    # used to look like a session starting slowly.
+                    entry["held_for"] = seen.get("held_for")
                 if delivery.get("human_input_after_knock") is not None:
                     entry["human_input_after_knock"] = int(delivery["human_input_after_knock"])
         measured.append(entry)

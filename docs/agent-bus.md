@@ -360,6 +360,58 @@ behaves exactly as it did before: the provider inherits the streams, and
 nothing is typed. A session that is not started through `run` is not nudged
 at all; it notices on its next turn, like before.
 
+## Three ways a turn starts
+
+Every turn in this document begins one of three ways. They differ in who
+supplies the first bytes the provider reads, what the daemon writes down at
+that moment, and therefore what `scripts/agent-bus-evidence.sh` can say about
+the wait afterwards.
+
+**A person types in the pane.** The first bytes are their keystrokes, and the
+daemon records nothing: no event marks when a prompt was typed, because a
+keyboard is not on the bus. The ledger row reads `user-started`, and the
+stretch between a message being sent and that session's next bus call stays
+one span nobody accounted for — `silent_seconds`, reported as
+`longest_silent_seconds`, which is a ceiling rather than a measurement. The
+first row of [the decision log](agent-bus-decision-log.md) carries
+`<=107s unattributed` for exactly this reason: nothing recorded when the
+prompt was typed, the person was asked afterwards and could not confirm it,
+and it therefore stays unattributed permanently. It is not re-derivable after
+the fact, and a retro that claims the records settled it would be false.
+
+**The bus knocks (M7f).** The first bytes are a fixed literal: `run` types
+only `check your bus inbox` into the provider, so no byte of a payload is
+ever provider input, and the message itself is appended to `nudges.log`,
+escaped and quoted behind `  | `. At the moment it types, the store writes a
+`turn.nudged` event, and the exporter uses it to split the silent stretch at
+that moment: `knock_seconds`, the bus deciding to knock, which is a machine
+start to finish, and `next_bus_call_seconds`, the time from the knock to that
+agent's next call to the daemon. Only the first is what its name says. The
+second is named for what it measures and not for what it is assumed to be,
+because it also holds a provider that was busy, a keystroke that was
+swallowed, and a person deciding whether to authorise the work — and nothing
+recorded tells those apart from a session starting. The wait is marked
+`attributed` and counted under `nudged_turns`, which the summary reports as
+`bus-started`: attributed to a knock, and no further. What that buys is
+attribution, not autonomy. The knock starts a turn, not the work: the session
+reads the message and may decline to act on it, because an untrusted payload
+authorises nothing. A person then authorises the work by typing — which is the
+first mode again, and that keystroke is once more unrecorded.
+
+**The daemon starts the provider itself.** Under managed dispatch (M6, above)
+the first bytes come from the dispatcher: it mints a `managed` binding, starts
+the worker command with that credential, and revokes it when the turn ends.
+The ledger's turn column then reads `N dispatched` rather than `user-started`,
+because what triggered the turn is a record and not a keystroke. That is one
+delivery, one worker, one turn. Chaining such turns into a flow that runs to
+the end with nobody in the loop is designed and not built: see
+[ADR 0007](adr/0007-agent-bus-managed-vertical-slice.md), which proposes the
+task-delivery trigger that a completed task would need in order to start the
+next one, bus records as the worker's memory across turns, idempotent steps
+for a dispatcher killed mid-flow, and an offline gate tier
+`./test.sh --agent-bus-managed` to prove them. None of that is implemented;
+only the single dispatched turn above exists today.
+
 ## What to do next
 
 ```bash

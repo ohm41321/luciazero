@@ -42,6 +42,13 @@ def _run(argv: Sequence[str]) -> str:
         done = subprocess.run(list(argv), capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
     except FileNotFoundError as exc:
         raise ProcessError(f"{argv[0]} not found") from exc
+    except PermissionError as exc:
+        # A sandboxed exec: the file is there and may not be run. Named
+        # separately from "not found" because the fix is different -- one
+        # installs a tool, the other loosens a policy -- and caught at all
+        # because it escaped as itself once, past every handler in the
+        # commands, as a traceback from ninety different call sites.
+        raise ProcessError(f"{argv[0]} is not permitted to run here") from exc
     except subprocess.TimeoutExpired as exc:
         raise ProcessError(f"{argv[0]} timed out") from exc
     if done.returncode != 0:

@@ -365,7 +365,16 @@ def cmd_claim(args: argparse.Namespace) -> int:
         # under a pty passes this and the isatty check above. What actually
         # stops the asking session is the code, which only the daemon's own
         # console ever saw.
-        inside = procinfo.provider_above(os.getpid())
+        try:
+            inside = procinfo.provider_above(os.getpid())
+        except procinfo.ProcessError as exc:
+            # This check is what keeps a session from approving its own
+            # request. Unable to run it, the honest answer is no: an approval
+            # granted without it would be worth nothing.
+            print(f"claim: cannot read the process table: {clean(exc)}. Approving needs to "
+                  "prove this shell is not the session that is asking; approve from a "
+                  "terminal where the process table can be read.", file=sys.stderr)
+            return 2
         if inside is not None:
             # The whole point of the second phase: the session that asked must
             # not be the one that answers.
@@ -698,7 +707,10 @@ def _pick_process(args: argparse.Namespace) -> tuple[Optional[dict[str, Any]], O
     if args.pid is not None:
         chosen = [s for s in sessions if s["pid"] == args.pid]
         if not chosen:
-            identity = procinfo.identity(args.pid)
+            try:
+                identity = procinfo.identity(args.pid)
+            except procinfo.ProcessError as exc:
+                return None, f"cannot read the process table: {exc}"
             if identity is None:
                 return None, f"no process {args.pid} of this user"
             return identity, None
@@ -798,6 +810,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     if provider is None:
         print(f"run: cannot tell which provider {command[0]!r} is; pass --provider", file=sys.stderr)
         return 2
+    # Asked before anything is created, because the answer decides whether
+    # this command can work at all: a binding is anchored to the child's pid
+    # and its start time, and the start time comes from the process table.
+    # Finding out afterwards would mean a credential minted, a provider
+    # started, and a session that cannot be proved alive.
+    try:
+        procinfo.started_at(os.getpid())
+    except procinfo.ProcessError as exc:
+        print(f"run: cannot read the process table: {clean(exc)}. A binding records the "
+              "session's pid and start time, so there is nothing to bind to here; start the "
+              "provider yourself and use `attach` from a terminal that can.", file=sys.stderr)
+        return 2
     store = _open_store("run", state_dir)
     if store is None:
         return 2
@@ -865,8 +889,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         with store:
             try:
                 store.bind_process(binding["id"], pid=child.pid, process_started_at=procinfo.started_at(child.pid))
-            except StoreError:
-                pass  # the child may already be gone; the reaper handles it
+            except (StoreError, procinfo.ProcessError):
+                # The child may already be gone (the reaper handles it), or
+                # the process table may have become unreadable since the
+                # check above. Neither is worth taking the user's terminal
+                # down for: the binding still dies when this command exits.
+                pass
 
     def _stop_run(*_: object) -> None:
         raise KeyboardInterrupt

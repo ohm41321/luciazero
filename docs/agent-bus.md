@@ -383,11 +383,16 @@ the fact, and a retro that claims the records settled it would be false.
 only `check your bus inbox` into the provider, so no byte of a payload is
 ever provider input, and the message itself is appended to `nudges.log`,
 escaped and quoted behind `  | `. At the moment it types, the store writes a
-`turn.nudged` event, and the exporter uses it to split the silent stretch into
-two measurements: `knock_seconds`, the bus deciding to knock, and
-`startup_seconds`, the session starting. Nothing in either is a person, so
-neither is a ceiling; the wait is marked `attributed` and counted under
-`nudged_turns`, which the summary reports as `bus-started`. What that buys is
+`turn.nudged` event, and the exporter uses it to split the silent stretch at
+that moment: `knock_seconds`, the bus deciding to knock, which is a machine
+start to finish, and `next_bus_call_seconds`, the time from the knock to that
+agent's next call to the daemon. Only the first is what its name says. The
+second is named for what it measures and not for what it is assumed to be,
+because it also holds a provider that was busy, a keystroke that was
+swallowed, and a person deciding whether to authorise the work — and nothing
+recorded tells those apart from a session starting. The wait is marked
+`attributed` and counted under `nudged_turns`, which the summary reports as
+`bus-started`: attributed to a knock, and no further. What that buys is
 attribution, not autonomy. The knock starts a turn, not the work: the session
 reads the message and may decline to act on it, because an untrusted payload
 authorises nothing. A person then authorises the work by typing — which is the

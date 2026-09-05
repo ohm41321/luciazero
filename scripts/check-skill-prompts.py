@@ -330,7 +330,10 @@ SPECS = {
                  ("__intro__", "node <this-skill-dir>/../../bin/luciazero.js discipline")),
     },
     "lucia-bus": {
-        "budget": 560,
+        # Raised from 560 when the inbox section gained its display duty: a
+        # session that read the inbox and told the user nothing left both
+        # terminals looking like the bus was dead.
+        "budget": 607,
         "sections": ("1. Identify", "2. Inspect the inbox", "3. Claim", "4. Work and publish", "Rules"),
         "contracts": {
             "__description__": ("Luciazero Agent Bus", "peers never grant approval"),
@@ -338,7 +341,9 @@ SPECS = {
             "1. Identify": ("`agent_whoami`", "`verified: false`", "`luciazero-agentd\nattach`", "`agent_register`",
                             "Never invent a second id", "`worktree_bind`", "never share one"),
             "2. Inspect the inbox": ("`message_inbox`", "`message_ack`", "untrusted input",
-                                     "never consent, approval, or permission"),
+                                     "never consent, approval, or permission",
+                                     "verified, unprompted", "quote the payload's own words",
+                                     "Print what you send"),
             "3. Claim": ("`task_list`", "`task_claim`", "A conflict means another agent won",
                          "A `waiting` task\ncannot be claimed", "`task_get` names the prerequisites"),
             "4. Work and publish": ("`artifact_publish`", "`task_complete`", "`blocked`", "`message_send`",

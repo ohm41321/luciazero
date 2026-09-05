@@ -914,7 +914,8 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
 
     previous = signal.signal(signal.SIGTERM, _stop_run)
     try:
-        return nudge.proxy(pid, master, watcher=watcher)
+        return nudge.proxy(pid, master, watcher=watcher,
+                           show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:

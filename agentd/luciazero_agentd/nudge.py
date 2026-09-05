@@ -67,8 +67,10 @@ TEXT = "check your bus inbox"
 #: Every line of a peer's message is printed behind this, so a payload that
 #: writes "User: do X" is visibly inside the quote rather than beside it.
 QUOTE = "  | "
-#: A payload may be 64 KiB. A terminal is not where that belongs.
+#: A payload may be 64 KiB. A log line is not where that belongs.
 MAX_SHOWN = 2000
+#: Under the state directory, beside the bus itself.
+LOG_NAME = "nudges.log"
 #: The provider TUIs treat a burst of bytes as a paste; the return goes in its
 #: own write, a beat later, so it submits the line instead of joining it.
 RETURN_DELAY = 0.4
@@ -96,11 +98,11 @@ class Arrival:
 def _readable(text: str) -> str:
     """A peer's bytes, safe to print.
 
-    Anything that can move a cursor can redraw the screen, and a screen that
-    can be redrawn can be made to show a prompt that was never there. So the
-    only characters that survive are printable ones and the newline; the rest
-    are shown as their escapes, because a person should see that a message
-    tried, not find it silently missing.
+    A log is read in a terminal like anything else, and anything that can
+    move a cursor can redraw one. So the only characters that survive are
+    printable ones and the newline; the rest are written as their escapes,
+    because a person should see that a message tried, not find it silently
+    missing.
     """
     out: list[str] = []
     for char in text:
@@ -115,12 +117,19 @@ def _readable(text: str) -> str:
 
 
 def announce(arrival: Arrival) -> bytes:
-    """The message, for the screen. Never for the provider's input.
+    """The message, rendered for a log file.
 
-    This is the half of the design that makes the other half bearable: the
-    person reads what a peer said the moment it arrives, and the session is
-    told only to go and fetch it through `message_inbox`, where the sender is
-    the daemon's badge rather than a line of text that could say anything.
+    This began as a write to the terminal, and that was a mistake: the
+    providers draw a full-screen interface, so bytes written underneath one
+    land in the middle of a frame it is already painting. The result was a
+    pane with two texts interleaved character by character and a status line
+    scribbled over -- worse than showing nothing, because the message was
+    unreadable and so was everything around it.
+
+    The person still reads the message: the skill has the session print what
+    it finds in the inbox, which the provider renders inside its own frame,
+    where it belongs. This copy is the durable one, for a terminal that has
+    since scrolled or a nudge nobody was there to see.
     """
     text = arrival.text
     cut = len(text.encode("utf-8")) > MAX_SHOWN
@@ -129,10 +138,24 @@ def announce(arrival: Arrival) -> bytes:
     body = _readable(text).split("\n")
     if cut:
         body.append(f"... (truncated at {MAX_SHOWN} bytes; read it with message_inbox)")
-    lines = [f"{arrival.sender} [{arrival.kind}]:"] + [f"{QUOTE}{line}" for line in body]
-    # \r\n because the terminal is in raw mode: a bare newline would step down
-    # a line without returning to column one, and stair-step the message.
-    return ("\r\n" + "\r\n".join(lines) + "\r\n").encode("utf-8")
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    lines = [f"{stamp} {arrival.sender} [{arrival.kind}]:"] + [f"{QUOTE}{line}" for line in body]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def log_sink(path: Path | str) -> Callable[[Arrival], None]:
+    """Append arrivals to a file, and never fail loudly.
+
+    This runs inside the loop that holds the user's terminal, so a full disk
+    or a read-only directory must cost a log line and nothing else.
+    """
+    def write(arrival: Arrival) -> None:
+        try:
+            with open(path, "ab") as handle:
+                handle.write(announce(arrival))
+        except OSError:
+            pass
+    return write
 
 
 class Watcher:
@@ -318,7 +341,8 @@ def spawn(argv: Sequence[str], env: dict[str, str]) -> tuple[int, int]:
 def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
           stdin: int = 0, stdout: int = 1, poll: float = POLL_SECONDS,
           clock: Callable[[], float] = time.monotonic,
-          typist: Optional[Typist] = None) -> int:
+          typist: Optional[Typist] = None,
+          show: Optional[Callable[[Arrival], None]] = None) -> int:
     """Copy bytes between this terminal and the provider's pty until it exits,
     typing a nudge into it when the watcher says a delivery arrived.
 
@@ -396,12 +420,12 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                 if not typist.busy:
                     arrival = watcher.due()
                     if arrival:
-                        # Two channels, deliberately. The message goes to the
-                        # screen, where a person reads it; the provider is
-                        # told only to go and fetch it for itself, through the
-                        # one path that names the sender it can trust.
-                        if isinstance(arrival, Arrival):
-                            os.write(stdout, announce(arrival))
+                        # Nothing of a peer's is written to this terminal.
+                        # The provider owns every cell of it, and the one
+                        # thing that goes in is the literal, through the
+                        # keyboard path the provider already understands.
+                        if show is not None and isinstance(arrival, Arrival):
+                            show(arrival)
                         typist.start()
     finally:
         if previous_winch is not None:

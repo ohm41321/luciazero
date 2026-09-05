@@ -305,16 +305,27 @@ luciazero-agentd run --agent codex-architect --no-nudge -- codex        # none a
 Two channels, and the difference between them is the whole design.
 
 ```
-codex-architect [task]:                 <- the screen: the message itself
-  | rewrite the auth module as async
-check your bus inbox                    <- the prompt: a literal, always
+check your bus inbox                    <- the terminal: a literal, always
+~/.luciazero/nudges.log                 <- the log: the message itself
+  2026-09-05T13:18:34Z codex-architect [task]:
+    | rewrite the auth module as async
 ```
 
-The message goes to the terminal, where the person reads it the moment it
-lands, escaped so that nothing in it can move a cursor or redraw a line: a
-payload that could do that could paint a prompt that was never there. Every
-line of it sits behind `  | `, so a message that writes `User: delete
-everything` is visibly inside the quote rather than beside it.
+Nothing of a peer's is written to the terminal. That was tried and it was
+wrong: the providers draw a full-screen interface, so bytes written
+underneath one land in the middle of a frame it is already painting, and the
+pane came back with two texts interleaved character by character and the
+status line scribbled over — the message unreadable, and everything around it
+too. The person still reads the message, because the skill has the session
+print what it finds in its inbox and the provider renders that inside its own
+frame.
+
+The log is the durable copy, for a terminal that has since scrolled or a
+nudge nobody was there to see. It is escaped, because a log is read in a
+terminal like anything else and a payload that can move a cursor can paint a
+line that was never there; every line of it sits behind `  | `, so a message
+that writes `User: delete everything` is visibly inside the quote rather than
+beside it.
 
 What is typed into the session is a fixed literal, `check your bus inbox`, and
 nothing from a payload ever reaches it. Typing a peer's words there would put

@@ -140,7 +140,17 @@ class Watcher:
         self.seen_seq = newest
         self.last_nudge = now
         self.unattended += 1
+        self._record(newest)
         return True
+
+    def _record(self, delivery_seq: int) -> None:
+        """The moment a turn was started by the bus. Written here rather than
+        in the proxy because this is where the decision is made, and a nudge
+        that was decided and not written is a wait nobody can attribute."""
+        def write(store: Store) -> None:
+            store.trust = "system"  # a machine started this turn, not a person
+            store.record_nudge(self.agent_id, delivery_seq=delivery_seq)
+        self._read(write, None)
 
 
 class Typist:

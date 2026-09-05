@@ -101,6 +101,20 @@ the user to say what actually happened, and a retro that claims the records did
 it would be false. This workflow therefore counts as 1 of 3, and as 0 of the 2
 retros.
 
+**What changed on 2026-09-05, and what it does not change.** The gap was
+unattributable because a pull-beta turn is started by a person and nothing
+records when. M7f starts turns with a machine: `run` holds the provider's
+terminal and types into it when a delivery arrives, and it now writes a
+`turn.nudged` event at that moment. For a nudged turn the silent stretch is no
+longer one ambiguous span but two measurements -- the bus deciding to knock,
+then the session starting -- and `agent-bus-evidence.sh` reports them as
+`knock_seconds` and `startup_seconds` and stops carrying a ceiling for that
+delivery. A workflow run this way can therefore be retro'd on its own records.
+
+None of that reaches backwards. The row above was recorded before any of it
+existed and stays exactly as it is: unattributed, permanently, and not
+re-derivable.
+
 **Asked and closed as unattributable (2026-09-04).** The user was asked whether
 the 107s was mostly the delay before they gave the implementer its turn, and
 answered that they cannot confirm it: nothing they saw records when the prompt

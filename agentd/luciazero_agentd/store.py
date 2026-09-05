@@ -2795,6 +2795,26 @@ class Store:
         return recovered
 
     # ----------------------------------------------------------------- events
+    def record_nudge(self, agent_id: str, *, delivery_seq: Optional[int] = None) -> None:
+        """Write down the moment a turn was started by the bus rather than by
+        a person.
+
+        A pull-beta turn has no `turn_started_at`: nothing records when
+        somebody typed, so the gap between a message arriving and the
+        recipient's first bus call covers both a person not looking and a
+        model thinking, and no measurement can separate them afterwards --
+        which is exactly why the first ledger row carries its 107 seconds as
+        an unattributed ceiling. A nudged turn is started by a machine, at a
+        moment that machine knows, so it says so and the gap becomes two spans
+        that are each measured.
+        """
+        _check_id(agent_id, "agent id", self._redactor)
+        if delivery_seq is not None:
+            delivery_seq = _check_int(delivery_seq, 0, 2**62, "delivery_seq")
+        with self._tx("record_nudge"):
+            self._event("bus", "turn.nudged", "agent", agent_id,
+                        {"delivery_seq": delivery_seq})
+
     def events(self, *, after: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         _check_int(limit, 1, 500, "limit")
         _check_int(after, 0, 2**62, "after")

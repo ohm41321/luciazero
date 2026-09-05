@@ -153,6 +153,29 @@ class WatcherTests(unittest.TestCase):
         watcher.human_typed()
         self.assertTrue(watcher.due())
 
+    def test_a_nudge_is_recorded_as_the_moment_the_turn_started(self) -> None:
+        """A pull-beta turn has no `turn_started_at`, which is why the first
+        workflow's 107 silent seconds could never be attributed: nothing knew
+        whether they were a person not typing or a model thinking. A nudged
+        turn is started by a machine, so the machine writes down when."""
+        watcher = self.watcher()
+        self.seen()
+        self.send()
+        self.assertTrue(watcher.due())
+        with make_store(self.db) as store:
+            events = [e for e in store.events(limit=500) if e["kind"] == "turn.nudged"]
+        self.assertEqual(1, len(events), "the nudge left no record")
+        self.assertEqual("codex-architect", events[0]["entity_id"])
+        self.assertEqual("system", events[0]["payload"]["trust"])
+
+    def test_a_nudge_that_is_refused_records_nothing(self) -> None:
+        watcher = self.watcher(limit=0)
+        self.seen()
+        self.send()
+        self.assertFalse(watcher.due())
+        with make_store(self.db) as store:
+            self.assertEqual([], [e for e in store.events(limit=500) if e["kind"] == "turn.nudged"])
+
     def test_a_delivery_for_somebody_else_is_not_a_nudge(self) -> None:
         watcher = self.watcher("codex-architect")
         self.seen("codex-architect")

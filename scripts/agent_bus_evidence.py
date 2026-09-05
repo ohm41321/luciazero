@@ -122,6 +122,15 @@ def record_set(conn: sqlite3.Connection, correlation_id: str) -> dict[str, Any]:
             "SELECT MIN(at) AS first FROM events WHERE actor = ? AND at > ?",
             (str(delivery["recipient_agent_id"]), sent)).fetchone()
         delivery["first_touch_at"] = touch["first"] if touch and touch["first"] else None
+        # M7f: when the bus started the turn itself, it wrote down when. That
+        # moment is the boundary the pull beta never had -- before it, the bus
+        # had not knocked yet; after it, a model was starting. Both halves are
+        # then measurements, and neither is a person nobody timed.
+        nudged = conn.execute(
+            "SELECT MIN(at) AS first FROM events WHERE kind = 'turn.nudged' "
+            "AND entity_id = ? AND at > ?",
+            (str(delivery["recipient_agent_id"]), sent)).fetchone()
+        delivery["nudged_at"] = nudged["first"] if nudged and nudged["first"] else None
 
     delivery_ids = [str(d["id"]) for d in deliveries]
     runs: list[dict[str, Any]] = []
@@ -184,6 +193,14 @@ def waits(record: dict[str, Any]) -> list[dict[str, Any]]:
             # working.
             entry["silent_seconds"] = round((touched - started).total_seconds(), 3)
             entry["agent_seconds"] = round((acknowledged - touched).total_seconds(), 3)
+            knocked = _at(delivery.get("nudged_at"))
+            if knocked is not None and started <= knocked <= touched:
+                # The silent half splits in two, and both are measured: the
+                # bus deciding to knock, then the session starting its turn.
+                # Nothing here is a person, so nothing here is a ceiling.
+                entry["knock_seconds"] = round((knocked - started).total_seconds(), 3)
+                entry["startup_seconds"] = round((touched - knocked).total_seconds(), 3)
+                entry["attributed"] = True
         measured.append(entry)
     return measured
 
@@ -225,8 +242,13 @@ def summarise(record: dict[str, Any]) -> dict[str, Any]:
         "longest_wait_seconds": max((w["seconds"] for w in measured), default=None),
         # The ceiling on the user-trigger delay: what a retro still has to
         # attribute, and what it must not claim the records attributed for it.
+        # Only the waits nothing accounted for. A nudged turn's silent half is
+        # split by `turn.nudged` into two measurements, so it is not a ceiling
+        # on anything and must not be reported as one.
         "longest_silent_seconds": max((w["silent_seconds"] for w in measured
-                                       if w["silent_seconds"] is not None), default=None),
+                                       if w["silent_seconds"] is not None
+                                       and not w.get("attributed")), default=None),
+        "nudged_turns": sum(1 for w in measured if w.get("attributed")),
         "total_wait_seconds": round(sum(w["seconds"] for w in measured), 3) if measured else None,
     }
 
@@ -237,6 +259,8 @@ def ledger_row(summary: dict[str, Any], *, label: str, path: Optional[Path]) -> 
     if summary["user_started_turns"]:
         cost = (f", {summary['user_started_turns']} turn(s) waited, longest "
                 f"{human_gap(float(summary['longest_wait_seconds']))}")
+        if summary.get("nudged_turns"):
+            cost += f", {summary['nudged_turns']} bus-started"
         # The ledger says how much of that is still unattributed, so a row can
         # never be read as evidence of a wait nobody measured.
         if summary.get("longest_silent_seconds") is not None:

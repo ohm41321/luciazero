@@ -177,8 +177,12 @@ class Watcher:
                 return 0, None
             payload = latest.get("payload")
             if isinstance(payload, dict):
-                message = payload.get("message")
-                text = message if isinstance(message, str) else json.dumps(payload, sort_keys=True)
+                # `message` is what the skill sends; `text` is what a session
+                # writing the call by hand reaches for. Anything else is shown
+                # as the payload it is rather than guessed at.
+                words = next((payload[key] for key in ("message", "text")
+                              if isinstance(payload.get(key), str)), None)
+                text = words if words is not None else json.dumps(payload, sort_keys=True)
             else:
                 text = str(payload)
             return int(latest["delivery_seq"]), Arrival(sender=str(latest.get("sender") or "?"),

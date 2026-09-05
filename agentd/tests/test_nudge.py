@@ -176,6 +176,30 @@ class WatcherTests(unittest.TestCase):
         with make_store(self.db) as store:
             self.assertEqual([], [e for e in store.events(limit=500) if e["kind"] == "turn.nudged"])
 
+    def test_a_payload_that_calls_its_words_text_is_still_words(self) -> None:
+        """The skill sends {"message": ...}; a session writing the call by
+        hand reaches for {"text": ...}, and Codex did. Shown as raw JSON, a
+        one-character reply reads as `{"text": "2"}` on the screen -- the one
+        copy of the message a person was supposed to be able to read."""
+        watcher = self.watcher()
+        self.seen()
+        with make_store(self.db) as store:
+            store.send_message(sender="claude-implementer", recipient="codex-architect",
+                               kind="result", payload={"text": "2"})
+        arrival = watcher.due()
+        assert arrival is not None
+        self.assertEqual("2", arrival.text)
+
+    def test_a_payload_with_neither_key_is_shown_as_the_payload_it_is(self) -> None:
+        watcher = self.watcher()
+        self.seen()
+        with make_store(self.db) as store:
+            store.send_message(sender="claude-implementer", recipient="codex-architect",
+                               kind="artifact", payload={"artifact_id": "art_1"})
+        arrival = watcher.due()
+        assert arrival is not None
+        self.assertEqual('{"artifact_id": "art_1"}', arrival.text)
+
     def test_a_delivery_for_somebody_else_is_not_a_nudge(self) -> None:
         watcher = self.watcher("codex-architect")
         self.seen("codex-architect")

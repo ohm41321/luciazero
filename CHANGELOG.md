@@ -9,6 +9,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Agent Bus (beta): a delivery that arrives while a session sits idle now
+  knocks on it. `luciazero-agentd run` holds the provider's pty and types one
+  fixed line — `check your bus inbox` — when a message reaches the bound
+  agent, so two sessions carry a conversation without a person relaying it.
+  Nothing from a payload is ever typed; the nudge waits until the agent has
+  used the bus (a session may still be holding a trust dialog), ignores the
+  backlog that was already queued, and is rate limited because every nudge
+  spends a turn. `run --no-nudge` opts out, and a `run` without a terminal to
+  proxy behaves exactly as before.
 - Agent Bus (beta, opt-in, checkout only): `./install.sh` now installs a
   `luciazero-agentd` launcher into `~/.claude/bin` (`LUCIAZERO_BIN_DIR` picks
   another directory), so the daemon has a public command instead of

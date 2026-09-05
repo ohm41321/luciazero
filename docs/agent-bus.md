@@ -282,6 +282,48 @@ code into a log the asking session can read. The refusal names the way out:
 rather skip all of this: sessions act while labelled unverified, their writes
 are recorded as `asserted`, and spending a human approval is still refused.
 
+## A message that arrives while you are not looking (M8)
+
+MCP is request and response. The daemon cannot push, so a session learns about
+a delivery only when it calls `message_inbox`, and it can call nothing while
+it is idle: a session runs code during a turn and at no other moment. Two
+sessions could therefore trade messages perfectly and neither would notice
+until a person typed "check your inbox" into the one that was waiting.
+
+`run` closes that gap, because it is the one process that owns the provider's
+terminal. It gives the provider a pty, copies bytes both ways, and when a
+delivery arrives for the bound agent it types one line into that terminal.
+To the provider it is indistinguishable from you typing, because that is what
+it is.
+
+```bash
+luciazero-agentd run --agent codex-architect -- codex     # nudges, by default
+luciazero-agentd run --agent codex-architect --no-nudge -- codex
+```
+
+Only a fixed literal is ever typed — `check your bus inbox` — and nothing from
+a payload reaches it. A peer that could put its own words into another
+session's prompt would be writing that session's instructions, which is the
+shape of a prompt injection; the payload arrives the way it always did,
+through `message_inbox`, where the skill treats it as untrusted.
+
+Three more limits, each for something that went wrong while building it:
+
+- **Nothing is typed until the agent has used the bus since `run` started.** A
+  session that has just opened may be holding a modal — Claude Code asks
+  whether the folder is trusted — and a line typed there answers a question
+  nobody read.
+- **The backlog is not a nudge.** What was already queued when the session
+  opened is the skill's first inbox read; only something that arrives
+  afterwards means "this happened while you sat there".
+- **A cooldown**, because every nudge spends a turn of somebody's quota and a
+  peer sending ten messages in a second must not start ten turns.
+
+Without a terminal to proxy — a pipe, a test, a dispatched turn — `run`
+behaves exactly as it did before: the provider inherits the streams, and
+nothing is typed. A session that is not started through `run` is not nudged
+at all; it notices on its next turn, like before.
+
 ## What to do next
 
 ```bash

@@ -45,9 +45,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
-from . import procinfo, service as service_mod, watch
+from . import nudge, procinfo, service as service_mod, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .statedir import (
@@ -68,7 +68,7 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError
+from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError, utcnow
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
@@ -844,6 +844,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 pass
 
     print(f"agent {clean(binding['agent_id'])} bound as {clean(binding['id'])}; starting {clean(command[0])}", file=sys.stderr)
+    # With a terminal to proxy, the provider gets a pty of its own and this
+    # process keeps the keyboard: that is what lets a delivery arriving while
+    # the session sits idle turn into a line typed at its prompt, instead of
+    # waiting for the user to think of asking. Without a terminal -- a test, a
+    # pipe, a dispatched turn -- there is nothing to type into and nothing to
+    # proxy, so the child simply inherits this process's streams as before.
+    if getattr(args, "nudge", True) and nudge.usable():
+        return _run_on_a_pty(args, argv, env, binding, state_dir, _cleanup)
     try:
         child = subprocess.Popen(argv, env=env)
     except OSError as exc:
@@ -879,6 +887,47 @@ def cmd_run(args: argparse.Namespace) -> int:
     finally:
         signal.signal(signal.SIGTERM, previous)
         _cleanup("run exited")
+
+
+def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str],
+                  binding: dict[str, Any], state_dir: Path,
+                  cleanup: Callable[[str], None]) -> int:
+    """`run`, holding the provider's terminal so the bus can knock on it."""
+    try:
+        pid, master = nudge.spawn(argv, env)
+    except OSError as exc:
+        cleanup("spawn failed")
+        print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
+        return 2
+    store = _open_store("run", state_dir)
+    if store is not None:
+        with store:
+            try:
+                store.bind_process(binding["id"], pid=pid, process_started_at=procinfo.started_at(pid))
+            except StoreError:
+                pass
+    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow())
+
+    def _stop_run(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, _stop_run)
+    try:
+        return nudge.proxy(pid, master, watcher=watcher)
+    except KeyboardInterrupt:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(pid, sig)
+                os.waitpid(pid, 0)
+                break
+            except ChildProcessError:
+                break
+            except OSError:
+                continue
+        return 130
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        cleanup("run exited")
 
 
 def cmd_detach(args: argparse.Namespace) -> int:
@@ -1082,6 +1131,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     run.add_argument("--provider", choices=("codex", "claude", "other"), default=None)
     run.add_argument("--ttl", type=int, default=BINDING_TTL_SECONDS)
     run.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
+    run.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,
+                     help="do not type into this session when a delivery arrives; it will notice on its next turn instead")
     run.add_argument("--state-dir", default=None)
     # REMAINDER swallows everything after the command, options included, so
     # every flag of `run` must come before the `--`.

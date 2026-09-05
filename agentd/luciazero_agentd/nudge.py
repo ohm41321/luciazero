@@ -33,6 +33,13 @@ Three more limits, each for a failure seen while building this:
   means "something happened while you were sitting there".
 * **A cooldown.** Every nudge spends a turn of somebody's quota, so a peer
   that sends ten messages in a second must not start ten turns.
+* **A cap on nudges with nobody at the keyboard.** Each reply queues a
+  delivery for the other side, which nudges it, which produces the next
+  reply: a pair that keeps answering has no natural end. What is counted is
+  consecutive nudges, and any keystroke resets the count -- a session
+  somebody is using may take messages all day and none of them is a runaway,
+  while a pair left alone stops after `MAX_NUDGES` of them. The delivery is
+  not lost when the cap holds; it knocks as soon as a person is back.
 """
 
 from __future__ import annotations
@@ -60,6 +67,10 @@ TEXT = "check your bus inbox"
 RETURN_DELAY = 0.4
 #: A nudge costs a turn. Peers cannot make that cheaper by sending faster.
 COOLDOWN_SECONDS = 20.0
+#: Consecutive nudges allowed with no keystroke in between. Reached only by a
+#: conversation running itself, which is the thing worth stopping; a person
+#: typing anything at all starts the count over.
+MAX_NUDGES = 8
 POLL_SECONDS = 2.0
 
 
@@ -68,12 +79,16 @@ class Watcher:
 
     def __init__(self, db_path: Path | str, agent_id: str, *, started_at: str,
                  clock: Callable[[], float] = time.monotonic,
-                 cooldown: float = COOLDOWN_SECONDS) -> None:
+                 cooldown: float = COOLDOWN_SECONDS,
+                 limit: int = MAX_NUDGES) -> None:
         self.db_path = str(db_path)
         self.agent_id = agent_id
         self.started_at = started_at
         self.clock = clock
         self.cooldown = cooldown
+        self.limit = limit
+        #: Nudges since the last keystroke, not since the session started.
+        self.unattended = 0
         #: Deliveries at or below this sequence were already there when the
         #: session opened; the skill reads those itself.
         self.seen_seq = self._max_queued_seq()
@@ -102,9 +117,18 @@ class Watcher:
         stamp = self._read(last_seen, None)
         return bool(stamp and stamp > self.started_at)
 
+    def human_typed(self) -> None:
+        """Somebody is at the keyboard: the conversation is theirs again."""
+        self.unattended = 0
+
     def due(self) -> bool:
         """True at most once per new delivery, and never faster than the
-        cooldown. Calling this is what marks the delivery as noticed."""
+        cooldown. Calling this is what marks the delivery as noticed.
+
+        A refusal never advances `seen_seq`, so a delivery held back by the
+        cap still knocks once a person types."""
+        if self.unattended >= self.limit:
+            return False
         newest = self._max_queued_seq()
         if newest <= self.seen_seq:
             return False
@@ -115,6 +139,7 @@ class Watcher:
             return False
         self.seen_seq = newest
         self.last_nudge = now
+        self.unattended += 1
         return True
 
 
@@ -269,6 +294,11 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                     data = b""
                 if data:
                     os.write(master, data)
+                    # The proxy is the only thing that sees a keystroke, so it
+                    # is the only thing that can tell the cap somebody is here.
+                    typed = getattr(watcher, "human_typed", None)
+                    if typed is not None:
+                        typed()
             typist.tick()
             now = clock()
             if watcher is not None and now >= next_poll:

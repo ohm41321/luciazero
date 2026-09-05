@@ -1140,10 +1140,13 @@ delivery arriving mid-session comes back out as keystrokes and the payload
 does not. Proven live on 2026-09-05: two sessions woke each other, read,
 replied and acknowledged with nobody typing.
 
-What it does not do: stop. Each reply nudges the other side, so a pair that
-keeps answering keeps going, bounded only by the cooldown, the hop limit, and
-the skill's own rule to stop when a reply adds nothing. A cap per session is
-open.
+- [x] A cap on consecutive nudges with nobody at the keyboard
+  (`--max-nudges`, eight by default), because each reply nudges the other side
+  and a pair left alone has no natural end. Counting keystrokes rather than
+  messages is what separates a runaway from a session in daily use: any
+  keystroke resets it, and a delivery the cap held back knocks as soon as a
+  person types. Enforced in code, not left to the model's judgement, the hop
+  limit or the cooldown.
 
 ### M7 — Managed-dispatch vertical slice
 

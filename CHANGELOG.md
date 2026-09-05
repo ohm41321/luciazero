@@ -16,8 +16,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Nothing from a payload is ever typed; the nudge waits until the agent has
   used the bus (a session may still be holding a trust dialog), ignores the
   backlog that was already queued, and is rate limited because every nudge
-  spends a turn. `run --no-nudge` opts out, and a `run` without a terminal to
-  proxy behaves exactly as before.
+  spends a turn. Consecutive nudges with nobody at the keyboard are capped
+  (`--max-nudges`, eight by default) so a pair that keeps answering each other
+  stops; any keystroke resets the count, and a delivery held back knocks as
+  soon as a person types. `run --no-nudge` opts out, and a `run` without a
+  terminal to proxy behaves exactly as before.
 - Agent Bus (beta, opt-in, checkout only): `./install.sh` now installs a
   `luciazero-agentd` launcher into `~/.claude/bin` (`LUCIAZERO_BIN_DIR` picks
   another directory), so the daemon has a public command instead of

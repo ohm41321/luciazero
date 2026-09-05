@@ -297,8 +297,9 @@ To the provider it is indistinguishable from you typing, because that is what
 it is.
 
 ```bash
-luciazero-agentd run --agent codex-architect -- codex     # nudges, by default
-luciazero-agentd run --agent codex-architect --no-nudge -- codex
+luciazero-agentd run --agent codex-architect -- codex                   # nudges, by default
+luciazero-agentd run --agent codex-architect --max-nudges 3 -- codex    # a shorter leash
+luciazero-agentd run --agent codex-architect --no-nudge -- codex        # none at all
 ```
 
 Only a fixed literal is ever typed — `check your bus inbox` — and nothing from
@@ -318,6 +319,13 @@ Three more limits, each for something that went wrong while building it:
   afterwards means "this happened while you sat there".
 - **A cooldown**, because every nudge spends a turn of somebody's quota and a
   peer sending ten messages in a second must not start ten turns.
+- **A cap on nudges with nobody at the keyboard** (`--max-nudges`, eight by
+  default). Each reply queues a delivery for the other side, which nudges it,
+  which produces the next reply, and a pair left alone has no natural end.
+  What is counted is consecutive nudges: any keystroke resets it, so a session
+  somebody is using may take messages all day, while a pair talking to itself
+  stops. Nothing is lost when the cap holds — what arrived meanwhile knocks as
+  soon as a person types.
 
 Without a terminal to proxy — a pipe, a test, a dispatched turn — `run`
 behaves exactly as it did before: the provider inherits the streams, and

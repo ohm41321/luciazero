@@ -906,7 +906,8 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
                 store.bind_process(binding["id"], pid=pid, process_started_at=procinfo.started_at(pid))
             except StoreError:
                 pass
-    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow())
+    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
+                            limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
 
     def _stop_run(*_: object) -> None:
         raise KeyboardInterrupt
@@ -1133,6 +1134,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     run.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
     run.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,
                      help="do not type into this session when a delivery arrives; it will notice on its next turn instead")
+    run.add_argument("--max-nudges", type=int, default=nudge.MAX_NUDGES,
+                     help="how many times in a row the bus may type into this session with nobody at the keyboard; "
+                          "any keystroke starts the count again (default: %(default)s)")
     run.add_argument("--state-dir", default=None)
     # REMAINDER swallows everything after the command, options included, so
     # every flag of `run` must come before the `--`.

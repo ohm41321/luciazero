@@ -108,6 +108,51 @@ class WatcherTests(unittest.TestCase):
         self.seen()
         self.assertTrue(watcher.due())
 
+    def test_a_runaway_conversation_stops_at_the_cap(self) -> None:
+        """Every reply nudges the other side, so a pair that keeps answering
+        keeps going. What is capped is nudges with nobody at the keyboard."""
+        watcher = self.watcher(cooldown=0.0, limit=3)
+        self.seen()
+        for n in range(3):
+            self.send(f"message {n}")
+            self.assertTrue(watcher.due(), f"nudge {n} should have been sent")
+        self.send("one too many")
+        self.assertFalse(watcher.due(), "the cap must stop the loop")
+
+    def test_a_person_typing_starts_the_count_again(self) -> None:
+        """A keystroke means somebody is there and steering; the cap is for
+        the case where nobody is."""
+        watcher = self.watcher(cooldown=0.0, limit=1)
+        self.seen()
+        self.send("one")
+        self.assertTrue(watcher.due())
+        self.send("two")
+        self.assertFalse(watcher.due())
+        watcher.human_typed()
+        self.assertTrue(watcher.due(), "a person typed; the loop is theirs again")
+
+    def test_the_cap_counts_consecutive_nudges_not_a_day_s_worth(self) -> None:
+        """A session somebody uses all day may take many messages; none of
+        them is a runaway."""
+        watcher = self.watcher(cooldown=0.0, limit=2)
+        self.seen()
+        for n in range(6):
+            self.send(f"message {n}")
+            self.assertTrue(watcher.due(), f"message {n} was refused")
+            watcher.human_typed()
+
+    def test_a_delivery_held_back_by_the_cap_is_not_forgotten(self) -> None:
+        """The cap stops the typing, not the delivery: once a person is back,
+        what arrived meanwhile still knocks."""
+        watcher = self.watcher(cooldown=0.0, limit=1)
+        self.seen()
+        self.send("one")
+        self.assertTrue(watcher.due())
+        self.send("arrived while capped")
+        self.assertFalse(watcher.due())
+        watcher.human_typed()
+        self.assertTrue(watcher.due())
+
     def test_a_delivery_for_somebody_else_is_not_a_nudge(self) -> None:
         watcher = self.watcher("codex-architect")
         self.seen("codex-architect")
@@ -274,6 +319,30 @@ class ProxyTests(unittest.TestCase):
 
         self.start(["cat"], watcher=Once(), poll=0.05)
         self.assertTrue(self.wait_for(nudge.TEXT.encode()), bytes(self.seen))
+
+    def test_what_the_user_types_is_reported_to_the_watcher(self) -> None:
+        """The proxy is the only thing that can see a keystroke, so it is the
+        only thing that can tell the cap a person is present."""
+
+        class Counting:
+            def __init__(self) -> None:
+                self.typed = 0
+
+            def due(self) -> bool:
+                return False
+
+            def human_typed(self) -> None:
+                self.typed += 1
+
+        watcher = Counting()
+        self.start(["cat"], watcher=watcher, poll=0.05)
+        # Not the echo: the tty driver echoes a write to the master by itself,
+        # before the proxy has read anything. The counter is the observable.
+        deadline = time.time() + 10
+        while time.time() < deadline and watcher.typed == 0:
+            os.write(self.terminal, b"a person is here\n")
+            time.sleep(0.1)
+        self.assertGreater(watcher.typed, 0)
 
     def test_a_quiet_bus_types_nothing(self) -> None:
         class Never:

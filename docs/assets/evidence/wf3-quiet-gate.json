@@ -1,0 +1,357 @@
+{
+  "agents": [
+    "claude-implementer",
+    "codex-architect"
+  ],
+  "artifacts": [
+    {
+      "created_at": "2026-09-05T16:42:34.786774+00:00",
+      "id": "art_7752c8bf47e8496da039047903c191d5",
+      "kind": "commit",
+      "produced_by_agent_id": "claude-implementer",
+      "ref": "20b970f109c704a8278466a9e6b1c36bf289dd5b",
+      "seq": 7,
+      "sha256": null,
+      "task_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "trust": "bound"
+    },
+    {
+      "created_at": "2026-09-05T16:51:38.854851+00:00",
+      "id": "art_2aa0ffcbe4404bf8b04511214b5b9057",
+      "kind": "commit",
+      "produced_by_agent_id": "claude-implementer",
+      "ref": "b1cf6d66904dd6887905528b63dce3f5acd61595",
+      "seq": 8,
+      "sha256": null,
+      "task_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "trust": "bound"
+    }
+  ],
+  "correlation_id": "wf3-quiet-gate",
+  "deliveries": [
+    {
+      "acknowledged_at": "2026-09-05T16:37:51.643860+00:00",
+      "acknowledged_by": "claude-implementer",
+      "attempts": 0,
+      "completed_at": "2026-09-05T16:42:59.574924+00:00",
+      "first_touch_at": "2026-09-05T16:37:51.644347+00:00",
+      "human_input_after_knock": 0,
+      "id": "dlv_30a7e4837aef40b7a2244f519d71cdd5",
+      "knock_observed": {
+        "delivery_seq": 31,
+        "human_typed_ago": 28.608,
+        "provider_quiet_for": 29.377,
+        "trust": "system"
+      },
+      "max_attempts": 3,
+      "message_id": "msg_cd94c8d76e644e32bde0715abd88190e",
+      "nudged_at": "2026-09-05T16:37:40.745080+00:00",
+      "recipient_agent_id": "claude-implementer",
+      "seq": 31,
+      "state": "completed",
+      "updated_at": "2026-09-05T16:42:59.574924+00:00"
+    },
+    {
+      "acknowledged_at": "2026-09-05T16:43:14.696192+00:00",
+      "acknowledged_by": "codex-architect",
+      "attempts": 0,
+      "completed_at": "2026-09-05T16:43:21.595208+00:00",
+      "first_touch_at": "2026-09-05T16:43:14.696432+00:00",
+      "human_input_after_knock": 0,
+      "id": "dlv_351b267fb8a544e6921e8ec077ba4a74",
+      "knock_observed": {
+        "delivery_seq": 32,
+        "human_typed_ago": 96.633,
+        "provider_quiet_for": 110.841,
+        "trust": "system"
+      },
+      "max_attempts": 3,
+      "message_id": "msg_fbe7745b4f104ceeb0cd1c1e533d20c6",
+      "nudged_at": "2026-09-05T16:42:56.343947+00:00",
+      "recipient_agent_id": "codex-architect",
+      "seq": 32,
+      "state": "completed",
+      "updated_at": "2026-09-05T16:43:21.595208+00:00"
+    }
+  ],
+  "events": [
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:37:21.208049+00:00",
+      "entity_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "entity_type": "task",
+      "kind": "task.created",
+      "payload": {
+        "assigned_to": "claude-implementer",
+        "budget": {},
+        "depends_on": [],
+        "redactions": 0,
+        "requires_worktree": true,
+        "state": "open",
+        "title": "record three agent-bus footguns in docs/lessons.md",
+        "trust": "bound"
+      },
+      "seq": 244
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:37:40.702905+00:00",
+      "entity_id": "msg_cd94c8d76e644e32bde0715abd88190e",
+      "entity_type": "message",
+      "kind": "message.sent",
+      "payload": {
+        "delivery_id": "dlv_30a7e4837aef40b7a2244f519d71cdd5",
+        "hop_count": 0,
+        "kind": "task",
+        "recipient": "claude-implementer",
+        "redactions": 0,
+        "trust": "bound"
+      },
+      "seq": 245
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:37:51.644347+00:00",
+      "entity_id": "dlv_30a7e4837aef40b7a2244f519d71cdd5",
+      "entity_type": "delivery",
+      "kind": "delivery.acknowledged",
+      "payload": {
+        "from": [
+          "queued",
+          "dispatched",
+          "processing"
+        ],
+        "to": "acknowledged",
+        "trust": "bound"
+      },
+      "seq": 247
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:39:56.757292+00:00",
+      "entity_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "entity_type": "task",
+      "kind": "task.claimed",
+      "payload": {
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-docs"
+      },
+      "seq": 251
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:42:34.787353+00:00",
+      "entity_id": "art_7752c8bf47e8496da039047903c191d5",
+      "entity_type": "artifact",
+      "kind": "artifact.published",
+      "payload": {
+        "bytes": null,
+        "kind": "commit",
+        "task_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-docs"
+      },
+      "seq": 258
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:42:43.778704+00:00",
+      "entity_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "entity_type": "task",
+      "kind": "task.completed",
+      "payload": {
+        "artifacts": [
+          "art_7752c8bf47e8496da039047903c191d5"
+        ],
+        "trust": "bound"
+      },
+      "seq": 259
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:42:54.588513+00:00",
+      "entity_id": "msg_fbe7745b4f104ceeb0cd1c1e533d20c6",
+      "entity_type": "message",
+      "kind": "message.sent",
+      "payload": {
+        "delivery_id": "dlv_351b267fb8a544e6921e8ec077ba4a74",
+        "hop_count": 1,
+        "kind": "result",
+        "recipient": "codex-architect",
+        "redactions": 0,
+        "trust": "bound"
+      },
+      "seq": 260
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:42:59.575075+00:00",
+      "entity_id": "dlv_30a7e4837aef40b7a2244f519d71cdd5",
+      "entity_type": "delivery",
+      "kind": "delivery.completed",
+      "payload": {
+        "from": [
+          "acknowledged"
+        ],
+        "to": "completed",
+        "trust": "bound"
+      },
+      "seq": 262
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:43:14.696432+00:00",
+      "entity_id": "dlv_351b267fb8a544e6921e8ec077ba4a74",
+      "entity_type": "delivery",
+      "kind": "delivery.acknowledged",
+      "payload": {
+        "from": [
+          "queued",
+          "dispatched",
+          "processing"
+        ],
+        "to": "acknowledged",
+        "trust": "bound"
+      },
+      "seq": 263
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:43:21.595552+00:00",
+      "entity_id": "dlv_351b267fb8a544e6921e8ec077ba4a74",
+      "entity_type": "delivery",
+      "kind": "delivery.completed",
+      "payload": {
+        "from": [
+          "acknowledged"
+        ],
+        "to": "completed",
+        "trust": "bound"
+      },
+      "seq": 264
+    },
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:51:38.855503+00:00",
+      "entity_id": "art_2aa0ffcbe4404bf8b04511214b5b9057",
+      "entity_type": "artifact",
+      "kind": "artifact.published",
+      "payload": {
+        "bytes": null,
+        "kind": "commit",
+        "task_id": "tsk_eccd6c956d16488ab31962a9466233c1",
+        "trust": "bound",
+        "worktree": "/Users/athitfkm/Code/Personal/wt-docs"
+      },
+      "seq": 271
+    }
+  ],
+  "messages": [
+    {
+      "correlation_id": "wf3-quiet-gate",
+      "created_at": "2026-09-05T16:37:40.701418+00:00",
+      "hop_count": 0,
+      "id": "msg_cd94c8d76e644e32bde0715abd88190e",
+      "kind": "task",
+      "payload": {
+        "message": {
+          "base": "e9fab44",
+          "branch": "docs/lessons-wf3",
+          "entries": [
+            "agentd suite \u0e41\u0e15\u0e01 90 errors + 6 failures \u0e43\u0e19 sandbox \u0e17\u0e35\u0e48\u0e2b\u0e49\u0e32\u0e21\u0e40\u0e23\u0e35\u0e22\u0e01 /bin/ps \u2014 PermissionError \u0e2b\u0e25\u0e38\u0e14\u0e2d\u0e2d\u0e01\u0e21\u0e32\u0e40\u0e1b\u0e47\u0e19 traceback \u0e08\u0e32\u0e01\u0e17\u0e38\u0e01 call site \u0e40\u0e1e\u0e23\u0e32\u0e30 procinfo \u0e41\u0e1b\u0e25\u0e07\u0e40\u0e09\u0e1e\u0e32\u0e30 missing \u0e01\u0e31\u0e1a timeout; \u0e01\u0e31\u0e1a\u0e14\u0e31\u0e01\u0e22\u0e48\u0e2d\u0e22: \u0e27\u0e32\u0e07\u0e44\u0e1f\u0e25\u0e4c ps \u0e17\u0e35\u0e48\u0e23\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e44\u0e27\u0e49\u0e2b\u0e19\u0e49\u0e32 /bin/ps \u0e43\u0e19 PATH \u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e2b\u0e49\u0e32\u0e21\u0e2d\u0e30\u0e44\u0e23\u0e40\u0e25\u0e22 \u0e40\u0e1e\u0e23\u0e32\u0e30 exec search \u0e40\u0e14\u0e34\u0e19\u0e1c\u0e48\u0e32\u0e19\u0e44\u0e1f\u0e25\u0e4c\u0e17\u0e35\u0e48\u0e23\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e41\u0e25\u0e49\u0e27\u0e2b\u0e32\u0e15\u0e48\u0e2d \u2014 deny directory \u0e15\u0e49\u0e2d\u0e07\u0e40\u0e1b\u0e47\u0e19 PATH \u0e17\u0e31\u0e49\u0e07\u0e43\u0e1a",
+            "./test.sh \u0e15\u0e34\u0e14\u0e15\u0e31\u0e49\u0e07\u0e41\u0e25\u0e30\u0e16\u0e2d\u0e19 ~/.claude/bin/luciazero-agentd \u0e15\u0e31\u0e27\u0e08\u0e23\u0e34\u0e07 \u0e08\u0e36\u0e07\u0e23\u0e31\u0e19\u0e2a\u0e2d\u0e07\u0e0a\u0e38\u0e14\u0e1e\u0e23\u0e49\u0e2d\u0e21\u0e01\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49 \u0e41\u0e25\u0e30 session \u0e17\u0e35\u0e48 bound \u0e2d\u0e22\u0e39\u0e48\u0e08\u0e30\u0e40\u0e2a\u0e35\u0e22\u0e04\u0e33\u0e2a\u0e31\u0e48\u0e07\u0e01\u0e25\u0e32\u0e07\u0e04\u0e31\u0e19",
+            "artifact_publish: kind commit \u0e23\u0e31\u0e1a\u0e40\u0e09\u0e1e\u0e32\u0e30 full oid \u0e17\u0e35\u0e48\u0e21\u0e35\u0e2d\u0e22\u0e39\u0e48\u0e43\u0e19 worktree \u0e17\u0e35\u0e48 bind \u0e44\u0e27\u0e49 (oid \u0e04\u0e37\u0e2d digest \u0e43\u0e19\u0e15\u0e31\u0e27), kind \u0e2d\u0e37\u0e48\u0e19\u0e40\u0e1b\u0e47\u0e19 path relative \u0e15\u0e48\u0e2d worktree \u0e41\u0e25\u0e49\u0e27 daemon \u0e04\u0e33\u0e19\u0e27\u0e13 sha256 \u0e40\u0e2d\u0e07, URL \u0e16\u0e39\u0e01\u0e1b\u0e0f\u0e34\u0e40\u0e2a\u0e18, loose blob \u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e21\u0e35 ref \u0e40\u0e02\u0e35\u0e22\u0e19\u0e25\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49"
+          ],
+          "format": "\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e40\u0e14\u0e35\u0e22\u0e27\u0e15\u0e48\u0e2d\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 \"cause: \u2026 | proven-by: \u2026 | fix: \u2026 | date: 2026-09-05\" \u0e43\u0e2b\u0e21\u0e48\u0e2a\u0e38\u0e14\u0e44\u0e27\u0e49\u0e1a\u0e19\u0e2a\u0e38\u0e14\u0e43\u0e15\u0e49 # Debugging lessons",
+          "paths": [
+            "docs/lessons.md"
+          ],
+          "title": "record three agent-bus footguns in docs/lessons.md",
+          "worktree": "~/Code/Personal/wt-docs"
+        },
+        "task_id": "tsk_eccd6c956d16488ab31962a9466233c1"
+      },
+      "recipient_agent_id": "claude-implementer",
+      "reply_to": null,
+      "sender_agent_id": "codex-architect",
+      "seq": 31
+    },
+    {
+      "correlation_id": "wf3-quiet-gate",
+      "created_at": "2026-09-05T16:42:54.587487+00:00",
+      "hop_count": 1,
+      "id": "msg_fbe7745b4f104ceeb0cd1c1e533d20c6",
+      "kind": "result",
+      "payload": {
+        "message": "Done: three entries prepended under # Debugging lessons in docs/lessons.md, one line each in the cause | proven-by | fix | date form. Branch docs/lessons-wf3, commit 20b970f109c704a8278466a9e6b1c36bf289dd5b, artifact art_7752c8bf47e8496da039047903c191d5. Proof per entry: (a) `python3 -m unittest tests.test_no_process_table` in agentd/ \u2014 red with the procinfo.py and __main__.py hunks of 718ecce reversed (PermissionError: [Errno 13] Permission denied: 'ps'), green at HEAD (Ran 4 tests, OK); (b) ./test.sh was NOT run \u2014 it installs and uninstalls the real ~/.claude/bin/luciazero-agentd and would have broken this bound session mid-turn, which is the footgun itself, so the entry cites the step name only; (c) reproduced live instead of quoting wf2 \u2014 ConflictError: commit da0c4eb\u2026 is not in the bound worktree, UnsafeReference: artifact refs are commit ids or worktree-relative paths, never URLs, and WorktreeMismatch (branch is now 'docs/lessons-wf3', recorded 'docs/three-modes') from publishing before rebinding. Worktree rebound after the branch switch and again after the commit. Nothing pushed."
+      },
+      "recipient_agent_id": "codex-architect",
+      "reply_to": "msg_cd94c8d76e644e32bde0715abd88190e",
+      "sender_agent_id": "claude-implementer",
+      "seq": 32
+    }
+  ],
+  "runs": [],
+  "tasks": [
+    {
+      "assigned_agent_id": "claude-implementer",
+      "budget": {},
+      "claimed_at": "2026-09-05T16:39:56.756648+00:00",
+      "completed_at": "2026-09-05T16:42:43.778406+00:00",
+      "created_at": "2026-09-05T16:37:21.207135+00:00",
+      "created_by_agent_id": "codex-architect",
+      "deadline_at": null,
+      "depends_on": "[]",
+      "id": "tsk_eccd6c956d16488ab31962a9466233c1",
+      "payload": {
+        "base": "e9fab44",
+        "branch": "docs/lessons-wf3",
+        "entries": [
+          "agentd suite \u0e41\u0e15\u0e01 90 errors + 6 failures \u0e43\u0e19 sandbox \u0e17\u0e35\u0e48\u0e2b\u0e49\u0e32\u0e21\u0e40\u0e23\u0e35\u0e22\u0e01 /bin/ps \u2014 PermissionError \u0e2b\u0e25\u0e38\u0e14\u0e2d\u0e2d\u0e01\u0e21\u0e32\u0e40\u0e1b\u0e47\u0e19 traceback \u0e08\u0e32\u0e01\u0e17\u0e38\u0e01 call site \u0e40\u0e1e\u0e23\u0e32\u0e30 procinfo \u0e41\u0e1b\u0e25\u0e07\u0e40\u0e09\u0e1e\u0e32\u0e30 missing \u0e01\u0e31\u0e1a timeout; \u0e01\u0e31\u0e1a\u0e14\u0e31\u0e01\u0e22\u0e48\u0e2d\u0e22: \u0e27\u0e32\u0e07\u0e44\u0e1f\u0e25\u0e4c ps \u0e17\u0e35\u0e48\u0e23\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e44\u0e27\u0e49\u0e2b\u0e19\u0e49\u0e32 /bin/ps \u0e43\u0e19 PATH \u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e2b\u0e49\u0e32\u0e21\u0e2d\u0e30\u0e44\u0e23\u0e40\u0e25\u0e22 \u0e40\u0e1e\u0e23\u0e32\u0e30 exec search \u0e40\u0e14\u0e34\u0e19\u0e1c\u0e48\u0e32\u0e19\u0e44\u0e1f\u0e25\u0e4c\u0e17\u0e35\u0e48\u0e23\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e41\u0e25\u0e49\u0e27\u0e2b\u0e32\u0e15\u0e48\u0e2d \u2014 deny directory \u0e15\u0e49\u0e2d\u0e07\u0e40\u0e1b\u0e47\u0e19 PATH \u0e17\u0e31\u0e49\u0e07\u0e43\u0e1a",
+          "./test.sh \u0e15\u0e34\u0e14\u0e15\u0e31\u0e49\u0e07\u0e41\u0e25\u0e30\u0e16\u0e2d\u0e19 ~/.claude/bin/luciazero-agentd \u0e15\u0e31\u0e27\u0e08\u0e23\u0e34\u0e07 \u0e08\u0e36\u0e07\u0e23\u0e31\u0e19\u0e2a\u0e2d\u0e07\u0e0a\u0e38\u0e14\u0e1e\u0e23\u0e49\u0e2d\u0e21\u0e01\u0e31\u0e19\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49 \u0e41\u0e25\u0e30 session \u0e17\u0e35\u0e48 bound \u0e2d\u0e22\u0e39\u0e48\u0e08\u0e30\u0e40\u0e2a\u0e35\u0e22\u0e04\u0e33\u0e2a\u0e31\u0e48\u0e07\u0e01\u0e25\u0e32\u0e07\u0e04\u0e31\u0e19",
+          "artifact_publish: kind commit \u0e23\u0e31\u0e1a\u0e40\u0e09\u0e1e\u0e32\u0e30 full oid \u0e17\u0e35\u0e48\u0e21\u0e35\u0e2d\u0e22\u0e39\u0e48\u0e43\u0e19 worktree \u0e17\u0e35\u0e48 bind \u0e44\u0e27\u0e49 (oid \u0e04\u0e37\u0e2d digest \u0e43\u0e19\u0e15\u0e31\u0e27), kind \u0e2d\u0e37\u0e48\u0e19\u0e40\u0e1b\u0e47\u0e19 path relative \u0e15\u0e48\u0e2d worktree \u0e41\u0e25\u0e49\u0e27 daemon \u0e04\u0e33\u0e19\u0e27\u0e13 sha256 \u0e40\u0e2d\u0e07, URL \u0e16\u0e39\u0e01\u0e1b\u0e0f\u0e34\u0e40\u0e2a\u0e18, loose blob \u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e21\u0e35 ref \u0e40\u0e02\u0e35\u0e22\u0e19\u0e25\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49"
+        ],
+        "format": "\u0e1a\u0e23\u0e23\u0e17\u0e31\u0e14\u0e40\u0e14\u0e35\u0e22\u0e27\u0e15\u0e48\u0e2d\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 \"cause: \u2026 | proven-by: \u2026 | fix: \u2026 | date: 2026-09-05\" \u0e43\u0e2b\u0e21\u0e48\u0e2a\u0e38\u0e14\u0e44\u0e27\u0e49\u0e1a\u0e19\u0e2a\u0e38\u0e14\u0e43\u0e15\u0e49 # Debugging lessons",
+        "paths": [
+          "docs/lessons.md"
+        ],
+        "worktree": "~/Code/Personal/wt-docs"
+      },
+      "priority": 0,
+      "requires_worktree": 1,
+      "result": "{\"artifacts\":[\"art_7752c8bf47e8496da039047903c191d5\"],\"branch\":\"docs/lessons-wf3\",\"commit\":\"20b970f109c704a8278466a9e6b1c36bf289dd5b\",\"entries\":3,\"path\":\"docs/lessons.md\",\"verification\":{\"entry_a\":\"python3 -m unittest tests.test_no_process_table in agentd/ \u2014 red with the procinfo.py and __main__.py hunks of 718ecce reversed (PermissionError: [Errno 13] Permission denied: 'ps'), green at HEAD (Ran 4 tests, OK)\",\"entry_b\":\"./test.sh NOT run: it installs and uninstalls the real ~/.claude/bin/luciazero-agentd and would break this bound session mid-turn \u2014 the footgun itself; cited by step name only\",\"entry_c\":\"reproduced live rather than quoted from wf2: ConflictError on a loose-blob oid, UnsafeReference on a URL ref, WorktreeMismatch before rebinding\"}}",
+      "seq": 4,
+      "spent": "{\"cost_usd\": 0.0, \"tokens\": 0, \"turns\": 1}",
+      "state": "completed",
+      "title": "record three agent-bus footguns in docs/lessons.md",
+      "updated_at": "2026-09-05T16:42:43.778406+00:00",
+      "version": 3
+    }
+  ],
+  "worktrees": [
+    {
+      "agent_id": "claude-implementer",
+      "base_oid": "b1cf6d66904dd6887905528b63dce3f5acd61595",
+      "branch": "docs/lessons-wf3",
+      "dirty": 0,
+      "head_oid": "b1cf6d66904dd6887905528b63dce3f5acd61595",
+      "id": "wt_238c81ba0a50455f9f81d77476f564aa",
+      "path": "/Users/athitfkm/Code/Personal/wt-docs",
+      "recorded_at": "2026-09-05T16:51:33.293459+00:00",
+      "repo_id": "c08635e4269925407a51a8c7f30e426f89ff018a",
+      "verified_at": "2026-09-05T16:51:38.855092+00:00"
+    },
+    {
+      "agent_id": "codex-architect",
+      "base_oid": "e9fab44e57a957a578d2d00cc6d98508b9e2b7f0",
+      "branch": "main",
+      "dirty": 0,
+      "head_oid": "e9fab44e57a957a578d2d00cc6d98508b9e2b7f0",
+      "id": "wt_6f94438f3c21409bb84ee36649704b51",
+      "path": "/Users/athitfkm/Code/Personal/Luciazero",
+      "recorded_at": "2026-09-05T16:34:40.583886+00:00",
+      "repo_id": "c08635e4269925407a51a8c7f30e426f89ff018a",
+      "verified_at": "2026-09-05T16:34:40.583886+00:00"
+    }
+  ]
+}

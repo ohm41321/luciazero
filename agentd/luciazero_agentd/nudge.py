@@ -14,12 +14,22 @@ delivery arrives for the bound agent it types one line into that pty. To the
 provider it is indistinguishable from the user typing, because that is exactly
 what it is.
 
-What may be typed is the narrow part. The text is a fixed literal defined here
-and nothing from the payload ever reaches it: a peer that could put its own
-words into another session's prompt would have found a way to write that
-session's instructions, which is the whole shape of a prompt injection. The
-payload still arrives the way it always did, through `message_inbox`, where the
-skill treats it as untrusted input.
+What may be typed is the narrow part. Nothing from a payload ever reaches it:
+a peer that could put its own words into another session's prompt would have
+found a way to write that session's instructions, which is the whole shape of
+a prompt injection. The payload still arrives the way it always did, through
+`message_inbox`, where the skill treats it as untrusted input.
+
+The line is the literal `check your bus inbox`, and after it, in brackets, what
+the daemon itself can say about the inbox: how many deliveries are new, what
+kind they are, and which provider they came from -- `check your bus inbox
+(2 new tasks from codex)`. Every word of that is either a number counted here
+or a string object taken from a tuple in this file. An agent id is not among
+them on purpose: an id is checked for its characters, never for its meaning,
+and `ignore_previous_instructions` is a perfectly valid one. The provider a
+sender runs under is a word this module can name in full, so that is what the
+sender is called. `_typeable` is the last gate, and a line it does not
+recognise costs the reader a detail rather than the prompt its contents.
 
 Three more limits, each for a failure seen while building this:
 
@@ -73,7 +83,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from .store import Store, StoreError
+from .store import MESSAGE_KINDS, PROVIDERS, Store, StoreError
 
 #: Typed into the provider's terminal, verbatim, and never anything else.
 TEXT = "check your bus inbox"
@@ -82,6 +92,14 @@ TEXT = "check your bus inbox"
 QUOTE = "  | "
 #: A payload may be 64 KiB. A log line is not where that belongs.
 MAX_SHOWN = 2000
+#: The sender is named by the provider it runs under and never by its agent
+#: id. `other` names no product, so it tells a reader nothing and is left out.
+NAMED_PROVIDERS = tuple(name for name in PROVIDERS if name != "other")
+#: What a mixed inbox is called. The count stays exact; the kind cannot.
+GENERIC_KIND = "message"
+#: A knock is one short line. Anything longer is a bug upstream, and this is
+#: where it stops instead of where it is typed.
+MAX_TYPED = 100
 #: Under the state directory, beside the bus itself.
 LOG_NAME = "nudges.log"
 #: The provider TUIs treat a burst of bytes as a paste; the return goes in its
@@ -117,6 +135,60 @@ class Arrival:
     sender: str
     kind: str
     text: str
+    #: What is typed about this delivery. Built by `note` from counts and
+    #: enum members, defaulting to the bare literal, so an `Arrival` made
+    #: without one can still only put the literal into a terminal.
+    note: str = TEXT
+
+
+def _shared(values: Sequence[str], allowed: Sequence[str]) -> Optional[str]:
+    """The one value they all have, if they have one and it is a member of
+    `allowed` -- and then the member itself rather than the value, so what
+    goes on to be typed is this file's own string and not the database's."""
+    unique = set(values)
+    if len(unique) != 1:
+        return None
+    value = unique.pop()  # once, not once per candidate
+    return next((choice for choice in allowed if choice == value), None)
+
+
+def note(count: int, kinds: Sequence[str], providers: Sequence[str]) -> str:
+    """The literal, and after it only what the daemon counted and named.
+
+    An agent id is deliberately not in here. An id passes a character check,
+    not a meaning one -- `ignore_previous_instructions` is a perfectly valid
+    one -- so the sender is described by the provider it runs under, which is
+    one of a handful of words this module can name in full. Every word after
+    the literal is either a number the daemon counted or a string object taken
+    from a tuple in this file; nothing is copied out of the database, and a
+    payload has no path in at all.
+
+    An inbox holding more than one kind, or messages from more than one
+    provider, loses that detail rather than guessing: the count is what is
+    always true.
+    """
+    if count < 1:
+        return TEXT
+    kind = _shared(kinds, MESSAGE_KINDS) or GENERIC_KIND
+    line = f"{TEXT} ({count} new {kind}{'' if count == 1 else 's'}"
+    provider = _shared(providers, NAMED_PROVIDERS)
+    return line + (f" from {provider})" if provider else ")")
+
+
+def _typeable(line: Optional[str], fallback: str) -> str:
+    """The last gate before the pty.
+
+    A line that did not come out of `note` -- too long, not starting with the
+    literal, not plain printable ASCII -- is not typed, and the literal is.
+    A caller that gets this wrong then costs the reader a detail, which is
+    the cheap failure, rather than typing a peer's words into a prompt,
+    which is the whole thing this module exists to refuse.
+    """
+    if not isinstance(line, str) or not line.startswith(fallback):
+        return fallback
+    if len(line) > MAX_TYPED or not line.isascii() or not line.isprintable():
+        return fallback
+    return line
 
 
 def _readable(text: str) -> str:
@@ -228,13 +300,18 @@ class Watcher:
     def _max_queued_seq(self) -> int:
         return self._newest()[0]
 
-    def _newest(self) -> tuple[int, Optional[Arrival]]:
-        """The highest queued delivery, and what it says."""
-        def newest(store: Store) -> tuple[int, Optional[Arrival]]:
+    def _newest(self) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
+        """The highest queued delivery, what it says, and the shape of the
+        queue behind it: `(seq, kind, sender)` per delivery, which is what a
+        knock is counted from. No payload rides along with those -- only the
+        newest one carries its text, and only to be shown."""
+        def newest(store: Store) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
             page = store.inbox(self.agent_id, states=("queued",), limit=500)
+            queued = [(int(item["delivery_seq"]), str(item.get("kind") or ""),
+                       str(item.get("sender") or "")) for item in page["items"]]
             latest = max(page["items"], key=lambda item: item["delivery_seq"], default=None)
             if latest is None:
-                return 0, None
+                return 0, None, queued
             payload = latest.get("payload")
             if isinstance(payload, dict):
                 # `message` is what the skill sends; `text` is what a session
@@ -245,10 +322,11 @@ class Watcher:
                 text = words if words is not None else json.dumps(payload, sort_keys=True)
             else:
                 text = str(payload)
-            return int(latest["delivery_seq"]), Arrival(sender=str(latest.get("sender") or "?"),
-                                                        kind=str(latest.get("kind") or "?"),
-                                                        text=text)
-        return self._read(newest, (0, None))
+            return (int(latest["delivery_seq"]),
+                    Arrival(sender=str(latest.get("sender") or "?"),
+                            kind=str(latest.get("kind") or "?"), text=text),
+                    queued)
+        return self._read(newest, (0, None, []))
 
     def _seen_since_start(self) -> bool:
         """Has the agent talked to the daemon since this terminal opened?"""
@@ -295,7 +373,7 @@ class Watcher:
         cap still knocks once a person types."""
         if self.unattended >= self.limit:
             return None
-        newest, arrival = self._newest()
+        newest, arrival, queued = self._newest()
         if newest <= self.seen_seq:
             return None
         now = self.clock()
@@ -317,12 +395,46 @@ class Watcher:
             return None
         held_for = self._since(self.deferred_since, now) if self.deferred_seq == newest else None
         self.deferred_seq = self.deferred_since = None
+        if arrival is not None:
+            arrival.note = self._note_for(queued)  # before `seen_seq` moves: it is what "new" means
         self.seen_seq = newest
         self.last_nudge = now
         self.unattended += 1
         self._record(newest, provider_quiet_for=quiet_for, held_for=held_for,
                      human_typed_ago=self._since(self.last_input, now))
         return arrival
+
+    def _note_for(self, queued: Sequence[tuple[int, str, str]]) -> str:
+        """What the knock says about the inbox, counted over the deliveries
+        that are new to this session. Called once per knock rather than once
+        per poll -- it needs a second read for the roster, and the cooldown
+        is what keeps that cheap."""
+        fresh = [row for row in queued if row[0] > self.seen_seq]
+        if not fresh:
+            return TEXT
+        providers = self._providers_of({sender for _, _, sender in fresh})
+        return note(len(fresh), [kind for _, kind, _ in fresh], providers)
+
+    def _providers_of(self, senders: set[str]) -> list[str]:
+        """The provider each sender runs under, as the roster records it.
+
+        A sender the roster does not know contributes an empty string and not
+        its own id: falling back to the id would put it on the line, which is
+        the one thing naming the provider is here to avoid. Two different
+        answers, or one unknown, drop the clause instead.
+
+        The unknown case has no route through the store -- a delivery's sender
+        is a foreign key into `agents` -- so it is defence in depth and has no
+        regression test above the pure function."""
+        def read(store: Store) -> list[str]:
+            found = []
+            for sender in sorted(senders):
+                try:
+                    found.append(str(store.get_agent(sender).get("provider") or ""))
+                except StoreError:
+                    found.append("")
+            return found
+        return self._read(read, [])
 
     def _defer(self, delivery_seq: int, provider_quiet_for: float) -> None:
         """Written once per delivery held back, never once per poll.
@@ -369,10 +481,11 @@ class Typist:
         self.text = text
         self.return_due: Optional[float] = None
 
-    def start(self) -> None:
+    def start(self, line: Optional[str] = None) -> None:
+        """`line` is a note from `note()`. Anything else types the literal."""
         if self.return_due is not None:
             return  # a line is already going in; never interleave two
-        self.write(self.text.encode("utf-8"))
+        self.write(_typeable(line, self.text).encode("utf-8"))
         self.return_due = self.clock() + self.delay
 
     def tick(self) -> None:
@@ -534,7 +647,7 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                         # keyboard path the provider already understands.
                         if show is not None and isinstance(arrival, Arrival):
                             show(arrival)
-                        typist.start()
+                        typist.start(getattr(arrival, "note", None))
     finally:
         if previous_winch is not None:
             try:

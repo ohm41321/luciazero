@@ -103,6 +103,33 @@ already-downloaded installers. No lifecycle or background updater is allowed.
       OpenAI's curated set is [openai/skills](https://github.com/openai/skills)
       (curated-acceptance process unconfirmed) (†)
 
+## 5. Agent Bus — checkout only, and deliberately so
+
+No channel ships it. `package.json` `files` does not list `agentd/`, and the
+launcher step in `install.sh` is gated on
+`agentd/luciazero_agentd/__init__.py`, which the npm payload does not carry:
+"the npm payload ships this shim but not the package it runs". So a version
+bump publishes the skills and hooks as always and moves the bus not at all.
+Nothing about the bus reaches a user who has not cloned the repo and run
+`./install.sh` from the checkout, which is the intended state for now.
+
+Decided 2026-09-06. Five things close before that changes, in this order:
+
+1. The wt-docs items 1-5 are green and merged.
+2. A clean install is driven through `lucia claude` and `lucia codex` — the
+   public command, not `run --agent ... --provider ...`.
+3. The decision log reaches 3 of 3 workflows and 2 of 2 retros. It stands at
+   2 of 3 and 0 of 2.
+4. Packaging `agentd/` is taken as its own decision, reviewed as a public
+   contract and as a security question. It is not a `files` entry: it puts a
+   Python daemon, a pty proxy and a launchd or systemd service onto machines
+   whose owners asked for a set of skills.
+5. Install, upgrade and uninstall are proved on a machine that is not this
+   one, and proved to leave the user's own configuration alone.
+
+Until then the bus is described as checkout-only wherever it is described at
+all, and a release note that implies otherwise is wrong.
+
 ## Channel honesty
 
 The classic `./install.sh` remains the reference channel — it is the only one

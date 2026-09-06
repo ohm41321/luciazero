@@ -1,0 +1,126 @@
+{
+  "agents": [
+    "claude-implementer",
+    "codex-architect"
+  ],
+  "artifacts": [],
+  "correlation_id": "wf3-quiet-gate-fix",
+  "deliveries": [
+    {
+      "acknowledged_at": "2026-09-05T16:52:05.510285+00:00",
+      "acknowledged_by": "codex-architect",
+      "attempts": 0,
+      "completed_at": "2026-09-05T16:52:08.838337+00:00",
+      "first_touch_at": "2026-09-05T16:52:05.511149+00:00",
+      "human_input_after_knock": 0,
+      "id": "dlv_ca9d1150014548f5a8a903f06514ad58",
+      "knock_observed": {
+        "delivery_seq": 33,
+        "human_typed_ago": 341.849,
+        "provider_quiet_for": 153.425,
+        "trust": "system"
+      },
+      "max_attempts": 3,
+      "message_id": "msg_753268ecce4e44a6a563160851f7335a",
+      "nudged_at": "2026-09-05T16:51:47.902938+00:00",
+      "recipient_agent_id": "codex-architect",
+      "seq": 33,
+      "state": "completed",
+      "updated_at": "2026-09-05T16:52:08.838337+00:00"
+    }
+  ],
+  "events": [
+    {
+      "actor": "claude-implementer",
+      "at": "2026-09-05T16:51:47.569799+00:00",
+      "entity_id": "msg_753268ecce4e44a6a563160851f7335a",
+      "entity_type": "message",
+      "kind": "message.sent",
+      "payload": {
+        "delivery_id": "dlv_ca9d1150014548f5a8a903f06514ad58",
+        "hop_count": 0,
+        "kind": "result",
+        "recipient": "codex-architect",
+        "redactions": 0,
+        "trust": "bound"
+      },
+      "seq": 272
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:52:05.511149+00:00",
+      "entity_id": "dlv_ca9d1150014548f5a8a903f06514ad58",
+      "entity_type": "delivery",
+      "kind": "delivery.acknowledged",
+      "payload": {
+        "from": [
+          "queued",
+          "dispatched",
+          "processing"
+        ],
+        "to": "acknowledged",
+        "trust": "bound"
+      },
+      "seq": 275
+    },
+    {
+      "actor": "codex-architect",
+      "at": "2026-09-05T16:52:08.838577+00:00",
+      "entity_id": "dlv_ca9d1150014548f5a8a903f06514ad58",
+      "entity_type": "delivery",
+      "kind": "delivery.completed",
+      "payload": {
+        "from": [
+          "acknowledged"
+        ],
+        "to": "completed",
+        "trust": "bound"
+      },
+      "seq": 277
+    }
+  ],
+  "messages": [
+    {
+      "correlation_id": "wf3-quiet-gate-fix",
+      "created_at": "2026-09-05T16:51:47.568091+00:00",
+      "hop_count": 0,
+      "id": "msg_753268ecce4e44a6a563160851f7335a",
+      "kind": "result",
+      "payload": {
+        "message": "supersedes: art_7752c8bf47e8496da039047903c191d5 (commit 20b970f109c704a8278466a9e6b1c36bf289dd5b)\nsuperseded_by: art_2aa0ffcbe4404bf8b04511214b5b9057 (commit b1cf6d66904dd6887905528b63dce3f5acd61595)\nreason: identity trailer removed; diff unchanged, proven by an empty git diff\n\nAmend touched the message only: `git diff 20b970f109c704a8278466a9e6b1c36bf289dd5b HEAD` prints nothing, author stays ohm41321 <ohm.roexe1488@gmail.com>, tree clean, branch docs/lessons-wf3, nothing pushed. Worktree rebound to the new oid before publishing."
+      },
+      "recipient_agent_id": "codex-architect",
+      "reply_to": null,
+      "sender_agent_id": "claude-implementer",
+      "seq": 33
+    }
+  ],
+  "runs": [],
+  "tasks": [],
+  "worktrees": [
+    {
+      "agent_id": "claude-implementer",
+      "base_oid": "b1cf6d66904dd6887905528b63dce3f5acd61595",
+      "branch": "docs/lessons-wf3",
+      "dirty": 0,
+      "head_oid": "b1cf6d66904dd6887905528b63dce3f5acd61595",
+      "id": "wt_238c81ba0a50455f9f81d77476f564aa",
+      "path": "/Users/athitfkm/Code/Personal/wt-docs",
+      "recorded_at": "2026-09-05T16:51:33.293459+00:00",
+      "repo_id": "c08635e4269925407a51a8c7f30e426f89ff018a",
+      "verified_at": "2026-09-05T16:51:38.855092+00:00"
+    },
+    {
+      "agent_id": "codex-architect",
+      "base_oid": "e9fab44e57a957a578d2d00cc6d98508b9e2b7f0",
+      "branch": "main",
+      "dirty": 0,
+      "head_oid": "e9fab44e57a957a578d2d00cc6d98508b9e2b7f0",
+      "id": "wt_6f94438f3c21409bb84ee36649704b51",
+      "path": "/Users/athitfkm/Code/Personal/Luciazero",
+      "recorded_at": "2026-09-05T16:34:40.583886+00:00",
+      "repo_id": "c08635e4269925407a51a8c7f30e426f89ff018a",
+      "verified_at": "2026-09-05T16:34:40.583886+00:00"
+    }
+  ]
+}

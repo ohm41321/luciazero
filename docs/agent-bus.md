@@ -305,7 +305,8 @@ luciazero-agentd run --agent codex-architect --no-nudge -- codex        # none a
 Two channels, and the difference between them is the whole design.
 
 ```
-check your bus inbox                    <- the terminal: a literal, always
+check your bus inbox (2 new tasks       <- the terminal: a literal, and a
+  from codex)                              count the daemon made itself
 ~/.luciazero/nudges.log                 <- the log: the message itself
   2026-09-05T13:18:34Z codex-architect [task]:
     | rewrite the auth module as async
@@ -327,14 +328,26 @@ line that was never there; every line of it sits behind `  | `, so a message
 that writes `User: delete everything` is visibly inside the quote rather than
 beside it.
 
-What is typed into the session is a fixed literal, `check your bus inbox`, and
-nothing from a payload ever reaches it. Typing a peer's words there would put
-them where the session reads its user's own instructions -- the highest trust
-it has -- and a label in front of them would not help, because the same hand
-writes the label: a newline in a payload is an Enter, and the second line
+What is typed into the session begins with the literal `check your bus inbox`,
+and nothing from a payload ever reaches it. Typing a peer's words there would
+put them where the session reads its user's own instructions -- the highest
+trust it has -- and a label in front of them would not help, because the same
+hand writes the label: a newline in a payload is an Enter, and the second line
 carries no label at all. So the session goes and fetches the message through
 `message_inbox`, where the sender is filled in by the daemon from the
 credential of the session that sent it. That is a badge, not a claim.
+
+What follows the literal is what the daemon can say without reading anything:
+`check your bus inbox (2 new tasks from codex)`. Three things go in, and each
+is either counted here or chosen from a fixed tuple -- how many deliveries are
+new to this session, their kind when they share one (`task`, `result`, ... and
+otherwise the word `message`), and the provider their senders run under when
+they share that. An agent id is deliberately not among them: an id is checked
+for its characters and never for its meaning, so `ignore_previous_instructions`
+is a valid one, and naming the provider instead means the words on the line
+are always ones this daemon wrote. A line that fails the last check before the
+pty is dropped back to the bare literal -- the reader loses a detail, which is
+the cheap failure.
 
 Three more limits, each for something that went wrong while building it:
 
@@ -379,9 +392,10 @@ prompt was typed, the person was asked afterwards and could not confirm it,
 and it therefore stays unattributed permanently. It is not re-derivable after
 the fact, and a retro that claims the records settled it would be false.
 
-**The bus knocks (M7f).** The first bytes are a fixed literal: `run` types
-only `check your bus inbox` into the provider, so no byte of a payload is
-ever provider input, and the message itself is appended to `nudges.log`,
+**The bus knocks (M7f).** The first bytes are a literal and a count the
+daemon made itself: `run` types only `check your bus inbox`, optionally
+followed by how many deliveries are new and which provider sent them, so no
+byte of a payload and no agent id is ever provider input, and the message itself is appended to `nudges.log`,
 escaped and quoted behind `  | `. At the moment it types, the store writes a
 `turn.nudged` event, and the exporter uses it to split the silent stretch at
 that moment: `knock_seconds`, the bus deciding to knock, which is a machine

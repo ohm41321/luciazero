@@ -14,9 +14,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from luciazero_agentd import Store
+from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS
 from luciazero_agentd import procinfo
 from luciazero_agentd.redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX, DEFAULT as DEFAULT_REDACTOR
 from luciazero_agentd.server import ACTOR_FIELDS, TOOL_INDEX, BusServer, tool_contract
@@ -89,6 +91,40 @@ class Bindings(StoreCase):
         self.assertIsNone(self.store.resolve_credential(credential, alive=ALIVE))
         kinds = [e["kind"] for e in self.store.events(limit=50)]
         self.assertIn("binding.stale", kinds)
+
+    def test_a_credential_in_use_is_renewed_before_it_can_expire(self) -> None:
+        """The session that broke this was fifteen hours into its own work when
+        the daemon stopped answering it: the terminal was alive, the process
+        check passed, and the twelve-hour window had simply run out."""
+        binding, credential = self.bind(tty="ttys120", pid=os.getpid(), ttl_seconds=3600)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        resolved = self.store.resolve_credential(credential, alive=ALIVE)
+        self.assertIsNotNone(resolved)
+        self.assertGreater(str(resolved["expires_at"]), soon)
+        self.assertIn("binding.renewed", [e["kind"] for e in self.store.events(limit=50)])
+
+    def test_renewal_keeps_the_window_the_binding_was_created_with(self) -> None:
+        """A short `--ttl` is a decision, not a starting point: renewing it by
+        the default would hand a session twelve hours it was denied on purpose."""
+        binding, credential = self.bind(tty="ttys121", pid=os.getpid(), ttl_seconds=60)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        resolved = self.store.resolve_credential(credential, alive=ALIVE)
+        window = datetime.fromisoformat(str(resolved["expires_at"])) - datetime.now(timezone.utc)
+        self.assertLessEqual(window, timedelta(seconds=60))
+
+    def test_renewal_never_carries_a_binding_past_its_ceiling(self) -> None:
+        """Renewal must not make a binding immortal on a machine nobody reboots."""
+        binding, credential = self.bind(tty="ttys122", pid=os.getpid(), ttl_seconds=3600)
+        born = datetime.now(timezone.utc) - timedelta(seconds=BINDING_MAX_LIFETIME_SECONDS)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET created_at = ?, expires_at = ? WHERE id = ?",
+                                 (born.isoformat(timespec="microseconds"), soon, binding["id"]))
+        resolved = self.store.resolve_credential(credential, alive=ALIVE)
+        self.assertEqual(str(resolved["expires_at"]), soon)
+        self.store._conn.execute("UPDATE bindings SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (binding["id"],))
+        self.assertIsNone(self.store.resolve_credential(credential, alive=ALIVE))
 
     def test_an_expired_credential_is_refused_even_while_the_process_lives(self) -> None:
         binding, credential = self.bind(tty="ttys106", pid=os.getpid(), ttl_seconds=60)

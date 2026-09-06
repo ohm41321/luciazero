@@ -65,6 +65,14 @@ APPROVAL_TTL_SECONDS = 900
 # A terminal binding outlives a long working session but not a weekend; the
 # credential dies with it (ADR 0004).
 BINDING_TTL_SECONDS = 12 * 3600
+# ...and it renews while the terminal is alive, because a session that is being
+# worked in is the last thing that should lose its credential mid-turn. The
+# ceiling is what keeps "not a weekend" true: renewal never carries a binding
+# past this far from when it was created, however busy the session is.
+BINDING_MAX_LIFETIME_SECONDS = 7 * 24 * 3600
+# Renewing on every request would mean a write per call, so a binding is
+# extended only once it is inside the last part of its window.
+BINDING_RENEW_AT = 0.5
 # M7c: how long a session's request to be an agent waits for a human. Long
 # enough to switch to another window and read what is being asked, short
 # enough that an unattended request is not still approvable an hour later.
@@ -1791,9 +1799,9 @@ class Store:
         ).fetchone()["g"])
         self._conn.execute(
             """INSERT INTO bindings (id, agent_id, credential_hash, provider, ownership, tty, pid,
-                                     process_started_at, cwd, generation, state, bound_by, created_at, updated_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
-            (binding_id, agent_id, digest, provider, ownership, tty, pid, process_started_at, cwd, generation, by, stamp, stamp, expires),
+                                     process_started_at, cwd, generation, state, bound_by, created_at, updated_at, expires_at, ttl_seconds)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)""",
+            (binding_id, agent_id, digest, provider, ownership, tty, pid, process_started_at, cwd, generation, by, stamp, stamp, expires, int(ttl_seconds)),
         )
         self._event(by, "binding.created", "binding", binding_id, {
             "agent_id": agent_id, "provider": provider, "ownership": ownership, "tty": tty,
@@ -1885,8 +1893,38 @@ class Store:
             with self._tx("stale_binding"):
                 self._end_binding(str(row["id"]), state="stale", by="daemon", reason="process gone", now=now)
             return None
+        renewed = self._renew_binding(row, now=now)
+        if renewed is not None:
+            row["expires_at"] = renewed
         row.pop("credential_hash", None)
         return row
+
+    def _renew_binding(self, row: dict[str, Any], *, now: str) -> Optional[str]:
+        """Push a live binding's expiry back, and say where it landed.
+
+        Called from `resolve_credential` once the terminal has been proved
+        alive, which is the whole justification: the credential dies with the
+        session either way, so expiring one that is provably still there only
+        ever interrupted somebody mid-turn. `BINDING_MAX_LIFETIME_SECONDS`
+        keeps the other half of the promise -- a binding still has an end.
+        Returns None when nothing was written, which is the common case."""
+        window = int(row["ttl_seconds"] or BINDING_TTL_SECONDS)
+        moment = datetime.fromisoformat(now)
+        if (datetime.fromisoformat(str(row["expires_at"])) - moment).total_seconds() > window * BINDING_RENEW_AT:
+            return None
+        ceiling = datetime.fromisoformat(str(row["created_at"])) + timedelta(seconds=BINDING_MAX_LIFETIME_SECONDS)
+        target = min(moment + timedelta(seconds=window), ceiling)
+        if target <= datetime.fromisoformat(str(row["expires_at"])):
+            return None  # at the ceiling: let it run out rather than write on every call
+        expires = target.isoformat(timespec="microseconds")
+        with self._tx("renew_binding"):
+            self._conn.execute(
+                "UPDATE bindings SET expires_at = ?, updated_at = ? WHERE id = ? AND state = 'active'",
+                (expires, now, row["id"]),
+            )
+            self._event("daemon", "binding.renewed", "binding", str(row["id"]),
+                        {"agent_id": row["agent_id"], "expires_at": expires, "ttl_seconds": window})
+        return expires
 
     def refuse_identity(self, binding: dict[str, Any], *, claimed: str, field: str, tool: str) -> None:
         """Record that a bound session named another agent, then let the

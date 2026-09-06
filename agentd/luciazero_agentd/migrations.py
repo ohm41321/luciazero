@@ -407,6 +407,14 @@ CREATE INDEX claim_requests_live ON claim_requests (state, expires_at);
 """
 
 
+SCHEMA_V9 = """
+-- A binding renews itself while its terminal is alive, so the window it was
+-- created with has to survive the first renewal: without it a session started
+-- with a deliberately short `--ttl` would silently inherit the default one.
+ALTER TABLE bindings ADD COLUMN ttl_seconds INTEGER NOT NULL DEFAULT 43200;
+"""
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
@@ -416,6 +424,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (6, SCHEMA_V6),
     (7, SCHEMA_V7),
     (8, SCHEMA_V8),
+    (9, SCHEMA_V9),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

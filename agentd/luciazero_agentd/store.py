@@ -1716,15 +1716,29 @@ class Store:
         cwd: Optional[str] = None,
         ownership: str = "human",
         ttl_seconds: int = BINDING_TTL_SECONDS,
+        replace_live_human: bool = False,
     ) -> tuple[dict[str, Any], str]:
         """Human channel only (never an MCP tool): bind one terminal to one
         agent and mint the session credential that proves it. Only the hash
         is stored; the plain credential is returned once, for the command
         that will hand it to that terminal's provider process.
 
-        An agent may hold one live binding, and a terminal may hold one, so
-        binding either again revokes the previous one instead of creating a
-        second way to answer as the same role."""
+        An agent holds one live binding and a terminal holds one, and the two
+        halves of that are not the same rule:
+
+        * A terminal that binds again is one window changing its own mind, so
+          the binding it had is revoked. Nothing is taken from anybody.
+        * An agent that is already bound to a live terminal belongs to
+          whoever is sitting at it. A second launcher is refused by default
+          and has to say `replace_live_human=True` to take it, which is what
+          `attach` says and what `run` does not. The way out of a refusal is
+          `detach`, in the window that holds it or by agent id.
+
+        The default is the refusal because the launcher is about to get
+        shorter: with the roster and the daemon started for you, two windows
+        running the same command is the ordinary case rather than a mistake,
+        and the second one must not end the first one's session in silence.
+        """
         _check_id(agent_id, "agent id", self._redactor)
         _check_enum(provider, PROVIDERS, "provider")
         _check_enum(ownership, OWNERSHIPS, "ownership")
@@ -1742,9 +1756,21 @@ class Store:
             cwd = _check_path_arg(cwd)
             if self._redactor.scan(cwd):
                 raise UnsafeReference("cwd carries a secret shape")
+        if ownership == "human" and not replace_live_human:
+            # Outside the transaction on purpose. Deciding whether a binding
+            # is still live means asking the process table, `procinfo` gives
+            # `ps` ten seconds, and `BEGIN IMMEDIATE` is not a place to spend
+            # ten seconds. `list_bindings` is the reaper that already exists:
+            # it ends every binding that expired or whose process is gone,
+            # each in its own transaction, so the check inside reads rows and
+            # not guesses. Two launchers may both reap and both find the id
+            # free; the transaction is what makes the second one see the
+            # first's binding and refuse.
+            self.list_bindings()
         with self._tx("bind_terminal"):
             return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=tty, pid=pid,
                                               process_started_at=process_started_at, cwd=cwd,
+                                              replace_live_human=replace_live_human,
                                               ownership=ownership, ttl_seconds=ttl_seconds, checked=True)
 
     def _bind_terminal_locked(
@@ -1760,6 +1786,7 @@ class Store:
         ownership: str = "human",
         ttl_seconds: int = BINDING_TTL_SECONDS,
         checked: bool = False,
+        replace_live_human: bool = False,
     ) -> tuple[dict[str, Any], str]:
         """The body of `bind_terminal`, inside a transaction the caller owns:
         `decide_claim` binds as part of approving, and a second transaction
@@ -1784,6 +1811,24 @@ class Store:
                 raise ConflictError(
                     f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
                     "the dispatcher never takes over a session the user owns"
+                )
+        if ownership == "human" and not replace_live_human:
+            # Rows only: whether each bound process is still running was
+            # settled by the reaper before this transaction opened, because
+            # answering it here would hold the write lock across `ps`. What
+            # is asked here is what the table says, which is the part that
+            # has to be atomic -- two launchers reaching this line at the
+            # same moment are serialised by the transaction, and the second
+            # one reads the first one's row.
+            held = _row(self._conn.execute(
+                "SELECT id, tty, pid FROM bindings WHERE state = 'active' AND ownership = 'human' "
+                "AND agent_id = ? AND expires_at > ?", (agent_id, utcnow())).fetchone())
+            if held is not None:
+                where = held["tty"] or (f"pid {held['pid']}" if held["pid"] else "no terminal")
+                raise ConflictError(
+                    f"agent {agent_id!r} is already bound to a live session ({where}); "
+                    f"end it with `luciazero-agentd detach --agent {agent_id}` or take it over "
+                    "with `luciazero-agentd attach`"
                 )
         now = datetime.now(timezone.utc)
         stamp = now.isoformat(timespec="microseconds")

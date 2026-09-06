@@ -880,6 +880,10 @@ def cmd_attach(args: argparse.Namespace) -> int:
                 args.agent, provider=provider, by=f"human:{getpass.getuser()}",
                 tty=process.get("tty"), pid=process["pid"], process_started_at=process.get("started_at"),
                 cwd=process.get("cwd"), ttl_seconds=args.ttl,
+                # `attach` is a person naming a terminal and an agent in one
+                # breath, which is the sentence a takeover is made of. `run`
+                # is the one that refuses.
+                replace_live_human=True,
             )
     except NotFound as exc:
         print(f"attach: {clean(exc)} (add it first: luciazero-agentd roster add ...)", file=sys.stderr)

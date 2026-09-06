@@ -129,6 +129,18 @@ for `--pid`.
 - A binding dies with its terminal: the daemon checks the recorded pid and
   its start time on every request, so a killed session cannot be impersonated
   by a later process that reuses the pid.
+- **One agent id, one live session, and the second asker is refused.** `run`
+  on an id that is already bound to a live terminal stops and names the
+  window that holds it; it does not end that session and take its place.
+  `attach` is the takeover, because naming a terminal and an agent together
+  is the sentence a takeover is made of, and `detach` is the way out of a
+  refusal. This matters more the shorter the launcher gets: with the roster
+  filled in and the daemon started for you, two windows running the same
+  command is the ordinary case rather than a slip, and the second one must
+  not end the first one's work in silence.
+- A terminal that binds again is a different thing and keeps the old
+  behaviour: one window changing its own mind revokes the binding it had, so
+  a single terminal can never answer as two agents at once.
 
 An agent with no binding is **unverified**, and `bus status` says so on that
 agent's line. **The daemon refuses acting calls from unverified sessions by

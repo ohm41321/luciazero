@@ -62,9 +62,12 @@ class Bindings(StoreCase):
         for value in (None, 42, "", "bearer", CREDENTIAL_PREFIX + "0" * 32, CREDENTIAL_PREFIX + "zz", "lzap_" + "0" * 32):
             self.assertIsNone(self.store.resolve_credential(value, alive=ALIVE), value)
 
-    def test_binding_again_replaces_the_previous_one_for_that_agent(self) -> None:
+    def test_a_takeover_replaces_the_previous_binding_for_that_agent(self) -> None:
+        """What a takeover does once it has been asked for: the old
+        credential dies, the new one answers, and the generation moves so the
+        two are never confused for each other."""
         first, cred1 = self.bind(tty="ttys101", pid=os.getpid())
-        second, cred2 = self.bind(tty="ttys102", pid=os.getpid())
+        second, cred2 = self.bind(tty="ttys102", pid=os.getpid(), replace_live_human=True)
         self.assertIsNone(self.store.resolve_credential(cred1, alive=ALIVE))
         self.assertEqual(self.store.resolve_credential(cred2, alive=ALIVE)["id"], second["id"])
         self.assertEqual(self.store.get_binding(first["id"])["state"], "revoked")
@@ -77,6 +80,73 @@ class Bindings(StoreCase):
         self.assertEqual(self.store.resolve_credential(cred_architect, alive=ALIVE)["agent_id"], "codex-architect")
         live = [b["agent_id"] for b in self.store.list_bindings(alive=None)]
         self.assertEqual(live, ["codex-architect"])
+
+    def test_a_second_launcher_is_refused_instead_of_handed_the_id(self) -> None:
+        """The id belongs to whoever is sitting at the terminal that holds it.
+        A launcher that finds it taken says so; it does not end the session
+        that is using it and take its place."""
+        _, working = self.bind(tty="ttys120", pid=os.getpid())
+        with self.assertRaises(ConflictError) as caught:
+            self.bind(tty="ttys121", pid=os.getpid())
+        self.assertIn("already bound", str(caught.exception))
+        self.assertIn("detach", str(caught.exception), "a refusal names the way out")
+        self.assertEqual("claude-reviewer",
+                         self.store.resolve_credential(working, alive=ALIVE)["agent_id"])
+
+    def test_a_takeover_happens_only_when_it_is_asked_for(self) -> None:
+        """`attach` is a person naming a terminal and an agent in one breath.
+        That sentence is allowed to replace what was there."""
+        _, first = self.bind(tty="ttys122", pid=os.getpid())
+        _, second = self.bind(tty="ttys123", pid=os.getpid(), replace_live_human=True)
+        self.assertIsNone(self.store.resolve_credential(first, alive=ALIVE))
+        self.assertEqual("claude-reviewer",
+                         self.store.resolve_credential(second, alive=ALIVE)["agent_id"])
+
+    def test_a_binding_whose_time_ran_out_does_not_hold_the_id(self) -> None:
+        """The refusal is about a live session, not about a row. An expired
+        binding proves nobody is there any more."""
+        binding, _ = self.bind(tty="ttys124", pid=os.getpid())
+        self.store._conn.execute(
+            "UPDATE bindings SET expires_at = ? WHERE id = ?",
+            ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="microseconds"),
+             binding["id"]))
+        self.store._conn.commit()
+        _, credential = self.bind(tty="ttys125", pid=os.getpid())
+        self.assertEqual("claude-reviewer",
+                         self.store.resolve_credential(credential, alive=ALIVE)["agent_id"])
+
+    def test_two_launchers_racing_leave_one_binding_and_one_refusal(self) -> None:
+        """Reaping happens outside the transaction, so both launchers can
+        walk past a free-looking id at the same moment. What makes the second
+        one refuse is the transaction, not the check before it."""
+        import threading
+
+        ready = threading.Barrier(2)
+        outcomes: list[str] = []
+        lock = threading.Lock()
+
+        def launch(tty: str) -> None:
+            try:
+                with Store.open(self.db) as store:
+                    store.migrate()
+                    store.trust = "human"
+                    ready.wait(timeout=10)
+                    store.bind_terminal("claude-reviewer", provider="claude", by="human:test",
+                                        tty=tty, pid=os.getpid())
+                outcome = "bound"
+            except ConflictError:
+                outcome = "refused"
+            with lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=launch, args=(tty,)) for tty in ("ttys126", "ttys127")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        self.assertEqual(["bound", "refused"], sorted(outcomes))
+        live = [b for b in self.store.list_bindings(alive=None) if b["agent_id"] == "claude-reviewer"]
+        self.assertEqual(1, len(live), "one id, one live binding, however many launchers ask")
 
     def test_detach_kills_the_credential(self) -> None:
         binding, credential = self.bind(tty="ttys104", pid=os.getpid())
@@ -380,7 +450,8 @@ class Revocation(ServerCase):
         with Store.open(self.db) as store:
             store.migrate()
             store.trust = "human"
-            _, other = store.bind_terminal("claude-reviewer", provider="claude", by="human:test", tty=None, pid=os.getpid())
+            _, other = store.bind_terminal("claude-reviewer", provider="claude", by="human:test",
+                                           tty=None, pid=os.getpid(), replace_live_human=True)
         client.token = other  # same MCP session, different binding
         status, _, body = client.rpc("tools/list")
         self.assertEqual(status, 401)

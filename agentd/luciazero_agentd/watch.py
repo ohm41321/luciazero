@@ -462,16 +462,21 @@ def roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
-                      state_dir: Optional[Path] = None) -> list[tuple[str, str]]:
+                      state_dir: Optional[Path] = None,
+                      which: Optional[Callable[[str], Optional[str]]] = None) -> list[tuple[str, str]]:
     """One (what this terminal is, what to type in it) pair per terminal.
 
     The watcher comes first on purpose: open it before the two sessions and
     the conversation is visible from its first message rather than from
     whenever somebody thought to look.
+
+    ``which`` is passed on to the launcher helpers: which of the two forms a
+    reader is handed depends on whether `./install.sh` has run, so a caller
+    that has to know cannot be left reading this process's PATH.
     """
     where = f" --state-dir {state_dir}" if state_dir is not None else ""
     known = {str(a["id"]): a for a in agents}
-    run = launcher()
+    run = launcher(which)
     plan = [("terminal 1 - the conversation",
              f"{run} watch --between {first} {second}{where}")]
     for agent_id in (first, second):
@@ -483,7 +488,7 @@ def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
                          f"{run} run --agent {agent_id}{where} -- <your {provider} command>"))
             continue
         held = f"  # already bound to {agent['tty']}" if agent.get("tty") else ""
-        start = launcher_in(agent["worktree"]) if agent.get("worktree") else run
+        start = launcher_in(agent["worktree"], which) if agent.get("worktree") else run
         plan.append((f"terminal for {agent_id} ({provider})",
                      f"{start} run --agent {agent_id}{where} -- {command}{held}"))
     return plan

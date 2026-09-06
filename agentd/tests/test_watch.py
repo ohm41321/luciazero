@@ -270,13 +270,20 @@ class ChatTests(WatchCase):
 
     def test_an_agent_with_its_own_worktree_is_started_from_inside_it(self) -> None:
         """A session started from the main checkout binds the main checkout,
-        and the isolation two agents depend on is quietly gone."""
+        and the isolation two agents depend on is quietly gone.
+
+        Both launcher forms are asserted through an injected lookup. Reading
+        the developer's own PATH instead would make this test pass or fail by
+        whether `./install.sh` had been run on that machine, which is the
+        documented setup: it was red for everyone who had followed it.
+        """
         repo = make_repo(self.state_dir / "wt-implementer")
         self.store.bind_worktree(IMPLEMENTER, repo)
-        plan = dict((label, command) for label, command in
-                    watch.conversation_plan(self.roster(), ARCHITECT, IMPLEMENTER))
-        line = plan[f"terminal for {IMPLEMENTER} (claude)"]
-        self.assertTrue(line.startswith(f"cd {repo}/agentd &&"), line)
+        for which, expected in ((lambda name: "/opt/bin/" + name, f"cd {repo} && luciazero-agentd"),
+                                (lambda name: None, f"cd {repo}/agentd && python3 -m luciazero_agentd")):
+            plan = dict(watch.conversation_plan(self.roster(), ARCHITECT, IMPLEMENTER, which=which))
+            line = plan[f"terminal for {IMPLEMENTER} (claude)"]
+            self.assertTrue(line.startswith(expected), line)
 
     def test_an_agent_whose_provider_has_no_known_command_is_not_guessed_at(self) -> None:
         self.store.register_agent("someone-else", provider="other", role="helper")

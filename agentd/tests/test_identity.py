@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from luciazero_agentd import Store
 from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS
@@ -451,6 +452,122 @@ class HumanCommands(unittest.TestCase):
         with Store.open(self.state / "bus.sqlite3") as store:
             store.migrate()
             return store.list_bindings(states=states, alive=None)
+
+    def _stop_daemon(self, state: Optional[Path] = None) -> None:
+        from luciazero_agentd.statedir import read_endpoint
+
+        endpoint = read_endpoint(self.state if state is None else state)
+        if endpoint is None or not isinstance(endpoint.get("pid"), int):
+            return
+        try:
+            os.kill(endpoint["pid"], __import__("signal").SIGTERM)
+        except OSError:
+            pass
+
+    def test_run_starts_the_daemon_a_first_terminal_does_not_have(self) -> None:
+        """Setup step one is "start the daemon in a terminal you can leave
+        open", which is a window to lose and a thing to know. `run` needs a
+        daemon, so `run` starts one."""
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        self.assertIsNone(read_endpoint(self.state))
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        endpoint = read_endpoint(self.state)
+        self.assertIsNotNone(endpoint, done.stderr)
+        self.assertIn("hello", done.stdout)
+
+    def test_no_autostart_leaves_the_old_refusal_in_place(self) -> None:
+        """Automation that wants to know a daemon was already running keeps
+        the answer it had."""
+        done = self.cli("run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("no running daemon", done.stderr)
+
+    def test_an_autostarted_daemon_does_not_claim_the_service_port(self) -> None:
+        """A second state directory is a second daemon, and two daemons cannot
+        share a port. Claiming 8765 makes the second one die with `Errno 48`
+        in a log nobody reads -- green on a machine with no daemon, red on the
+        developer's, which is the flakiness this asserts away.
+
+        The port the service uses is not held here on purpose: a test that
+        occupied 8765 would be the same environment-dependent test again.
+        What is asserted is that the autostarted daemon did not ask for it."""
+        from urllib.parse import urlsplit
+
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        endpoint = read_endpoint(self.state)
+        self.assertIsNotNone(endpoint, done.stderr)
+        port = urlsplit(endpoint["url"]).port
+        self.assertNotEqual(8765, port, "the stable port belongs to the installed service")
+
+        second = Path(os.path.realpath(tempfile.mkdtemp(prefix="agentd-identity-second-")))
+        self.addCleanup(self._stop_daemon, second)
+        with Store.open(second / "bus.sqlite3") as store:
+            store.migrate()
+            store.trust = "human"
+            store.register_agent("claude-reviewer", provider="claude", role="reviewer")
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(second), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        other = read_endpoint(second)
+        self.assertIsNotNone(other, done.stderr)
+        self.assertNotEqual(port, urlsplit(other["url"]).port,
+                            "two daemons on one machine need two ports")
+
+    def test_a_daemon_that_dies_is_reported_at_once_and_with_the_reason(self) -> None:
+        """The wait is for a daemon that is coming up, not for one that is
+        already gone. A child that exits in the first second used to cost the
+        full timeout and then say only that nothing was recorded, which names
+        the symptom and not one cause."""
+        import time as _time
+
+        broken = Path(os.path.realpath(tempfile.mkdtemp(prefix="agentd-identity-broken-")))
+        (broken / "bus.sqlite3").mkdir()  # sqlite cannot open a directory
+        started = _time.monotonic()
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(broken), "--", "/bin/echo", "hello", raw=True)
+        waited = _time.monotonic() - started
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertLess(waited, 10, "a dead child is not worth a twenty second wait")
+        self.assertIn("exited", done.stderr)
+        self.assertIn("unable to open database", done.stderr)
+
+    def test_a_quoted_log_is_bounded_and_never_carries_the_token(self) -> None:
+        """The log is quoted into an error message, and the token sits in the
+        same directory."""
+        from luciazero_agentd.__main__ import LOG_TAIL_LINES, _log_tail
+
+        token = "s" * 40
+        (self.state / "token").write_text(token, encoding="utf-8")
+        (self.state / "daemon.log").write_text(
+            "\n".join(f"line {i} token={token}" for i in range(100)), encoding="utf-8")
+        tail = _log_tail(self.state)
+        self.assertNotIn(token, tail)
+        self.assertIn("[redacted]", tail)
+        self.assertLessEqual(len(tail.splitlines()), LOG_TAIL_LINES)
+
+    def test_run_puts_an_agent_nobody_named_on_the_roster(self) -> None:
+        """`roster add` before a first session is a step whose only job is to
+        make the next command work; the id `run` is starting is the name."""
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        done = self.cli("run", "--agent", "claude-newcomer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            self.assertEqual(store.get_agent("claude-newcomer")["provider"], "claude")
+        self.assertIn("claude-newcomer", done.stderr + done.stdout)
 
     def test_a_provider_that_never_starts_leaves_no_live_credential(self) -> None:
         from luciazero_agentd.statedir import write_endpoint

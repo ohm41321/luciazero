@@ -50,6 +50,7 @@ from typing import Any, Callable, Iterator, Optional
 from . import nudge, procinfo, service as service_mod, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
+from .redact import Redactor
 from .statedir import (
     clear_endpoint,
     db_path,
@@ -637,6 +638,113 @@ def _dispatch_passes(engine: "Dispatcher", *, passes: Optional[int], interval: f
         time.sleep(interval)
 
 
+#: How much of `daemon.log` a failed autostart quotes back. The log is
+#: appended to by every daemon this directory has ever started, so a failure
+#: shows its own last words rather than the file.
+LOG_TAIL_LINES = 10
+LOG_TAIL_BYTES = 2000
+
+
+def _log_tail(state_dir: Path) -> str:
+    """The end of `daemon.log`, bounded and scrubbed, for a failure to quote.
+
+    Bounded twice, by bytes and then by lines, because the file holds every
+    daemon this directory has started and a crash loop writes long ones.
+    Scrubbed with the daemon's own token added to the default rules: reading
+    the log is something this process may do and printing it is not the same
+    act, and the token sits in the same directory.
+    """
+    try:
+        with (state_dir / "daemon.log").open("rb") as handle:
+            # Seek rather than read and slice: this file is appended to by
+            # every daemon the directory has started, and a crash loop is
+            # exactly the case where it is both huge and worth quoting.
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - LOG_TAIL_BYTES))
+            raw = handle.read()
+    except OSError:
+        return ""
+    token = read_token(state_dir)
+    text, _ = Redactor([token] if token else []).text(raw.decode("utf-8", "replace"))
+    return "\n".join(f"  {clean(line)}" for line in text.splitlines()[-LOG_TAIL_LINES:])
+
+
+def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dict[str, Any]]:
+    """Start a daemon for a terminal that has none, and wait until it answers.
+
+    Setup used to open with "start the daemon in a terminal you can leave
+    open": a window to keep, and a step whose only purpose was to make the
+    next command work. The daemon is started the way the service manager
+    starts it -- an absolute interpreter from `serve_command`, output appended
+    to `daemon.log`, its own session so it outlives this terminal -- and this
+    process waits for `endpoint.json` rather than assuming it arrived.
+
+    Two terminals starting at once is not a race worth locking: `serve`
+    refuses a state directory a live daemon already owns, so the loser exits
+    and both callers read the winner's endpoint.
+    """
+    ensure_state_dir(state_dir)
+    argv, env = service_mod.serve_command()
+    child = {**os.environ, **env, "LUCIAZERO_AGENT_BUS_HOME": str(state_dir)}
+    # An ephemeral port, always. The stable 8765 belongs to the installed
+    # service, which passes its own `--port`, and this path only runs when no
+    # daemon is recorded here at all -- so it never competes with one. What it
+    # does compete with is every other daemon on the machine: a second state
+    # directory is a second daemon, two daemons cannot share a port, and the
+    # loser dies with `Errno 48` in a log nobody reads. `cmd_serve` writes the
+    # address it actually bound into `endpoint.json`, which is where every
+    # client looks, so nothing downstream needs to know the number.
+    serve = argv + ["serve", "--state-dir", str(state_dir), "--port", "0"]
+    try:
+        log = (state_dir / "daemon.log").open("a")
+    except OSError as exc:
+        print(f"run: cannot write the daemon log in {state_dir}: {clean(exc)}", file=sys.stderr)
+        return None
+    try:
+        daemon = subprocess.Popen(serve, env=child,
+                                  stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                  start_new_session=True)
+    except OSError as exc:
+        print(f"run: cannot start a daemon: {clean(exc)}", file=sys.stderr)
+        return None
+    finally:
+        log.close()
+    deadline = time.monotonic() + timeout
+    while True:
+        endpoint = _live_endpoint(state_dir)
+        if endpoint is not None:
+            return endpoint
+        # Asked only after the endpoint, and asked again after it: a `serve`
+        # exits because another one already owns this directory, and that
+        # loser is not a failure -- the winner's endpoint is the answer both
+        # callers wanted. `cmd_serve` refuses only once an endpoint is
+        # recorded, so the one re-read closes the window between the two.
+        code = daemon.poll()
+        if code is not None:
+            endpoint = _live_endpoint(state_dir)
+            if endpoint is not None:
+                return endpoint
+            tail = _log_tail(state_dir)
+            print(f"run: the daemon it started exited {code} without recording an endpoint; "
+                  f"last of {state_dir / 'daemon.log'}:\n{tail or '  (nothing logged)'}",
+                  file=sys.stderr)
+            return None
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    print(f"run: started a daemon but it did not record an endpoint within {timeout:.0f}s; "
+          f"see {state_dir / 'daemon.log'}", file=sys.stderr)
+    return None
+
+
+def _live_endpoint(state_dir: Path) -> Optional[dict[str, Any]]:
+    """A recorded endpoint whose process is still there, or None."""
+    endpoint = read_endpoint(state_dir)
+    if endpoint is not None and isinstance(endpoint.get("pid"), int) and pid_alive(endpoint["pid"]):
+        return endpoint
+    return None
+
+
 def _open_store(command: str, state_dir: Path) -> Optional[Store]:
     """Human-channel commands write the store directly, as `approve` does."""
     path = db_path(state_dir)
@@ -797,6 +905,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     terminal's output, which is why automation uses this and not `attach`."""
     state_dir = resolve_state_dir(args.state_dir)
     endpoint = read_endpoint(state_dir)
+    if endpoint is None and args.autostart:
+        endpoint = _autostart_daemon(state_dir)
+        if endpoint is None:
+            return 2
     if endpoint is None:
         print(f"run: no running daemon recorded in {state_dir} (start one with: python3 -m luciazero_agentd serve)", file=sys.stderr)
         return 2
@@ -827,12 +939,26 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     try:
         with store:
-            binding, credential = store.bind_terminal(
-                args.agent, provider=provider, by=f"human:{getpass.getuser()}",
-                tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl,
-            )
+            try:
+                binding, credential = store.bind_terminal(
+                    args.agent, provider=provider, by=f"human:{getpass.getuser()}",
+                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl,
+                )
+            except NotFound:
+                # `roster add` before a first session exists so that peers can
+                # address an agent that has not run yet. The id being started
+                # here is that name, so asking for it twice is ceremony. It is
+                # printed because a typo makes a second agent, and a stray one
+                # is only obvious while the line is still on screen.
+                role = args.agent.rsplit("-", 1)[-1] if "-" in args.agent else "agent"
+                store.register_agent(args.agent, provider=provider, role=role)
+                print(f"run: added {clean(args.agent)} to the roster ({provider}, {clean(role)})", file=sys.stderr)
+                binding, credential = store.bind_terminal(
+                    args.agent, provider=provider, by=f"human:{getpass.getuser()}",
+                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl,
+                )
     except NotFound as exc:
-        print(f"run: {clean(exc)} (add it first: luciazero-agentd roster add ...)", file=sys.stderr)
+        print(f"run: {clean(exc)}", file=sys.stderr)
         return 2
     except StoreError as exc:
         print(f"run: {clean(exc)}", file=sys.stderr)
@@ -1161,6 +1287,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     run.add_argument("--provider", choices=("codex", "claude", "other"), default=None)
     run.add_argument("--ttl", type=int, default=BINDING_TTL_SECONDS)
     run.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
+    run.add_argument("--no-autostart", dest="autostart", action="store_false", default=True,
+                     help="fail instead of starting a daemon when this state directory has none")
     run.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,
                      help="do not type into this session when a delivery arrives; it will notice on its next turn instead")
     run.add_argument("--max-nudges", type=int, default=nudge.MAX_NUDGES,

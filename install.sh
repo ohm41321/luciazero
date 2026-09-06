@@ -39,6 +39,12 @@ BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
 AGENTD_MARKER="luciazero-managed: agentd-launcher"
 AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
+# One script, installed twice. `lucia claude` is the whole of the ordinary
+# path and the long name is what the subcommands were documented under, so
+# both are installed and both work; a copy rather than a symlink so that the
+# ownership marker is in the file itself and every check below reads it the
+# same way for either name.
+AGENTD_NAMES="luciazero-agentd lucia"
 AGENTD_HOME_FILE="${CLAUDE_DIR}/.luciazero-agentd-home"
 
 # Ours, someone else's, or absent. A launcher we did not write is never
@@ -97,22 +103,27 @@ if [ "${STATUS_ONLY}" = 1 ]; then
     check -f "${CLAUDE_DIR}/agents/${AGENT_NAME}.md" "agent ${AGENT_NAME}"
   done < <(catalog "${SRC}/claude/agents/catalog.txt")
   if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ]; then
-    case "$(launcher_kind "${AGENTD_LAUNCHER}")" in
-      ours|symlink)
-        echo "  ok    agent bus launcher ${AGENTD_LAUNCHER}"
-        on_path "${AGENTD_BIN_DIR}" \
-          || echo "        (not on PATH: export PATH=\"${AGENTD_BIN_DIR}:\$PATH\")"
-        if [ -f "${AGENTD_HOME_FILE}" ] && [ -d "$(cat "${AGENTD_HOME_FILE}")/luciazero_agentd" ]; then
-          echo "  ok    agentd package recorded at $(cat "${AGENTD_HOME_FILE}")"
-        else
-          echo "  MISS  ${AGENTD_HOME_FILE} does not point at an agentd package — re-run ./install.sh"; STATUS_RC=1
-        fi
-        ;;
-      foreign)
-        echo "  MISS  ${AGENTD_LAUNCHER} is not the Luciazero launcher (left untouched)"; STATUS_RC=1 ;;
-      *)
-        echo "  --    agent bus launcher not installed (optional; ./install.sh installs it)" ;;
-    esac
+    AGENTD_ANY=0
+    for AGENTD_NAME in ${AGENTD_NAMES}; do
+      case "$(launcher_kind "${AGENTD_BIN_DIR}/${AGENTD_NAME}")" in
+        ours|symlink)
+          echo "  ok    agent bus launcher ${AGENTD_BIN_DIR}/${AGENTD_NAME}"
+          AGENTD_ANY=1 ;;
+        foreign)
+          echo "  MISS  ${AGENTD_BIN_DIR}/${AGENTD_NAME} is not the Luciazero launcher (left untouched)"; STATUS_RC=1 ;;
+        *)
+          echo "  --    ${AGENTD_NAME} not installed (optional; ./install.sh installs it)" ;;
+      esac
+    done
+    if [ "${AGENTD_ANY}" = 1 ]; then
+      on_path "${AGENTD_BIN_DIR}" \
+        || echo "        (not on PATH: export PATH=\"${AGENTD_BIN_DIR}:\$PATH\")"
+      if [ -f "${AGENTD_HOME_FILE}" ] && [ -d "$(cat "${AGENTD_HOME_FILE}")/luciazero_agentd" ]; then
+        echo "  ok    agentd package recorded at $(cat "${AGENTD_HOME_FILE}")"
+      else
+        echo "  MISS  ${AGENTD_HOME_FILE} does not point at an agentd package — re-run ./install.sh"; STATUS_RC=1
+      fi
+    fi
   fi
   GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
   N="$(grep -cxF "${IMPORT_LINE}" "${GLOBAL_MD}" 2>/dev/null || true)"
@@ -308,24 +319,32 @@ done < <(catalog "${SRC}/claude/agents/catalog.txt")
 # `cd agentd && python3 -m luciazero_agentd`. Only from a checkout: the npm
 # payload ships this shim but not the package it runs.
 if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -f "${SRC}/bin/luciazero-agentd" ]; then
-  AGENTD_KIND="$(launcher_kind "${AGENTD_LAUNCHER}")"
-  case "${AGENTD_KIND}" in
-    foreign)
-      echo "  !!  ${AGENTD_LAUNCHER} exists and is not the Luciazero launcher; left untouched" >&2
-      echo "      install it elsewhere with: LUCIAZERO_BIN_DIR=<dir> ./install.sh" >&2 ;;
-    symlink)
-      echo "  ok  bin/luciazero-agentd (symlink to a Luciazero launcher; left as is)" ;;
-    *)
-      mkdir -p "${AGENTD_BIN_DIR}"
-      if [ "${AGENTD_KIND}" = ours ] && cmp -s "${SRC}/bin/luciazero-agentd" "${AGENTD_LAUNCHER}"; then
-        echo "  ok  bin/luciazero-agentd (unchanged)"
-      else
-        cp "${SRC}/bin/luciazero-agentd" "${AGENTD_LAUNCHER}"
-        echo "  ok  bin/luciazero-agentd -> ${AGENTD_LAUNCHER}"
-      fi
-      chmod +x "${AGENTD_LAUNCHER}" ;;
-  esac
-  if [ "${AGENTD_KIND}" != foreign ]; then
+  # `ours` for the pair: one foreign name must not stop the other being
+  # installed, and must not stop the package pointer both of them read.
+  AGENTD_KIND=absent
+  for AGENTD_NAME in ${AGENTD_NAMES}; do
+    AGENTD_TARGET="${AGENTD_BIN_DIR}/${AGENTD_NAME}"
+    AGENTD_ONE="$(launcher_kind "${AGENTD_TARGET}")"
+    case "${AGENTD_ONE}" in
+      foreign)
+        echo "  !!  ${AGENTD_TARGET} exists and is not the Luciazero launcher; left untouched" >&2
+        echo "      install it elsewhere with: LUCIAZERO_BIN_DIR=<dir> ./install.sh" >&2 ;;
+      symlink)
+        echo "  ok  bin/${AGENTD_NAME} (symlink to a Luciazero launcher; left as is)"
+        AGENTD_KIND=ours ;;
+      *)
+        mkdir -p "${AGENTD_BIN_DIR}"
+        if [ "${AGENTD_ONE}" = ours ] && cmp -s "${SRC}/bin/luciazero-agentd" "${AGENTD_TARGET}"; then
+          echo "  ok  bin/${AGENTD_NAME} (unchanged)"
+        else
+          cp "${SRC}/bin/luciazero-agentd" "${AGENTD_TARGET}"
+          echo "  ok  bin/${AGENTD_NAME} -> ${AGENTD_TARGET}"
+        fi
+        chmod +x "${AGENTD_TARGET}"
+        AGENTD_KIND=ours ;;
+    esac
+  done
+  if [ "${AGENTD_KIND}" != absent ]; then
     # The installed copy is no longer next to the package, so it is told
     # where the package went. Nothing here depends on the caller's cwd.
     printf '%s\n' "${SRC}/agentd" > "${AGENTD_HOME_FILE}"
@@ -449,7 +468,11 @@ echo
 SKILL_SUMMARY="$(catalog "${SRC}/skills/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") "/" $0} END{print s}')"
 AGENT_SUMMARY="$(catalog "${SRC}/claude/agents/catalog.txt" | awk 'BEGIN{s=""} {s=s (s ? ", " : "") $0} END{print s}')"
 echo "Skills: ${SKILL_SUMMARY}. Agents: ${AGENT_SUMMARY}."
-if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -x "${AGENTD_LAUNCHER}" ] \
+if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -x "${AGENTD_BIN_DIR}/lucia" ] \
+  && [ "$(launcher_kind "${AGENTD_BIN_DIR}/lucia")" != foreign ]; then
+  echo "Agent Bus: lucia claude in one window, lucia codex in another (${AGENTD_BIN_DIR}/lucia)."
+  echo "           the long name luciazero-agentd answers to every subcommand as before."
+elif [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -x "${AGENTD_LAUNCHER}" ] \
   && [ "$(launcher_kind "${AGENTD_LAUNCHER}")" != foreign ]; then
   echo "Agent Bus: luciazero-agentd next | watch | chat | run (${AGENTD_LAUNCHER})."
 fi

@@ -13,6 +13,9 @@ attach         bind one already-running terminal to an agent (interactive only:
                it prints that terminal's session credential)
 run            start a provider with the binding already in place; never
                prints the credential, so it is the path automation uses
+claude, codex  the short form of `run`, and the whole of the `lucia` command:
+               the provider is the verb and the agent id is its own name, so
+               joining the bus is `lucia claude` and nothing else
 detach         end a binding, which is what stops its credential working
 whoami         which agent this terminal is bound to
 sessions       every live binding
@@ -69,10 +72,16 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, NotFound, Store, StoreError, utcnow
+from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, ConflictError, NotFound, Store, StoreError, utcnow
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
+# The name the user typed. One program answers to two of them -- the long
+# `luciazero-agentd` and the short `lucia` -- and the difference matters only
+# where a message tells the user what to type next: a suggestion in the name
+# they did not use is a suggestion they have to translate.
+ARGV0_ENV = "LUCIAZERO_ARGV0"
+FRONT_NAME = "luciazero-agentd"
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
@@ -966,6 +975,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     except StoreError as exc:
         print(f"run: {clean(exc)}", file=sys.stderr)
+        if isinstance(exc, ConflictError) and getattr(args, "role", None) is None \
+                and getattr(args, "front", False):
+            # The refusal above is the right one -- a live session is not
+            # taken from the person sitting at it -- but under the short form
+            # the id came from the provider name rather than from the user,
+            # so the way out is a name for this window, not a detach.
+            print(f"run: give this window its own name: {FRONT_NAME} {provider} --as reviewer",
+                  file=sys.stderr)
         return 1
     env = dict(os.environ)
     url = endpoint["url"]
@@ -1227,6 +1244,37 @@ def cmd_service(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_provider(args: argparse.Namespace) -> int:
+    """`lucia claude` -- `run` with everything it can work out itself already
+    worked out. The provider is the verb, so there is no `--provider`; the
+    binary is the provider's own name, so there is no `--`; and the agent id
+    is that name too, so there is no `--agent`.
+
+    Defaulting the id to the provider is what makes a second window a name
+    collision instead of a silent takeover, which is the refusal
+    `bind_terminal` was given. `--as` is the answer to it: a window that says
+    what it is for gets `claude-reviewer`, and the two coexist."""
+    args.agent = f"{args.provider}-{args.role}" if args.role else args.provider
+    args.command = [args.provider] + list(args.command)
+    args.front = True
+    return cmd_run(args)
+
+
+def _add_run_flags(parser: argparse.ArgumentParser) -> None:
+    """The flags `run` and the provider verbs share. They are one command with
+    two spellings, so a flag added to one and not the other is a bug."""
+    parser.add_argument("--ttl", type=int, default=BINDING_TTL_SECONDS)
+    parser.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
+    parser.add_argument("--no-autostart", dest="autostart", action="store_false", default=True,
+                        help="fail instead of starting a daemon when this state directory has none")
+    parser.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,
+                        help="do not type into this session when a delivery arrives; it will notice on its next turn instead")
+    parser.add_argument("--max-nudges", type=int, default=nudge.MAX_NUDGES,
+                        help="how many times in a row the bus may type into this session with nobody at the keyboard; "
+                             "any keystroke starts the count again (default: %(default)s)")
+    parser.add_argument("--state-dir", default=None)
+
+
 def split_command(argv: list[str]) -> tuple[list[str], list[str]]:
     """Take everything after the first `--` as the provider command, before
     argparse sees it. argparse's REMAINDER swallows any of our own flags that
@@ -1241,7 +1289,11 @@ def split_command(argv: list[str]) -> tuple[list[str], list[str]]:
 def main(argv: Optional[list[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     argv, provider_command = split_command(argv)
-    parser = argparse.ArgumentParser(prog="luciazero-agentd", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Popped, not read: `run` hands its environment to the provider it
+    # starts, and the name this was invoked under is this process's business.
+    global FRONT_NAME
+    FRONT_NAME = os.environ.pop(ARGV0_ENV, None) or FRONT_NAME
+    parser = argparse.ArgumentParser(prog=FRONT_NAME, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     serve = sub.add_parser("serve", help="run the daemon in the foreground")
     serve.add_argument("--state-dir", default=None)
@@ -1289,20 +1341,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     run = sub.add_parser("run", help="start a provider with the binding already in place")
     run.add_argument("--agent", required=True)
     run.add_argument("--provider", choices=("codex", "claude", "other"), default=None)
-    run.add_argument("--ttl", type=int, default=BINDING_TTL_SECONDS)
-    run.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
-    run.add_argument("--no-autostart", dest="autostart", action="store_false", default=True,
-                     help="fail instead of starting a daemon when this state directory has none")
-    run.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,
-                     help="do not type into this session when a delivery arrives; it will notice on its next turn instead")
-    run.add_argument("--max-nudges", type=int, default=nudge.MAX_NUDGES,
-                     help="how many times in a row the bus may type into this session with nobody at the keyboard; "
-                          "any keystroke starts the count again (default: %(default)s)")
-    run.add_argument("--state-dir", default=None)
+    _add_run_flags(run)
     # REMAINDER swallows everything after the command, options included, so
     # every flag of `run` must come before the `--`.
     run.add_argument("command", nargs=argparse.REMAINDER, help="-- then the provider command, for example: run --agent x -- claude")
     run.set_defaults(func=cmd_run, takes_provider_command=True)
+    # The short form, and the reason the `lucia` name exists: one word to
+    # join the bus. Everything else on this parser stays reachable under
+    # either name, so learning the short form costs nothing later.
+    for provider in ("claude", "codex"):
+        front = sub.add_parser(provider, help=f"start {provider} on the bus as the agent `{provider}` (short for run)")
+        front.add_argument("--as", dest="role", default=None, metavar="ROLE",
+                           help=f"what this window is for, which is also its agent id: --as reviewer is {provider}-reviewer. "
+                                "Give a second window one of these; without it both ask for the same name and the second is refused.")
+        _add_run_flags(front)
+        front.add_argument("command", nargs=argparse.REMAINDER,
+                           help=f"-- then anything else to pass {provider} itself")
+        front.set_defaults(func=cmd_provider, provider=provider, takes_provider_command=True)
     detach = sub.add_parser("detach", help="end a binding (this terminal's by default)")
     detach.add_argument("--agent", default=None)
     detach.add_argument("--binding", default=None)

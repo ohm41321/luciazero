@@ -99,6 +99,9 @@ AGENTD_MARKER="luciazero-managed: agentd-launcher"
 AGENTD_SERVICE_MARKER="luciazero-managed: agentd-service"
 AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
+# Both names install.sh writes. The long one is kept in its own variable
+# because the service is stopped through it before either is removed.
+AGENTD_NAMES="luciazero-agentd lucia"
 
 # The background service outlives this script unless it is stopped first.
 # Removing the launcher while a LaunchAgent or a systemd unit still points at
@@ -129,19 +132,23 @@ for AGENTD_SVC in "${AGENTD_SERVICE_ROOT}/Library/LaunchAgents/com.luciazero.age
 done
 
 if [ "${AGENTD_KEEP}" = 0 ]; then
-  if [ -L "${AGENTD_LAUNCHER}" ]; then
-    echo "  !!  ${AGENTD_LAUNCHER} is a symlink you made; left untouched" >&2
-  elif [ -f "${AGENTD_LAUNCHER}" ]; then
-    if grep -qF "${AGENTD_MARKER}" "${AGENTD_LAUNCHER}" 2>/dev/null; then
-      rm -f "${AGENTD_LAUNCHER}"
-      rmdir "${AGENTD_BIN_DIR}" 2>/dev/null || true
-      echo "  ok  bin/luciazero-agentd"
-    else
-      echo "  !!  ${AGENTD_LAUNCHER} is not the Luciazero launcher; left untouched" >&2
+  for AGENTD_NAME in ${AGENTD_NAMES}; do
+    AGENTD_TARGET="${AGENTD_BIN_DIR}/${AGENTD_NAME}"
+    if [ -L "${AGENTD_TARGET}" ]; then
+      echo "  !!  ${AGENTD_TARGET} is a symlink you made; left untouched" >&2
+    elif [ -f "${AGENTD_TARGET}" ]; then
+      if grep -qF "${AGENTD_MARKER}" "${AGENTD_TARGET}" 2>/dev/null; then
+        rm -f "${AGENTD_TARGET}"
+        echo "  ok  bin/${AGENTD_NAME}"
+      else
+        echo "  !!  ${AGENTD_TARGET} is not the Luciazero launcher; left untouched" >&2
+      fi
+    elif [ -e "${AGENTD_TARGET}" ]; then
+      echo "  !!  ${AGENTD_TARGET} is not a regular file; left untouched" >&2
     fi
-  elif [ -e "${AGENTD_LAUNCHER}" ]; then
-    echo "  !!  ${AGENTD_LAUNCHER} is not a regular file; left untouched" >&2
-  fi
+  done
+  # Only once both are gone, and only if it is empty.
+  rmdir "${AGENTD_BIN_DIR}" 2>/dev/null || true
   rm -f "${CLAUDE_DIR}/.luciazero-agentd-home"
 fi
 

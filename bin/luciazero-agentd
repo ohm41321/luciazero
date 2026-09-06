@@ -1,5 +1,6 @@
 #!/bin/sh
 # luciazero-agentd -- run the Agent Bus daemon from anywhere.
+# lucia -- the same program under a shorter name, installed as a second copy.
 #
 # luciazero-managed: agentd-launcher
 #
@@ -16,6 +17,10 @@ fail() { printf 'luciazero-agentd: %s\n' "$*" >&2; exit 127; }
 # Resolve this script through any symlinks. `readlink -f` is GNU-only, so the
 # loop is hand-rolled; every expansion is quoted, so a path with spaces (and
 # an installed copy reached through a symlink) resolves correctly.
+# The name typed, before any symlink is followed: `lucia` and
+# `luciazero-agentd` are one program, and only the messages that tell the user
+# what to type next need to know which name they are speaking under.
+argv0="$(basename "$0")"
 self="$0"
 hops=0
 while [ -L "$self" ]; do
@@ -92,6 +97,8 @@ fi
 # a caller supplies is ever parsed as code.
 LUCIAZERO_AGENTD_PACKAGE="${package_home}"
 export LUCIAZERO_AGENTD_PACKAGE
+LUCIAZERO_ARGV0="${argv0}"
+export LUCIAZERO_ARGV0
 # ${python} is unquoted on purpose -- "py -3" is two words. The value is one of
 # this script's own literals, never anything a caller supplied.
 exec ${python} -c 'import os, sys, runpy

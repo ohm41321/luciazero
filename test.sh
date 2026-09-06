@@ -2847,9 +2847,11 @@ if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) els
 
   CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
     "${ROOT}/install.sh" >/dev/null || lb_fail "install.sh failed with LUCIAZERO_BIN_DIR"
-  [ -x "${LB_BIN}/luciazero-agentd" ] || lb_fail "launcher not installed as an executable"
-  grep -qF 'luciazero-managed: agentd-launcher' "${LB_BIN}/luciazero-agentd" \
-    || lb_fail "installed launcher carries no ownership marker"
+  for LB_NAME in luciazero-agentd lucia; do
+    [ -x "${LB_BIN}/${LB_NAME}" ] || lb_fail "${LB_NAME} not installed as an executable"
+    grep -qF 'luciazero-managed: agentd-launcher' "${LB_BIN}/${LB_NAME}" \
+      || lb_fail "installed ${LB_NAME} carries no ownership marker"
+  done
   [ "$(cat "${LB_HOME}/.claude/.luciazero-agentd-home")" = "${ROOT}/agentd" ] \
     || lb_fail "the launcher was not told where the agentd package is"
 
@@ -2866,6 +2868,17 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
   ( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
       luciazero-agentd roster add lb-architect codex architect --state-dir "${LB_STATE}" >/dev/null ) \
     || lb_fail "the installed launcher cannot run from outside the checkout"
+
+  # The short name is a second name for the same program, so it answers to
+  # every subcommand, and it says its own name back: a message that told a
+  # `lucia` user to type `luciazero-agentd` would be a translation step.
+  ( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
+    lucia sessions --state-dir "${LB_STATE}" >/dev/null ) \
+    || lb_fail "the short name cannot run from outside the checkout"
+  LB_USAGE="$( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
+    lucia claude --help )" || lb_fail "lucia claude --help failed"
+  printf '%s' "${LB_USAGE}" | grep -q '^usage: lucia claude' \
+    || lb_fail "lucia printed the long name back at the user: ${LB_USAGE}"
 
   # `next` renders the short command when the launcher is on PATH...
   LB_NEXT="$( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
@@ -2914,24 +2927,37 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
   printf '%s' "${LB_COLON}" | grep -q HIJACKED \
     && lb_fail "a ':' in the package path let the caller's directory supply the package"
 
-  # An executable somebody else put there is never replaced, and never removed.
-  printf '#!/bin/sh\nexit 3\n' > "${LB_BIN}/luciazero-agentd"
-  LB_OUT="$(CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
-    "${ROOT}/install.sh" 2>&1)" || lb_fail "install.sh must not fail on a foreign launcher"
-  printf '%s' "${LB_OUT}" | grep -q 'not the Luciazero launcher' \
-    || lb_fail "install.sh replaced or ignored a foreign luciazero-agentd silently"
-  grep -qF 'exit 3' "${LB_BIN}/luciazero-agentd" || lb_fail "install.sh overwrote a foreign launcher"
-  CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
-    "${ROOT}/uninstall.sh" >/dev/null 2>&1
-  grep -qF 'exit 3' "${LB_BIN}/luciazero-agentd" || lb_fail "uninstall.sh deleted a foreign luciazero-agentd"
+  # An executable somebody else put there is never replaced, and never
+  # removed. `lucia` is the shorter and likelier name to collide, so the rule
+  # is asserted for each name in turn: a foreign copy of one must not stop the
+  # other being installed.
+  for LB_NAME in luciazero-agentd lucia; do
+    if [ "${LB_NAME}" = luciazero-agentd ]; then LB_OTHER=lucia; else LB_OTHER=luciazero-agentd; fi
+    rm -f "${LB_BIN}/luciazero-agentd" "${LB_BIN}/lucia"
+    printf '#!/bin/sh\nexit 3\n' > "${LB_BIN}/${LB_NAME}"
+    LB_OUT="$(CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+      "${ROOT}/install.sh" 2>&1)" || lb_fail "install.sh must not fail on a foreign ${LB_NAME}"
+    printf '%s' "${LB_OUT}" | grep -q 'not the Luciazero launcher' \
+      || lb_fail "install.sh replaced or ignored a foreign ${LB_NAME} silently"
+    grep -qF 'exit 3' "${LB_BIN}/${LB_NAME}" || lb_fail "install.sh overwrote a foreign ${LB_NAME}"
+    [ -x "${LB_BIN}/${LB_OTHER}" ] \
+      || lb_fail "a foreign ${LB_NAME} stopped ${LB_OTHER} from being installed"
+    [ -f "${LB_HOME}/.claude/.luciazero-agentd-home" ] \
+      || lb_fail "a foreign ${LB_NAME} stopped the package pointer being written"
+    CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
+      "${ROOT}/uninstall.sh" >/dev/null 2>&1
+    grep -qF 'exit 3' "${LB_BIN}/${LB_NAME}" || lb_fail "uninstall.sh deleted a foreign ${LB_NAME}"
+  done
 
-  # Ours is removed, together with the record of where the package was.
-  rm -f "${LB_BIN}/luciazero-agentd"
+  # Ours are removed, both names, together with the record of where the
+  # package was.
+  rm -f "${LB_BIN}/luciazero-agentd" "${LB_BIN}/lucia"
   CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
     "${ROOT}/install.sh" >/dev/null
   CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
     "${ROOT}/uninstall.sh" >/dev/null
   [ ! -e "${LB_BIN}/luciazero-agentd" ] || lb_fail "uninstall.sh left its own launcher behind"
+  [ ! -e "${LB_BIN}/lucia" ] || lb_fail "uninstall.sh left the short name behind"
   [ ! -e "${LB_HOME}/.claude/.luciazero-agentd-home" ] || lb_fail "uninstall.sh left the package pointer behind"
 
   # The service subcommand must be inspectable without installing anything:
@@ -2947,7 +2973,7 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
     || lb_fail "service install --dry-run wrote a file"
 
   rm -rf "${LB_ROOT}"
-  echo "ok  luciazero-agentd launcher installs, runs from anywhere, and stays ownership-safe"
+  echo "ok  luciazero-agentd and lucia install, run from anywhere, and stay ownership-safe"
 else
   echo "skip  luciazero-agentd launcher (python3 is older than 3.10)"
 fi

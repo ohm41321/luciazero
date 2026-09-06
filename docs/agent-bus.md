@@ -10,7 +10,8 @@ The bus is beta and separate from the core install: `npx luciazero` never
 starts a daemon. Everything below runs from a checkout of this repository.
 The daemon needs Python 3.10+ and `git`; nothing is installed with pip.
 
-`./install.sh` puts a `luciazero-agentd` launcher in `~/.claude/bin`
+`./install.sh` puts a `luciazero-agentd` launcher — and `lucia`, the same
+program under a shorter name — in `~/.claude/bin`
 (`LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh` to choose somewhere already on
 your PATH), so **every `python3 -m luciazero_agentd X` below can be typed as
 `luciazero-agentd X`**. Without it, run the module form from the `agentd/`
@@ -19,6 +20,36 @@ finds the package from where it was installed, so it works from any directory,
 and it leaves your working directory alone — which matters, because `attach`
 records it. Commands the bus prints for you switch between the two forms
 depending on which one will actually run.
+
+## Start here
+
+`./install.sh` installs the launcher under two names, and the short one is the
+whole of the ordinary path — one window each:
+
+```bash
+lucia claude     # window 1
+lucia codex      # window 2
+```
+
+Each starts that CLI already on the bus: the daemon starts itself if none is
+running, the agent puts itself on the roster, and the session credential
+reaches the CLI through a file of its own, so neither `~/.claude.json` nor
+`~/.codex/config.toml` is edited. The agent id is the provider's name, so the
+two windows above are `claude` and `codex`.
+
+A third window of the same provider needs a name of its own:
+
+```bash
+lucia claude --as reviewer     # the agent claude-reviewer
+```
+
+Without `--as`, the second window asks for the id the first one holds, and is
+refused rather than taking it. `lucia` answers to every subcommand below as
+well (`lucia status`, `lucia next`, `lucia watch`), and so does the long name
+`luciazero-agentd`; the two are one program.
+
+Everything after this point is the long form: what `lucia claude` does for
+you, and what to type when you want to do a piece of it yourself.
 
 ## Setup
 

@@ -473,14 +473,16 @@ class HumanCommands(unittest.TestCase):
             store.register_agent("claude-reviewer", provider="claude", role="reviewer")
         self.addCleanup(self._tmp.cleanup)
 
-    def cli(self, *args: str, stdin: str = "", raw: bool = False) -> subprocess.CompletedProcess:
+    def cli(self, *args: str, stdin: str = "", raw: bool = False,
+            env: Optional[dict] = None) -> subprocess.CompletedProcess:
         argv = list(args) if raw else [*args, "--state-dir", str(self.state)]
         return subprocess.run(
             [sys.executable, "-m", "luciazero_agentd", *argv],
             cwd=str(PACKAGE_ROOT), input=stdin, capture_output=True, text=True, timeout=60,
             # the env var is the second guard: no test may reach the real bus
             # home even if an argument lands in the wrong place.
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
+                 "LUCIAZERO_AGENT_BUS_HOME": str(self.state), **(env or {})},
         )
 
     def test_terminal_list_reports_sessions_and_bindings(self) -> None:
@@ -639,6 +641,73 @@ class HumanCommands(unittest.TestCase):
             store.migrate()
             self.assertEqual(store.get_agent("claude-newcomer")["provider"], "claude")
         self.assertIn("claude-newcomer", done.stderr + done.stdout)
+
+    def _front(self, *args: str, home: Optional[Path] = None) -> subprocess.CompletedProcess:
+        """`lucia claude` with a stand-in on PATH for the provider itself.
+
+        The stand-in is what makes this a test of the command and not of the
+        machine: a real `claude` may or may not be installed, and if it is, it
+        would open a session nobody asked for."""
+        bin_dir = self.state / "front bin"
+        bin_dir.mkdir(exist_ok=True)
+        for name in ("claude", "codex"):
+            fake = bin_dir / name
+            fake.write_text(f'#!/bin/sh\nprintf "%s started: %s\\n" {name} "$*"\n')
+            fake.chmod(0o755)
+        env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        if home is not None:
+            env["HOME"] = str(home)
+        return self.cli(*args, "--state-dir", str(self.state), raw=True, env=env)
+
+    def test_the_provider_is_the_verb_and_its_name_is_the_agent(self) -> None:
+        """The short form exists to be the whole of the ordinary path: no
+        --agent to invent, no --provider to repeat, no `--` to remember."""
+        self.addCleanup(self._stop_daemon)
+        done = self._front("claude")
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("claude started", done.stdout)
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            self.assertEqual(store.get_agent("claude")["provider"], "claude")
+
+    def test_as_names_the_window_and_the_agent_together(self) -> None:
+        self.addCleanup(self._stop_daemon)
+        done = self._front("codex", "--as", "architect")
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            agent = store.get_agent("codex-architect")
+        self.assertEqual((agent["provider"], agent["role"]), ("codex", "architect"))
+
+    def test_a_second_window_of_the_same_name_is_told_to_name_itself(self) -> None:
+        """Two windows running the identical command is the ordinary case
+        once the command is one word, and the refusal that protects the first
+        window is only useful if it says what to type instead."""
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            store.trust = "human"
+            store.register_agent("claude", provider="claude", role="agent")
+            store.bind_terminal("claude", provider="claude", by="human:test",
+                                tty="ttys997", pid=os.getpid())
+        self.addCleanup(self._stop_daemon)
+        done = self._front("claude")
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn("already bound to a live session", done.stderr)
+        self.assertIn("--as reviewer", done.stderr)
+        self.assertNotIn("claude started", done.stdout)
+
+    def test_the_short_form_writes_nothing_into_the_home_it_was_given(self) -> None:
+        """The credential reaches the provider through a file of its own, so
+        joining the bus must not edit the CLI's global configuration: an
+        install that rewrote ~/.claude.json or ~/.codex/config.toml would
+        outlive the session and follow the user into every other project."""
+        home = Path(os.path.realpath(tempfile.mkdtemp(prefix="agentd-front-home-")))
+        self.addCleanup(lambda: __import__("shutil").rmtree(home, ignore_errors=True))
+        self.addCleanup(self._stop_daemon)
+        done = self._front("claude", "--as", "sandboxed", home=home)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertEqual(sorted(p.name for p in home.iterdir()), [],
+                         "the short form left something in the user's home")
 
     def test_a_provider_that_never_starts_leaves_no_live_credential(self) -> None:
         from luciazero_agentd.statedir import write_endpoint

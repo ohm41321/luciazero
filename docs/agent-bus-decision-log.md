@@ -325,21 +325,25 @@ Two things follow, and only one of them is fixed:
   answer and is not written yet; it is a candidate for the next workflow rather
   than something to slip in beside this one.
 
-This does not supply a retro. What the record proves is where the time went;
-what the second criterion asks is whether that wait blocked the person, and
-what they would have done instead. Only the user can write that, and it is not
-written here.
+**User retro, recorded 2026-09-07.** The user attributed **0 minutes and 0
+turns** to waiting for the bus: `message_inbox` answered immediately, but the
+session had joined the wrong bus and therefore found no delivery. This did not
+block the review itself. It did prevent the normal acknowledgement path from
+reaching `completed`, because that session had no `delivery_id` to
+acknowledge. Without the bus, the user would have copied the result between
+the two terminals by hand, at an estimated additional cost of 2--5 minutes.
+Their verdict was that the bus was partly worthwhile: carrying a finding with
+its correlation ID was clear, but the identity/inbox mismatch kept the
+workflow from closing cleanly.
 
-It was tried on 2026-09-07 and stopped on purpose, which is worth recording so
-that nobody tries it again from the same materials. A retro template was filled
-in as far as the records reach -- the switch to the other window, the manual
-`message_inbox`, the relaunch, 19m13s lost to the split state directory, 5m30s
-of review after the correct bind -- and the four remaining blanks are exactly
-the ones the criterion exists for: how long the wait felt, whether it blocked
-the person, what they would have done without the bus, and whether the bus was
-worth it. Nobody who could answer them was at the keyboard, and filling them
-from the timeline would turn telemetry into testimony, which is the one thing
-this criterion was written to prevent. The count stays at 0 of 2.
+That testimony and the record answer different questions. The record measures
+19m13s spent discovering and repairing the state-directory mismatch and 5m30s
+of review after the correct bind; neither number is a user-reported wait. The
+retro is valid and worth keeping, but it does **not** satisfy the second gate
+criterion: the user explicitly said the user-started turn cost 0 minutes, 0
+turns, and did not block the work. The count therefore stays at 0 of 2 rather
+than turning an observed failure into the blocking cost the criterion asks
+for.
 
 ## Carry-over, not claimed as done
 

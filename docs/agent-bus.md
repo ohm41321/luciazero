@@ -23,8 +23,28 @@ depending on which one will actually run.
 
 ## Start here
 
-`./install.sh` installs the launcher under two names, and the short one is the
-whole of the ordinary path — one window each:
+Once per machine. The bus lives in a checkout: `npx luciazero` installs the
+doctrine and the skills and never the daemon, which is
+[ADR 0008](adr/0008-agent-bus-distribution-and-the-cost-of-shipping-a-daemon.md).
+So the one-time part is a clone, an install, and a PATH entry:
+
+```bash
+git clone https://github.com/ohm41321/luciazero.git
+cd luciazero
+# plain ./install.sh uses ~/.claude/bin; this picks a directory you may
+# already have on PATH
+LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh
+export PATH="$HOME/.local/bin:$PATH"      # and in your shell profile
+```
+
+Without `git`, the release ZIP is the same checkout — it is built from the
+tag with `git archive`, so unpacking it and running `./install.sh` from
+inside costs the same three acts.
+
+`./install.sh --status` says whether the launcher landed and whether its
+directory is on your PATH; it names the directory to add when it is not.
+
+Then, every time after that, one window each and nothing before them:
 
 ```bash
 lucia claude     # window 1

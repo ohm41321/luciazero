@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -700,14 +701,32 @@ class HumanCommands(unittest.TestCase):
         """The credential reaches the provider through a file of its own, so
         joining the bus must not edit the CLI's global configuration: an
         install that rewrote ~/.claude.json or ~/.codex/config.toml would
-        outlive the session and follow the user into every other project."""
-        home = Path(os.path.realpath(tempfile.mkdtemp(prefix="agentd-front-home-")))
-        self.addCleanup(lambda: __import__("shutil").rmtree(home, ignore_errors=True))
+        outlive the session and follow the user into every other project.
+
+        Both providers, because they are not the same code: claude is handed
+        a `--mcp-config` file and codex is handed `-c` flags and an
+        environment variable, so one invocation proves one of them and says
+        nothing about the other. Each gets a home of its own, so a file
+        written under the first would still be there to see under the second
+        rather than being attributed to whichever ran last."""
+        homes = {}
         self.addCleanup(self._stop_daemon)
-        done = self._front("claude", "--as", "sandboxed", home=home)
-        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
-        self.assertEqual(sorted(p.name for p in home.iterdir()), [],
-                         "the short form left something in the user's home")
+        for provider in ("claude", "codex"):
+            with self.subTest(provider=provider):
+                home = Path(os.path.realpath(tempfile.mkdtemp(prefix=f"agentd-front-{provider}-home-")))
+                self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+                homes[provider] = home
+                done = self._front(provider, "--as", "sandboxed", home=home)
+                self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+                # A home stays empty just as well when nothing ran at all.
+                self.assertIn(f"{provider} started", done.stdout)
+                self.assertEqual(sorted(p.name for p in home.iterdir()), [],
+                                 f"{provider} left something in the user's home")
+        self.assertNotEqual(homes["claude"], homes["codex"])
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            for provider in ("claude", "codex"):
+                self.assertEqual(store.get_agent(f"{provider}-sandboxed")["provider"], provider)
 
     def test_a_provider_that_never_starts_leaves_no_live_credential(self) -> None:
         from luciazero_agentd.statedir import write_endpoint

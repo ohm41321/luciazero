@@ -330,6 +330,17 @@ what the second criterion asks is whether that wait blocked the person, and
 what they would have done instead. Only the user can write that, and it is not
 written here.
 
+It was tried on 2026-09-07 and stopped on purpose, which is worth recording so
+that nobody tries it again from the same materials. A retro template was filled
+in as far as the records reach -- the switch to the other window, the manual
+`message_inbox`, the relaunch, 19m13s lost to the split state directory, 5m30s
+of review after the correct bind -- and the four remaining blanks are exactly
+the ones the criterion exists for: how long the wait felt, whether it blocked
+the person, what they would have done without the bus, and whether the bus was
+worth it. Nobody who could answer them was at the keyboard, and filling them
+from the timeline would turn telemetry into testimony, which is the one thing
+this criterion was written to prevent. The count stays at 0 of 2.
+
 ## Carry-over, not claimed as done
 
 - ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed

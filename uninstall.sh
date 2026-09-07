@@ -11,6 +11,27 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCTRINE="luciazero.md"
 IMPORT_LINE="@${DOCTRINE}"
 GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
+IMPORT_PROVENANCE="${CLAUDE_DIR}/.luciazero-import"
+
+sha_of() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+  else echo ""; fi
+}
+
+# Read only a plain file of our own, proved by the marker install.sh writes as
+# its first line. Following a symlink, or trusting any regular file that
+# happens to sit at this path, would let somebody else's content decide
+# whether a blank line in the user's CLAUDE.md gets deleted.
+IMPORT_MARKER="luciazero-managed: import-provenance"
+provenance_is_ours() {
+  [ -f "${IMPORT_PROVENANCE}" ] && [ ! -L "${IMPORT_PROVENANCE}" ] \
+    && [ "$(head -n 1 "${IMPORT_PROVENANCE}" 2>/dev/null)" = "${IMPORT_MARKER}" ]
+}
+read_provenance() {
+  provenance_is_ours || return 0
+  sed -n '2p' "${IMPORT_PROVENANCE}" 2>/dev/null || true
+}
 MANAGED_DIR="${CLAUDE_DIR}/.luciazero-managed"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -248,13 +269,75 @@ fi
 if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   BACKUP="$(bakpath "${GLOBAL_MD}")"
   cp "${GLOBAL_MD}" "${BACKUP}"
-  # grep exits 1 when the import line was the only content — that is fine
-  grep -vxF "${IMPORT_LINE}" "${GLOBAL_MD}" > "${GLOBAL_MD}.tmp" || [ $? -eq 1 ]
-  mv "${GLOBAL_MD}.tmp" "${GLOBAL_MD}"
-  [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
-  echo "  ok  removed import line (backup: $(basename "${BACKUP}"))"
+  # `install.sh` appends the import line to an existing CLAUDE.md as
+  # `printf '\n%s\n'` — a blank separator and then the line — so removing only
+  # the line leaves the separator behind and every install-and-uninstall cycle
+  # grows a file the user wrote. Removing it is only safe where this
+  # installer is provably the one that put it there: the same file shape
+  # arises when somebody writes the import line themselves, and `install.sh`
+  # then leaves the file untouched, which makes the blank theirs. So the
+  # separator goes only on the record `install.sh` left behind, and the record
+  # carries the hash of the file as the installer left it, so it says something
+  # about THIS file and not merely about what the installer usually does. Move
+  # the import line, add a blank line, change a word: the hash stops matching
+  # and the separator stays. Any other value -- including none, which is every
+  # install older than this one, and every install that found a foreign
+  # `.luciazero-import` and refused to write -- takes the conservative path of
+  # removing the line and nothing else.
+  # BACKUP is the snapshot everything below reads: the hash is taken from it
+  # and the rewrite is computed from it, so the decision and the transform
+  # cannot see two different files. The live file is compared against that
+  # snapshot again before the result is published; anything that changed it in
+  # between wins, and this leaves it alone. A rename cannot be made atomic
+  # against an editor that is mid-write, so this narrows the window rather
+  # than closing it.
+  PROV="$(read_provenance)"
+  MD_TMP="$(mktemp "${CLAUDE_DIR}/.luciazero-claude-md.XXXXXX")"
+  if [ "${PROV%% *}" = appended ] && [ -n "${PROV#appended }" ] \
+     && [ "${PROV#appended }" = "$(sha_of "${BACKUP}")" ]; then
+    awk -v want="${IMPORT_LINE}" '
+      $0 == want { pending = 0; next }
+      pending    { print ""; pending = 0 }
+      $0 == ""   { pending = 1; next }
+                 { print }
+      END        { if (pending) print "" }
+    ' "${BACKUP}" > "${MD_TMP}"
+  else
+    # grep exits 1 when the import line was the only content — that is fine
+    grep -vxF "${IMPORT_LINE}" "${BACKUP}" > "${MD_TMP}" || [ $? -eq 1 ]
+  fi
+  if cmp -s "${BACKUP}" "${GLOBAL_MD}"; then
+    mv "${MD_TMP}" "${GLOBAL_MD}"
+    [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
+    IMPORT_REWRITTEN=1
+  else
+    rm -f "${MD_TMP}"
+    IMPORT_REWRITTEN=0
+    echo "  !!  CLAUDE.md changed while this was running; left exactly as it is now (backup: $(basename "${BACKUP}"))" >&2
+  fi
+  # A backup whose entire content is the line this installer wrote, on a
+  # CLAUDE.md that held nothing else, protects nothing: the machine had no
+  # CLAUDE.md before the install, and leaving the backup means it does not
+  # come back to that. Only this invocation's own BACKUP path is considered --
+  # never a glob, and never an older backup, whose identical content would
+  # still be somebody's decision to keep. One byte of anyone else's text and
+  # the file stays.
+  if [ "${IMPORT_REWRITTEN}" = 1 ]; then
+    if printf '%s\n' "${IMPORT_LINE}" | cmp -s - "${BACKUP}"; then
+      rm -f "${BACKUP}"
+      echo "  ok  removed import line (its backup held only that line; removed)"
+    else
+      echo "  ok  removed import line (backup: $(basename "${BACKUP}"))"
+    fi
+  fi
 else
   echo "  ok  no import line in CLAUDE.md"
+fi
+# Ours to remove only if it is ours, by the same marker install.sh wrote.
+# Anything else at this path -- a symlink, a directory, a regular file with
+# somebody's notes in it -- is left exactly where it is.
+if provenance_is_ours; then
+  rm -f "${IMPORT_PROVENANCE}"
 fi
 
 for KEEP in luciazero-stats.log luciazero-heuristics.md; do
@@ -265,6 +348,12 @@ done
 if [ -d "${CLAUDE_DIR}/.luciazero-backups" ]; then
   echo "  kept .luciazero-backups/ (pre-existing or customized components) — review and delete manually when no longer needed"
 fi
+
+# Directories this installer is the reason for, leaf to root, by name and
+# never by glob. rmdir refuses a directory that still holds anything, so one
+# file of the user's own keeps its directory and everything above it.
+rmdir "${CLAUDE_DIR}/skills" "${CLAUDE_DIR}/agents" 2>/dev/null || true
+rmdir "${CLAUDE_DIR}" 2>/dev/null || true
 
 echo
 echo "Done. Other CLAUDE.md content was left untouched."

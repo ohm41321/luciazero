@@ -2716,6 +2716,101 @@ fi
 rm -rf "${SB2}"
 echo "ok  fresh-user install + uninstall"
 
+# 5b2. Three data-safety rules that the steps above do not reach, each one a
+# way for an installer to destroy something nobody asked it to touch.
+SB3="$(mktemp -d)"
+SB3_FAIL() { rm -rf "${SB3}" "${SB3}-target" "${SB3}-scratch"; fail "$1"; }
+
+# (i) `.luciazero-import` is a symlink somebody else put there. `printf >` on
+# a symlink truncates the far end, so the installer must neither follow it nor
+# replace it, and the uninstaller must leave it where it is.
+printf 'someone elses data\n' > "${SB3}-target"
+ln -s "${SB3}-target" "${SB3}/.luciazero-import"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" >/dev/null 2>&1   || SB3_FAIL "install.sh failed when .luciazero-import was a symlink"
+[ -L "${SB3}/.luciazero-import" ] || SB3_FAIL "install.sh replaced a symlink it did not own"
+grep -qxF 'someone elses data' "${SB3}-target"   || SB3_FAIL "install.sh followed the symlink and truncated its target"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1   || SB3_FAIL "uninstall.sh failed when .luciazero-import was a symlink"
+[ -L "${SB3}/.luciazero-import" ] || SB3_FAIL "uninstall.sh deleted a symlink it did not own"
+grep -qxF 'someone elses data' "${SB3}-target"   || SB3_FAIL "uninstall.sh destroyed the symlink's target"
+rm -rf "${SB3}" "${SB3}-target"
+
+# (ii) The user rearranges their CLAUDE.md after installing. The record of the
+# separator is only usable while the file is still as the installer left it;
+# once it is not, every byte the user added has to survive the uninstall.
+SB3="$(mktemp -d)"
+printf '# mine\n\nkeep\n' > "${SB3}/CLAUDE.md"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" >/dev/null
+printf '# mine\n\nkeep\n\nmy new note\n\n@luciazero.md\n' > "${SB3}/CLAUDE.md"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null   || SB3_FAIL "uninstall.sh failed on a CLAUDE.md the user had rearranged"
+printf '# mine\n\nkeep\n\nmy new note\n\n' | cmp -s - "${SB3}/CLAUDE.md"   || SB3_FAIL "uninstall.sh did not leave the rearranged CLAUDE.md byte for byte:
+$(cat -A "${SB3}/CLAUDE.md")"
+rm -rf "${SB3}"
+
+# (iii) The gate script is handed a directory that already exists. It deletes
+# its scratch root whole, so it must refuse every path it did not make -- and
+# a file named like a marker, or a symlink wearing that name, must buy nothing.
+SB3="$(mktemp -d)"
+printf 'precious\n' > "${SB3}/sentinel"
+printf 'created by scripts/gate-linux-container.sh\n' > "${SB3}/.luciazero-gate5-scratch"
+LUCIAZERO_GATE_HOME="${SB3}" "${ROOT}/scripts/gate-linux-container.sh" --inner >/dev/null 2>&1   && SB3_FAIL "the gate script accepted a directory it did not create"
+grep -qxF 'precious' "${SB3}/sentinel"   || SB3_FAIL "the gate script deleted a directory it was handed"
+rm -rf "${SB3}"
+
+# (iv) `.luciazero-import` is an ordinary file somebody else keeps notes in.
+# Being a regular file is not ownership; only the marker in the first line is.
+SB3="$(mktemp -d)"
+printf 'my own notes\n' > "${SB3}/.luciazero-import"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" >/dev/null 2>&1 \
+  || SB3_FAIL "install.sh failed on a foreign .luciazero-import"
+printf 'my own notes\n' | cmp -s - "${SB3}/.luciazero-import" \
+  || SB3_FAIL "install.sh overwrote a .luciazero-import it did not own"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 \
+  || SB3_FAIL "uninstall.sh failed on a foreign .luciazero-import"
+printf 'my own notes\n' | cmp -s - "${SB3}/.luciazero-import" \
+  || SB3_FAIL "uninstall.sh deleted a .luciazero-import it did not own"
+rm -rf "${SB3}"
+
+# (v) No predictable temporary path. A symlink waiting at a guessable name
+# must never be written through, and no temporary file may survive the run.
+SB3="$(mktemp -d)"
+printf 'someone elses data\n' > "${SB3}-target"
+for GUESS in ".luciazero-import.tmp" ".luciazero-import.tmp.1" ".luciazero-import.tmp.99999"; do
+  ln -s "${SB3}-target" "${SB3}/${GUESS}"
+done
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" >/dev/null 2>&1 \
+  || SB3_FAIL "install.sh failed with decoy temp symlinks present"
+grep -qxF 'someone elses data' "${SB3}-target" \
+  || SB3_FAIL "install.sh wrote through a symlink at a predictable temp path"
+LEFT="$(find "${SB3}" -maxdepth 1 -name '.luciazero-import.*' -type f | wc -l | tr -d ' ')"
+[ "${LEFT}" = 0 ] || SB3_FAIL "install.sh left ${LEFT} temporary provenance files behind"
+provenance_ok=0
+head -n 1 "${SB3}/.luciazero-import" 2>/dev/null | grep -qxF 'luciazero-managed: import-provenance' \
+  && provenance_ok=1
+[ "${provenance_ok}" = 1 ] || SB3_FAIL "install.sh did not write its own provenance record"
+CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+grep -qxF 'someone elses data' "${SB3}-target" || SB3_FAIL "uninstall.sh destroyed a decoy symlink's target"
+rm -rf "${SB3}" "${SB3}-target"
+
+# (vi) The codex side has no ownership record, so it must remove its block and
+# nothing else, even when the user has moved that block since installing.
+SB3="$(mktemp -d)"
+printf '# mine\n\nkeep\n' > "${SB3}/AGENTS.md"
+CODEX_HOME="${SB3}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
+  || SB3_FAIL "install-codex.sh failed on a seeded AGENTS.md"
+{ printf '# mine\n\nkeep\n\nmy new note\n\n'
+  sed -n '/<!-- luciazero:start -->/,/<!-- luciazero:end -->/p' "${SB3}/AGENTS.md"
+  printf '\ntrailing note of mine\n'; } > "${SB3}/AGENTS.md.rearranged"
+mv "${SB3}/AGENTS.md.rearranged" "${SB3}/AGENTS.md"
+CODEX_HOME="${SB3}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 \
+  || SB3_FAIL "uninstall-codex.sh failed on a rearranged AGENTS.md"
+for USER_LINE in '# mine' 'keep' 'my new note' 'trailing note of mine'; do
+  grep -qxF "${USER_LINE}" "${SB3}/AGENTS.md" \
+    || SB3_FAIL "uninstall-codex.sh dropped the user's line: ${USER_LINE}"
+done
+! grep -qF 'luciazero:start' "${SB3}/AGENTS.md" || SB3_FAIL "uninstall-codex.sh left its block behind"
+rm -rf "${SB3}"
+echo "ok  installers refuse foreign provenance paths and keep rearranged user content"
+
 # 5c. enforcement pack: --with-hooks wiring is additive, idempotent, and
 # fully removed by uninstall while user settings survive
 SB3="$(mktemp -d)"

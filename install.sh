@@ -365,6 +365,46 @@ fi
 
 # 5. import line in global CLAUDE.md
 GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
+IMPORT_PROVENANCE="${CLAUDE_DIR}/.luciazero-import"
+
+# Empty when neither hasher is present, which makes the record unusable and
+# sends the uninstaller down its conservative path. That is the right failure.
+sha_of() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+  else echo ""; fi
+}
+
+# Anything already at this path belongs to whoever put it there until it
+# proves otherwise, and "it is a regular file" proves nothing -- a plain file
+# somebody keeps notes in would pass that and be overwritten here and deleted
+# by the uninstaller. Ownership is the marker in the first line, the same rule
+# the launcher lives under. A symlink, a directory, or a regular file without
+# the marker: the installer writes nothing and says so, and the uninstaller,
+# finding no record of its own, stays conservative.
+IMPORT_MARKER="luciazero-managed: import-provenance"
+provenance_is_ours() {
+  [ -f "${IMPORT_PROVENANCE}" ] && [ ! -L "${IMPORT_PROVENANCE}" ] \
+    && [ "$(head -n 1 "${IMPORT_PROVENANCE}" 2>/dev/null)" = "${IMPORT_MARKER}" ]
+}
+write_provenance() {
+  if [ -e "${IMPORT_PROVENANCE}" ] || [ -L "${IMPORT_PROVENANCE}" ]; then
+    if ! provenance_is_ours; then
+      echo "  !!  ${IMPORT_PROVENANCE} exists and is not ours; left untouched" >&2
+      echo "      uninstall will remove the import line and nothing else" >&2
+      return 0
+    fi
+  fi
+  # mktemp creates the file itself, exclusively and under a name nobody can
+  # guess, so there is no window in which a symlink planted at a predictable
+  # path could take the write. The rename is what publishes it.
+  IMPORT_TMP="$(mktemp "${CLAUDE_DIR}/.luciazero-import.XXXXXX")" || return 0
+  if printf '%s\n%s\n' "${IMPORT_MARKER}" "$1" > "${IMPORT_TMP}"; then
+    mv -f "${IMPORT_TMP}" "${IMPORT_PROVENANCE}" || rm -f "${IMPORT_TMP}"
+  else
+    rm -f "${IMPORT_TMP}"
+  fi
+}
 if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   echo "  ok  CLAUDE.md already imports ${DOCTRINE}"
 else
@@ -373,8 +413,18 @@ else
     cp "${GLOBAL_MD}" "${BACKUP}"
     echo "  ok  backed up CLAUDE.md -> $(basename "${BACKUP}")"
     printf '\n%s\n' "${IMPORT_LINE}" >> "${GLOBAL_MD}"
+    # Provenance for the uninstaller, and the only reason it may remove the
+    # blank line above the import line. A CLAUDE.md can arrive at that same
+    # shape without this branch running -- somebody writes the import line
+    # themselves, blank line and all, and the check above then leaves the file
+    # alone -- and in that case the blank is theirs. The hash is what makes the
+    # record about THIS file rather than about this installer's habits: edit
+    # the file afterwards, move the import line, add a blank of your own, and
+    # the hash stops matching and the uninstaller keeps its hands off.
+    write_provenance "appended $(sha_of "${GLOBAL_MD}")"
   else
     printf '%s\n' "${IMPORT_LINE}" > "${GLOBAL_MD}"
+    write_provenance "created $(sha_of "${GLOBAL_MD}")"
   fi
   echo "  ok  CLAUDE.md imports ${DOCTRINE}"
 fi

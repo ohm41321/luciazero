@@ -9,7 +9,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Agent Bus (beta): `lucia`, a second name for the launcher and a one-word
+- Agent Bus (beta, opt-in, checkout only): `lucia`, a second name for the
+  launcher and a one-word
   way onto the bus. `lucia claude` in one window and `lucia codex` in another
   is the whole of the ordinary path: the provider is the verb, so there is no
   `--provider` to repeat, no `--` to remember and no `--agent` to invent — the
@@ -17,13 +18,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   window of the same provider (`claude-reviewer`). Without `--as`, that second
   window asks for the id the first one holds and is refused rather than taking
   it, and the refusal now says which flag answers it. The daemon starts itself
-  and the roster fills itself in, so nothing precedes these two commands. Both
+  and the roster fills itself in, so within a session nothing precedes these
+  two commands. The one-time setup before them is unchanged and is not two
+  lines: clone the repository, run `./install.sh`, and put the launcher's
+  directory on PATH. Both
   names are one program: every subcommand answers to `lucia` and to
   `luciazero-agentd` alike, and each says back the name it was called by.
   `./install.sh` installs and `./uninstall.sh` removes both, each under the
   same ownership rule — an executable of someone else's under either name is
   never replaced, and a foreign copy of one name does not stop the other
-  being installed.
+  being installed. None of this arrives with `npx luciazero`, which installs
+  no daemon and never has: `agentd/` is in no npm payload, and the core
+  package carries only the `/lucia-bus` and `/lucia-chat` skills, which say
+  the bus server is absent and stop. The GitHub release ZIP is a source
+  archive of the tag and does carry `agentd/`, which is the checkout route
+  and not an install. See ADR 0008.
 - Agent Bus (beta, M7f): a delivery that arrives while a session sits idle
   now knocks on it. `luciazero-agentd run` holds the provider's pty and, when a
   message reaches the bound agent, types one fixed line into the session —

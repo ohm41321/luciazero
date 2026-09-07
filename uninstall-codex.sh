@@ -92,6 +92,16 @@ fi
 if [ -f "${AGENTS_MD}" ] && grep -qF "${START}" "${AGENTS_MD}"; then
   BACKUP="$(bakpath "${AGENTS_MD}")"
   cp "${AGENTS_MD}" "${BACKUP}"
+  # `install-codex.sh` writes a blank separator before its marker block, and
+  # removing only the block leaves that separator behind, so a file the user
+  # wrote grows one blank line per install-and-uninstall cycle. That is a
+  # defect and it is left standing on purpose: the Claude side may remove its
+  # separator only because `install.sh` records that it added it and hashes
+  # the file it left, and there is no such record here. Without one, a user
+  # who moves the block after installing would have a blank line of their own
+  # deleted -- a worse failure than a blank line accumulating. Give the codex
+  # side the same ownership proof and this becomes safe; until then the block
+  # goes and nothing else does.
   awk -v s="${START}" -v e="${END}" '
     $0==s {inblock=1; next}
     $0==e {inblock=0; next}

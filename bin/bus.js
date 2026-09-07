@@ -29,7 +29,8 @@ async function status(json) {
     endpoint = JSON.parse(fs.readFileSync(path.join(dir, "endpoint.json"), "utf8"));
   } catch (err) {
     console.error(`luciazero bus: no running daemon recorded in ${dir}`);
-    console.error("  start one with: python3 -m luciazero_agentd serve   (from the agentd package)");
+    console.error("  the bus is an opt-in beta that ships only in a checkout, not with npx luciazero:");
+    console.error("  clone https://github.com/ohm41321/luciazero, run ./install.sh, then: lucia claude");
     process.exit(2);
   }
   let token;

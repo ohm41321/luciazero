@@ -329,8 +329,10 @@ Two things follow, and only one of them is fixed:
 turns** to waiting for the bus: `message_inbox` answered immediately, but the
 session had joined the wrong bus and therefore found no delivery. This did not
 block the review itself. It did prevent the normal acknowledgement path from
-reaching `completed`, because that session had no `delivery_id` to
-acknowledge. Without the bus, the user would have copied the result between
+reaching `completed` on that attempt, because that session had no
+`delivery_id` to acknowledge; the redo on the right bus acknowledged and
+completed both deliveries (06:40:47Z and 06:41:29Z), and what is still
+`queued` is only the closing finding the implementer sent afterwards. Without the bus, the user would have copied the result between
 the two terminals by hand, at an estimated additional cost of 2--5 minutes.
 Their verdict was that the bus was partly worthwhile: carrying a finding with
 its correlation ID was clear, but the identity/inbox mismatch kept the

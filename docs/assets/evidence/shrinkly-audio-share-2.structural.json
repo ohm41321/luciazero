@@ -1,0 +1,236 @@
+{
+  "correlation_id": "shrinkly-audio-share-2",
+  "record": "structural only",
+  "note": "Event types, timestamps, states and counts. Message payloads, task titles and results, artifact references, and worktree paths are removed, and every database identifier is replaced by an alias local to this file (message-1, delivery-1, task-1, artifact-1) so the relationships the timings are computed from survive without publishing an id from the bus. This workflow was real work in a private repository, and the gate asks for a record set kept, not for another project's review published here. The complete export is held outside this repository; its SHA-256 is below, so a later audit can prove the file it is shown is the file this row was written from.",
+  "original_sha256": "16684ced88f23233d0c736c3f9a0591ce9741d7aa0968562186387ed5701f349",
+  "original_bytes": 19874,
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "counts": {
+    "messages": 3,
+    "deliveries": 3,
+    "events": 14,
+    "tasks": 1,
+    "artifacts": 2,
+    "runs": 0,
+    "worktrees": 2
+  },
+  "messages": [
+    {
+      "seq": 42,
+      "id": "message-1",
+      "sender_agent_id": "claude",
+      "recipient_agent_id": "codex",
+      "kind": "task",
+      "created_at": "2026-09-07T09:17:22.907114+00:00",
+      "hop_count": 0,
+      "reply_to": null
+    },
+    {
+      "seq": 43,
+      "id": "message-2",
+      "sender_agent_id": "codex",
+      "recipient_agent_id": "claude",
+      "kind": "finding",
+      "created_at": "2026-09-07T09:23:35.038275+00:00",
+      "hop_count": 1,
+      "reply_to": null
+    },
+    {
+      "seq": 44,
+      "id": "message-3",
+      "sender_agent_id": "claude",
+      "recipient_agent_id": "codex",
+      "kind": "result",
+      "created_at": "2026-09-07T09:24:13.946952+00:00",
+      "hop_count": 2,
+      "reply_to": null
+    }
+  ],
+  "deliveries": [
+    {
+      "seq": 42,
+      "id": "delivery-1",
+      "message_id": "message-1",
+      "recipient_agent_id": "codex",
+      "state": "completed",
+      "attempts": 0,
+      "max_attempts": 3,
+      "first_touch_at": "2026-09-07T09:17:58.023076+00:00",
+      "acknowledged_at": "2026-09-07T09:17:58.022927+00:00",
+      "acknowledged_by": "codex",
+      "completed_at": "2026-09-07T09:24:04.849010+00:00",
+      "nudged_at": "2026-09-07T09:17:23.894172+00:00",
+      "human_input_after_knock": 1,
+      "updated_at": "2026-09-07T09:24:04.849010+00:00"
+    },
+    {
+      "seq": 43,
+      "id": "delivery-2",
+      "message_id": "message-2",
+      "recipient_agent_id": "claude",
+      "state": "completed",
+      "attempts": 0,
+      "max_attempts": 3,
+      "first_touch_at": "2026-09-07T09:23:48.037578+00:00",
+      "acknowledged_at": "2026-09-07T09:23:48.037402+00:00",
+      "acknowledged_by": "claude",
+      "completed_at": "2026-09-07T09:24:15.584761+00:00",
+      "nudged_at": "2026-09-07T09:23:35.104487+00:00",
+      "human_input_after_knock": 0,
+      "updated_at": "2026-09-07T09:24:15.584761+00:00"
+    },
+    {
+      "seq": 44,
+      "id": "delivery-3",
+      "message_id": "message-3",
+      "recipient_agent_id": "codex",
+      "state": "completed",
+      "attempts": 0,
+      "max_attempts": 3,
+      "first_touch_at": "2026-09-07T09:25:11.355330+00:00",
+      "acknowledged_at": "2026-09-07T09:25:11.355131+00:00",
+      "acknowledged_by": "codex",
+      "completed_at": "2026-09-07T09:25:18.293176+00:00",
+      "nudged_at": "2026-09-07T09:24:35.850533+00:00",
+      "human_input_after_knock": 0,
+      "updated_at": "2026-09-07T09:25:18.293176+00:00"
+    }
+  ],
+  "events": [
+    {
+      "seq": 515,
+      "kind": "task.created",
+      "at": "2026-09-07T09:17:00.922491+00:00",
+      "entity_type": "task",
+      "actor": "claude"
+    },
+    {
+      "seq": 516,
+      "kind": "artifact.published",
+      "at": "2026-09-07T09:17:06.355476+00:00",
+      "entity_type": "artifact",
+      "actor": "claude"
+    },
+    {
+      "seq": 517,
+      "kind": "message.sent",
+      "at": "2026-09-07T09:17:22.908133+00:00",
+      "entity_type": "message",
+      "actor": "claude"
+    },
+    {
+      "seq": 521,
+      "kind": "delivery.acknowledged",
+      "at": "2026-09-07T09:17:58.023076+00:00",
+      "entity_type": "delivery",
+      "actor": "codex"
+    },
+    {
+      "seq": 524,
+      "kind": "task.claimed",
+      "at": "2026-09-07T09:18:29.884587+00:00",
+      "entity_type": "task",
+      "actor": "codex"
+    },
+    {
+      "seq": 526,
+      "kind": "message.sent",
+      "at": "2026-09-07T09:23:35.039449+00:00",
+      "entity_type": "message",
+      "actor": "codex"
+    },
+    {
+      "seq": 528,
+      "kind": "delivery.acknowledged",
+      "at": "2026-09-07T09:23:48.037578+00:00",
+      "entity_type": "delivery",
+      "actor": "claude"
+    },
+    {
+      "seq": 529,
+      "kind": "artifact.published",
+      "at": "2026-09-07T09:23:49.060224+00:00",
+      "entity_type": "artifact",
+      "actor": "codex"
+    },
+    {
+      "seq": 530,
+      "kind": "task.completed",
+      "at": "2026-09-07T09:23:59.234658+00:00",
+      "entity_type": "task",
+      "actor": "codex"
+    },
+    {
+      "seq": 531,
+      "kind": "delivery.completed",
+      "at": "2026-09-07T09:24:04.849154+00:00",
+      "entity_type": "delivery",
+      "actor": "codex"
+    },
+    {
+      "seq": 532,
+      "kind": "message.sent",
+      "at": "2026-09-07T09:24:13.949390+00:00",
+      "entity_type": "message",
+      "actor": "claude"
+    },
+    {
+      "seq": 534,
+      "kind": "delivery.completed",
+      "at": "2026-09-07T09:24:15.584916+00:00",
+      "entity_type": "delivery",
+      "actor": "claude"
+    },
+    {
+      "seq": 536,
+      "kind": "delivery.acknowledged",
+      "at": "2026-09-07T09:25:11.355330+00:00",
+      "entity_type": "delivery",
+      "actor": "codex"
+    },
+    {
+      "seq": 537,
+      "kind": "delivery.completed",
+      "at": "2026-09-07T09:25:18.293357+00:00",
+      "entity_type": "delivery",
+      "actor": "codex"
+    }
+  ],
+  "tasks": [
+    {
+      "seq": 7,
+      "id": "task-1",
+      "state": "completed",
+      "created_by_agent_id": "claude",
+      "assigned_agent_id": "codex",
+      "created_at": "2026-09-07T09:17:00.921854+00:00",
+      "claimed_at": "2026-09-07T09:18:29.884356+00:00",
+      "completed_at": "2026-09-07T09:23:59.234552+00:00",
+      "requires_worktree": 1,
+      "priority": 10
+    }
+  ],
+  "artifacts": [
+    {
+      "seq": 13,
+      "id": "artifact-1",
+      "kind": "commit",
+      "produced_by_agent_id": "claude",
+      "task_id": "task-1",
+      "created_at": "2026-09-07T09:17:06.355262+00:00",
+      "trust": "bound"
+    },
+    {
+      "seq": 14,
+      "id": "artifact-2",
+      "kind": "commit",
+      "produced_by_agent_id": "codex",
+      "task_id": "task-1",
+      "created_at": "2026-09-07T09:23:49.059969+00:00",
+      "trust": "bound"
+    }
+  ]
+}

@@ -21,8 +21,8 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 3 | met (2026-09-07) |
-| Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 0 | **not met** |
+| Distinct real workflows on the pull beta, not the demo | 3 | 5 | met (2026-09-07) |
+| Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 1 | **not met** |
 | Open M3 safety findings | 0 | 0 | met |
 
 ## The gate was passed by, not passed
@@ -73,6 +73,8 @@ redaction contract over what it writes, and prints the ledger row filled in.
 | M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m (<=107s unattributed) | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
 | Three agent-bus footguns in the lessons file | `wf3-quiet-gate` | 2026-09-05T16:37:40.701418+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 2 turn(s) waited, longest 20s, 2 bus-started | `docs/assets/evidence/wf3-quiet-gate.json` |
 | `lucia codex --strict` accepted an option it never used | `wf4-strict-silent` | 2026-09-07T06:15:55.833545+00:00 | claude, codex-architect | 1 task(s) completed, 3 message(s), 1 artifact(s) | user-started, 2 turn(s) waited, longest 20m, 1 bus-started (<=20m unattributed) | `docs/assets/evidence/wf4-strict-silent.json` |
+| Video-encoding plan review, private repository | `shrinkly-vplan-1` | 2026-09-07T08:57:27.404448+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 3 artifact(s) | user-started, 3 turn(s) waited, longest 4m, 2 bus-started (<=199s unattributed) | `docs/assets/evidence/shrinkly-vplan-1.structural.json` (structural; full set held outside this repository) |
+| Audio-share cap review, private repository | `shrinkly-audio-share-2` | 2026-09-07T09:17:22.907114+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 2 artifact(s) | user-started, 3 turn(s) waited, longest 57s, 3 bus-started | `docs/assets/evidence/shrinkly-audio-share-2.structural.json` (structural; full set held outside this repository) |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
@@ -352,6 +354,63 @@ failure -- a session on the wrong bus -- is not that cost either. The count
 stays at 0 of 2. Both remaining retros therefore have to come from workflows
 still to be done, one each, written while the wait is happening.
 
+### Two workflows in a private repository, and the first retro that counts (2026-09-07)
+
+Both are real work: a video-encoding plan and an audio-share cap, reviewed
+across the bus by `claude` and `codex`, one task claimed and completed on each
+side and the artifacts published against the commits they name. They are
+recorded here as rows because the criterion counts workflows on the bus, not
+workflows in this repository, and work somebody would have done anyway is
+exactly what it asks for.
+
+**The record sets are not published here, deliberately.** They are another
+project's review in full: findings, task payloads, commit references and
+absolute paths on the operator's machine. What is committed is a structural
+export -- event types, timestamps, states, counts, and the delivery timings the
+ledger row is computed from, with every payload, title, result, artifact
+reference and worktree path removed, and every database identifier replaced by
+an alias local to its file (`message-1`, `delivery-1`, `task-1`, `artifact-1`)
+so the relationships those timings are computed from survive without an id from
+the bus being published either. The complete exports are kept outside this
+repository, and each structural file carries the SHA-256 of the file it was
+made from, so a later audit can prove the file it is handed is the file the row
+was written from:
+
+| Correlation | SHA-256 of the full export | Bytes |
+| --- | --- | --- |
+| `shrinkly-vplan-1` | `4042af2be0a5557848da86806e3a348e229c6b4b169727aae700a9eccdcd36f9` | 22785 |
+| `shrinkly-audio-share-2` | `16684ced88f23233d0c736c3f9a0591ce9741d7aa0968562186387ed5701f349` | 19874 |
+
+**`shrinkly-vplan-1` supplies the first retro that counts.** The operator
+measured it from the daemon's own timestamps rather than from memory: 08:57:27Z
+sent, 09:11:46Z the finding back, **14m19s and one turn blocked**, with the peer
+blocked 4m57s of its own waiting for somebody to open its window. And it
+blocked something specific: the tree held a verify command that could not run on
+the runtime the README named, so nothing could be built on that commit until
+the review came back. That is the user-started turn named as the blocking cost,
+with the wait measured, which is what the second criterion asks for. It also
+bought the thing the gate was really testing for -- the reviewing side found a
+blocker the implementing side had missed.
+
+**`shrinkly-audio-share-2` is kept and does not count.** Same shape, 09:17:22Z
+to 09:23:35Z, 6m13s and one turn, and the operator's own verdict is that it
+blocked nothing: the commit was already green on their own evidence, and the
+review bought confidence rather than progress. A wait that blocked nothing is
+not a blocking cost, so the count moves to 1 of 2 and not to 2.
+
+**Two different measurements, kept apart.** The ledger rows say `longest 4m`
+and `longest 57s`; those are send to first touch, per delivery, computed by the
+exporter. The operator's 14m19s and 6m13s are send to finding-returned, which
+includes the peer working. Both come from the same daemon timestamps and answer
+different questions, and neither should be quoted as the other.
+
+The operator's own reading of the value, recorded as given: the bus removed the
+copying -- four hops of commit ids, review questions and evidence payloads,
+roughly 8 to 16 minutes of hand work -- but removed none of the waiting, because
+a person still opens every turn. What it added was the record: correlation,
+sender, artifact, claim and acknowledgement, a revert probe attributable to the
+side that ran it, and an open question left visibly open rather than lost.
+
 ## Carry-over, not claimed as done
 
 - ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed
@@ -360,8 +419,8 @@ still to be done, one each, written while the wait is happening.
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** 3 of 3 workflows recorded as
-  of 2026-09-07, `wf4-strict-silent` being the third; 0
+- **The three workflows and two retros above.** 5 of 3 workflows recorded as
+  of 2026-09-07; 1
   of 2 retros, and the first workflow can never supply one (see the
   attribution note above). `wf3-quiet-gate` attributes its waits from the
   records rather than from memory, but it does so by taking the user-started

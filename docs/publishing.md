@@ -118,8 +118,9 @@ Decided 2026-09-06. Five things close before that changes, in this order:
 1. The wt-docs items 1-5 are green and merged.
 2. A clean install is driven through `lucia claude` and `lucia codex` — the
    public command, not `run --agent ... --provider ...`.
-3. The decision log reaches 3 of 3 workflows and 2 of 2 retros. It reached 3
-   of 3 on 2026-09-07 with `wf4-strict-silent`, and stands at 0 of 2 retros.
+3. The decision log reaches 3 of 3 workflows and 2 of 2 retros. Workflows
+   stand at 5 of 3 as of 2026-09-07; the retros stand at 1 of 2, the one being
+   `shrinkly-vplan-1`, where the wait blocked real work and was measured.
 4. Packaging `agentd/` is taken as its own decision, reviewed as a public
    contract and as a security question. It is not a `files` entry: it puts a
    Python daemon, a pty proxy and a launchd or systemd service onto machines

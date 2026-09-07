@@ -60,8 +60,8 @@ dispatch on evidence that the decision gate does not accept.
 Empty. A row is added by doing real work on the bus and exporting its records:
 
 ```bash
-./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero --list
-./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero \
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --list
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus \
     --correlation <id> --label "what the work was" --out docs/assets/evidence/<id>.json
 ```
 

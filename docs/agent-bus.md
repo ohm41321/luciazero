@@ -748,8 +748,8 @@ any of it -- as JSON, plus a ready ledger row for
 `docs/agent-bus-decision-log.md`:
 
 ```bash
-./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero --list
-./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero --correlation <id> --out evidence.json
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --list
+./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --correlation <id> --out evidence.json
 ```
 
 It opens the database read-only and never migrates it, and runs the redaction

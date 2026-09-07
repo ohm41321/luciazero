@@ -917,14 +917,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     reaches the child through its own configuration and never through this
     terminal's output, which is why automation uses this and not `attach`."""
     state_dir = resolve_state_dir(args.state_dir)
-    endpoint = read_endpoint(state_dir)
-    if endpoint is None and args.autostart:
-        endpoint = _autostart_daemon(state_dir)
-        if endpoint is None:
-            return 2
-    if endpoint is None:
-        print(f"run: no running daemon recorded in {state_dir} (start one with: python3 -m luciazero_agentd serve)", file=sys.stderr)
-        return 2
+    # The command is read and judged before a daemon is started, because a
+    # request that cannot be carried out should leave nothing behind that has
+    # to be cleaned up -- least of all a daemon the user did not ask for.
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]  # argparse keeps the separator in a REMAINDER list
@@ -934,6 +929,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     provider = args.provider or procinfo.PROVIDER_COMMANDS.get(os.path.basename(command[0]))
     if provider is None:
         print(f"run: cannot tell which provider {command[0]!r} is; pass --provider", file=sys.stderr)
+        return 2
+    if args.strict and provider != "claude":
+        # `--strict` is spelled `--strict-mcp-config` to claude and has no
+        # counterpart anywhere else. Taking it anyway would answer a request
+        # for an isolated session with a session that kept every other MCP
+        # server, and say nothing -- so it is refused rather than ignored.
+        print(f"run: --strict is only supported by claude, not {clean(provider)}; "
+              "it passes claude's --strict-mcp-config, which has no equivalent here", file=sys.stderr)
+        return 2
+    endpoint = read_endpoint(state_dir)
+    if endpoint is None and args.autostart:
+        endpoint = _autostart_daemon(state_dir)
+        if endpoint is None:
+            return 2
+    if endpoint is None:
+        print(f"run: no running daemon recorded in {state_dir} (start one with: python3 -m luciazero_agentd serve)", file=sys.stderr)
         return 2
     # Asked before anything is created, because the answer decides whether
     # this command can work at all: a binding is anchored to the child's pid
@@ -1264,7 +1275,7 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
     """The flags `run` and the provider verbs share. They are one command with
     two spellings, so a flag added to one and not the other is a bug."""
     parser.add_argument("--ttl", type=int, default=BINDING_TTL_SECONDS)
-    parser.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers")
+    parser.add_argument("--strict", action="store_true", help="claude only: pass --strict-mcp-config, which hides the session's other MCP servers; any other provider is refused")
     parser.add_argument("--no-autostart", dest="autostart", action="store_false", default=True,
                         help="fail instead of starting a daemon when this state directory has none")
     parser.add_argument("--no-nudge", dest="nudge", action="store_false", default=True,

@@ -697,6 +697,40 @@ class HumanCommands(unittest.TestCase):
         self.assertIn("--as reviewer", done.stderr)
         self.assertNotIn("claude started", done.stdout)
 
+    def test_strict_is_refused_for_codex_instead_of_silently_ignored(self) -> None:
+        """`--strict` is `claude --strict-mcp-config`, and codex has no
+        equivalent. Accepting it there would promise an isolated session and
+        hand over one that kept every other MCP server, so it is a usage
+        error -- raised before a daemon, a roster entry or a credential
+        exists, because nothing should be created for a command that cannot
+        do what it was asked."""
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        done = self._front("codex", "--strict")
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("--strict is only supported by claude", done.stderr)
+        self.assertNotIn("codex started", done.stdout)
+        self.assertIsNone(read_endpoint(self.state), done.stderr)
+        self.assertEqual(self._bindings(), [])
+
+    def test_the_long_form_refuses_strict_for_codex_too(self) -> None:
+        """`run` and the provider verbs are one command with two spellings, so
+        a refusal that only one of them makes is half a refusal."""
+        self.addCleanup(self._stop_daemon)
+        done = self.cli("run", "--strict", "--agent", "codex-architect", "--provider", "codex",
+                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("--strict is only supported by claude", done.stderr)
+        self.assertNotIn("hello", done.stdout)
+
+    def test_strict_still_reaches_the_provider_that_has_it(self) -> None:
+        """The refusal above is about codex only; claude keeps the flag."""
+        self.addCleanup(self._stop_daemon)
+        done = self._front("claude", "--strict")
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("--strict-mcp-config", done.stdout)
+
     def test_the_short_form_writes_nothing_into_the_home_it_was_given(self) -> None:
         """The credential reaches the provider through a file of its own, so
         joining the bus must not edit the CLI's global configuration: an

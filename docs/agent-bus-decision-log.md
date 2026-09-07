@@ -398,6 +398,33 @@ blocked nothing: the commit was already green on their own evidence, and the
 review bought confidence rather than progress. A wait that blocked nothing is
 not a blocking cost, so the count moves to 1 of 2 and not to 2.
 
+A full retro for it was written on 2026-09-07 and does not change that. Its
+measurements, which are the part that belongs here: the peer was blocked 1m07s
+and one turn waiting for somebody to open its window; the operator was blocked
+6m13s and one turn; the review itself took 5m06s of that; acknowledging took
+13s and closing the whole exchange 27s more, 7m15s end to end. Against the
+first round -- 14m19s and 4m57s -- both halves more than halved, and the bus
+did nothing to cause that: the windows were simply opened sooner.
+
+Two things in it are worth keeping for reasons other than the count. The
+operator states that they did not run the regression probe they had claimed
+would fail on the parent commit; the reviewing side checked the parent out and
+ran it, and it did fail there. Had that side skipped it, an unverified claim
+would have shipped and the operator would not have known. And two constants
+central to the change were judgement rather than measurement, said so in the
+request, and were measured by the reviewer because the request said so. That is
+what the second criterion is circling around -- what the round trip buys -- even
+though this particular round trip bought it without blocking anything.
+
+There is a reading under which this row would qualify: the peer's 1m07s is a
+wait caused by a turn needing a person to start it, and it did hold the review
+up. It is not adopted, because under that reading almost every row in the
+ledger qualifies -- `wf3-quiet-gate` and `wf4-strict-silent` both have waits of
+that shape -- and a criterion that everything satisfies is not measuring
+anything. The second retro therefore still needs a workflow where the wait held
+up the work itself, with the time or turn count measured, the way
+`shrinkly-vplan-1` did.
+
 **Two different measurements, kept apart.** The ledger rows say `longest 4m`
 and `longest 57s`; those are send to first touch, per delivery, computed by the
 exporter. The operator's 14m19s and 6m13s are send to finding-returned, which

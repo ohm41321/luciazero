@@ -325,27 +325,32 @@ Two things follow, and only one of them is fixed:
   answer and is not written yet; it is a candidate for the next workflow rather
   than something to slip in beside this one.
 
-**User retro, recorded 2026-09-07.** The user attributed **0 minutes and 0
-turns** to waiting for the bus: `message_inbox` answered immediately, but the
-session had joined the wrong bus and therefore found no delivery. This did not
-block the review itself. It did prevent the normal acknowledgement path from
+**User retro, recorded 2026-09-07, amended the same day with the operator's own
+figures.** The user attributed **0 minutes of waiting and one turn**: they
+called `message_inbox` once and the message was there. On the earlier attempt
+`message_inbox` also answered immediately, but the session had joined the wrong
+bus and so found no delivery. Neither cost blocked the review, because the
+message was sitting ready to read and acknowledge. It did prevent the normal acknowledgement path from
 reaching `completed` on that attempt, because that session had no
 `delivery_id` to acknowledge; the redo on the right bus acknowledged and
 completed both deliveries (06:40:47Z and 06:41:29Z), and what is still
-`queued` is only the closing finding the implementer sent afterwards. Without the bus, the user would have copied the result between
-the two terminals by hand, at an estimated additional cost of 2--5 minutes.
-Their verdict was that the bus was partly worthwhile: carrying a finding with
-its correlation ID was clear, but the identity/inbox mismatch kept the
-workflow from closing cleanly.
+`queued` is only the closing finding the implementer sent afterwards. Without the bus, the user would have copied the report between
+the two terminals by hand, an estimated 3--5 minutes with a risk of dropping
+context on the way. Their verdict was that the bus was worth it here, not for
+the time it saved -- which was little -- but because the correlation, the
+sender, the artifact and the acknowledged/completed states can all be checked
+afterwards.
 
 That testimony and the record answer different questions. The record measures
 19m13s spent discovering and repairing the state-directory mismatch and 5m30s
 of review after the correct bind; neither number is a user-reported wait. The
 retro is valid and worth keeping, but it does **not** satisfy the second gate
-criterion: the user explicitly said the user-started turn cost 0 minutes, 0
-turns, and did not block the work. The count therefore stays at 0 of 2 rather
-than turning an observed failure into the blocking cost the criterion asks
-for.
+criterion, and the operator's own figures are the reason: one turn, no wait,
+nothing blocked. A criterion that asks for the user-started turn as the
+*blocking* cost is not met by testimony that it cost nothing, and the observed
+failure -- a session on the wrong bus -- is not that cost either. The count
+stays at 0 of 2. Both remaining retros therefore have to come from workflows
+still to be done, one each, written while the wait is happening.
 
 ## Carry-over, not claimed as done
 

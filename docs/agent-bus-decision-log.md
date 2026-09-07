@@ -21,7 +21,7 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 2 | **not met** |
+| Distinct real workflows on the pull beta, not the demo | 3 | 3 | met (2026-09-07) |
 | Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 0 | **not met** |
 | Open M3 safety findings | 0 | 0 | met |
 
@@ -72,6 +72,7 @@ redaction contract over what it writes, and prints the ledger row filled in.
 | --- | --- | --- | --- | --- | --- | --- |
 | M7 vertical-slice design | `msg_a68fc39c3f284278a5cd45563e4b9fcb` | 2026-09-04T10:42:22.924320+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 1 turn(s) waited, longest 2m (<=107s unattributed) | `docs/assets/evidence/msg_a68fc39c3f284278a5cd45563e4b9fcb.json` |
 | Three agent-bus footguns in the lessons file | `wf3-quiet-gate` | 2026-09-05T16:37:40.701418+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 2 artifact(s) | user-started, 2 turn(s) waited, longest 20s, 2 bus-started | `docs/assets/evidence/wf3-quiet-gate.json` |
+| `lucia codex --strict` accepted an option it never used | `wf4-strict-silent` | 2026-09-07T06:15:55.833545+00:00 | claude, codex-architect | 1 task(s) completed, 3 message(s), 1 artifact(s) | user-started, 2 turn(s) waited, longest 20m, 1 bus-started (<=20m unattributed) | `docs/assets/evidence/wf4-strict-silent.json` |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
@@ -293,6 +294,42 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   the pull beta records no `turn_started_at`. The ledger carries that half as
   a ceiling, and attributing it is a retro's job, not the exporter's.
 
+### What `wf4-strict-silent`'s 20 minutes actually contain (2026-09-07)
+
+The third workflow is real work: `lucia codex --strict` was accepted, started
+the session, and passed nothing on, because `--strict` is spelled
+`--strict-mcp-config` to claude and codex has no counterpart. One agent fixed
+it behind three regressions, red on the parent commit first; the other read the
+diff from the worktree and answered the question the task asked -- whether any
+other flag in `_add_run_flags` is read by only some providers. None is.
+
+The ledger row says `longest 20m ... (<=20m unattributed)`, and that ceiling
+would be read wrongly without this: **most of it was not a person thinking.**
+The reviewing session joined a different bus. It resolved its state directory
+to the scratch directory left by the 2026-09-06 gate run -- the one thing that
+does that is `LUCIAZERO_AGENT_BUS_HOME` being set in that shell
+(`statedir.py:18`), and `run` exports that variable to its child
+(`__main__.py:697`), so it propagates -- registered `codex-architect` there at
+06:22:15Z, and sent its finding into that database, where the default bus
+never saw it. Each side saw an inbox that would never fill.
+
+Two things follow, and only one of them is fixed:
+
+- The workflow was completed properly afterwards on one bus, which is the row
+  above. The misrouted half's message is still in the scratch database, and
+  nothing was deleted to tidy that up.
+- **Nothing tells a session which bus it joined.** `run` binds, starts the
+  provider, and never names the state directory it used, so two sessions can
+  work an entire correlation apart while each behaves exactly as though the
+  other were slow. A line naming the state directory at startup is the obvious
+  answer and is not written yet; it is a candidate for the next workflow rather
+  than something to slip in beside this one.
+
+This does not supply a retro. What the record proves is where the time went;
+what the second criterion asks is whether that wait blocked the person, and
+what they would have done instead. Only the user can write that, and it is not
+written here.
+
 ## Carry-over, not claimed as done
 
 - ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed
@@ -301,7 +338,8 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** 2 of 3 workflows recorded; 0
+- **The three workflows and two retros above.** 3 of 3 workflows recorded as
+  of 2026-09-07, `wf4-strict-silent` being the third; 0
   of 2 retros, and the first workflow can never supply one (see the
   attribution note above). `wf3-quiet-gate` attributes its waits from the
   records rather than from memory, but it does so by taking the user-started

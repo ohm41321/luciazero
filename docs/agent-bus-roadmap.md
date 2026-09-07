@@ -1199,6 +1199,64 @@ opt-in at every milestone through `LZ_AGENT_BUS_LIVE=1`, and CI never sets
 it. Release only when the full suite exits zero, both focused reviews have no
 blockers, and every v1 requirement has linked evidence.
 
+### M9 — Delivery to a session `lucia` did not start (after v2.5.0)
+
+Deferred deliberately: none of this is in the v2.5.0 gate, and none of it is
+started before that gate closes.
+
+A session started as plain `claude` or `codex` cannot be reached by the bus at
+all. Two separate things are missing, and it is worth writing down that they
+are two, because the first is not a ceiling on the design:
+
+- **No MCP tools in a provider process that has already started.** The server
+  is injected at launch and nowhere else — `__main__.py:996-999` writes
+  `mcp.json` into a per-run `mkdtemp` and passes `--mcp-config` for Claude, and
+  `__main__.py:1002` passes `-c mcp_servers...` for Codex. Neither touches the
+  user's central MCP configuration, which is the property gate item 5 proves
+  byte for byte.
+- **No proxy to knock on.** The nudge of M7f is `run` holding the pty
+  (`__main__.py:1072-1093`). A session that no `run` owns has nobody to type
+  into it.
+
+So the honest statement of the limit is: the bus carries more than a session
+message does — durable deliveries, ack states, task claims, artifacts,
+worktree binding, an approval nonce, hop and budget limits — and it cannot
+reach a session it did not start, because there is no session-control
+adapter, not because the architecture forbids one.
+
+Three ways out, and only the first exists today:
+
+1. **Start with `lucia claude` or `lucia codex`.** Current and recommended.
+2. **Write the server into the user's central MCP configuration and have the
+   session reconnect.** Rejected on ownership, and the rejection is load
+   bearing: ADR 0008 and the item 5 gate both rest on the central config
+   never being written.
+3. **A provider-specific session-control adapter** that delivers into a
+   session that already exists, without injecting MCP at launch or owning its
+   pty. Possible, and its own feature. It is not scheduled, because it has to
+   answer all of these first:
+   - How is a session identified, and how is ownership of it proved?
+   - Does the provider expose an API or IPC for this, or would the adapter be
+     leaning on private internals that change without notice?
+   - What stops a peer's payload from becoming a prompt injection? The M7f
+     answer — only a literal defined in `nudge.py` is ever typed — has to
+     survive whatever the adapter can write.
+   - Does `delivered` mean the control plane accepted it, or that the provider
+     read it? These are different promises and the acknowledgement states have
+     to say which one they carry.
+   - What makes Claude and Codex mean the same thing by all of the above?
+
+**The small piece that does not wait for any of that.** `message_send` returns
+`get_message(message_id)` (`store.py:804`), and the delivery row it just wrote
+is `queued` whether or not anything can wake the recipient (`store.py:791`).
+A sender therefore cannot tell "waiting to be read" from "nobody is listening",
+which is the same silence M7f was built to remove, one layer up. The fix is to
+say so in the result — queued, and the recipient has no active delivery proxy
+— while the message stays exactly as durable as it is now. It widens no
+security boundary: it reports a fact the daemon already has in `bindings`
+(`tty`, `pid`, `process_started_at`, `state`) rather than reaching anywhere
+new. Scheduled after the current release gate, not before v2.5.0.
+
 ## Suggested delivery cadence
 
 | Window | Milestone | Deliverable |
@@ -1246,6 +1304,9 @@ Items marked (M6+) apply only once managed dispatch exists.
   to Streamable HTTP requests; see ADR 0001, Transports, for the exact
   configuration surface each one uses.
 - Which artifact formats should be first-class beyond commits and Lucia Relay?
+- Should the bus deliver into a session it did not start? Open, and framed in
+  M9 rather than here, because the answer is a feature with five prerequisite
+  questions rather than a choice between two known options.
 - When should multi-machine delivery graduate from Relay references to a
   networked bus backend?
 

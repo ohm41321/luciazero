@@ -308,6 +308,15 @@ M6 dispatcher core (2 blockers, 3 majors, 1 minor) and M6 adapters (3 majors,
   turn out of the loop, which is not what the second criterion asks for. A
   retro that satisfies it needs a user-started turn whose cost somebody
   attributes while it is happening.
+- **The 2026-09-06 live check of the public command is not one of the three.**
+  A clean clone driven through `lucia claude` and `lucia codex` produced two
+  user-started conversations and four completed deliveries, exported as
+  `docs/assets/evidence/msg_571db8b6423c46e69872e5241ad4ec09.json` and
+  `docs/assets/evidence/handshake-hi-what-20260906.json`. It closes item 2 of
+  the release gate in `docs/publishing.md` §5 and nothing here: no work was
+  attached to it, and the ledger takes work the user would have done anyway,
+  not a handshake. Recorded so that a later reading of the evidence directory
+  does not mistake it for the missing third row.
 - **The M7-design workflow's open loop.** Its `result` delivery is still
   `queued`: closing it needs the architect's own terminal, not this log.
 

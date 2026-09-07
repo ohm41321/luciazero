@@ -127,6 +127,33 @@ Decided 2026-09-06. Five things close before that changes, in this order:
 5. Install, upgrade and uninstall are proved on a machine that is not this
    one, and proved to leave the user's own configuration alone.
 
+Item 2 was closed on 2026-09-06. A clean clone was installed and driven
+through `lucia claude` in one window and `lucia codex` in the other, both
+typed by the user rather than by a script, and the run's state directory was
+kept. Its records are exported now rather than described from memory:
+`docs/assets/evidence/msg_571db8b6423c46e69872e5241ad4ec09.json` and
+`docs/assets/evidence/handshake-hi-what-20260906.json`. Between them: two
+conversations, four messages, every delivery acknowledged and then completed,
+and the two agent ids the short form assigns without being asked, `claude` and
+`codex`. Neither conversation has a dispatcher run behind it, so the exporter
+calls both `user-started`; three of the four waits were ended by a bus knock
+and the fourth leaves 79 seconds or less unattributed.
+
+Two things that run does not prove, said plainly rather than left for a reader
+to assume:
+
+- **No quota figure was captured, and none can be reconstructed.** The
+  exchange carried no task, so nothing called `task_record_usage`, and the
+  turns were the user's own session turns rather than dispatched ones, so no
+  provider-side usage was measured either. What the record proves is that both
+  real CLIs ran, bound, and answered each other through the public command.
+  What it costs to do that is not in this evidence and must not be claimed
+  from it.
+- **It is not the third workflow.** The exchange was a handshake with no work
+  attached, and the roadmap excludes demonstrations from the ledger by name —
+  the same reason M7b's live chat is not a row. The decision log stands at 2
+  of 3 workflows and 0 of 2 retros.
+
 Item 4 was closed on 2026-09-07 by ADR 0008: the bus stays an opt-in,
 checkout-only beta, and `agentd/` enters no installer or npm payload. One
 channel does carry it, and the first draft of that ADR was wrong to say

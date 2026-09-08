@@ -3274,6 +3274,37 @@ CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
   || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked agent-snapshot parent"; }
 rm -rf "${SM}"
 
+# Ambiguous marker structure is refused, and the refusal leaves the user's
+# AGENTS.md byte-identical: no backup, no partial rewrite, no lost tail.
+for CASE in incomplete duplicate nested; do
+  SM="$(mktemp -d)"
+  mkdir -p "${SM}/skills"
+  {
+    printf '# user rules\n'
+    printf '<!-- luciazero:start -->\n'
+    if [ "${CASE}" = nested ]; then printf '<!-- luciazero:start -->\n'; fi
+    printf 'doctrine\n'
+    if [ "${CASE}" != incomplete ]; then printf '<!-- luciazero:end -->\n'; fi
+    if [ "${CASE}" = nested ]; then printf '<!-- luciazero:end -->\n'; fi
+    if [ "${CASE}" = duplicate ]; then
+      printf '<!-- luciazero:start -->\ndoctrine\n<!-- luciazero:end -->\n'
+    fi
+    printf 'tail the user wrote\n'
+  } > "${SM}/AGENTS.md"
+  cp "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected"
+  CODEX_HOME="${SM}" "${ROOT}/install-codex.sh" >/dev/null 2>&1     && { rm -rf "${SM}"; fail "codex install accepted ${CASE} markers"; }
+  cmp -s "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected" \
+    || { rm -rf "${SM}"; fail "codex install rewrote AGENTS.md with ${CASE} markers"; }
+  [ -z "$(find "${SM}" -maxdepth 1 -name 'AGENTS.md.bak.*' -print -quit)" ] \
+    || { rm -rf "${SM}"; fail "codex install backed up AGENTS.md it refused to touch (${CASE})"; }
+  OUT="$(CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" 2>&1)" || true
+  cmp -s "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected" \
+    || { rm -rf "${SM}"; fail "codex uninstall rewrote AGENTS.md with ${CASE} markers"; }
+  echo "${OUT}" | grep -q 'markers' \
+    || { rm -rf "${SM}"; fail "codex uninstall did not report the ${CASE} markers: ${OUT}"; }
+  rm -rf "${SM}"
+done
+
 # the codex rewrite must not publish through a name anyone can pre-create
 SM="$(mktemp -d)"
 mkdir -p "${SM}/skills"

@@ -48,6 +48,26 @@ parents_safe() {
   return 0
 }
 
+# Exactly one well-formed marker pair, or none at all. Anything else — a start
+# with no end, a second pair, a pair nested inside another — has no defined
+# meaning, and the awk rewrites below would answer it by dropping whatever
+# follows the opening marker. AGENTS.md is the user's file; an ambiguous one is
+# left exactly as it is, down to the byte, rather than repaired by guesswork.
+# Markers count only on a line of their own, which is what the rewrites match.
+marker_block_ok() {
+  MB_FILE="$1"
+  [ -f "${MB_FILE}" ] || return 0
+  MB_S="$(grep -cxF "${START}" "${MB_FILE}" || true)"
+  MB_E="$(grep -cxF "${END}" "${MB_FILE}" || true)"
+  [ "${MB_S}" = 0 ] && [ "${MB_E}" = 0 ] && return 0
+  if [ "${MB_S}" = 1 ] && [ "${MB_E}" = 1 ]; then
+    MB_SL="$(grep -nxF "${START}" "${MB_FILE}" | cut -d: -f1)"
+    MB_EL="$(grep -nxF "${END}" "${MB_FILE}" | cut -d: -f1)"
+    [ "${MB_SL}" -lt "${MB_EL}" ] && return 0
+  fi
+  return 1
+}
+
 remove_managed_tree() {
   RT_DST="$1"; RT_SNAPSHOT="$2"; RT_SHIPPED="$3"; RT_LABEL="$4"; RT_ALLOW_SHIPPED="${5:-1}"
   # ancestry first, and return: refusing further down would still leave the
@@ -106,7 +126,12 @@ if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then
   fi
 fi
 
-if [ -f "${AGENTS_MD}" ] && grep -qF "${START}" "${AGENTS_MD}"; then
+if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_block_ok "${AGENTS_MD}"; then
+  # the skills are gone by now, which is safe on its own; the file is not ours
+  # to interpret, so it keeps every byte it has, backup included
+  echo "  !!  AGENTS.md carries ambiguous Luciazero markers; left untouched" >&2
+  echo "      expected exactly one '${START}' ... '${END}' pair, on their own lines" >&2
+elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   BACKUP="$(bakpath "${AGENTS_MD}")"
   cp "${AGENTS_MD}" "${BACKUP}"
   # `install-codex.sh` writes a blank separator before its marker block, and

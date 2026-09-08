@@ -80,6 +80,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `install-codex.sh` and `uninstall-codex.sh` refuse an `AGENTS.md` whose
+  Luciazero markers are ambiguous — a start with no end, a second pair, a pair
+  nested in another — and leave the file byte-identical instead of rewriting
+  it. A start with no end previously took everything after it to end of file.
+  The install stops before it creates anything; the uninstall still removes the
+  skills and leaves only the marker block alone.
 - `uninstall-codex.sh` writes its `AGENTS.md` rewrite to a `mktemp` name in the
   config directory instead of the predictable `AGENTS.md.tmp`. Anyone who could
   create that name as a symlink received the user's file content through it,

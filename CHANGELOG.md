@@ -80,6 +80,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A session's credential survives a database it cannot write. Binding renewal
+  ran its `UPDATE` with no `sqlite3.Error` handling, so a read-only mount or a
+  full disk turned a valid credential into a refused one mid-session. The
+  renewal is now dropped whole — no expiry change, no event — and the session
+  keeps the access and the expiry it already had.
 - `install-codex.sh` and `uninstall-codex.sh` refuse an `AGENTS.md` whose
   Luciazero markers are ambiguous — a start with no end, a second pair, a pair
   nested in another — and leave the file byte-identical instead of rewriting

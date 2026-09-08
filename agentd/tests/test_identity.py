@@ -176,6 +176,25 @@ class Bindings(StoreCase):
         self.assertGreater(str(resolved["expires_at"]), soon)
         self.assertIn("binding.renewed", [e["kind"] for e in self.store.events(limit=50)])
 
+    def test_a_database_that_cannot_be_written_still_answers_a_valid_credential(self) -> None:
+        """Renewal is a convenience; the credential it renews is already valid.
+        A read-only database, a full disk or a lost lock must not cost a live
+        session the access it already has."""
+        binding, credential = self.bind(tty="ttys123", pid=os.getpid(), ttl_seconds=3600)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        before = self.store.get_binding(binding["id"])
+        events_before = len(self.store.events(limit=200))
+        self.store._conn.execute("PRAGMA query_only = ON")
+        try:
+            resolved = self.store.resolve_credential(credential, alive=ALIVE)
+        finally:
+            self.store._conn.execute("PRAGMA query_only = OFF")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(str(resolved["expires_at"]), soon)
+        self.assertEqual(self.store.get_binding(binding["id"]), before)
+        self.assertEqual(len(self.store.events(limit=200)), events_before)
+
     def test_renewal_keeps_the_window_the_binding_was_created_with(self) -> None:
         """A short `--ttl` is a decision, not a starting point: renewing it by
         the default would hand a session twelve hours it was denied on purpose."""

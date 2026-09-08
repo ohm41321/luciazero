@@ -1962,13 +1962,24 @@ class Store:
         if target <= datetime.fromisoformat(str(row["expires_at"])):
             return None  # at the ceiling: let it run out rather than write on every call
         expires = target.isoformat(timespec="microseconds")
-        with self._tx("renew_binding"):
-            self._conn.execute(
-                "UPDATE bindings SET expires_at = ?, updated_at = ? WHERE id = ? AND state = 'active'",
-                (expires, now, row["id"]),
-            )
-            self._event("daemon", "binding.renewed", "binding", str(row["id"]),
-                        {"agent_id": row["agent_id"], "expires_at": expires, "ttl_seconds": window})
+        try:
+            with self._tx("renew_binding"):
+                self._conn.execute(
+                    "UPDATE bindings SET expires_at = ?, updated_at = ? WHERE id = ? AND state = 'active'",
+                    (expires, now, row["id"]),
+                )
+                self._event("daemon", "binding.renewed", "binding", str(row["id"]),
+                            {"agent_id": row["agent_id"], "expires_at": expires, "ttl_seconds": window})
+        except sqlite3.Error:
+            # The credential this renews is already valid; pushing its end back
+            # is a convenience. A database that cannot be written -- a read-only
+            # mount, a full disk, a lock lost to another process -- must not
+            # cost a live session the access it has, so the write is dropped
+            # whole: nothing renewed, no event, and the caller keeps the expiry
+            # it came in with. Only sqlite's own failures are absorbed here;
+            # the checks above ran before it, so a corrupt timestamp or a bug
+            # in this method still surfaces.
+            return None
         return expires
 
     def refuse_identity(self, binding: dict[str, Any], *, claimed: str, field: str, tool: str) -> None:

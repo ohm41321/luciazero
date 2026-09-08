@@ -3274,6 +3274,23 @@ CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
   || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked agent-snapshot parent"; }
 rm -rf "${SM}"
 
+# the codex rewrite must not publish through a name anyone can pre-create
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills"
+printf '# user rules\n<!-- luciazero:start -->\ndoctrine\n<!-- luciazero:end -->\n' > "${SM}/AGENTS.md"
+printf 'sentinel\n' > "${SM}/outside.txt"
+ln -s "${SM}/outside.txt" "${SM}/AGENTS.md.tmp"
+CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 || true
+grep -qx sentinel "${SM}/outside.txt" \
+  || { rm -rf "${SM}"; fail "codex uninstall wrote through a predictable temporary path"; }
+[ ! -L "${SM}/AGENTS.md" ] \
+  || { rm -rf "${SM}"; fail "codex uninstall published a symlink as AGENTS.md"; }
+grep -qx '# user rules' "${SM}/AGENTS.md" \
+  || { rm -rf "${SM}"; fail "codex uninstall lost user content in AGENTS.md"; }
+! grep -qF 'luciazero:start' "${SM}/AGENTS.md" \
+  || { rm -rf "${SM}"; fail "codex uninstall left the marker block behind"; }
+rm -rf "${SM}"
+
 # and the codex uninstaller shares the policy
 SM="$(mktemp -d)"
 mkdir -p "${SM}/skills/done" "${SM}/.luciazero-managed" "${SM}/outside/done"

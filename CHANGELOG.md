@@ -80,6 +80,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `uninstall-codex.sh` writes its `AGENTS.md` rewrite to a `mktemp` name in the
+  config directory instead of the predictable `AGENTS.md.tmp`. Anyone who could
+  create that name as a symlink received the user's file content through it,
+  and the symlink itself was then renamed over `AGENTS.md`.
 - `uninstall.sh` and `uninstall-codex.sh` refuse a symlinked ancestor before
   they clean anything, instead of printing the refusal and then deleting the
   ownership snapshot anyway. A symlink at `.luciazero-managed/skills`, or at

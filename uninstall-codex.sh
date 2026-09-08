@@ -83,7 +83,8 @@ remove_managed_tree "${CODEX_DIR}/skills/luciazero-bootstrap" \
   "skills/luciazero-bootstrap (retired alias)" 0
 
 AGENT_STAGE_ROOT="$(mktemp -d)"
-trap 'rm -rf "${AGENT_STAGE_ROOT}"' EXIT
+AGENTS_TMP=""
+trap 'rm -rf "${AGENT_STAGE_ROOT}"; [ -z "${AGENTS_TMP}" ] || rm -f "${AGENTS_TMP}"' EXIT
 while IFS= read -r AGENT_NAME; do
   AGENT_SOURCE="${AGENT_STAGE_ROOT}/${AGENT_NAME}"
   mkdir -p "${AGENT_SOURCE}"
@@ -118,12 +119,20 @@ if [ -f "${AGENTS_MD}" ] && grep -qF "${START}" "${AGENTS_MD}"; then
   # deleted -- a worse failure than a blank line accumulating. Give the codex
   # side the same ownership proof and this becomes safe; until then the block
   # goes and nothing else does.
+  # `${AGENTS_MD}.tmp` is a name anyone with write access to the config dir can
+  # pre-create as a symlink, and both the rewrite and the rename would then
+  # follow it: the awk output lands wherever it points, and the symlink itself
+  # is published as AGENTS.md. mktemp picks a name nobody can predict and
+  # creates it exclusively; keeping it in the same directory keeps the rename
+  # on one filesystem, the way the Claude side already does it.
+  AGENTS_TMP="$(mktemp "${CODEX_DIR}/.luciazero-agents-md.XXXXXX")"
   awk -v s="${START}" -v e="${END}" '
     $0==s {inblock=1; next}
     $0==e {inblock=0; next}
     !inblock {print}
-  ' "${AGENTS_MD}" > "${AGENTS_MD}.tmp"
-  mv "${AGENTS_MD}.tmp" "${AGENTS_MD}"
+  ' "${AGENTS_MD}" > "${AGENTS_TMP}"
+  mv "${AGENTS_TMP}" "${AGENTS_MD}"
+  AGENTS_TMP=""
   [ -s "${AGENTS_MD}" ] || rm -f "${AGENTS_MD}"
   echo "  ok  removed doctrine block (backup: $(basename "${BACKUP}"))"
 else

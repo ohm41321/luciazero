@@ -412,6 +412,38 @@ queued-without-proxy is observable without claiming the recipient read it;
 normal/pull-only sessions remain supported. Session-control adapter work stays
 under M9 and requires verified provider capabilities and ownership boundaries.
 
+### R21 — Metrics rotation writes through a predictable temporary name [Confirmed, P2]
+
+Source: `claude/hooks/luciazero-verify.sh:326`.
+The metrics log rotation writes `path + ".tmp"` and then `os.replace`s it over
+the log. It is the same class as R11, one directory further in: anyone able to
+create that name in the state directory receives the rotated content and hands
+back whatever they point at. The exposure is smaller — the state directory is
+the user's own and the content is telemetry, not their config file — so this is
+P2, but the fix is the same `mkstemp` in the same directory.
+Acceptance: a symlink pre-created at the rotation name is not followed, and the
+sentinel it points at is unchanged.
+
+### R22 — A test pins CPython's old JSON recursion behavior [Confirmed, P1]
+
+Source: `agentd/tests/test_mcp.py:203-205`.
+`test_pathological_json_is_a_parse_error_not_a_dropped_connection` feeds 20000
+nested brackets and asserts `-32700` (parse error). Until CPython 3.14.7 that
+input raised inside `json.loads`; 3.14.7 parses it, so the daemon correctly
+answers `-32600` (invalid request) — valid JSON that is not a JSON-RPC request
+— and the assertion fails. The behavior under test is the daemon's, but the
+input's classification belongs to the interpreter, so the test pinned something
+it does not own. Confirmed on 2026-09-08 after homebrew relinked python3 to
+3.14.7 at 16:25; the same suite was green earlier the same afternoon.
+
+This is P1 for a different reason than the rest: while `./test.sh` is red,
+nothing below it can be proven by the full suite.
+
+Fix: assert what the daemon owns — status 400 and a JSON-RPC error object
+rather than a dropped connection — and keep a `-32700` case whose input no
+interpreter can parse. Acceptance: green on 3.14.7 and on an interpreter that
+still raises; a dropped connection still fails the test.
+
 ## Delivery sequence
 
 The owner reviewed this order on 2026-09-08 and rejected accepting the P1
@@ -420,6 +452,9 @@ and R15 makes a still-valid credential unusable. They are fixed, not accepted.
 The proof tool is repaired first, because every fix below is supposed to be
 proven with it.
 
+0. R22, whenever it is red: the full suite is the proof for everything below
+   it. Added on 2026-09-08 after the interpreter upgrade, not part of the
+   owner's 2026-09-08 ordering — where it belongs is theirs to say.
 1. R01: repair the proof tool. The fix must go past "current tree green, parent
    tree red" — targeted verification plus a failure-fingerprint check, or a
    parent-only dependency failure still reads as regression proof.

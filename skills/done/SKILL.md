@@ -25,8 +25,9 @@ Re-read the final diff as a hostile reviewer. Check:
 - **Test honesty**: would changed tests fail if implementation is reverted?
 
 When applicable run
-`<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"`. Weakened checks are
-findings. Fix findings and repeat full verify.
+`<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"`, preferring a command
+aimed at the changed tests. Exit 2 is UNASSESSABLE: report it as no proof, not
+as a pass. Weakened checks are findings. Fix findings and repeat full verify.
 
 ## 3. Risk-routed independent review
 

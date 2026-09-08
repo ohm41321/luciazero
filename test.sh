@@ -2074,6 +2074,8 @@ mkdir -p "${RPX}/bites/tests"
   git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
 )
 cp -R "${RPX}/bites" "${RPX}/vacuous"
+cp -R "${RPX}/bites" "${RPX}/nocmd"
+cp -R "${RPX}/bites" "${RPX}/bothred"
 # (i) working-tree fix + a new test that bites -> probe exits 0
 (
   cd "${RPX}/bites"
@@ -2131,6 +2133,76 @@ mkdir -p "${RPX}/root-script"
 )
 RC=0; OUT="$(cd "${RPX}/root-script" && "${RP}" './test.sh')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe ignored root test.sh: ${OUT}"; }
+# (vi) a verify command that is not installed also fails on the old tree, for a
+# reason that has nothing to do with the change -> UNASSESSABLE, never PASS
+(
+  cd "${RPX}/nocmd"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/nocmd" && "${RP}" 'luciazero-not-a-real-command tests/test_calc.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a missing command (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'exit 127' || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
+# (vii) the old tree cannot import a module the change adds — a red run that
+# proves the file is new, not that the test asserts anything -> UNASSESSABLE
+mkdir -p "${RPX}/newmod/tests"
+(
+  cd "${RPX}/newmod"
+  git init -q .
+  printf 'print("base")\n' > main.py
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm base
+  printf 'def twice(n):\n    return n * 2\n' > helper.py
+  printf 'import helper\nassert helper.twice(2) == 4\nprint("ok")\n' > tests/test_helper.py
+)
+RC=0; OUT="$(cd "${RPX}/newmod" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_helper.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a parent-only import failure (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
+# (viii) a test that is red on the old code AND on the current code proves
+# nothing about the change -> UNASSESSABLE
+(
+  cd "${RPX}/bothred"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 5\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/bothred" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} when current code fails too (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'also fails on the current code' \
+  || { rm -rf "${RPX}"; fail "current-code control verdict wrong: ${OUT}"; }
+# (ix) a whole-suite verify whose failure belongs to an unrelated broken test
+# is not attributable to the changed tests -> UNASSESSABLE
+mkdir -p "${RPX}/unrelated/tests"
+(
+  cd "${RPX}/unrelated"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  printf 'assert False, "unrelated breakage"\n' > tests/test_broken.py
+  printf '#!/bin/sh\nfor f in tests/*.py; do PYTHONPATH=. python3 "$f" || exit 1; done\n' > run-all.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug and unrelated breakage'
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/unrelated" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an unrelated failure (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'cannot be attributed' \
+  || { rm -rf "${RPX}"; fail "attribution verdict wrong: ${OUT}"; }
+# (x) an untargeted suite still passes when the failure output names the
+# changed test, and says so
+mkdir -p "${RPX}/suite/tests"
+(
+  cd "${RPX}/suite"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  printf '#!/bin/sh\nfor f in tests/*.py; do PYTHONPATH=. python3 "$f" || exit 1; done\n' > run-all.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/suite" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an untargeted but attributable suite: ${OUT}"; }
+echo "${OUT}" | grep -q 'not targeted' || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
 rm -rf "${RPX}"
 echo "ok  revert-probe bites/vacuous/unassessable"
 

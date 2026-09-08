@@ -78,6 +78,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   2026-09-02 campaign runs four tasks the 2026-08-11 campaigns never had and
   the rows are not like-for-like.
 
+### Fixed
+
+- `revert-probe.sh` no longer reads any red old-code run as regression proof.
+  A missing command, a module the change adds, a denied execution or an
+  unrelated broken test all turn the old tree red while saying nothing about
+  the change, and all four used to print `PASS`. A red run now has to be a
+  test verdict rather than an infrastructure failure, has to be attributable
+  to the changed tests, and the same command has to pass against the current
+  state before the probe calls it proof; anything else is `UNASSESSABLE`
+  (exit 2) with the reason.
+
 ## [2.4.3] - 2026-08-24
 
 ### Changed

@@ -200,12 +200,26 @@ class ErrorShapes(ServerCase):
         self.assertTrue(result["isError"])
         self.assertIn("NotFound", result["content"][0]["text"])
 
-    def test_pathological_json_is_a_parse_error_not_a_dropped_connection(self) -> None:
-        status, _, body = self.client.raw(("[" * 20000 + "]" * 20000).encode())
+    def test_pathological_json_is_answered_with_its_own_error_not_dropped(self) -> None:
+        """Nesting that parses is an invalid request; syntax that does not
+        parse is a parse error. Neither classification may depend on how deep
+        the interpreter of the day happens to go: CPython raised RecursionError
+        on 20000 levels until 3.14.7 and parses them now, so a test that pins
+        a code to that depth is testing CPython, not the daemon."""
+        status, _, body = self.client.raw(("[" * 200 + "]" * 200).encode())
+        answer = json.loads(body)
+        self.assertEqual((status, answer["jsonrpc"], answer["error"]["code"]), (400, "2.0", -32600))
+        # malformed syntax stays a parse error whichever exception the parser
+        # reaches for -- JSONDecodeError on 3.14, RecursionError on 3.10 for
+        # this same input, UnicodeDecodeError for the bytes below
+        status, _, body = self.client.raw(("[" * 20000).encode())
         self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32700))
-        status, _, body = self.client.raw(('{"jsonrpc":"2.0","id":' + "9" * 5000 + ',"method":"ping"}').encode())
-        self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body)["error"]["code"], -32700)
+        status, _, body = self.client.raw(b'{"jsonrpc":"2.0",\xff}')
+        self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32700))
+        # and the daemon is still serving: the failure this was written for
+        # dropped the connection instead of answering
+        self.client.initialize()
+        self.assertEqual(self.client.rpc("ping", {})[0], 200)
 
     def test_early_errors_close_the_connection(self) -> None:
         # Review finding: an unread body on a keep-alive connection was parsed

@@ -439,10 +439,13 @@ it does not own. Confirmed on 2026-09-08 after homebrew relinked python3 to
 This is P1 for a different reason than the rest: while `./test.sh` is red,
 nothing below it can be proven by the full suite.
 
-Fix: assert what the daemon owns — status 400 and a JSON-RPC error object
-rather than a dropped connection — and keep a `-32700` case whose input no
-interpreter can parse. Acceptance: green on 3.14.7 and on an interpreter that
-still raises; a dropped connection still fails the test.
+Closed 2026-09-08. The test now asserts what the daemon owns and nothing else:
+valid JSON whose root is not a request object is an invalid request (`-32600`)
+at a depth every supported interpreter parses, malformed syntax is a parse
+error (`-32700`) whichever exception the parser reaches for, and the daemon is
+still serving afterwards. The 20000-level input stays, as malformed syntax,
+where its classification no longer depends on the interpreter. Verified on
+3.14.7 and 3.10.20.
 
 ## Delivery sequence
 
@@ -452,9 +455,8 @@ and R15 makes a still-valid credential unusable. They are fixed, not accepted.
 The proof tool is repaired first, because every fix below is supposed to be
 proven with it.
 
-0. R22, whenever it is red: the full suite is the proof for everything below
-   it. Added on 2026-09-08 after the interpreter upgrade, not part of the
-   owner's 2026-09-08 ordering — where it belongs is theirs to say.
+0. R22, done first on 2026-09-08 at the owner's direction: the full suite is
+   the proof for everything below it, and it was red.
 1. R01: repair the proof tool. The fix must go past "current tree green, parent
    tree red" — targeted verification plus a failure-fingerprint check, or a
    parent-only dependency failure still reads as regression proof.

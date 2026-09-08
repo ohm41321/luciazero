@@ -468,7 +468,9 @@ def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
 
     The watcher comes first on purpose: open it before the two sessions and
     the conversation is visible from its first message rather than from
-    whenever somebody thought to look.
+    whenever somebody thought to look. It is still the optional one -- the
+    conversation needs one window per agent and nothing else -- and its label
+    says so, because a reader who counts three commands opens three terminals.
 
     ``which`` is passed on to the launcher helpers: which of the two forms a
     reader is handed depends on whether `./install.sh` has run, so a caller
@@ -477,7 +479,7 @@ def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     where = f" --state-dir {state_dir}" if state_dir is not None else ""
     known = {str(a["id"]): a for a in agents}
     run = launcher(which)
-    plan = [("terminal 1 - the conversation",
+    plan = [("optional - watch the conversation",
              f"{run} watch --between {first} {second}{where}")]
     for agent_id in (first, second):
         agent = known.get(agent_id, {})

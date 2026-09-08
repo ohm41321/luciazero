@@ -115,6 +115,18 @@ Acceptance: examples resolve with actual CLI help/parsing; a two-session nudge
 flow and a pull flow have distinct explanations; no prose infers human wait
 from send/ack timestamps. Real-provider evidence remains distinct from mocks.
 
+Closed 2026-09-08. The skill now opens one window per agent with `lucia claude`
+and `lucia codex`, keeps the watcher as the optional third, and explains the
+knock and `--no-nudge` as two different flows. The send-to-acknowledgement gap
+is named delivery latency and kept apart from completion latency and from
+user-attributed blocking cost, which the skill says only the user can supply.
+`chat` printed the same two false sentences and prints the corrected ones now,
+and `conversation_plan` labels the watcher optional rather than "terminal 1".
+The claims are held by `agentd/tests/test_docs.py`: every command the skill
+quotes is parsed by the real CLI parser (extracted as `build_parser`), every
+flag it names has to exist, and the cooldown and cap it quotes come from the
+constants in `nudge`.
+
 ### R03 — Installed skill command discovery needs a portable contract [Investigate]
 
 Sources: `skills/discipline-report/SKILL.md:12`,
@@ -468,7 +480,9 @@ proven with it.
 5. R15: reproduce the read-only failure in a focused test first, then narrow
    the handling to the SQLite write alone.
 6. R02/R03/R12b/R13/R14: stale Bus guidance, portable installation, whitespace
-   round-trip, safe config updates, shell quoting.
+   round-trip, safe config updates, shell quoting. R02 was taken out of order
+   on 2026-09-08: it is public usage guidance, and the release gate is open on
+   items a user would follow it through.
 7. R04–R08 and R19: lifecycle, approval, reviewer, relay, testimony, and
    gate/release proposals.
 8. R16–R18, R20, R09 and remaining catalog items: evaluate behavior before

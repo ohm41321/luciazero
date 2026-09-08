@@ -80,6 +80,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `/lucia-chat` describes the bus it ships with. It asked for three terminals
+  and said nothing wakes an idle session, both true before the knock existed:
+  it now opens one window per agent with `lucia claude` and `lucia codex`,
+  keeps the watcher as an optional third, and explains the knock and
+  `--no-nudge` as the two flows they are. The send-to-acknowledgement gap is
+  named delivery latency and kept apart from completion latency and from
+  user-attributed blocking cost, which only the user can supply. `chat` printed
+  the same two sentences and no longer does. The commands the skill quotes are
+  now parsed by the CLI itself in the test suite, so a renamed flag fails here
+  rather than in a user's terminal.
 - `CLAUDE.md` and `AGENTS.md` keep the mode they had. Both uninstallers publish
   their rewrite by renaming a `mktemp` file over the original, and mktemp
   creates it 0600, so a `0640` instruction file came back `0600`. The backup is

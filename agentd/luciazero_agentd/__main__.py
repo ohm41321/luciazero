@@ -524,13 +524,18 @@ def cmd_chat(args: argparse.Namespace) -> int:
         print("from you. A dispatched agent cannot also hold a human terminal: the turn opens its own session.")
         return 0
     plan = watch.conversation_plan(agents, str(first), str(second), state_dir=where)
-    print(f"\n{clean(first)} and {clean(second)}, in three terminals:\n")
+    print(f"\n{clean(first)} and {clean(second)}, one window each, and a third only if you want to watch:\n")
     for label, command in plan:
         print(f"  {label}")
         print(f"    {command}\n")
     print(f"Then in {clean(first)}'s session: /lucia-bus (Codex: $lucia-bus), and send {clean(second)} a message.")
-    print("Terminal 1 shows every message either of them sends, and when the other one opens it.")
-    print("Neither session is woken by this: each agent reads its inbox when its own turn starts.")
+    print("The watcher shows every message either of them sends, and when the other one opens it.")
+    # `run` holds the provider's terminal, so a delivery that lands while the
+    # session is idle is typed at its prompt. Saying otherwise sent users
+    # looking for a person to start every turn by hand.
+    print(f"A session started this way is knocked on -- `{nudge.TEXT}` typed at its prompt -- when a")
+    print("delivery arrives while it is idle. Add --no-nudge to a window to leave it alone; it then reads")
+    print("its inbox when its own turn next starts, which somebody has to start.")
     print(f"To have them answer each other without you: {watch.launcher()} chat "
           f"--between {clean(first)} {clean(second)} --auto")
     return 0
@@ -1297,13 +1302,14 @@ def split_command(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv, []
 
 
-def main(argv: Optional[list[str]] = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    argv, provider_command = split_command(argv)
-    # Popped, not read: `run` hands its environment to the provider it
-    # starts, and the name this was invoked under is this process's business.
-    global FRONT_NAME
-    FRONT_NAME = os.environ.pop(ARGV0_ENV, None) or FRONT_NAME
+def build_parser() -> argparse.ArgumentParser:
+    """Every command this program has, and nothing that runs one.
+
+    Separate from `main` so a test can ask the real parser whether a command
+    line resolves -- the commands in the skills are quoted prose until
+    something parses them, and a flag renamed here is a documented command
+    that no longer runs.
+    """
     parser = argparse.ArgumentParser(prog=FRONT_NAME, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     serve = sub.add_parser("serve", help="run the daemon in the foreground")
@@ -1483,7 +1489,17 @@ def main(argv: Optional[list[str]] = None) -> int:
                       help="print the managed-dispatch setup instead: turns started by the dispatcher, which spends quota")
     chat.add_argument("--state-dir", default=None)
     chat.set_defaults(func=cmd_chat)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    argv, provider_command = split_command(argv)
+    # Popped, not read: `run` hands its environment to the provider it
+    # starts, and the name this was invoked under is this process's business.
+    global FRONT_NAME
+    FRONT_NAME = os.environ.pop(ARGV0_ENV, None) or FRONT_NAME
+    args = build_parser().parse_args(argv)
     # argparse's own subcommand dest is also "command", so the tail is handed
     # only to the parsers that declared they take one.
     if provider_command and getattr(args, "takes_provider_command", False):

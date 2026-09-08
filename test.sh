@@ -3237,6 +3237,53 @@ CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
 [ -f "${SM}/outside/luciazero-bootstrap/SKILL.md" ] \
   || { rm -rf "${SM}"; fail "uninstall followed a symlinked skill parent during alias migration"; }
 rm -rf "${SM}"
+
+# A refusal has to come out BEFORE snapshot cleanup, not after it: a symlink
+# anywhere between the managed root and a snapshot would otherwise redirect
+# the cleanup outside the config dir. Sentinels below live outside it.
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills/done" "${SM}/.luciazero-managed" "${SM}/outside/done"
+printf 'x\n' > "${SM}/skills/done/SKILL.md"
+printf 'sentinel\n' > "${SM}/outside/done/keepme"
+ln -s "${SM}/outside" "${SM}/.luciazero-managed/skills"
+OUT="$(CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" 2>&1)" || true
+[ -f "${SM}/outside/done/keepme" ] \
+  || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked snapshot parent"; }
+echo "${OUT}" | grep -q 'symlinked parent' \
+  || { rm -rf "${SM}"; fail "uninstall did not report the symlinked snapshot parent: ${OUT}"; }
+rm -rf "${SM}"
+
+# the same redirection one level up: a symlinked managed root
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills/done" "${SM}/outside/skills/done"
+printf 'x\n' > "${SM}/skills/done/SKILL.md"
+printf 'sentinel\n' > "${SM}/outside/skills/done/keepme"
+ln -s "${SM}/outside" "${SM}/.luciazero-managed"
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
+[ -f "${SM}/outside/skills/done/keepme" ] \
+  || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked managed root"; }
+rm -rf "${SM}"
+
+# managed files carry the same policy as managed trees
+SM="$(mktemp -d)"
+mkdir -p "${SM}/.luciazero-managed" "${SM}/outside-agents"
+printf 'sentinel\n' > "${SM}/outside-agents/reviewer.md"
+ln -s "${SM}/outside-agents" "${SM}/.luciazero-managed/agents"
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
+[ -f "${SM}/outside-agents/reviewer.md" ] \
+  || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked agent-snapshot parent"; }
+rm -rf "${SM}"
+
+# and the codex uninstaller shares the policy
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills/done" "${SM}/.luciazero-managed" "${SM}/outside/done"
+printf 'x\n' > "${SM}/skills/done/SKILL.md"
+printf 'sentinel\n' > "${SM}/outside/done/keepme"
+ln -s "${SM}/outside" "${SM}/.luciazero-managed/skills"
+CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 || true
+[ -f "${SM}/outside/done/keepme" ] \
+  || { rm -rf "${SM}"; fail "codex uninstall deleted through a symlinked snapshot parent"; }
+rm -rf "${SM}"
 echo "ok  retired alias ownership + symlink safety"
 
 echo

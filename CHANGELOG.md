@@ -80,6 +80,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `uninstall.sh` and `uninstall-codex.sh` refuse a symlinked ancestor before
+  they clean anything, instead of printing the refusal and then deleting the
+  ownership snapshot anyway. A symlink at `.luciazero-managed/skills`, or at
+  the managed root itself, previously redirected that cleanup outside the
+  config directory. Every directory between the config dir and the path being
+  deleted must now be a real one — the config dir itself may still be a
+  symlink — and managed files carry the same policy as managed trees.
 - `revert-probe.sh` no longer reads any red old-code run as regression proof.
   A missing command, a module the change adds, a denied execution or an
   unrelated broken test all turn the old tree red while saying nothing about

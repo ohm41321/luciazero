@@ -32,16 +32,32 @@ same_tree() {
     && diff -qr "$1" "$2" >/dev/null 2>&1
 }
 
-tree_parents_safe() {
-  [ ! -L "$(dirname "$1")" ] && [ ! -L "$(dirname "$2")" ]
+# A symlink anywhere between the config dir and a path we are about to delete
+# can redirect that delete outside the config dir, so every directory on the
+# way down has to be a real one. The config dir itself may be a symlink: where
+# it lives is the user's own choice.
+parents_safe() {
+  PS_ROOT="${CODEX_DIR%/}"
+  PS_DIR="$(dirname "$1")"
+  while [ "${PS_DIR}" != "${PS_ROOT}" ] && [ "${PS_DIR}" != "/" ] && [ "${PS_DIR}" != "." ]; do
+    [ ! -L "${PS_DIR}" ] || return 1
+    PS_NEXT="$(dirname "${PS_DIR}")"
+    [ "${PS_NEXT}" != "${PS_DIR}" ] || break
+    PS_DIR="${PS_NEXT}"
+  done
+  return 0
 }
 
 remove_managed_tree() {
   RT_DST="$1"; RT_SNAPSHOT="$2"; RT_SHIPPED="$3"; RT_LABEL="$4"; RT_ALLOW_SHIPPED="${5:-1}"
+  # ancestry first, and return: refusing further down would still leave the
+  # snapshot cleanup below to delete whatever the symlink points at
+  if ! parents_safe "${RT_DST}" || ! parents_safe "${RT_SNAPSHOT}"; then
+    echo "  !!  ${RT_LABEL} has a symlinked parent; left untouched" >&2
+    return 0
+  fi
   if [ ! -e "${RT_DST}" ] && [ ! -L "${RT_DST}" ]; then
     echo "  ok  ${RT_LABEL} (already absent)"
-  elif ! tree_parents_safe "${RT_DST}" "${RT_SNAPSHOT}"; then
-    echo "  !!  ${RT_LABEL} has a symlinked parent; left untouched" >&2
   elif same_tree "${RT_DST}" "${RT_SNAPSHOT}" \
     || { [ "${RT_ALLOW_SHIPPED}" = 1 ] && [ ! -e "${RT_SNAPSHOT}" ] && same_tree "${RT_DST}" "${RT_SHIPPED}"; }; then
     rm -rf "${RT_DST}"

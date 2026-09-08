@@ -59,9 +59,10 @@ recorded on 2026-09-08. The one open item is behavioral/enforced proof that a
 claimed task cannot pass `/done` without a published result or blocked outcome.
 
 The repository-wide review below also found new P1 defects. They are not
-silently inserted into the historical five-item release gate. Release review
-must either fix them or record an explicit owner acceptance; otherwise calling
-the release ready would ignore newly verified data/authentication risks.
+silently inserted into the historical five-item release gate. On 2026-09-08 the
+owner decided they are fixed rather than accepted, because R10, R11 and R12a
+touch the user's own files and R15 disables a credential that is still valid.
+The delivery sequence at the end of this document carries that order.
 
 ## P1: proof and runtime contract correctness
 
@@ -78,10 +79,23 @@ evidence. A nonzero old-code run alone is insufficient to claim causality.
 Explain the base revision: the helper defaults to HEAD for uncommitted fixes,
 but a committed fix needs an explicit pre-fix base.
 
+Running the current tree green and the parent tree red is not enough on its
+own. A dependency or import failure that exists only in the parent tree still
+produces a red parent and a green current tree, so the probe would still print
+regression proof for a change that proves nothing. The fix therefore needs two
+further properties: the verification command must be targeted at the tests the
+change adds or repairs rather than the whole suite, and the probe must compare
+the parent run's failure fingerprint — the failing test identities and the
+failure kind — against what the regression is expected to look like. A parent
+run that fails for a different reason than the regression is unassessable, not
+proof.
+
 Acceptance: a real target regression passes the probe; missing command,
 missing dependency, denied execution, and unrelated failing tests never count
-as regression proof; current-code failure cannot yield success. Tests preserve
-the caller's dirty/untracked files and cleanup the isolated worktree.
+as regression proof; a parent run whose failure fingerprint does not match the
+expected regression is reported as unassessable rather than as proof;
+current-code failure cannot yield success. Tests preserve the caller's
+dirty/untracked files and cleanup the isolated worktree.
 
 ### R02 — Chat skill describes pre-nudge behavior and misattributes wait [Confirmed]
 
@@ -266,17 +280,36 @@ Fix: validated same-directory mktemp, cleanup, and conservative replacement.
 Acceptance: a decoy symlink and its target survive; failed writes preserve the
 original AGENTS.md. Source review only; no live user files were exercised.
 
-### R12 — Malformed Codex markers and trailing user whitespace [Confirmed, P1/P2]
+### R12a — Malformed Codex markers rewrite the file anyway [Confirmed, P1]
 
 Sources: `install-codex.sh:100-115`, `uninstall-codex.sh:95-110`.
 An opening marker without a closing marker suppresses trailing text through
-EOF. First install also trims trailing blank lines even when no block existed.
-Backups aid recovery but do not make the rewrite correct.
+EOF. Nested or duplicated markers have no defined meaning either, and the
+rewrite proceeds regardless. Backups aid recovery but do not make the rewrite
+correct: the user's `AGENTS.md` is their own file, and losing the tail of it is
+data loss.
 
-Fix: validate marker structure before mutation; preserve ambiguous files;
-introduce explicit separator provenance if exact roundtrip is promised.
-Acceptance: malformed, nested, and ambiguous markers leave originals intact;
-zero/one/multiple trailing blank lines and rearranged user content survive.
+Fix: validate marker structure before any mutation, and refuse on anything that
+is not exactly one well-formed block — malformed, nested, or missing a closing
+marker. A refusal must leave the file byte-identical, not merely recoverable
+from a backup, and must say which marker structure it found.
+Acceptance: for each of malformed, nested, and incomplete-marker inputs, the
+command exits nonzero and the file's bytes are unchanged (compare hashes, not
+just content read back through the same rewriter); the well-formed case still
+installs and uninstalls as before.
+
+### R12b — Trailing whitespace round-trip and separator provenance [Confirmed, P2]
+
+Source: `install-codex.sh:100-115`.
+First install trims trailing blank lines even when no managed block existed, so
+an install/uninstall cycle does not return the file to its original bytes.
+
+Fix: preserve zero, one, and multiple trailing blank lines across a full cycle,
+and introduce explicit separator provenance if exact round-trip is promised
+rather than inferred.
+Acceptance: install then uninstall restores the original bytes for zero, one,
+and multiple trailing blank lines, and for user content rearranged around the
+managed block.
 
 ### R13 — Generated hook commands need shell quoting [Confirmed, P2]
 
@@ -381,14 +414,28 @@ under M9 and requires verified provider capabilities and ownership boundaries.
 
 ## Delivery sequence
 
-1. R10–R12 and R15: triage data/authentication defects before release;
-   prove each in isolated fixtures and fix separately.
-2. R01 and R02: fix incorrect proof and stale Bus guidance in separate commits.
-3. R03/R13/R14/R16/R17: test portable installation, safe config updates,
-   renewal ordering, and write-lock duration.
-4. R04–R07: align lifecycle, approval, reviewer, and relay contracts.
-5. R08/R19: preserve testimony and propose gate/release changes explicitly.
-6. R09/R18/R20 and remaining catalog items: evaluate behavior before expanding prompts.
+The owner reviewed this order on 2026-09-08 and rejected accepting the P1
+findings as known risks: R10, R11 and R12a touch the user's own files directly,
+and R15 makes a still-valid credential unusable. They are fixed, not accepted.
+The proof tool is repaired first, because every fix below is supposed to be
+proven with it.
+
+1. R01: repair the proof tool. The fix must go past "current tree green, parent
+   tree red" — targeted verification plus a failure-fingerprint check, or a
+   parent-only dependency failure still reads as regression proof.
+2. R10: the refusal must return before snapshot cleanup, in every path.
+3. R11: same-directory `mktemp` for the Codex uninstall rewrite. R10 and R11
+   are separate commits; they are separate defects in separate scripts.
+4. R12a: malformed, nested, and incomplete markers refuse, leaving the file
+   byte-identical.
+5. R15: reproduce the read-only failure in a focused test first, then narrow
+   the handling to the SQLite write alone.
+6. R02/R03/R12b/R13/R14: stale Bus guidance, portable installation, whitespace
+   round-trip, safe config updates, shell quoting.
+7. R04–R08 and R19: lifecycle, approval, reviewer, relay, testimony, and
+   gate/release proposals.
+8. R16–R18, R20, R09 and remaining catalog items: evaluate behavior before
+   expanding prompts.
 
 Implementation proposals here do not authorize bumping versions, tagging,
 publishing, changing existing release gates, or deploying to production.

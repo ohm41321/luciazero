@@ -1277,26 +1277,51 @@ milestone rather than weakening the gate.
 
 Items marked (M6+) apply only once managed dispatch exists.
 
-- [ ] No task can be claimed by two workers at the same time.
-- [ ] No provider session can have two active writers. (M6+)
-- [ ] Replaying any state-changing request is idempotent.
-- [ ] Daemon restart does not lose acknowledged messages or completed tasks.
-- [ ] A failed dispatch is retried only within its declared policy. (M6+)
+- [x] No task can be claimed by two workers at the same time. (`test_store.py::TaskTests::test_concurrent_claimers_produce_exactly_one_winner`.)
+- [x] No provider session can have two active writers. (M6+;
+  `test_dispatch.py::DispatcherTests::test_a_second_dispatcher_finds_the_session_busy`
+  and lease-expiry/recovery cases.)
+- [x] Replaying state-creating requests with an idempotency key does not
+  duplicate their effects. (`test_store.py::IdempotencyTests`, plus the
+  after-commit replays in `test_crash.py`.) The narrower wording names what the
+  API actually promises; guarded transitions reject stale replays instead.
+- [x] Daemon restart does not lose acknowledged messages or completed tasks.
+  (`test_crash.py::CrashTransitions`, including delivery ack/complete and task
+  create/claim/complete before and after commit.)
+- [x] A failed dispatch is retried only within its declared policy. (M6+;
+  `test_dispatch.py::DispatcherTests::test_failing_turns_spend_the_attempts_and_stop_at_the_dead_letter`,
+  permanent-failure and budget-during-retry cases, plus crash attempt counting.)
 - [x] Infinite agent-to-agent loops terminate at a budget, TTL, or hop limit.
   (M5, 2026-09-04: 32-hop cap, 24-hour conversation TTL, per-task budgets.)
-- [ ] A stable agent can rotate to a new provider session without losing its
-  open tasks or address.
-- [ ] Concurrent writers never share a worktree.
-- [ ] Agent messages cannot authorize sensitive actions, and no MCP tool can
-  create an approval.
-- [ ] Logs and artifacts do not expose secrets or unbounded transcripts.
-- [ ] Fake-provider integration tests run offline in CI.
-- [ ] Real-provider tests are opt-in and disclose quota/cost requirements.
-- [ ] The default `./test.sh` passes without provider binaries, and `--full`
-  never runs a live provider gate.
+- [x] A stable agent can rotate to a new provider session without losing its
+  open tasks or address. (M4 outcome flow: the reviewer's second MCP session
+  claims the verify task under the same agent ID; the approved live run proves
+  a real second session. The stronger managed-dispatch rotation remains M7.)
+- [x] Concurrent writers never share a worktree.
+  (`test_security.py::WorktreeIsolation::test_concurrent_writers_never_share_a_worktree`.)
+- [x] Agent messages cannot authorize sensitive actions, and no MCP tool can
+  create an approval. (`test_security.py::ApprovalProvenance::test_no_mcp_tool_can_create_an_approval`,
+  forwarded-nonce scrubbing, bound claimant checks, and claim-channel tests.)
+- [x] Logs and artifacts do not expose known secret shapes or unbounded
+  transcripts. (`test_security.py` secret-bearing artifact/content cases;
+  `test_dispatch.py` capped/private/scrubbed run-log and split-secret cases.)
+- [x] Fake-provider integration tests run offline in CI. (`.github/workflows/ci.yml`
+  runs `./test.sh`; its M4-M6 tiers use fake/offline providers.)
+- [x] Real-provider tests are opt-in and disclose quota/cost requirements.
+  (`./test.sh --agent-bus-live --spend-quota`; the live tier refuses without
+  the flag and is excluded from full/default.)
+- [x] The default `./test.sh` passes without provider binaries, and `--full`
+  never runs a live provider gate. (2026-09-08: `./test.sh` returned
+  `PASS  all checks green` with PATH restricted to an isolated directory
+  containing only explicit Python/Node/npm links plus system directories;
+  neither `claude` nor `codex` was present. `test.sh` dispatch keeps the live
+  tier behind `--agent-bus-live --spend-quota`.)
 - [ ] A claimed bus task cannot pass `/done` without a published result or
-  blocked outcome.
-- [ ] The full Luciazero verification command passes at closeout.
+  blocked outcome. `/done` states the rule, but no behavioral/enforcement test
+  proves the stronger “cannot pass” wording yet.
+- [x] The full Luciazero verification command passes at closeout. (`./test.sh`
+  on 2026-09-08: `PASS  all checks green`; local shellcheck was unavailable,
+  while CI is configured to require it.)
 
 ## Open decisions
 

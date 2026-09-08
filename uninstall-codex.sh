@@ -133,7 +133,7 @@ if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_bloc
   echo "      expected exactly one '${START}' ... '${END}' pair, on their own lines" >&2
 elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   BACKUP="$(bakpath "${AGENTS_MD}")"
-  cp "${AGENTS_MD}" "${BACKUP}"
+  cp -p "${AGENTS_MD}" "${BACKUP}"
   # `install-codex.sh` writes a blank separator before its marker block, and
   # removing only the block leaves that separator behind, so a file the user
   # wrote grows one blank line per install-and-uninstall cycle. That is a
@@ -151,6 +151,10 @@ elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   # creates it exclusively; keeping it in the same directory keeps the rename
   # on one filesystem, the way the Claude side already does it.
   AGENTS_TMP="$(mktemp "${CODEX_DIR}/.luciazero-agents-md.XXXXXX")"
+  # mktemp makes its file 0600 and the rename publishes that file: copying the
+  # backup, which kept the original's mode, carries the mode onto it. The
+  # redirection below replaces the content and leaves the mode alone.
+  cp -p "${BACKUP}" "${AGENTS_TMP}"
   awk -v s="${START}" -v e="${END}" '
     $0==s {inblock=1; next}
     $0==e {inblock=0; next}

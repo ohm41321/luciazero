@@ -288,7 +288,7 @@ fi
 
 if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   BACKUP="$(bakpath "${GLOBAL_MD}")"
-  cp "${GLOBAL_MD}" "${BACKUP}"
+  cp -p "${GLOBAL_MD}" "${BACKUP}"
   # `install.sh` appends the import line to an existing CLAUDE.md as
   # `printf '\n%s\n'` — a blank separator and then the line — so removing only
   # the line leaves the separator behind and every install-and-uninstall cycle
@@ -313,6 +313,11 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   # than closing it.
   PROV="$(read_provenance)"
   MD_TMP="$(mktemp "${CLAUDE_DIR}/.luciazero-claude-md.XXXXXX")"
+  # mktemp makes its file 0600 and the rename below publishes that file, so
+  # without this a 0640 CLAUDE.md came back 0600. Copying the backup -- which
+  # kept the original's mode -- onto the temporary file carries the mode over;
+  # the redirection that follows replaces the content and leaves it.
+  cp -p "${BACKUP}" "${MD_TMP}"
   if [ "${PROV%% *}" = appended ] && [ -n "${PROV#appended }" ] \
      && [ "${PROV#appended }" = "$(sha_of "${BACKUP}")" ]; then
     awk -v want="${IMPORT_LINE}" '

@@ -3291,6 +3291,7 @@ for CASE in incomplete duplicate nested; do
     fi
     printf 'tail the user wrote\n'
   } > "${SM}/AGENTS.md"
+  chmod 640 "${SM}/AGENTS.md"
   cp "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected"
   CODEX_HOME="${SM}" "${ROOT}/install-codex.sh" >/dev/null 2>&1     && { rm -rf "${SM}"; fail "codex install accepted ${CASE} markers"; }
   cmp -s "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected" \
@@ -3302,6 +3303,8 @@ for CASE in incomplete duplicate nested; do
     || { rm -rf "${SM}"; fail "codex uninstall rewrote AGENTS.md with ${CASE} markers"; }
   echo "${OUT}" | grep -q 'markers' \
     || { rm -rf "${SM}"; fail "codex uninstall did not report the ${CASE} markers: ${OUT}"; }
+  [ "$(stat -c '%a' "${SM}/AGENTS.md" 2>/dev/null || stat -f '%Lp' "${SM}/AGENTS.md")" = 640 ] \
+    || { rm -rf "${SM}"; fail "a refused ${CASE} rewrite changed the AGENTS.md mode"; }
   rm -rf "${SM}"
 done
 
@@ -3309,6 +3312,7 @@ done
 SM="$(mktemp -d)"
 mkdir -p "${SM}/skills"
 printf '# user rules\n<!-- luciazero:start -->\ndoctrine\n<!-- luciazero:end -->\n' > "${SM}/AGENTS.md"
+chmod 640 "${SM}/AGENTS.md"
 printf 'sentinel\n' > "${SM}/outside.txt"
 ln -s "${SM}/outside.txt" "${SM}/AGENTS.md.tmp"
 CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 || true
@@ -3320,6 +3324,8 @@ grep -qx '# user rules' "${SM}/AGENTS.md" \
   || { rm -rf "${SM}"; fail "codex uninstall lost user content in AGENTS.md"; }
 ! grep -qF 'luciazero:start' "${SM}/AGENTS.md" \
   || { rm -rf "${SM}"; fail "codex uninstall left the marker block behind"; }
+[ "$(stat -c '%a' "${SM}/AGENTS.md" 2>/dev/null || stat -f '%Lp' "${SM}/AGENTS.md")" = 640 ] \
+  || { rm -rf "${SM}"; fail "the mktemp rewrite changed the AGENTS.md mode"; }
 rm -rf "${SM}"
 
 # and the codex uninstaller shares the policy
@@ -3333,6 +3339,68 @@ CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 || true
   || { rm -rf "${SM}"; fail "codex uninstall deleted through a symlinked snapshot parent"; }
 rm -rf "${SM}"
 echo "ok  retired alias ownership + symlink safety"
+
+# The user's own instruction files keep the mode they had. mktemp creates its
+# file 0600 and the rename publishes it, so a rewrite handed a 0640 CLAUDE.md
+# back as 0600 -- a change to the user's file that nobody asked for.
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
+SM="$(mktemp -d)"
+printf '# my own rules\n' > "${SM}/CLAUDE.md"
+chmod 640 "${SM}/CLAUDE.md"
+EXP="$(mktemp -d)"
+cp "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md"
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/install.sh" >/dev/null 2>&1
+[ "$(mode_of "${SM}/CLAUDE.md")" = 640 ] \
+  || { M="$(mode_of "${SM}/CLAUDE.md")"; rm -rf "${SM}" "${EXP}"; fail "install changed CLAUDE.md mode to ${M}"; }
+CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+[ "$(mode_of "${SM}/CLAUDE.md")" = 640 ] \
+  || { M="$(mode_of "${SM}/CLAUDE.md")"; rm -rf "${SM}" "${EXP}"; fail "uninstall changed CLAUDE.md mode to ${M}"; }
+cmp -s "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md" \
+  || { rm -rf "${SM}" "${EXP}"; fail "install then uninstall did not restore CLAUDE.md byte for byte"; }
+BK="$(find "${SM}" -maxdepth 1 -name 'CLAUDE.md.bak.*' -print -quit)"
+[ -n "${BK}" ] && [ "$(mode_of "${BK}")" = 640 ] \
+  || { rm -rf "${SM}" "${EXP}"; fail "the CLAUDE.md backup did not keep the file's mode"; }
+rm -rf "${SM}" "${EXP}"
+
+SM="$(mktemp -d)"
+mkdir -p "${SM}/skills"
+printf '# my codex rules\n' > "${SM}/AGENTS.md"
+chmod 640 "${SM}/AGENTS.md"
+CODEX_HOME="${SM}" "${ROOT}/install-codex.sh" >/dev/null 2>&1
+[ "$(mode_of "${SM}/AGENTS.md")" = 640 ] \
+  || { M="$(mode_of "${SM}/AGENTS.md")"; rm -rf "${SM}"; fail "codex install changed AGENTS.md mode to ${M}"; }
+CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1
+[ "$(mode_of "${SM}/AGENTS.md")" = 640 ] \
+  || { M="$(mode_of "${SM}/AGENTS.md")"; rm -rf "${SM}"; fail "codex uninstall changed AGENTS.md mode to ${M}"; }
+grep -qxF '# my codex rules' "${SM}/AGENTS.md" \
+  || { rm -rf "${SM}"; fail "codex install+uninstall lost the user's own line"; }
+BK="$(find "${SM}" -maxdepth 1 -name 'AGENTS.md.bak.*' -print -quit)"
+[ -n "${BK}" ] && [ "$(mode_of "${BK}")" = 640 ] \
+  || { rm -rf "${SM}"; fail "the AGENTS.md backup did not keep the file's mode"; }
+rm -rf "${SM}"
+
+# a rewrite that cannot be written leaves the file it was going to replace
+# exactly as it was: same bytes, same mode, no backup, nonzero exit
+SM="$(mktemp -d)"
+EXP="$(mktemp -d)"
+printf '# my own rules\n@luciazero.md\n' > "${SM}/CLAUDE.md"
+chmod 640 "${SM}/CLAUDE.md"
+cp "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md"
+chmod 555 "${SM}"
+ERR="$(CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" 2>&1 >/dev/null)" \
+  && { chmod 755 "${SM}"; rm -rf "${SM}" "${EXP}"; fail "uninstall reported success with a config dir it cannot write"; }
+chmod 755 "${SM}"
+echo "${ERR}" | grep -q 'CLAUDE.md' \
+  || { rm -rf "${SM}" "${EXP}"; fail "the failure did not come from the CLAUDE.md rewrite: ${ERR}"; }
+cmp -s "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md" \
+  || { rm -rf "${SM}" "${EXP}"; fail "a failed rewrite changed CLAUDE.md"; }
+[ "$(mode_of "${SM}/CLAUDE.md")" = 640 ] \
+  || { M="$(mode_of "${SM}/CLAUDE.md")"; rm -rf "${SM}" "${EXP}"; fail "a failed rewrite changed CLAUDE.md mode to ${M}"; }
+[ -z "$(find "${SM}" -maxdepth 1 -name 'CLAUDE.md.bak.*' -print -quit)" ] \
+  || { rm -rf "${SM}" "${EXP}"; fail "a failed rewrite left a backup behind"; }
+rm -rf "${SM}" "${EXP}"
+echo "ok  instruction files keep their mode across install, uninstall and failure"
 
 echo
 echo "PASS  all checks green"

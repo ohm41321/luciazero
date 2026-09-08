@@ -80,6 +80,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `CLAUDE.md` and `AGENTS.md` keep the mode they had. Both uninstallers publish
+  their rewrite by renaming a `mktemp` file over the original, and mktemp
+  creates it 0600, so a `0640` instruction file came back `0600`. The backup is
+  taken with `cp -p` and copied onto the temporary file before the rewrite is
+  written into it, which carries the original's mode through the rename. The
+  backups themselves keep the mode too.
 - A session's credential survives a database it cannot write. Binding renewal
   ran its `UPDATE` with no `sqlite3.Error` handling, so a read-only mount or a
   full disk turned a valid credential into a refused one mid-session. The

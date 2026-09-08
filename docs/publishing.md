@@ -216,14 +216,16 @@ should use. Two honest limits on what it has proved so far:
   the window against a concurrent editor; it does not close it, and no test
   covers a true race — what is tested is the stale-record path, which is the
   same guard reached deterministically.
-- **The codex side does not do any of this, deliberately.**
-  `uninstall-codex.sh` removes its marker block and leaves the blank separator
-  `install-codex.sh` wrote, so a cycle still costs one blank line in
-  `AGENTS.md`. Removing it would mean guessing, since there is no record on
-  that side, and a user who moves the block after installing would lose a
-  blank line of their own — the worse failure of the two. Giving the codex
-  side the same ownership proof is what would make it safe, and that is its
-  own piece of work. The distinction is not academic — a CLAUDE.md that already carries
+- **The codex side answers the same defect from the other end.**
+  `uninstall-codex.sh` removes its marker block and nothing else, and it can
+  afford to, because `install-codex.sh` no longer writes a separator above
+  that block: the blank line that spaces the doctrine lives inside the
+  markers, so the bytes the uninstall takes away are exactly the bytes the
+  install added. Removing a separator from the uninstall side would have meant
+  guessing, since there is no record there, and a user who moved the block
+  after installing would have lost a blank line of their own. Not writing one
+  needs no record and no guess — a moved block carries its own blank with it.
+  The distinction is not academic — a CLAUDE.md that already carries
   the import line makes `install.sh` leave the file alone entirely, so the
   blank line above it is the user's, and an uninstaller that assumed otherwise
   would delete it while printing "Other CLAUDE.md content was left untouched."
@@ -231,9 +233,12 @@ should use. Two honest limits on what it has proved so far:
   takes the old conservative path. Two full cycles now leave a seeded file
   byte-identical, and a file whose owner wrote the import line themselves
   keeps its blank line. `AGENTS.md` had the same defect from the same cause —
-  `install-codex.sh` writes a blank separator before its marker block — and
-  took the same fix in `uninstall-codex.sh`, where the block's own markers
-  make the provenance unambiguous without a sidecar.
+  `install-codex.sh` wrote a blank separator before its marker block, and then
+  trimmed trailing blank lines it had not written so that separator would not
+  accumulate — and took the opposite fix, in `install-codex.sh`: no separator
+  is written, nothing outside the markers is trimmed, and a full cycle returns
+  the file to its bytes for zero, one and several trailing blank lines, and for
+  user content rearranged around the block (R12b).
 - **One asymmetry is left in place deliberately.** `uninstall.sh` now removes
   the `CLAUDE.md` backup it just made when that backup holds nothing but the
   import line. `uninstall-codex.sh` does not do the equivalent for a backup
@@ -247,9 +252,10 @@ should use. Two honest limits on what it has proved so far:
   had, so this uninstaller cannot prove the blank is its own and does not
   touch it. The check asserts what is actually true rather than pretending
   otherwise: every line the user wrote survives unchanged, and the residue is
-  at most one trailing blank line. `AGENTS.md` has no such residue even on
-  that path, because its marker block makes the separator's provenance plain
-  without a sidecar. Phase 3 covers the case where the record does exist —
+  at most one trailing blank line. `AGENTS.md` upgraded from a release that
+  still wrote the separator carries the same residue and for the same reason:
+  the uninstall cannot prove that blank is its own, and does not touch it. A
+  cycle run entirely on this revision leaves neither file changed. Phase 3 covers the case where the record does exist —
   this revision installing and uninstalling a seeded home — and there the bar
   is byte-identical, on both files.
 - **What phase 1 compares is paths, not bytes.** It catches a file or a

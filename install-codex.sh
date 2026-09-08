@@ -121,22 +121,33 @@ echo "Installing into ${CODEX_DIR}"
 mkdir -p "${CODEX_DIR}/skills"
 
 # 1. doctrine as a marker block in global AGENTS.md (replaced in place on reinstall)
+#
+# This rewrite and the uninstaller's are exact inverses: it strips the marker
+# block and nothing else, and appends the block back with no separator of its
+# own. That is the whole of what makes a full cycle return AGENTS.md to its
+# original bytes.
+#
+# It used to write a blank separator above the start marker, and then trim
+# trailing blank lines here so that separator would not accumulate one line
+# per reinstall. The trim could not tell a blank line this installer had added
+# from one the user wrote, so it spent theirs to pay for ours: a file ending in
+# no blank line came back from a cycle one line longer, and one ending in
+# several came back shorter. The blank line that keeps the doctrine readable
+# now lives INSIDE the block, under the start marker, where the markers are its
+# provenance and the uninstaller takes it away without having to guess.
 TMP="$(mktemp)"
 if [ -f "${AGENTS_MD}" ]; then
   cp "${AGENTS_MD}" "$(bakpath "${AGENTS_MD}")"
-  # strip the old block AND trailing blank lines, so reinstalls do not
-  # accumulate one separator blank line per run
   awk -v s="${START}" -v e="${END}" '
     $0==s {inblock=1; next}
     $0==e {inblock=0; next}
-    inblock {next}
-    NF {for (i=0; i<blank; i++) print ""; blank=0; print; next}
-    {blank++}
+    !inblock {print}
   ' "${AGENTS_MD}" > "${TMP}"
 fi
 {
-  if [ -s "${TMP}" ]; then cat "${TMP}"; echo; fi
+  if [ -s "${TMP}" ]; then cat "${TMP}"; fi
   echo "${START}"
+  echo
   cat "${SRC}/claude/luciazero.md"
   echo "${END}"
 } > "${AGENTS_MD}"

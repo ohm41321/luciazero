@@ -3212,6 +3212,43 @@ grep -qxF '# pre-existing codex rules' "${CX}/AGENTS.md" || fail "pre-existing A
 ! grep -qF 'luciazero:start' "${CX}/AGENTS.md" || fail "marker block left behind"
 echo "ok  codex uninstall restores AGENTS.md"
 
+# R12b: an install/uninstall cycle has to hand AGENTS.md back byte for byte.
+# The installer used to trim trailing blank lines it had never written, paying
+# for a separator of its own, so a file ending in no blank line came back one
+# line longer and one ending in several came back shorter. The rearranged case
+# also reinstalls, because moving the block is what puts the installer's own
+# stripping pass -- the one that did the trimming -- over user content.
+for RT_CASE in none one several rearranged; do
+  RT="$(mktemp -d)"
+  case "${RT_CASE}" in
+    several) printf '# mine\n\nkeep\n\n\n\n' > "${RT}/AGENTS.md" ;;
+    one)     printf '# mine\n\nkeep\n\n'       > "${RT}/AGENTS.md" ;;
+    *)       printf '# mine\n\nkeep\n'          > "${RT}/AGENTS.md" ;;
+  esac
+  cp "${RT}/AGENTS.md" "${RT}/AGENTS.md.orig"
+  CODEX_HOME="${RT}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
+    || { rm -rf "${RT}"; fail "codex install failed on the ${RT_CASE} round-trip fixture"; }
+  if [ "${RT_CASE}" = rearranged ]; then
+    # the user moves the block, writes above and below it, and reinstalls
+    { printf 'my new note\n\n'
+      sed -n '/<!-- luciazero:start -->/,/<!-- luciazero:end -->/p' "${RT}/AGENTS.md"
+      printf '\n# mine\n\nkeep\n\n\n'; } > "${RT}/AGENTS.md.moved"
+    mv "${RT}/AGENTS.md.moved" "${RT}/AGENTS.md"
+    printf 'my new note\n\n\n# mine\n\nkeep\n\n\n' > "${RT}/AGENTS.md.orig"
+    CODEX_HOME="${RT}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
+      || { rm -rf "${RT}"; fail "codex reinstall failed on a rearranged AGENTS.md"; }
+  fi
+  CODEX_HOME="${RT}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 \
+    || { rm -rf "${RT}"; fail "codex uninstall failed on the ${RT_CASE} round-trip fixture"; }
+  cmp -s "${RT}/AGENTS.md.orig" "${RT}/AGENTS.md" || {
+    RT_DIFF="$(diff "${RT}/AGENTS.md.orig" "${RT}/AGENTS.md" | tr '\n' ' ')"
+    rm -rf "${RT}"
+    fail "codex install/uninstall cycle did not restore AGENTS.md bytes (${RT_CASE}): ${RT_DIFF}"
+  }
+  rm -rf "${RT}"
+done
+echo "ok  codex install/uninstall cycle returns AGENTS.md to its original bytes"
+
 # Retired-alias migration must not delete an exact-looking collision without a
 # managed ownership snapshot, and must refuse symlinked skill parents.
 SM="$(mktemp -d)"

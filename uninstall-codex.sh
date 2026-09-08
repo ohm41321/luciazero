@@ -134,16 +134,18 @@ if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_bloc
 elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   BACKUP="$(bakpath "${AGENTS_MD}")"
   cp -p "${AGENTS_MD}" "${BACKUP}"
-  # `install-codex.sh` writes a blank separator before its marker block, and
-  # removing only the block leaves that separator behind, so a file the user
-  # wrote grows one blank line per install-and-uninstall cycle. That is a
-  # defect and it is left standing on purpose: the Claude side may remove its
-  # separator only because `install.sh` records that it added it and hashes
-  # the file it left, and there is no such record here. Without one, a user
-  # who moves the block after installing would have a blank line of their own
-  # deleted -- a worse failure than a blank line accumulating. Give the codex
-  # side the same ownership proof and this becomes safe; until then the block
-  # goes and nothing else does.
+  # The block goes and nothing else does, which is now the whole round trip
+  # rather than a compromise. `install-codex.sh` used to write a blank
+  # separator above the start marker, and removing only the block left it
+  # behind, so a file the user wrote grew one blank line per cycle. Removing
+  # it from here would have meant guessing whose that blank was -- the Claude
+  # side may drop its separator only because `install.sh` records that it
+  # added it and hashes the file it left, and there is no such record on this
+  # side. The install answered it instead: it appends its block without a
+  # separator and keeps the blank that spaces the doctrine inside the markers,
+  # where deleting the block deletes exactly what the install added. A block
+  # the user has since moved carries that blank with it, so a rearranged file
+  # comes back byte for byte too.
   # `${AGENTS_MD}.tmp` is a name anyone with write access to the config dir can
   # pre-create as a symlink, and both the rewrite and the rename would then
   # follow it: the awk output lands wherever it points, and the symlink itself

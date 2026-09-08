@@ -101,6 +101,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   full disk turned a valid credential into a refused one mid-session. The
   renewal is now dropped whole — no expiry change, no event — and the session
   keeps the access and the expiry it already had.
+- A Codex install and uninstall hand `AGENTS.md` back byte for byte.
+  `install-codex.sh` wrote a blank separator above its marker block and, so
+  that separator would not accumulate one line per reinstall, trimmed trailing
+  blank lines out of the file — including the ones the user had written, which
+  it had no way to tell apart from its own. A file ending in no blank line came
+  back from a full cycle one line longer; one ending in several came back
+  shorter. The separator is gone: the block is appended to the user's bytes
+  unchanged, and the blank line that spaces the doctrine sits inside the
+  markers, where removing the block removes it too. The install now strips
+  exactly what the uninstall strips, so the two are inverses — for zero, one
+  and several trailing blank lines, and for user content rearranged around the
+  block.
 - `install-codex.sh` and `uninstall-codex.sh` refuse an `AGENTS.md` whose
   Luciazero markers are ambiguous — a start with no end, a second pair, a pair
   nested in another — and leave the file byte-identical instead of rewriting

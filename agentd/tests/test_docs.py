@@ -209,6 +209,29 @@ class BundledScriptTests(unittest.TestCase):
                     named += 1
         self.assertGreater(named, 0, "no skill named a bundled script; this read nothing")
 
+    def test_every_script_a_skill_points_at_is_a_file_that_is_there(self) -> None:
+        """The other direction: a reference is only good if it lands on a file.
+
+        Walking the scripts and looking for their names catches a command that
+        forgot the prefix, and nothing else -- a reference to a script that was
+        renamed, moved, or misspelled names no existing file, so that walk
+        never visits it and every skill still passes. This one starts at the
+        prose instead: whatever the skill tells the reader to run has to
+        resolve inside that skill.
+        """
+        pointed = 0
+        for name in cataloged():
+            skill = SKILLS / name
+            body = (skill / "SKILL.md").read_text()
+            for hit in re.finditer(re.escape(BUNDLED) + r"([A-Za-z0-9._-]+)", body):
+                target = skill / "scripts" / hit.group(1)
+                self.assertTrue(
+                    target.is_file(),
+                    f"skills/{name}/SKILL.md tells the reader to run "
+                    f"{BUNDLED}{hit.group(1)}, and no such file ships with it")
+                pointed += 1
+        self.assertGreater(pointed, 0, "no skill pointed at a bundled script; this read nothing")
+
     def test_every_bundled_script_is_there_and_executable(self) -> None:
         for name in cataloged():
             for script in sorted((SKILLS / name / "scripts").glob("*")):

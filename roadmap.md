@@ -589,6 +589,20 @@ minimum and frontmatter advertises `[focus|on|off]`. If persistence is chosen,
 tests cover start, resume, clear, compaction, off, crash/corrupt state, and
 suspend/restore without modifying the other plugin's source.
 
+Contract half closed 2026-09-09. The intro states that this is a voice for one
+invocation and not a session mode, and says why a prompt alone cannot promise
+otherwise. `focus` now requires exactly one warm touch in the response it was
+invoked for, names the fallback position when the answer has no greeting,
+transition or handoff, and calls an answer nobody can tell apart from the
+normal voice non-compliant. Frontmatter carries `argument-hint: [focus|on|off]`,
+and enabling a mode is acknowledged in the first line of that same response,
+never in a turn of its own and never before a tool call. The prompt budget in
+`scripts/check-skill-prompts.py` was deliberately raised from 319 to 470 for
+those clauses, with each of them pinned in the same file, so removing one fails
+the checker rather than quietly freeing words. Nothing was deleted to make
+room. The plugin-interaction half stays open: no suspend/restore protocol was
+added, and the A/B is still the thing that would justify one.
+
 ### R24 — The shell backup name is checked, not reserved [Confirmed, P2]
 
 Sources: `install.sh`, `uninstall.sh`, `install-codex.sh`,
@@ -638,9 +652,9 @@ proven with it.
    R12b are already closed.
 7. R13 before v2.5.0: quote generated hook/status commands, then keep install,
    status detection, and uninstall matching on the same canonical contract.
-8. R23 contract half before v2.5.0: observable `focus`, explicit one-shot UX,
-   argument hint, and a deliberate prompt-budget revision. Caveman
-   suspend/restore remains behind the controlled A/B.
+8. R23 contract half, done 2026-09-09: observable `focus`, explicit one-shot
+   UX, argument hint, and a deliberate prompt-budget revision (319 to 470).
+   Caveman suspend/restore remains behind the controlled A/B.
 9. R04/R06 next: unchanged-state verification reuse and actual review
    independence.
 10. R05/R20, R08, R14, R16–R19, R21, R24, R09 and remaining proposals after

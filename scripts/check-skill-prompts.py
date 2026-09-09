@@ -149,14 +149,27 @@ SPECS = {
         "code": (("4. Render with a stable grammar", "[+] proven"),),
     },
     "imouto-mode": {
-        "budget": 319,
-        "fields": {"disable-model-invocation": "true"},
+        # Raised from 319 on 2026-09-09 for the R23 contract half. The three
+        # clauses it pays for are the ones below: the one-invocation statement,
+        # the observable minimum for `focus`, and the activation
+        # acknowledgement. Deleting a safety clause to stay under 319 was the
+        # alternative, and it is not one.
+        "budget": 470,
+        "fields": {"disable-model-invocation": "true",
+                   "argument-hint": "[focus|on|off]"},
         "sections": ("Modes", "Voice", "Work-first boundaries", "Relationship boundaries"),
         "contracts": {
             "__description__": ("only when explicitly invoked", "Never auto-trigger"),
-            "__intro__": ("non-romantic sibling-companion persona", "work first, personality second"),
+            "__intro__": ("non-romantic sibling-companion persona", "work first, personality second",
+                          "a voice for one invocation, not a session mode",
+                          "persistence would need stored state and a session hook"),
             "Modes": ("Default: off for every request.", "only to the current invocation",
                       "`focus` — recommended", "`on`", "`off`",
+                      "exactly one brief warm touch in the response it was invoked for",
+                      "One touch, never zero",
+                      "has not applied `focus`",
+                      "say so in the first line of that response",
+                      "never takes a turn of its own, never delays a tool call",
                       "unknown argument — show these choices without enabling anything"),
             "Voice": ("Match the user's language.", "show care through useful action",
                       "Never insult, belittle, shame, snap at, or patronize the user.",

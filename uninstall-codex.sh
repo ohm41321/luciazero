@@ -11,6 +11,9 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_MD="${CODEX_DIR}/AGENTS.md"
 START='<!-- luciazero:start -->'
 END='<!-- luciazero:end -->'
+# written inside the block, under the start marker, when the install had to add
+# a final newline to the user's content to make room for that marker
+ADDED_NL_MARK='<!-- luciazero:added-final-newline -->'
 MANAGED_DIR="${CODEX_DIR}/.luciazero-managed"
 
 catalog() { sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$1"; }
@@ -46,6 +49,45 @@ parents_safe() {
     PS_DIR="${PS_NEXT}"
   done
   return 0
+}
+
+# Does $1 end in a newline? A last line without one is content like any other,
+# and `awk` cannot pass it through: print terminates every record it writes, so
+# a rewrite that goes through awk hands such a file back one byte longer.
+ends_with_newline() {
+  [ -s "$1" ] && [ -z "$(tail -c 1 "$1")" ]
+}
+
+# Write $1 with its marker block removed and every other byte kept, including a
+# last line that carries no newline.
+#
+# The newline directly above the start marker is removed with the block when
+# the block says the installer put it there. The install has to: a start marker
+# only counts on a line of its own, so a file whose last line was unterminated
+# needs one before the block can be appended. That newline is the installer's,
+# not the user's, and nothing in the finished file distinguishes it from a
+# newline the user typed -- so the installer records it, on the line under the
+# start marker, where the markers are its provenance exactly as they are the
+# blank line's. The record is honoured only while the block is still the last
+# thing in the file, which is where the install put it; a user who has moved
+# the block since has moved that newline into the middle of their own text,
+# where it is no longer provably ours and stays.
+strip_marker_block() {
+  if ends_with_newline "$1"; then SMB_SRC_NL=1; else SMB_SRC_NL=0; fi
+  awk -v s="${START}" -v e="${END}" -v mark="${ADDED_NL_MARK}" -v srcnl="${SMB_SRC_NL}" '
+    $0==s {inblock=1; head=1; blockend=NR; next}
+    $0==e {inblock=0; blockend=NR; next}
+    inblock {if (head && $0==mark) added=1; head=0; blockend=NR; next}
+    {n++; keep[n]=$0; lastkept=NR}
+    END {
+      chop = (added && n > 0 && blockend == NR)
+      for (i = 1; i <= n; i++) {
+        printf "%s", keep[i]
+        if (i < n) printf "\n"
+      }
+      if (n > 0 && !chop && !(lastkept == NR && srcnl == 0)) printf "\n"
+    }
+  ' "$1"
 }
 
 # Exactly one well-formed marker pair, or none at all. Anything else — a start
@@ -134,16 +176,21 @@ if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_bloc
 elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   BACKUP="$(bakpath "${AGENTS_MD}")"
   cp -p "${AGENTS_MD}" "${BACKUP}"
-  # `install-codex.sh` writes a blank separator before its marker block, and
-  # removing only the block leaves that separator behind, so a file the user
-  # wrote grows one blank line per install-and-uninstall cycle. That is a
-  # defect and it is left standing on purpose: the Claude side may remove its
-  # separator only because `install.sh` records that it added it and hashes
-  # the file it left, and there is no such record here. Without one, a user
-  # who moves the block after installing would have a blank line of their own
-  # deleted -- a worse failure than a blank line accumulating. Give the codex
-  # side the same ownership proof and this becomes safe; until then the block
-  # goes and nothing else does.
+  # The block goes and nothing else does, which is now the whole round trip
+  # rather than a compromise. `install-codex.sh` used to write a blank
+  # separator above the start marker, and removing only the block left it
+  # behind, so a file the user wrote grew one blank line per cycle. Removing
+  # it from here would have meant guessing whose that blank was -- the Claude
+  # side may drop its separator only because `install.sh` records that it
+  # added it and hashes the file it left, and there is no such record on this
+  # side. The install answered it instead: it appends its block without a
+  # separator and keeps the blank that spaces the doctrine inside the markers,
+  # where deleting the block deletes exactly what the install added. A block
+  # the user has since moved carries that blank with it, so a rearranged file
+  # comes back byte for byte too. The one byte the install cannot leave alone
+  # is a final newline on content that had none, because the start marker needs
+  # a line of its own; it records that newline inside the block, and
+  # `strip_marker_block` takes it away with the rest.
   # `${AGENTS_MD}.tmp` is a name anyone with write access to the config dir can
   # pre-create as a symlink, and both the rewrite and the rename would then
   # follow it: the awk output lands wherever it points, and the symlink itself
@@ -155,11 +202,7 @@ elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   # backup, which kept the original's mode, carries the mode onto it. The
   # redirection below replaces the content and leaves the mode alone.
   cp -p "${BACKUP}" "${AGENTS_TMP}"
-  awk -v s="${START}" -v e="${END}" '
-    $0==s {inblock=1; next}
-    $0==e {inblock=0; next}
-    !inblock {print}
-  ' "${AGENTS_MD}" > "${AGENTS_TMP}"
+  strip_marker_block "${AGENTS_MD}" > "${AGENTS_TMP}"
   mv "${AGENTS_TMP}" "${AGENTS_MD}"
   AGENTS_TMP=""
   [ -s "${AGENTS_MD}" ] || rm -f "${AGENTS_MD}"

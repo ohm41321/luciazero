@@ -2237,6 +2237,20 @@ EN_H="$(grep -c '^## ' "${ROOT}/README.md")"
 TH_H="$(grep -c '^## ' "${ROOT}/README.th.md")"
 [ "${EN_H}" -eq $((TH_H + 1)) ] \
   || fail "README section drift: ${EN_H} EN sections vs ${TH_H} TH (EN must be TH+1 for its ภาษาไทย pointer) — update README.th.md alongside README.md"
+for README in "${ROOT}/README.md" "${ROOT}/README.th.md"; do
+  grep -qF 'bash docs/assets/agent-bus-demo.sh' "${README}" \
+    || fail "$(basename "${README}") lost the Agent Bus demo command"
+  grep -qF 'lucia claude' "${README}" \
+    || fail "$(basename "${README}") lost the Claude short-form Bus command"
+  grep -qF 'lucia codex' "${README}" \
+    || fail "$(basename "${README}") lost the Codex short-form Bus command"
+  grep -qF '| `/lucia-chat` |' "${README}" \
+    || fail "$(basename "${README}") lost lucia-chat from its skill table"
+done
+grep -qF '**Agent Bus is beta, opt-in, and checkout only.**' "${ROOT}/README.md" \
+  || fail "README.md no longer labels its Agent Bus demo checkout-only"
+grep -qF '**Agent Bus เป็น beta แบบ opt-in และใช้ได้จาก checkout เท่านั้น**' "${ROOT}/README.th.md" \
+  || fail "README.th.md no longer labels its Agent Bus demo checkout-only"
 echo "ok  Thai README present + in sync"
 
 # 4e. luciazero-ci example stays inert and shaped right

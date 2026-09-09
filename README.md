@@ -93,6 +93,42 @@ bash docs/assets/relay-demo.sh
 
 Both scripts use throwaway directories and exercise the real implementation.
 
+## Let two agents hand work to each other
+
+**Agent Bus is beta, opt-in, and checkout only.** It does not come with
+`npx luciazero` and never starts during a normal npm, plugin, or skills-only
+install. After the one-time checkout setup, the ordinary path is one command
+in each agent window:
+
+```text
+window A                              window B
+$ lucia claude                       $ lucia codex
+
+task_create + message_send  ───────► queued durably in the local bus
+                                      check your bus inbox (1 new task from claude)
+                                      message_ack + task_claim
+                                      work + verify
+                                      artifact_publish + task_complete
+result in the inbox          ◄─────── message_send
+```
+
+The daemon starts when the first `lucia` session needs it, each CLI receives
+an MCP configuration for that run only, and the user's central Claude or
+Codex configuration is not edited. Messages and task state stay in local
+SQLite; peer message text is never typed into another session's prompt. The
+proxy types only the daemon-built inbox notice after the provider is quiet.
+
+Try the shipped fake-provider demo—no model, login, or quota required:
+
+```bash
+bash docs/assets/agent-bus-demo.sh
+```
+
+To open real Claude Code and Codex sessions, first follow the one-time
+[checkout setup](docs/agent-bus.md#start-here), then run `lucia claude` and
+`lucia codex`. See the [Agent Bus guide](docs/agent-bus.md) for worktree
+ownership, `--no-nudge`, security boundaries, and cleanup.
+
 ## What it protects
 
 | Failure mode | Mechanism |
@@ -233,6 +269,7 @@ rest activate when their moment arrives.
 | Before claiming completion | `/done` | Full verify, skeptic review, scope report |
 | Work must move elsewhere | `/lucia-relay` | Portable JSON + Markdown state with drift inspection |
 | Another agent's work is queued for you (beta) | `/lucia-bus` | Register, read the inbox, claim, work, publish the result through the local Agent Bus ([setup and demo](docs/agent-bus.md)) |
+| Want two agent sessions talking (beta) | `/lucia-chat` | Shows what is waiting, opens one window per agent, and optionally watches the conversation |
 | Optimizing performance | `/experiment` | Baseline, threshold, controlled measurement |
 | Reviewing local verify habits | `/discipline-report` | Time/project-filtered local outcome report |
 | After difficult work | `/retro` | Stores reusable lessons and disproved approaches |

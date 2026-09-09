@@ -91,6 +91,42 @@ bash docs/assets/relay-demo.sh
 
 ทั้งสอง script ใช้ directory ชั่วคราวและรัน implementation จริง
 
+## ให้ agent สองตัวส่งงานหากัน
+
+**Agent Bus เป็น beta แบบ opt-in และใช้ได้จาก checkout เท่านั้น** มันไม่ได้มา
+กับ `npx luciazero` และจะไม่เริ่มทำงานระหว่างการติดตั้ง npm, plugin หรือ
+skills-only ตามปกติ หลัง setup checkout ครั้งเดียว การใช้งานประจำเหลือคำสั่ง
+เดียวในแต่ละหน้าต่าง:
+
+```text
+หน้าต่าง A                             หน้าต่าง B
+$ lucia claude                       $ lucia codex
+
+task_create + message_send  ───────► เก็บใน local bus แบบ durable
+                                      check your bus inbox (1 new task from claude)
+                                      message_ack + task_claim
+                                      ทำงาน + verify
+                                      artifact_publish + task_complete
+ผลอยู่ใน inbox               ◄─────── message_send
+```
+
+daemon เริ่มเมื่อ session แรกที่เปิดผ่าน `lucia` ต้องใช้ แต่ละ CLI ได้ MCP
+configuration เฉพาะ run นั้น จึงไม่แก้ config กลางของ Claude หรือ Codex
+ข้อความและสถานะ task อยู่ใน SQLite บนเครื่อง และข้อความของ peer จะไม่ถูกพิมพ์
+เข้า prompt ของอีก session ตัว proxy พิมพ์เฉพาะ inbox notice ที่ daemon
+ประกอบเอง หลัง provider เงียบแล้ว
+
+ลอง demo ที่ ship มาด้วย fake provider ได้โดยไม่ใช้ model, login หรือ quota:
+
+```bash
+bash docs/assets/agent-bus-demo.sh
+```
+
+ถ้าจะเปิด Claude Code กับ Codex จริง ให้ทำ
+[checkout setup ครั้งเดียว](docs/agent-bus.md#start-here) ก่อน แล้วรัน
+`lucia claude` กับ `lucia codex` อ่าน [คู่มือ Agent Bus](docs/agent-bus.md)
+สำหรับ ownership ของ worktree, `--no-nudge`, ขอบเขตความปลอดภัย และการล้างข้อมูล
+
 ## ปกป้องอะไร
 
 | ความพัง | กลไกที่จับ |
@@ -211,7 +247,7 @@ Claude Code อัปเดต plugin ตอนเริ่มโปรแกร
 ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
 GitHub **Watch → Custom → Releases**
 
-## ภาพรวม skill ทั้ง 12 ตัว
+## ภาพรวม skill ทั้ง 13 ตัว
 
 เรียกใช้ `ready` ก่อนหนึ่งครั้ง (`/ready` สำหรับ agent ที่ใช้ slash และ `$ready`
 ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน
@@ -227,6 +263,7 @@ GitHub **Watch → Custom → Releases**
 | ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
 | ต้องส่งงานไปที่อื่น | `/lucia-relay` | State แบบ JSON + Markdown พร้อมตรวจ drift |
 | มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง ([วิธีตั้งค่าและ demo](docs/agent-bus.md)) |
+| อยากให้ agent สอง session คุยกัน (beta) | `/lucia-chat` | บอกว่าใครรออะไร เปิดหนึ่งหน้าต่างต่อ agent และเปิดหน้าต่างดูบทสนทนาได้ถ้าต้องการ |
 | ปรับ performance | `/experiment` | Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม |
 | ดูนิสัยการ verify ในเครื่อง | `/discipline-report` | รายงาน outcome กรองตามเวลา/โปรเจกต์ |
 | หลังงานยาก | `/retro` | เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก |

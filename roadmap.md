@@ -583,6 +583,30 @@ minimum and frontmatter advertises `[focus|on|off]`. If persistence is chosen,
 tests cover start, resume, clear, compaction, off, crash/corrupt state, and
 suspend/restore without modifying the other plugin's source.
 
+### R24 — The shell backup name is checked, not reserved [Confirmed, P2]
+
+Sources: `install.sh`, `uninstall.sh`, `install-codex.sh`,
+`uninstall-codex.sh` — the `bakpath()` each of them defines.
+The helper picks `<file>.bak.<timestamp>[.n]` by testing the name and then
+returns it; the caller copies to it afterwards. f54ea56 closed the planted
+case — `[ -e ]` alone follows the name and calls a dangling symlink free, so
+`install.sh` copied a real settings.json through one and out of the config
+directory (reproduced: `escaped-0` outside a scratch config dir) — by refusing
+any name a symlink holds. What it does not close is the window between that
+test and the `cp`: anything able to create files in the config directory can
+plant the symlink after the test, and `cp` will still follow it. POSIX `sh`
+has no `O_CREAT | O_EXCL`, which is what the uninstaller's settings backup
+uses now that the same logic is Python.
+The exposure is the user's own config directory, and winning the race needs
+write access to it plus timing, so this is P2 rather than a release blocker.
+The claim in the code and in any note about it is "a free name", never
+"collision-proof" or "atomic".
+Acceptance: the backup is created by a call that fails when the name exists,
+so a symlink planted between choosing the name and writing it cannot be
+followed — in practice by moving each `bakpath` caller onto `mktemp` in the
+same directory, or onto the same Python reservation, and a test that plants
+the symlink after the name is chosen rather than before.
+
 ## Delivery sequence
 
 The owner reviewed this order on 2026-09-08 and rejected accepting the P1
@@ -613,7 +637,7 @@ proven with it.
    suspend/restore remains behind the controlled A/B.
 9. R04/R06 next: unchanged-state verification reuse and actual review
    independence.
-10. R05/R20, R08, R14, R16–R19, R21, R09 and remaining proposals after
+10. R05/R20, R08, R14, R16–R19, R21, R24, R09 and remaining proposals after
    that, ordered by reproduced impact rather than catalog order.
 
 Implementation proposals here do not authorize bumping versions, tagging,

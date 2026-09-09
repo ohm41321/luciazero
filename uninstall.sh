@@ -40,11 +40,18 @@ skill_inventory() {
   catalog "${SRC}/skills/aliases.txt"
 }
 
-# collision-proof backup path for $1 (two runs in the same second must not overwrite)
+# A free backup name for $1. Two runs in the same second must not overwrite
+# each other, and a name a symlink already holds is taken too: `-e` follows
+# the name and answers false for a symlink whose target is missing, which
+# would send the `cp` below straight through that symlink and out of the
+# config directory. This is a check, not a reservation -- the name is still
+# free to be taken between the test and the `cp` (roadmap R24). The
+# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
+# instead, which the shell has no portable equivalent for.
 bakpath() {
   B="$1.bak.$(date +%Y%m%d%H%M%S)"
   N=1
-  while [ -e "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
+  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
   printf '%s' "${B}"
 }
 
@@ -295,16 +302,54 @@ if not changed:
     raise SystemExit(0)
 
 # The user's file changes only once the new content is known, and only after a
-# copy of the old one exists. `bakpath` in the shell above cannot be called
-# from here, so the same collision-proof name is built the same way.
+# complete copy of the old one exists beside it, under a name nothing else
+# holds.
+#
+# "Nothing else holds" cannot be asked with os.path.exists: it follows the
+# name, and answers False for a symlink whose target is missing. A dangling
+# symlink planted at the name this was about to take therefore read as free,
+# and the copy then followed it -- writing the user's settings outside the
+# config directory, under a name the planter chose, while the config directory
+# was left with no backup at all. O_CREAT|O_EXCL is the question that cannot
+# be fooled: the kernel refuses the open if anything is at the name, a
+# dangling symlink included, and refuses without following it. The name is
+# ours only once that open has returned, so the bytes go through that
+# descriptor and the name is never resolved a second time.
 stamp = time.strftime("%Y%m%d%H%M%S")
-backup = path + ".bak." + stamp
-n = 1
-while os.path.exists(backup):
-    backup = path + ".bak." + stamp + "." + str(n)
-    n += 1
+backup, fd, n = path + ".bak." + stamp, None, 1
+while fd is None:
+    try:
+        fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if n > 100:
+            print("      no free backup name beside " + os.path.basename(path),
+                  file=sys.stderr)
+            raise SystemExit(1)
+        backup = path + ".bak." + stamp + "." + str(n)
+        n += 1
+    except OSError as exc:
+        print("      " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
+
+# A backup that is not complete is not a backup. If any part of making one
+# fails, the reserved file goes and settings.json is never opened for writing
+# -- which is the outcome that keeps the hook files, upstairs.
 try:
-    shutil.copy2(path, backup)
+    with open(path, "rb") as src, os.fdopen(fd, "wb") as dst:
+        fd = None  # fdopen owns it now, and closing it twice is an error
+        shutil.copyfileobj(src, dst)
+    shutil.copystat(path, backup)  # mode and times, the half copy2 adds
+except OSError as exc:
+    if fd is not None:
+        os.close(fd)
+    try:
+        os.unlink(backup)
+    except OSError:
+        pass
+    print("      " + str(exc), file=sys.stderr)
+    raise SystemExit(1)
+
+try:
     with open(path, "w") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")

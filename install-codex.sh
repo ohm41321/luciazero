@@ -35,11 +35,18 @@ version_of() {
     "${SRC}/package.json" 2>/dev/null || true
 }
 
-# collision-proof backup path for $1 (two runs in the same second must not overwrite)
+# A free backup name for $1. Two runs in the same second must not overwrite
+# each other, and a name a symlink already holds is taken too: `-e` follows
+# the name and answers false for a symlink whose target is missing, which
+# would send the `cp` below straight through that symlink and out of the
+# config directory. This is a check, not a reservation -- the name is still
+# free to be taken between the test and the `cp` (roadmap R24). The
+# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
+# instead, which the shell has no portable equivalent for.
 bakpath() {
   B="$1.bak.$(date +%Y%m%d%H%M%S)"
   N=1
-  while [ -e "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
+  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
   printf '%s' "${B}"
 }
 

@@ -3076,6 +3076,128 @@ fi
 rm -rf "$(dirname "${SPL}")"
 echo "ok  hook commands survive a config path with a space, old spelling included"
 
+# 5c4. A dangling symlink planted at the name the backup is about to take.
+# `os.path.exists` follows the name and answers False when the target is
+# missing, so such a name read as free -- and the copy that followed wrote the
+# user's settings through the symlink, outside the config directory and under
+# a name the planter chose, while the config directory was left with no backup
+# at all. Reserving the name with an exclusive create is the only check a
+# symlink cannot pass, and the assertions below are all three halves of it:
+# nothing outside was written, no decoy was written or removed, and the backup
+# that did get made is the real file under the next free name.
+BLK="$(mktemp -d)"
+BLK_CFG="${BLK}/cfg"; BLK_OUT="${BLK}/outside"
+mkdir -p "${BLK_CFG}" "${BLK_OUT}"
+BLK_FAIL() { rm -rf "${BLK}"; fail "$1"; }
+CLAUDE_CONFIG_DIR="${BLK_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null
+chmod 640 "${BLK_CFG}/settings.json"
+cp -p "${BLK_CFG}/settings.json" "${BLK}/settings.before"
+# One decoy per second for the next minute, so whichever second the uninstall
+# reaches its backup in, the name it computes first is already a symlink. The
+# names are written down as they are planted: checking them afterwards against
+# whatever is still in the directory would let a run that deleted them pass.
+python3 - "${BLK_CFG}/settings.json" "${BLK_OUT}/escaped" "${BLK}/decoys" <<'BLKPY'
+import os, sys, time
+base = time.time()
+with open(sys.argv[3], "w") as planted:
+    for i in range(60):
+        decoy = sys.argv[1] + ".bak." + time.strftime("%Y%m%d%H%M%S",
+                                                      time.localtime(base + i))
+        os.symlink(sys.argv[2] + "-" + str(i), decoy)
+        planted.write(decoy + "\n")
+BLKPY
+CLAUDE_CONFIG_DIR="${BLK_CFG}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
+[ -z "$(ls -A "${BLK_OUT}")" ] \
+  || BLK_FAIL "uninstall wrote through a planted symlink, outside the config directory: $(ls -A "${BLK_OUT}")"
+python3 - "${BLK_CFG}/settings.json" "${BLK}/settings.before" "${BLK}/decoys" <<'BLKPY' || BLK_FAIL "backup did not survive a planted symlink (see above)"
+import os, re, sys
+settings, before, planted = sys.argv[1], sys.argv[2], sys.argv[3]
+decoys = [line.rstrip("\n") for line in open(planted) if line.strip()]
+if len(decoys) != 60:
+    raise SystemExit("the planter recorded " + str(len(decoys)) + " decoys, not 60")
+for p in decoys:
+    name = os.path.basename(p)
+    if not os.path.lexists(p):
+        raise SystemExit("a planted decoy was removed: " + name)
+    if not os.path.islink(p):
+        raise SystemExit("a planted decoy was replaced by a real file: " + name)
+    if os.path.exists(p):
+        raise SystemExit("a planted decoy was given a target: " + name)
+d, base = os.path.dirname(settings), os.path.basename(settings) + ".bak."
+real = [n for n in os.listdir(d)
+        if n.startswith(base) and not os.path.islink(os.path.join(d, n))]
+if len(real) != 1:
+    raise SystemExit("expected exactly one real backup, found: " + repr(real))
+p = os.path.join(d, real[0])
+if not re.search(r"\.bak\.\d{14}\.\d+$", real[0]):
+    raise SystemExit("backup did not move on to the next free name: " + real[0])
+if open(p, "rb").read() != open(before, "rb").read():
+    raise SystemExit("backup is not the file that was replaced: " + real[0])
+mode = os.stat(p).st_mode & 0o777
+if mode != 0o640:
+    raise SystemExit("backup did not keep the original mode: " + oct(mode))
+BLKPY
+grep -qF 'luciazero-' "${BLK_CFG}/settings.json" \
+  && BLK_FAIL "settings.json was not cleaned once the backup took the next name"
+[ ! -f "${BLK_CFG}/hooks/luciazero-verify.sh" ] \
+  || BLK_FAIL "hook file kept although settings.json was cleaned"
+rm -rf "${BLK}"
+echo "ok  the settings backup refuses a symlinked name and keeps the bytes"
+
+# 5c5. The same planted name, on the install side. `install.sh` copies an
+# existing settings.json aside before it wires the hooks, and `bakpath` picked
+# that name with `[ -e ]`, which follows it: a dangling symlink read as free
+# and `cp` wrote the user's settings through it. The shell cannot reserve a
+# name the way the uninstaller's Python now does -- the window between the
+# test and the `cp` stays open, tracked as roadmap R24 -- but it can refuse a
+# name any symlink already holds, which is the whole of the planted case.
+BLI="$(mktemp -d)"
+BLI_CFG="${BLI}/cfg"; BLI_OUT="${BLI}/outside"
+mkdir -p "${BLI_CFG}" "${BLI_OUT}"
+BLI_FAIL() { rm -rf "${BLI}"; fail "$1"; }
+CLAUDE_CONFIG_DIR="${BLI_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null
+cp -p "${BLI_CFG}/settings.json" "${BLI}/settings.before"
+python3 - "${BLI_CFG}/settings.json" "${BLI_OUT}/escaped" "${BLI}/decoys" <<'BLIPY'
+import os, sys, time
+base = time.time()
+with open(sys.argv[3], "w") as planted:
+    for i in range(60):
+        decoy = sys.argv[1] + ".bak." + time.strftime("%Y%m%d%H%M%S",
+                                                      time.localtime(base + i))
+        os.symlink(sys.argv[2] + "-" + str(i), decoy)
+        planted.write(decoy + "\n")
+BLIPY
+CLAUDE_CONFIG_DIR="${BLI_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null \
+  || BLI_FAIL "reinstall failed with symlinks planted at the backup names"
+[ -z "$(ls -A "${BLI_OUT}")" ] \
+  || BLI_FAIL "install wrote through a planted symlink, outside the config directory: $(ls -A "${BLI_OUT}")"
+python3 - "${BLI_CFG}/settings.json" "${BLI}/settings.before" "${BLI}/decoys" <<'BLIPY' || BLI_FAIL "install backup did not survive a planted symlink (see above)"
+import os, re, sys
+settings, before, planted = sys.argv[1], sys.argv[2], sys.argv[3]
+decoys = [line.rstrip("\n") for line in open(planted) if line.strip()]
+if len(decoys) != 60:
+    raise SystemExit("the planter recorded " + str(len(decoys)) + " decoys, not 60")
+for p in decoys:
+    name = os.path.basename(p)
+    if not os.path.lexists(p):
+        raise SystemExit("a planted decoy was removed: " + name)
+    if not os.path.islink(p):
+        raise SystemExit("a planted decoy was replaced by a real file: " + name)
+    if os.path.exists(p):
+        raise SystemExit("a planted decoy was given a target: " + name)
+d, base = os.path.dirname(settings), os.path.basename(settings) + ".bak."
+real = [n for n in os.listdir(d)
+        if n.startswith(base) and not os.path.islink(os.path.join(d, n))]
+if len(real) != 1:
+    raise SystemExit("expected exactly one real backup, found: " + repr(real))
+if not re.search(r"\.bak\.\d{14}\.\d+$", real[0]):
+    raise SystemExit("backup did not move on to the next free name: " + real[0])
+if open(os.path.join(d, real[0]), "rb").read() != open(before, "rb").read():
+    raise SystemExit("backup is not the file that was replaced: " + real[0])
+BLIPY
+rm -rf "${BLI}"
+echo "ok  the install backup refuses a symlinked name too"
+
 # 5d. failed settings cleanup must NOT delete the hook files (no dangling refs)
 SB4="$(mktemp -d)"
 CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/install.sh" --with-hooks >/dev/null

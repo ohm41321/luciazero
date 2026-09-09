@@ -73,21 +73,22 @@ current queue, not a claim that every proposal is a defect.
 | --- | --- | --- |
 | `ready` | Replace the numeric 3–6 smoke-test target with risk-based selection; keep offline and service-dependent verification distinct | Proposal, R09 coverage |
 | `show` | Make its five-part response contract proportional so a one-fact request does not require a ceremonial report | Proposal |
-| `imouto-mode` | Its name suggests persistence but its contract is one invocation; `focus` permits no visible voice, invocation UX hides the arguments, and coexistence with persistent style plugins is undefined | Confirmed contract gaps plus one unproven interaction, R23 |
+| `imouto-mode` | Its name suggests persistence but its contract is one invocation; `focus` permits no visible voice, invocation UX hides the arguments, and coexistence with persistent style plugins is undefined | Contract half is pre-release; plugin interaction waits for A/B, R23 |
 | `plan` | Reuse authority already granted and pause only for a decision that changes the result | Proposal, R05 |
 | `debug` | Permit evidence-led hypotheses where production or intermittent failures cannot safely be reproduced; revert only the agent-owned edit | Proposal |
 | `bisect` | Explain per-revision dependency setup and that endpoint retries do not make flaky midpoints reliable | Proposal |
 | `done` | R01 is closed; still avoid rerunning an unchanged full suite and distinguish a reviewer prompt from an independent execution context | R04/R06 open |
-| `lucia-relay` | Resolve `relay.py` portably and make publication/tag creation an explicit user-authorized action | R03/R07 open |
+| `lucia-relay` | Resolve all five bare `relay.py` commands relative to the installed skill before release; keep publication/tag creation explicit | R03 pre-release; R07 open |
 | `experiment` | Treat three samples as a minimum heuristic, model warmup/noise, and retain correctness or secondary benefits in keep/revert decisions | Proposal |
 | `discipline-report` | Give installed/standalone layouts a real command-resolution contract and state malformed/partial-data limits in reports | R03 open |
 | `lucia-bus` | Reuse verified identity before redundant registration, bound display of untrusted/private payloads, and expose queued-without-proxy state | R05/R20 open |
 | `lucia-chat` | Two-window flow, optional watcher, nudge/pull split, and three latency names now match the shipped CLI | R02 closed; no new finding |
 | `retro` | Preserve user testimony as testimony, route private evidence out of Git, deduplicate corrections, and keep nonqualifying outcomes visible | R08 open |
 
-Cross-skill priorities remain R03 (commands that work after every supported
-install), R05 (authority and missing-capability stops), R06 (actual review
-independence), R08 (evidence/testimony boundaries), and R09 (behavioral tests).
+Pre-release skill order is now R03 first, then the source-confirmed contract
+half of R23. After that come R04/R06, then R05/R20, R08, and the remaining
+proposals. R03 moved ahead because an installed Relay user reaches a command
+that does not resolve, not because portable discovery would merely be nicer.
 R23 is deliberately not called a Caveman defect: the installed Caveman state
 conflicts with Imouto's voice, but no controlled A/B result exists yet.
 
@@ -158,21 +159,34 @@ quotes is parsed by the real CLI parser (extracted as `build_parser`), every
 flag it names has to exist, and the cooldown and cap it quotes come from the
 constants in `nudge`.
 
-### R03 — Installed skill command discovery needs a portable contract [Investigate]
+### R03 — Installed Relay commands do not resolve their bundled script [Confirmed, pre-release]
 
 Sources: `skills/discipline-report/SKILL.md:12`,
 `skills/lucia-relay/SKILL.md`, `install-codex.sh:121-153`.
 Discipline's fallback resolves `../../bin/luciazero.js` relative to the skill.
 That matches checkout/package layout but is not guaranteed for individually
-copied skills. Relay examples use bare `relay.py`, which need not be on PATH.
+copied skills and remains an investigation. Relay is already confirmed:
+`skills/lucia-relay/SKILL.md` invokes bare `relay.py` five times, while the
+installer puts the executable at
+`<this-skill-dir>/scripts/relay.py` and never adds it to `PATH`. Ready, Bisect,
+and Done already use the resolvable `<this-skill-dir>/scripts/...` convention.
+A user or agent following Relay literally therefore fails on its first command
+after a normal install. This is part of the v2.5.0 installed skill surface, not
+a future packaging concern.
 
-Proposed work: document executable resolution for checkout, npm, Claude
-installation, Codex installation, and skill-only installation. Use a bundled
-script's resolved location where available; report offline unavailability
-when its runtime is absent rather than silently installing dependencies.
+Pre-release work: replace all five bare Relay invocations with the bundled
+skill-relative path. Keep the broader Discipline layout question separate so
+it cannot hold the small confirmed fix hostage. Report offline unavailability
+when a required runtime is absent rather than silently installing dependencies.
 
-Acceptance: commands run from `/` in isolated install layouts; a missing
-runtime produces a useful diagnostic without network access or config writes.
+Acceptance: extract every `<this-skill-dir>/scripts/...` command referenced by
+every cataloged skill, resolve it from that skill directory, and require the
+target to exist with the expected executable type. Put this contract beside
+`agentd/tests/test_docs.py`, whose current command parser covers only
+`lucia-chat`; run the Relay command from `/` in isolated Claude and Codex
+install layouts. A missing runtime produces a useful diagnostic without
+network access or config writes. The test must fail if Relay returns to a bare
+`relay.py` command.
 
 ## P2: autonomy, cost, and consistent skill behavior
 
@@ -533,9 +547,18 @@ at `SessionStart`, and reinforces it at every `UserPromptSubmit`. Imouto has no
 precedence or suspend/restore protocol. The presence of two conflicting prompts
 does not prove which one caused a particular silent answer.
 
-Decision before implementation: either rename and document Imouto as an
-explicit one-shot voice, or make it a real session mode. The persistent design
-needs its own symlink-safe state, `SessionStart` re-assertion after
+Split the work before implementation. The source-confirmed contract half does
+not need the A/B result: state conspicuously that the voice is one invocation,
+make `focus` require one observable brief touch per response, add
+`argument-hint: [focus|on|off]`, and add an activation acknowledgement that
+does not pad or delay the work. `imouto-mode` is already at 316/319 words, so
+this change must deliberately revise its prompt budget in
+`scripts/check-skill-prompts.py` rather than silently deleting safety clauses
+to squeeze under three remaining words.
+
+The separate product decision remains: retain that explicit one-shot voice or
+make it a real session mode. The persistent design needs its own symlink-safe
+state, `SessionStart` re-assertion after
 startup/resume/clear/compaction, `UserPromptSubmit` handling, and a defined
 suspend/restore contract with other persistent style plugins. Merely writing
 “Imouto wins” in the skill is not a state machine.
@@ -571,13 +594,16 @@ proven with it.
    byte-identical.
 5. R15 (closed `14bf3d6`): reproduce the read-only failure in a focused test first, then narrow
    the handling to the SQLite write alone.
-6. R02 and R12b are closed; R03/R13/R14 remain: portable installation, safe
-   config updates, and shell quoting. R02 was taken out of order on 2026-09-08
-   because it is public usage guidance.
-7. R04–R08 and R19: lifecycle, approval, reviewer, relay, testimony, and
-   gate/release proposals.
-8. R16–R18, R20, R09, R23 and remaining catalog items: evaluate behavior
-   before expanding prompts or adding persistent state.
+6. R03 before v2.5.0: make all five Relay commands resolve the bundled script
+   and bind cataloged skill script references to real files in a test. R02 and
+   R12b are already closed.
+7. R23 contract half before v2.5.0: observable `focus`, explicit one-shot UX,
+   argument hint, and a deliberate prompt-budget revision. Caveman
+   suspend/restore remains behind the controlled A/B.
+8. R04/R06 next: unchanged-state verification reuse and actual review
+   independence.
+9. R05/R20, R08, R13/R14, R16–R19, R21, R09 and remaining proposals after
+   that, ordered by reproduced impact rather than catalog order.
 
 Implementation proposals here do not authorize bumping versions, tagging,
 publishing, changing existing release gates, or deploying to production.

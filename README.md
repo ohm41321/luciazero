@@ -105,7 +105,7 @@ window A                              window B
 $ lucia claude                       $ lucia codex
 
 task_create + message_send  ───────► queued durably in the local bus
-                                      check your bus inbox (1 new task from claude)
+                             nudge ─► check your bus inbox (1 new task from claude)
                                       message_ack + task_claim
                                       work + verify
                                       artifact_publish + task_complete

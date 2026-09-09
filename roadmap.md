@@ -179,14 +179,16 @@ skill-relative path. Keep the broader Discipline layout question separate so
 it cannot hold the small confirmed fix hostage. Report offline unavailability
 when a required runtime is absent rather than silently installing dependencies.
 
-Acceptance: extract every `<this-skill-dir>/scripts/...` command referenced by
-every cataloged skill, resolve it from that skill directory, and require the
-target to exist with the expected executable type. Put this contract beside
-`agentd/tests/test_docs.py`, whose current command parser covers only
+Acceptance: test in both directions. Extract every
+`<this-skill-dir>/scripts/...` reference from every cataloged skill, resolve it
+from that skill directory, and require the referenced file to exist and be
+executable; also require every mention of a script that is actually bundled by
+that skill to carry the prefix. The first direction catches a documented typo
+such as `relay2.py`; the second catches a return to bare `relay.py`. Put this
+contract beside `agentd/tests/test_docs.py`, whose command parser covers
 `lucia-chat`; run the Relay command from `/` in isolated Claude and Codex
 install layouts. A missing runtime produces a useful diagnostic without
-network access or config writes. The test must fail if Relay returns to a bare
-`relay.py` command.
+network access or config writes.
 
 ## P2: autonomy, cost, and consistent skill behavior
 
@@ -382,12 +384,19 @@ Closed 2026-09-09 by `994d4a2` and `0fa38c9`, merged as `b86f2f0`. The block
 owns its separator inside its markers, records a final newline it had to add,
 and round-trips LF/CRLF files whose last line has no newline.
 
-### R13 — Generated hook commands need shell quoting [Confirmed, P2]
+### R13 — Generated hook commands need shell quoting [Confirmed, pre-release]
 
 Sources: `install.sh:457-458,481-493`.
 Executable paths enter shell command strings unquoted. Spaces break the
 command and shell metacharacters can alter execution. This review does not
 establish a remote attack path; the configured directory is the input.
+
+Reproduced 2026-09-09 with `CLAUDE_CONFIG_DIR` containing a space. The
+installer completed and stored
+`<config with space>/hooks/luciazero-verify.sh edit` without quoting; executing
+that exact hook command through the shell exited 127 at the first space. This
+is the same installed-user surface that promoted R03 and therefore belongs
+before v2.5.0, even without a remote injection path.
 
 Fix command construction, status detection, and uninstall matching together.
 Acceptance: generated hooks actually run from paths with spaces/apostrophes;
@@ -597,12 +606,14 @@ proven with it.
 6. R03 before v2.5.0: make all five Relay commands resolve the bundled script
    and bind cataloged skill script references to real files in a test. R02 and
    R12b are already closed.
-7. R23 contract half before v2.5.0: observable `focus`, explicit one-shot UX,
+7. R13 before v2.5.0: quote generated hook/status commands, then keep install,
+   status detection, and uninstall matching on the same canonical contract.
+8. R23 contract half before v2.5.0: observable `focus`, explicit one-shot UX,
    argument hint, and a deliberate prompt-budget revision. Caveman
    suspend/restore remains behind the controlled A/B.
-8. R04/R06 next: unchanged-state verification reuse and actual review
+9. R04/R06 next: unchanged-state verification reuse and actual review
    independence.
-9. R05/R20, R08, R13/R14, R16–R19, R21, R09 and remaining proposals after
+10. R05/R20, R08, R14, R16–R19, R21, R09 and remaining proposals after
    that, ordered by reproduced impact rather than catalog order.
 
 Implementation proposals here do not authorize bumping versions, tagging,

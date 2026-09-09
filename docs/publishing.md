@@ -166,8 +166,15 @@ otherwise: `release.yml` builds the GitHub release asset with `git archive
 ZIP holds all 42 entries under `agentd/`, and `bin/lucia` as a symlink entry
 besides. ADR 0008 now records that as the checkout channel rather than an
 exception — the ZIP asks the same acts of a user as `git clone` does — and
-says why an `export-ignore` was rejected. The other four items are open, and
-item 5 has a partial answer worth writing down rather than leaving as a blank.
+says why an `export-ignore` was rejected.
+
+Item 1 was closed on 2026-09-09 by five commits, each verified to be an
+ancestor of the release candidate with `git merge-base --is-ancestor`, all five
+returning 0: `343a59a` (a binding renews while its terminal is alive),
+`25b1f52` (`run` starts the daemon and names the agent it starts), `02ea1a2`
+(an id already in use is refused rather than taken), `ff35542` (one word puts a
+session on the bus) and `3d0609b` (the clean home proved for codex too). The
+last of them left `./test.sh` at `PASS  all checks green`.
 
 `scripts/gate-linux-container.sh` refuses any scratch root that already
 exists, rather than deleting a path it was handed on the strength of a marker
@@ -179,9 +186,10 @@ comparison of a home directory before and after. It runs in a Debian container,
 or with `--inner` against a home you name, which is what a real second machine
 should use. Two honest limits on what it has proved so far:
 
-- **No second machine yet, and no container either.** The development machine
-  has no docker, podman, colima or lima, so only the `--inner` path has run,
-  and only on macOS. Linux and a second machine are both still unproved.
+- **A second machine has run it, on Linux; the container path still has not.**
+  The development machine has no docker, podman, colima or lima, so everything
+  written here came through `--inner` -- which is the path a real second
+  machine uses anyway, and the one the remaining run will use too.
 - **It found a real footprint on its first run, since fixed.** A home that
   started empty did not come back empty: `./uninstall.sh` left
   `.claude/CLAUDE.md.bak.<timestamp>` — whose entire content was the
@@ -273,12 +281,74 @@ should use. Two honest limits on what it has proved so far:
   upgrade from the previous released tag to this revision and out the other
   side of both uninstallers.
 
-Item 5 is still not met, for one reason only: nothing has run anywhere but
-this machine. Linux and a second machine are both unproved, and "clean
-uninstall" should carry that qualifier until one of them has run.
+Item 5 is not closed. What a second machine has already answered is written
+here, together with the one question it could not, so that the rerun that
+closes the item is a short one rather than a repeat of the argument.
 
-Until then the bus is described as checkout-only wherever it is described at
-all, and a release note that implies otherwise is wrong.
+On 2026-09-09 a machine that is not this one checked out
+`2144eb194415e91e899dd39c5ebc1f501615739a` and ran
+`LUCIAZERO_GATE_HOME=/tmp/lucia-gate ./scripts/gate-linux-container.sh --inner`
+on `Linux 6.17.0-1031-nvidia aarch64`. The scratch root did not exist before
+the run, the clone came out at that same commit id, and the run ended `GATE 5
+GREEN on Linux aarch64 -- no provider started, nothing written outside
+/tmp/lucia-gate` with exit 0 and no `gate5:` or `FAIL` line in it at all.
+
+The other half of the item -- that the operator's own configuration was left
+alone -- is recorded as it came out rather than as it was meant to come out. A
+single digest over `~/.claude` and `~/.codex` did not match: 26560 rows before
+and 26560 after, exactly one row different, and that row was the session
+transcript the harness doing the measuring appends to by existing. Nothing was
+added and nothing was removed, anywhere. The instrument was wrong, not the
+run: what item 5 asks is whether anything the installers can write changed,
+and no installer names `.claude/projects/` -- every write target in the four
+installers is a named leaf under the config directory.
+`scripts/gate-config-manifest.py` and `scripts/gate-config-compare.py` ask it
+that way now, per row and with the harness's own stores named, and `./test.sh`
+covers them. The comparison that ran over that machine's two listings was an
+earlier form of the same logic, and it exited 0 at `PASS: nothing changed
+outside the harness's own stores` on `changed=1 added=0 removed=0` -- counts
+the shipped comparator reads the same way, since its stricter rule is about
+added and removed paths and there were none.
+
+Three things this does not say. It does not say the digests matched: they did
+not, and the reason is above rather than left to be inferred.
+
+It does not say the instrument was right the first time. Review found three
+defects in it, two of them after it was already being called evidence. It
+split each row at the first space, and a third of that machine's 26560 rows
+have a space in the path, so it died on the data instead of reading a third of
+it wrongly -- it splits from the right now. It recorded a symlink as a mode
+with no content, so a symlink pointed somewhere new kept the row it had and
+the comparison called the tree unchanged -- the row now carries the sha256 of
+the target string, which is the only place that change can show. And its
+allowance for the harness's stores covered appearing and disappearing paths as
+well as changed ones, so a file created or deleted under `.claude/projects/`
+passed -- the allowance is now for a row that moved and nothing else, because
+nothing here can tell a new transcript from a new `luciazero-` anything
+sharing that directory. Each of the three is a case in `./test.sh`, and
+reverting any one of the three fixes fails its case.
+
+It does not say that no symlink under that machine's configuration was
+retargeted, and that is why the item stays open. The listings it saved were
+taken with the earlier logic, which recorded no target, so no re-reading of
+them answers that question either way -- a rerun with the shipped manifest is
+the only thing that does. What those two files can support is recorded above
+and no more: 26560 rows each, one changed row, nothing added, nothing removed.
+
+What closes item 5, then, is one more run on a second machine, with the tools
+fetched from the commit that is being judged rather than copied by hand -- an
+instrument that is not pinned to the checkout is not evidence about that
+checkout. In order: `python3 scripts/gate-config-manifest.py "$HOME" >
+before.txt`, then the gate against a scratch root that does not exist yet,
+then `... > after.txt`, then `python3 scripts/gate-config-compare.py
+before.txt after.txt`. It closes on the gate exiting 0 at its `GATE 5 GREEN`
+line and the comparison exiting 0 at `PASS: nothing changed outside the
+harness's own stores`. Until that is recorded here with its commit id and its
+`uname`, "clean uninstall" carries the qualifier that it has been proved on
+one Linux machine with an instrument that could not see a retargeted symlink.
+
+The bus stays checkout-only regardless: that is ADR 0008's decision and not a
+consequence of this item, and a release note that implies otherwise is wrong.
 
 ## Channel honesty
 

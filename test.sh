@@ -2901,6 +2901,102 @@ CLAUDE_CONFIG_DIR="${LEAK}/claude" CODEX_HOME="${LEAK}/codex" \
 rm -rf "${SB3}"
 echo "ok  installers refuse foreign provenance paths and keep rearranged user content"
 
+# 5b3. The instruments release gate item 5 is measured with. The gate itself
+# proves its own footprint; these two answer the other half of the item -- that
+# the operator's real configuration came out unchanged -- and they are here
+# because the prose version of them shipped blind spots: a third of the rows on
+# the machine that closed the item carried a space in the path, which a left
+# split reads as four fields; a symlink pointed somewhere new kept its row; and
+# a path that appeared or disappeared inside a harness store was waved through
+# by the allowance meant only for a row that moved.
+GM="$(mktemp -d)"
+GM_FAIL() { rm -rf "${GM}"; fail "$1"; }
+MANIFEST="${ROOT}/scripts/gate-config-manifest.py"
+COMPARE="${ROOT}/scripts/gate-config-compare.py"
+mkdir -p "${GM}/home/.claude/skills/dir with space" "${GM}/home/.claude/projects" "${GM}/home/.codex"
+printf 'doctrine\n' > "${GM}/home/.claude/CLAUDE.md"
+printf 'skill\n' > "${GM}/home/.claude/skills/dir with space/SKILL.md"
+printf 'turn one\n' > "${GM}/home/.claude/projects/session.jsonl"
+printf 'agents\n' > "${GM}/home/.codex/AGENTS.md"
+printf 'first\n' > "${GM}/target-one"
+printf 'second\n' > "${GM}/target-two"
+ln -s "${GM}/target-one" "${GM}/home/.claude/settings.json"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/before" || GM_FAIL "the manifest failed on a home with a space in a path"
+grep -qF 'skills/dir with space/SKILL.md' "${GM}/before" \
+  || GM_FAIL "the manifest did not record the path with a space in it"
+
+# (i) the harness appending to its own store is not a footprint
+printf 'turn two\n' >> "${GM}/home/.claude/projects/session.jsonl"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+python3 "${COMPARE}" "${GM}/before" "${GM}/after" > "${GM}/out" \
+  || GM_FAIL "a write to the harness store was reported as a footprint: $(cat "${GM}/out")"
+grep -q 'changed=1 added=0 removed=0' "${GM}/out" \
+  || GM_FAIL "the comparison did not see the harness write: $(cat "${GM}/out")"
+
+GM_MUST_FAIL() {
+  RC=0; python3 "${COMPARE}" "${GM}/before" "${GM}/after" > "${GM}/out" || RC=$?
+  [ "${RC}" = 1 ] || GM_FAIL "$1"
+  grep -qE "FAIL +$2 +$3" "${GM}/out" || GM_FAIL "$4: $(cat "${GM}/out")"
+}
+
+# (ii) a changed file whose path contains a space -- the case a left split
+# turns into four fields and then either mis-parses or silently drops
+printf 'tampered\n' > "${GM}/home/.claude/skills/dir with space/SKILL.md"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a changed file with a space in its path did not fail the comparison" \
+  changed '\.claude/skills/dir with space/SKILL\.md' \
+  "the comparison did not name the changed path"
+printf 'skill\n' > "${GM}/home/.claude/skills/dir with space/SKILL.md"
+
+# (iii) a symlink pointed somewhere else keeps its path and its mode, so the
+# target is the only thing that can carry the change
+rm -f "${GM}/home/.claude/settings.json"
+ln -s "${GM}/target-two" "${GM}/home/.claude/settings.json"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a retargeted symlink did not fail the comparison" \
+  changed '\.claude/settings\.json' \
+  "the comparison did not name the retargeted symlink"
+rm -f "${GM}/home/.claude/settings.json"
+ln -s "${GM}/target-one" "${GM}/home/.claude/settings.json"
+
+# (iv) a path that disappears, and (v) one that appears
+rm -f "${GM}/home/.claude/CLAUDE.md"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a removed config file did not fail the comparison" \
+  removed '\.claude/CLAUDE\.md' "the comparison did not name the removed path"
+printf 'doctrine\n' > "${GM}/home/.claude/CLAUDE.md"
+printf 'left behind\n' > "${GM}/home/.claude/.luciazero-version"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a file left behind did not fail the comparison" \
+  added '\.claude/\.luciazero-version' "the comparison did not name the added path"
+rm -f "${GM}/home/.claude/.luciazero-version"
+
+# (vi) and (vii) the allowance covers a row that moved inside a harness store
+# and nothing more: a file that appears or disappears there is still a
+# footprint, because nothing here can tell a new transcript from a new
+# `luciazero-` anything sharing the directory
+printf 'another session\n' > "${GM}/home/.claude/projects/second.jsonl"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a file that appeared inside the harness store was waved through" \
+  added '\.claude/projects/second\.jsonl' "the comparison did not name the added harness path"
+rm -f "${GM}/home/.claude/projects/second.jsonl"
+rm -f "${GM}/home/.claude/projects/session.jsonl"
+python3 "${MANIFEST}" "${GM}/home" > "${GM}/after"
+GM_MUST_FAIL "a file that disappeared from the harness store was waved through" \
+  removed '\.claude/projects/session\.jsonl' "the comparison did not name the removed harness path"
+printf 'turn one\n' > "${GM}/home/.claude/projects/session.jsonl"
+
+# (viii) a row is a line, so a path carrying a newline is refused rather than
+# recorded as two paths
+NLNAME="$(printf 'two\nlines')"
+: > "${GM}/home/.claude/${NLNAME}"
+RC=0; python3 "${MANIFEST}" "${GM}/home" > "${GM}/after" 2>"${GM}/err" || RC=$?
+[ "${RC}" != 0 ] || GM_FAIL "the manifest recorded a path containing a newline"
+grep -q 'newline' "${GM}/err" || GM_FAIL "the manifest did not say why it refused: $(cat "${GM}/err")"
+rm -f "${GM}/home/.claude/${NLNAME}"
+rm -rf "${GM}"
+echo "ok  gate 5 config manifest and comparison"
+
 # 5c. enforcement pack: --with-hooks wiring is additive, idempotent, and
 # fully removed by uninstall while user settings survive
 SB3="$(mktemp -d)"

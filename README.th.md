@@ -103,7 +103,7 @@ skills-only ตามปกติ หลัง setup checkout ครั้งเ
 $ lucia claude                       $ lucia codex
 
 task_create + message_send  ───────► เก็บใน local bus แบบ durable
-                                      check your bus inbox (1 new task from claude)
+                             nudge ─► check your bus inbox (1 new task from claude)
                                       message_ack + task_claim
                                       ทำงาน + verify
                                       artifact_publish + task_complete
@@ -126,6 +126,13 @@ bash docs/assets/agent-bus-demo.sh
 [checkout setup ครั้งเดียว](docs/agent-bus.md#start-here) ก่อน แล้วรัน
 `lucia claude` กับ `lucia codex` อ่าน [คู่มือ Agent Bus](docs/agent-bus.md)
 สำหรับ ownership ของ worktree, `--no-nudge`, ขอบเขตความปลอดภัย และการล้างข้อมูล
+
+งานเสี่ยงยังต้องผ่านคุณเสมอ: delete, deploy, การเข้าถึง production, การใช้เงิน,
+force-push, การเปลี่ยน public contract และการขยาย scope ต้องใช้ nonce ครั้งเดียว
+ที่คุณสร้างเองในเทอร์มินัลของคุณ ไม่มี bus tool ใดสร้างให้ได้ และ nonce ที่ถูกใส่
+ลงใน message, task หรือ artifact จะถูกลบหรือปฏิเสธ
+([approvals](docs/agent-bus.md#approvals)) ส่วน trust boundary ของโปรเจกต์อยู่ใน
+[SECURITY.md](SECURITY.md)
 
 ## ปกป้องอะไร
 
@@ -195,7 +202,7 @@ Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใ
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 12 ตัว ไม่มี doctrine, reviewer หรือ hook
+ช่องทางนี้ติดตั้งเฉพาะ skill 13 ตัว ไม่มี doctrine, reviewer หรือ hook
 
 </details>
 

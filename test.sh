@@ -2246,6 +2246,14 @@ for README in "${ROOT}/README.md" "${ROOT}/README.th.md"; do
     || fail "$(basename "${README}") lost the Codex short-form Bus command"
   grep -qF '| `/lucia-chat` |' "${README}" \
     || fail "$(basename "${README}") lost lucia-chat from its skill table"
+  grep -qF 'nudge ─►' "${README}" \
+    || fail "$(basename "${README}") lost the nudge step from its Bus flow"
+  grep -qF 'docs/agent-bus.md#start-here' "${README}" \
+    || fail "$(basename "${README}") lost its link to the one-time Bus setup"
+  grep -qF 'docs/agent-bus.md#approvals' "${README}" \
+    || fail "$(basename "${README}") lost its link to the Bus approval boundary"
+  grep -qF 'SECURITY.md' "${README}" \
+    || fail "$(basename "${README}") lost its link to the trust boundary"
 done
 grep -qF '**Agent Bus is beta, opt-in, and checkout only.**' "${ROOT}/README.md" \
   || fail "README.md no longer labels its Agent Bus demo checkout-only"
@@ -2404,6 +2412,14 @@ assert len(skills) == 13, f"expected 13 cataloged skills, found {len(skills)}"
 assert aliases == [], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
     assert "13 skills" in open(os.path.join(root, metadata)).read(), f"{metadata} skill count drift"
+for readme in ("README.md", "README.th.md"):
+    # a translation that keeps the old count is worse than no translation:
+    # README.th.md read "skill 12 ตัว" for a whole release after lucia-chat landed
+    text = open(os.path.join(root, readme), encoding="utf-8").read()
+    named = re.findall(r"(\d+) skills\b", text) + re.findall(r"skill (?:ทั้ง )?(\d+) ตัว", text)
+    assert named, f"{readme} no longer names its skill count"
+    drift = sorted({n for n in named if int(n) != len(skills)})
+    assert not drift, f"{readme} names {drift} skills, the catalog has {len(skills)}"
 publishing = open(os.path.join(root, "docs/publishing.md")).read()
 assert "carries the 13 skills" in publishing, "publishing channel skill count drift"
 release_workflow = open(os.path.join(root, ".github/workflows/release.yml")).read()

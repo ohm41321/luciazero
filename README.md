@@ -129,6 +129,15 @@ To open real Claude Code and Codex sessions, first follow the one-time
 `lucia codex`. See the [Agent Bus guide](docs/agent-bus.md) for worktree
 ownership, `--no-nudge`, security boundaries, and cleanup.
 
+Inside the Bus workflow, the skill stops before risky work: delete, deploy,
+production access, spending, force-push, public-contract changes, and scope
+expansion need a single-use nonce you mint in your own terminal. No bus tool
+can create one, and a nonce put into a bus message, task, or artifact is
+scrubbed or refused ([approvals](docs/agent-bus.md#approvals)). This records
+approval provenance; it is not a host sandbox against another process running
+as you. The project trust boundary is in
+[SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md).
+
 ## What it protects
 
 | Failure mode | Mechanism |

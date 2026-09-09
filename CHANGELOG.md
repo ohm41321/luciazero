@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-09
+
 ### Added
 
 - Agent Bus (beta, opt-in, checkout only): `lucia`, a second name for the

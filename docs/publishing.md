@@ -189,7 +189,7 @@ should use. Two honest limits on what it has proved so far:
 - **A second machine has run it, on Linux; the container path still has not.**
   The development machine has no docker, podman, colima or lima, so everything
   written here came through `--inner` -- which is the path a real second
-  machine uses anyway, and the one the remaining run will use too.
+  machine uses anyway, and the one that closed the item.
 - **It found a real footprint on its first run, since fixed.** A home that
   started empty did not come back empty: `./uninstall.sh` left
   `.claude/CLAUDE.md.bak.<timestamp>` — whose entire content was the
@@ -281,11 +281,10 @@ should use. Two honest limits on what it has proved so far:
   upgrade from the previous released tag to this revision and out the other
   side of both uninstallers.
 
-Item 5 is not closed. What a second machine has already answered is written
-here, together with the one question it could not, so that the rerun that
-closes the item is a short one rather than a repeat of the argument.
+Item 5 was closed on 2026-09-09, and it took three instruments to ask its
+second half correctly, which is written out below rather than tidied away.
 
-On 2026-09-09 a machine that is not this one checked out
+A machine that is not this one checked out
 `2144eb194415e91e899dd39c5ebc1f501615739a` and ran
 `LUCIAZERO_GATE_HOME=/tmp/lucia-gate ./scripts/gate-linux-container.sh --inner`
 on `Linux 6.17.0-1031-nvidia aarch64`. The scratch root did not exist before
@@ -348,17 +347,36 @@ replaced by the installer-owned rule above after it failed on a rotating
 harness backup. Each is a case in `./test.sh`, and reverting any one of the
 fixes fails its case.
 
-What is left is the comparison itself. The `0b89977` run's two listings were
-taken with the shipped manifest, so they carry symlink targets and every other
-thing the earlier ones could not answer; what judged them was the denylist
-that has since been replaced. Item 5 closes when
-`python3 scripts/gate-config-compare.py before.txt after.txt`, from a checkout
-of the commit being judged rather than a copy, exits 0 over those same two
-files -- an instrument that is not pinned to the checkout is not evidence
-about that checkout. Until that is recorded here with its commit id, its
-`uname` and the sha256 of the four files it rests on, "clean uninstall"
-carries the qualifier that the gate itself is green on one Linux machine and
-the configuration half is not yet judged by the rule that ships.
+The evidence the item rests on carries two commit ids, not one, because the
+run and the judgement happened at different revisions and collapsing them into
+a single id would misstate both. The gate itself and the two listings are from
+`0b89977182f52fc30e41c96077f53ceb9fb5aec7`, on `Linux 6.17.0-1031-nvidia
+aarch64`, against a scratch root that did not exist beforehand: `GATE 5 GREEN
+on Linux aarch64 -- no provider started, nothing written outside
+/tmp/lucia-gate2`, exit 0, with no `gate5:` or `FAIL` line in it. The
+comparison is from `e21f067291418605e26362b1f46319514cb1c0f7`, run from a
+checkout of that commit rather than a copy of the script -- an instrument that
+is not pinned to the checkout is not evidence about that checkout -- and it
+exits 0 at `rows before=26494 after=26494 | changed=3 added=1 removed=1 |
+installer-owned=0` and `PASS: no installer-owned path differs`. The manifest
+that took both listings is byte-identical across the two commits: `git diff
+--name-only 0b89977 e21f067` does not name it.
+
+The four files that carry it are kept outside this repository, and their
+sha256 is recorded here so that a copy can be checked against what was read:
+
+    1a4f33b0a49f938bbb0aad7b64d881785bc2d9acdaf3b82e892bb173e6847699  before.txt
+    bca6be2519f1663f5c5b3c0df9a8f2ec61ed88fda6d2fc2d5a0efefe1d8231e1  after.txt
+    6aae1e5642b700e8e75871a0e2ddb1038fdb62745d0672c115b85c691ec27fbf  gate.log
+    abb859345d144f5ab50d328a53272675fab3fe9f2970ccaab3da37a7211f12eb  compare2.txt
+
+`before.txt`, `after.txt` and `gate.log` hash the same as when they were first
+reported, which is how the second reading is known to be of the first run's
+data and not of a repeat.
+
+"Clean uninstall" still carries one qualifier, and it is about coverage rather
+than doubt: this is one Linux machine on aarch64, through the `--inner` path,
+with no container run anywhere.
 
 The bus stays checkout-only regardless: that is ADR 0008's decision and not a
 consequence of this item, and a release note that implies otherwise is wrong.

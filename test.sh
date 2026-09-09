@@ -2921,11 +2921,12 @@ rm -rf "${SB3}"
 # nothing outside its own root.
 SB3="$(mktemp -d)"
 LEAK="${SB3}/leak"
-CLAUDE_CONFIG_DIR="${LEAK}/claude" CODEX_HOME="${LEAK}/codex" \
+SB3_GATE_OUT="$(CLAUDE_CONFIG_DIR="${LEAK}/claude" CODEX_HOME="${LEAK}/codex" \
   LUCIAZERO_BIN_DIR="${LEAK}/bin" LUCIAZERO_SERVICE_ROOT="${LEAK}/service" \
   LUCIAZERO_GATE_HOME="${SB3}/root" \
-  "${ROOT}/scripts/gate-linux-container.sh" --inner >/dev/null 2>&1 \
-  || SB3_FAIL "the gate script did not run green with config env vars set in the caller's shell"
+  "${ROOT}/scripts/gate-linux-container.sh" --inner 2>&1)" \
+  || SB3_FAIL "the gate script did not run green with config env vars set in the caller's shell:
+${SB3_GATE_OUT}"
 [ ! -e "${LEAK}" ] \
   || SB3_FAIL "the gate script installed outside its own root: $(find "${LEAK}" -maxdepth 2 | head -5)"
 rm -rf "${SB3}"

@@ -21,7 +21,7 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 5 | met (2026-09-07) |
+| Distinct real workflows on the pull beta, not the demo | 3 | 6 | met (2026-09-07) |
 | Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 1 | **not met** |
 | Open M3 safety findings | 0 | 0 | met |
 
@@ -75,6 +75,7 @@ redaction contract over what it writes, and prints the ledger row filled in.
 | `lucia codex --strict` accepted an option it never used | `wf4-strict-silent` | 2026-09-07T06:15:55.833545+00:00 | claude, codex-architect | 1 task(s) completed, 3 message(s), 1 artifact(s) | user-started, 2 turn(s) waited, longest 20m, 1 bus-started (<=20m unattributed) | `docs/assets/evidence/wf4-strict-silent.json` |
 | Video-encoding plan review, private repository | `shrinkly-vplan-1` | 2026-09-07T08:57:27.404448+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 3 artifact(s) | user-started, 3 turn(s) waited, longest 4m, 2 bus-started (<=199s unattributed) | `docs/assets/evidence/shrinkly-vplan-1.structural.json` (structural; full set held outside this repository) |
 | Audio-share cap review, private repository | `shrinkly-audio-share-2` | 2026-09-07T09:17:22.907114+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 2 artifact(s) | user-started, 3 turn(s) waited, longest 57s, 3 bus-started | `docs/assets/evidence/shrinkly-audio-share-2.structural.json` (structural; full set held outside this repository) |
+| R12b AGENTS.md byte round-trip, reviewed on the bus | `wf5-r12b-round-trip` | 2026-09-08T15:31:28.433413+00:00 | claude-implementer, codex-architect | 0 task(s) , 2 message(s), 0 artifact(s) | user-started, 1 turn(s) waited, longest 3m (<=123s unattributed) | `docs/assets/evidence/wf5-r12b-round-trip.structural.json` |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
@@ -438,6 +439,105 @@ a person still opens every turn. What it added was the record: correlation,
 sender, artifact, claim and acknowledgement, a revert probe attributable to the
 side that ran it, and an open question left visibly open rather than lost.
 
+**`wf5-r12b-round-trip`, 2026-09-08: the review refused the claim it was sent.**
+The work is roadmap R12b, which was going to be done anyway: `install-codex.sh`
+trimmed trailing blank lines on a first install, so an install/uninstall cycle
+did not return the user's `AGENTS.md` to its original bytes. Both windows ran
+`--no-nudge`, in worktrees of their own, and the operator started every turn by
+hand: the knock is deliberately out of this one, because the criterion asks
+what a user-started turn costs and a nudged turn does not answer it.
+
+The daemon's own timestamps, in order:
+
+| At (UTC) | Record | What happened |
+| --- | --- | --- |
+| 15:31:09.818 | the commit artifact for `994d4a2` | the implementer published what it was asking about |
+| 15:31:28.433 | `message-1` (`task`) | the claim went to `codex-architect`, with the branch named as unmerged until the answer came back |
+| 15:34:04.091 | `delivery-1` acknowledged | 155.658s later: 123.242s with no bus call at all, then 32.416s of the agent working |
+| 15:34:50.878 | the reviewer's own task, created and claimed 15:34:56.652 | the reviewer's own task, on its own side |
+| 15:49:23.820 | the review report artifact | the review, with its sha256 recorded |
+| 15:49:42.009 | that task completed | `claim: refuted` |
+| 15:50:04.677 | `message-2` (`finding`) | back to the implementer, 1116.244s (18m36s) after the question |
+
+The verdict is the reason the row is worth having: the claim is **refuted**. A
+full cycle is byte-identical for zero, one and several trailing blank lines, for
+CRLF with a final newline, for a moved block and for a second install -- and not
+for a file with no trailing newline at all, which `install-codex.sh:141-145`
+grows by one byte through `awk`'s output record separator (12 bytes to 13; the
+CRLF variant 15 to 16). The reviewing side also checked the parent commit
+itself rather than taking the implementer's word for the red-before-green
+claim, and found it red for the zero, several and moved fixtures. The branch is
+still unmerged.
+
+Both sides wrote as `bound` sessions, so nothing in this record set carries the
+`unverified` caveat the 2026-09-05 rows carry.
+
+What is committed for this row is the structural export, the treatment the
+private-repository rows got in cf03fa2: event types, timestamps, states,
+linkage and the figures the row is computed from, with payloads, titles,
+results, artifact references and worktree paths removed and every identifier
+replaced by an alias local to the file. The full export is kept outside this
+repository and its SHA-256 is inside the structural one, so a later audit can
+prove which file the row was written from.
+
+**Why the row says `0 task(s), 0 artifact(s)` when the task and the artifacts
+exist.** `agent_bus_evidence.py` collects a task only when a message payload
+names `task_id` (or a delivery carries one), and artifacts only through that
+task. Here the reviewer created its task after reading the message and the
+reply cited artifact ids rather than the task, so the exporter could not prove
+they belong to this conversation and did not claim they do. One completed task and two published
+artifacts exist for it in the bus, findable by their timestamps and agents;
+their ids are not written down here, because what this repository publishes of
+a record set is the structural export, not identifiers from the bus. The lesson for the next workflow is
+to put the task id in the reply payload; the exporter is not being widened
+after the fact to reach records it could not link.
+
+**What the operator says they were doing, and why this is not the second
+retro.** Asked what the 18m36s cost them, the operator's answer, recorded as
+given: they pasted the two prompts into the two windows and went to watch
+Netflix, and did nothing else. The machine agrees with the second half --
+between 15:31:28 and 15:50:04 there is not one commit in any worktree, not one
+file modified in the main checkout or in `wt-r12b`, not one timestamped shell
+command, and not one bus call from `claude-implementer`. Nothing advanced
+anywhere while the review ran.
+
+Both readings of that are worth writing down, because they point in opposite
+directions:
+
+* The **work** was blocked, in the `shrinkly-vplan-1` sense. Merging was the
+  next step, the branch was declared unmerged until the verdict, and the verdict
+  refuted the claim -- a merge at 15:31 would have shipped an installer that
+  grows a file with no trailing newline by a byte. Nothing could be built on
+  `994d4a2` until the review came back, and the wait is measured: 18m36s, one
+  user-started turn, of which 2m03s is the reviewer's window not yet being open.
+* The **operator** was not blocked. They were not waiting to act; they were
+  somewhere else, and the wait cost them nothing they noticed.
+
+The second criterion asks for a user-started turn named as the blocking cost.
+The turn that mattered was user-started -- `codex-architect` registered at
+15:33:31 with no knock, because the window was opened after the message was
+sent -- but the cost the operator attributes to it is zero attention, not a
+period of blocked work they sat through. On the standard that kept
+`shrinkly-audio-share-2` out of the count, this stays out of it too: the count
+holds at **1 of 2**, and this row joins the ledger as the sixth workflow.
+
+That is not a failed write-up, it is the answer to the question the gate asked.
+The gate exists to find out whether the user-started turn hurts enough to
+justify a dispatcher, and the honest reading of this run is that it did not
+hurt: an operator who can start both sides and walk away is describing a
+coordination cost that does not need managed dispatch to fix. A later decision
+to amend the gate (option 2 above) now has this to weigh, and it is evidence
+for stopping at the pull beta rather than against it.
+
+**One correction to how the run was set up.** The intent was both windows
+pull-only. The reviewer's side was: no `turn.nudged` event exists for
+`codex-architect`, and its session registered two minutes after the message.
+The implementer's side was not: `turn.nudged` fires for `claude-implementer` at
+15:50:05.849 when the finding arrives, and the first keystroke the proxy
+records is 3m44s later at 15:53:49.596. The return leg of this conversation is
+therefore bus-started and is not evidence about a user-started turn. It is left
+as it happened.
+
 ## Carry-over, not claimed as done
 
 - ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed
@@ -446,9 +546,11 @@ side that ran it, and an open question left visibly open rather than lost.
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** 5 of 3 workflows recorded as
-  of 2026-09-07; 1
-  of 2 retros, and the first workflow can never supply one (see the
+- **The three workflows and two retros above.** 6 of 3 workflows recorded as
+  of 2026-09-08; 1
+  of 2 retros, and `wf5-r12b-round-trip` did not supply the second: the work
+  was blocked and the wait measured, but the operator attributes no blocked
+  attention to it (see that row's retro), and the first workflow can never supply one (see the
   attribution note above). `wf3-quiet-gate` attributes its waits from the
   records rather than from memory, but it does so by taking the user-started
   turn out of the loop, which is not what the second criterion asks for. A

@@ -1,5 +1,9 @@
 # Debugging lessons
 
+## a workflow's task and artifacts vanished from its own record set
+
+cause: `agent_bus_evidence.py` links a task to a conversation only through `payload.task_id` in a message or `deliveries.task_id`, and artifacts only through that task. In `wf5-r12b-round-trip` the reviewer created its task after reading the message and the reply cited artifact ids instead, so the exported ledger row read `0 task(s), 0 artifact(s)` while a completed task and two published artifacts existed in the bus | proven-by: `./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --correlation wf5-r12b-round-trip` printing `"tasks": 0` and `"artifacts": 0`, against the same window's row in `tasks` returning `state=completed` | fix: none in the tool -- put the task id in the payload of the reply that reports it, and say in the decision log that unlinked records exist rather than publishing their ids. Widening the exporter after the fact would let it claim records it cannot prove belong to the conversation | date: 2026-09-08
+
 ## a bound session lost its own credential fifteen hours into its work
 
 cause: `BINDING_TTL_SECONDS = 12 * 3600` was enforced on age alone -- `resolve_credential` proved the terminal was still alive on every request and then expired the binding anyway, because nothing renewed one that was being used. Every bus call in that session answered `requires re-authorization (token expired)`, and no tool in the session could win the credential back | proven-by: `python3 -m unittest tests.test_identity` in `agentd/` -- red first, as `ImportError: cannot import name 'BINDING_MAX_LIFETIME_SECONDS' from 'luciazero_agentd.store'` and then the three renewal cases; green after (`Ran 42 tests`, `OK`) | fix: migration 9 stores each binding's own window, and `resolve_credential` pushes expiry back once the terminal is proved alive, never past `BINDING_MAX_LIFETIME_SECONDS` from when the binding was created | date: 2026-09-06

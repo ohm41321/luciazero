@@ -1,0 +1,156 @@
+{
+  "correlation_id": "wf6-r12b-newline",
+  "record": "structural only",
+  "note": "Event types, timestamps, states, linkage and the figures the ledger row is computed from. Message payloads, task titles and results, artifact references and worktree paths are removed, and every database identifier is replaced by an alias local to this file (message-1, delivery-1, task-1, artifact-1) so the relationships survive without publishing an id from the bus or a path from the machine it ran on. The complete export is kept outside this repository; its SHA-256 is above, so a later audit can prove the file it is shown is the file this row was written from.",
+  "original_sha256": "30bf351b8a622925d218817fea2cc86d0aac8254aff1135094b072311f2fcc72",
+  "original_bytes": 12031,
+  "agents": [
+    "claude-implementer",
+    "codex-architect"
+  ],
+  "counts": {
+    "messages": 2,
+    "deliveries": 2,
+    "events": 8,
+    "tasks": 1,
+    "artifacts": 1,
+    "runs": 0,
+    "worktrees": 2
+  },
+  "messages": [
+    {
+      "seq": 47,
+      "id": "message-1",
+      "sender_agent_id": "claude-implementer",
+      "recipient_agent_id": "codex-architect",
+      "kind": "task",
+      "created_at": "2026-09-09T03:41:27.249816+00:00",
+      "hop_count": 0,
+      "reply_to": null
+    },
+    {
+      "seq": 48,
+      "id": "message-2",
+      "sender_agent_id": "codex-architect",
+      "recipient_agent_id": "claude-implementer",
+      "kind": "result",
+      "created_at": "2026-09-09T03:52:51.435814+00:00",
+      "hop_count": 1,
+      "reply_to": "message-1"
+    }
+  ],
+  "deliveries": [
+    {
+      "seq": 47,
+      "id": "delivery-1",
+      "message_id": "message-1",
+      "recipient_agent_id": "codex-architect",
+      "state": "completed",
+      "attempts": 0,
+      "max_attempts": 3,
+      "first_touch_at": "2026-09-09T03:42:03.330253+00:00",
+      "acknowledged_at": "2026-09-09T03:42:21.790151+00:00",
+      "acknowledged_by": "codex-architect",
+      "completed_at": "2026-09-09T03:53:10.715056+00:00",
+      "nudged_at": null,
+      "knock_observed": null,
+      "updated_at": "2026-09-09T03:53:10.715056+00:00"
+    },
+    {
+      "seq": 48,
+      "id": "delivery-2",
+      "message_id": "message-2",
+      "recipient_agent_id": "claude-implementer",
+      "state": "queued",
+      "attempts": 0,
+      "max_attempts": 3,
+      "acknowledged_at": null,
+      "acknowledged_by": null,
+      "completed_at": null,
+      "updated_at": "2026-09-09T03:52:51.435814+00:00"
+    }
+  ],
+  "events": [
+    {
+      "seq": 591,
+      "kind": "task.created",
+      "at": "2026-09-09T03:41:02.519661+00:00",
+      "entity_type": "task",
+      "actor": "claude-implementer"
+    },
+    {
+      "seq": 592,
+      "kind": "message.sent",
+      "at": "2026-09-09T03:41:27.251690+00:00",
+      "entity_type": "message",
+      "actor": "claude-implementer"
+    },
+    {
+      "seq": 595,
+      "kind": "delivery.acknowledged",
+      "at": "2026-09-09T03:42:21.790408+00:00",
+      "entity_type": "delivery",
+      "actor": "codex-architect"
+    },
+    {
+      "seq": 596,
+      "kind": "task.claimed",
+      "at": "2026-09-09T03:42:24.747320+00:00",
+      "entity_type": "task",
+      "actor": "codex-architect"
+    },
+    {
+      "seq": 597,
+      "kind": "artifact.published",
+      "at": "2026-09-09T03:52:18.970303+00:00",
+      "entity_type": "artifact",
+      "actor": "codex-architect"
+    },
+    {
+      "seq": 598,
+      "kind": "message.sent",
+      "at": "2026-09-09T03:52:51.437455+00:00",
+      "entity_type": "message",
+      "actor": "codex-architect"
+    },
+    {
+      "seq": 599,
+      "kind": "task.completed",
+      "at": "2026-09-09T03:53:08.246403+00:00",
+      "entity_type": "task",
+      "actor": "codex-architect"
+    },
+    {
+      "seq": 600,
+      "kind": "delivery.completed",
+      "at": "2026-09-09T03:53:10.715227+00:00",
+      "entity_type": "delivery",
+      "actor": "codex-architect"
+    }
+  ],
+  "tasks": [
+    {
+      "seq": 9,
+      "id": "task-1",
+      "state": "completed",
+      "created_by_agent_id": "claude-implementer",
+      "assigned_agent_id": "codex-architect",
+      "created_at": "2026-09-09T03:41:02.518185+00:00",
+      "claimed_at": "2026-09-09T03:42:24.747191+00:00",
+      "completed_at": "2026-09-09T03:53:08.246154+00:00",
+      "requires_worktree": 1,
+      "priority": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "seq": 18,
+      "id": "artifact-1",
+      "kind": "report",
+      "produced_by_agent_id": "codex-architect",
+      "task_id": "task-1",
+      "created_at": "2026-09-09T03:52:18.969971+00:00",
+      "trust": "bound"
+    }
+  ]
+}

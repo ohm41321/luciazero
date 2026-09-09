@@ -21,8 +21,8 @@ become the reason to keep building:
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
-| Distinct real workflows on the pull beta, not the demo | 3 | 6 | met (2026-09-07) |
-| Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 1 | **not met** |
+| Distinct real workflows on the pull beta, not the demo | 3 | 7 | met (2026-09-07) |
+| Of those, ones whose retro or run log names the user-started turn as the blocking cost, with a measured wait or turn count | 2 | 2 | met (2026-09-09) |
 | Open M3 safety findings | 0 | 0 | met |
 
 ## The gate was passed by, not passed
@@ -76,6 +76,7 @@ redaction contract over what it writes, and prints the ledger row filled in.
 | Video-encoding plan review, private repository | `shrinkly-vplan-1` | 2026-09-07T08:57:27.404448+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 3 artifact(s) | user-started, 3 turn(s) waited, longest 4m, 2 bus-started (<=199s unattributed) | `docs/assets/evidence/shrinkly-vplan-1.structural.json` (structural; full set held outside this repository) |
 | Audio-share cap review, private repository | `shrinkly-audio-share-2` | 2026-09-07T09:17:22.907114+00:00 | claude, codex | 1 task(s) completed, 3 message(s), 2 artifact(s) | user-started, 3 turn(s) waited, longest 57s, 3 bus-started | `docs/assets/evidence/shrinkly-audio-share-2.structural.json` (structural; full set held outside this repository) |
 | R12b AGENTS.md byte round-trip, reviewed on the bus | `wf5-r12b-round-trip` | 2026-09-08T15:31:28.433413+00:00 | claude-implementer, codex-architect | 0 task(s) , 2 message(s), 0 artifact(s) | user-started, 1 turn(s) waited, longest 3m (<=123s unattributed) | `docs/assets/evidence/wf5-r12b-round-trip.structural.json` |
+| R12b missing final newline, reviewed on the bus | `wf6-r12b-newline` | 2026-09-09T03:41:27.249816+00:00 | claude-implementer, codex-architect | 1 task(s) completed, 2 message(s), 1 artifact(s) | user-started, 1 turn(s) waited, longest 55s (<=36s unattributed) | `docs/assets/evidence/wf6-r12b-newline.structural.json` |
 
 The first row, and what it does not say. The work was real -- the M7 section of
 the roadmap and ADR 0007 were written by the implementer on the bus, from its
@@ -538,6 +539,56 @@ records is 3m44s later at 15:53:49.596. The return leg of this conversation is
 therefore bus-started and is not evidence about a user-started turn. It is left
 as it happened.
 
+**`wf6-r12b-newline`, 2026-09-09: the second retro, and the first one where the
+operator was the thing that was blocked.** Same pair, same worktrees, the round
+after the one above: the implementer replaced both `awk` rewrites with a shared
+`strip_marker_block` that learns termination from the file rather than from
+`awk`'s output record separator, and recorded the one newline an install must
+add as `<!-- luciazero:added-final-newline -->` inside the block, so the
+uninstall can take it back. Both windows ran `--no-nudge` this time, so both
+legs are user-started.
+
+| At (UTC) | Record | What happened |
+| --- | --- | --- |
+| 03:40:42.463 | the previous round's finding delivery, completed | the previous round's finding, acted on and closed |
+| 03:41:02.519 | `task-1` created | assigned to `codex-architect` before the message, so the record set has something to export against |
+| 03:41:27.250 | `message-1` (`task`) | the claim, now covering eight cases |
+| 03:42:03.330 | `agent.registered` | 36.080s: the reviewer's turn, started by the operator |
+| 03:42:21.790 | `delivery-1` acknowledged | 54.540s after the question |
+| 03:42:24.747 | `task-1` claimed | |
+| 03:52:18.970 | `artifact-1` (report) | |
+| 03:52:51.436 | `message-2` (`result`) | 684.186s (11m24s) after the question. Task completed 03:53:08.246 |
+
+What is committed for this row is the structural export as well, on the same
+terms. The verdict is `no finding; claim holds in requested scope`. The reviewing side
+checked the parent commit itself rather than accepting the implementer's
+red-before-green claim -- `994d4a2` is red for both new fixtures (LF with no
+final newline 12 bytes to 13, CRLF with no final newline 14 to 15), `0fa38c9`
+is green, `git diff --check` clean -- and recorded a caveat of its own: its
+first run failed inside a restricted sandbox that denied process-table access,
+and it reran outside that restriction rather than reporting the sandbox as a
+result.
+
+**The operator's attribution, recorded as given:** they waited the 11m24s and
+could not merge, because the merge required the reviewer to confirm the
+regression first. That is the second criterion satisfied: a user-started turn,
+the wait measured from the daemon's own timestamps, and the thing it blocked
+named -- the merge of `0fa38c9`, which is the next step of R12b and the only
+one available while the confirmation was outstanding.
+
+Two honest qualifications belong beside it, because this row is what closes a
+gate. The review returned **no finding**, which is the shape that kept
+`shrinkly-audio-share-2` out of the count: what the wait bought was
+confirmation of a regression claim rather than a defect. It is counted anyway
+because the operator was blocked by the confirmation being a precondition, not
+by its outcome -- and the previous round is the reason that precondition is not
+ceremony: the same reviewer refuted the same implementer's byte-identity claim
+19 hours earlier, on a commit whose own suite was green. And the count rests on
+the operator's own words, as it must: a user-started turn leaves no record of
+when a person started one, so `the user attributed this` is the strongest form
+this evidence can take, and no reading of the timestamps alone would establish
+it.
+
 ## Carry-over, not claimed as done
 
 - ~~Kill-at-commit matrix for the new delivery transitions (M6).~~ Closed
@@ -546,11 +597,10 @@ as it happened.
   recovery, and proves the next pass still reaches exactly one outcome with the
   attempt counted once and no credential or lease left live. Made red first by
   removing the credential revocation from recovery.
-- **The three workflows and two retros above.** 6 of 3 workflows recorded as
-  of 2026-09-08; 1
-  of 2 retros, and `wf5-r12b-round-trip` did not supply the second: the work
-  was blocked and the wait measured, but the operator attributes no blocked
-  attention to it (see that row's retro), and the first workflow can never supply one (see the
+- ~~**The three workflows and two retros above.**~~ Closed 2026-09-09: 7 of 3
+  workflows and 2 of 2 retros. `shrinkly-vplan-1` supplied the first and
+  `wf6-r12b-newline` the second; `wf5-r12b-round-trip` did not, because the
+  work was blocked and the operator was not (see that row's retro), and the first workflow can never supply one (see the
   attribution note above). `wf3-quiet-gate` attributes its waits from the
   records rather than from memory, but it does so by taking the user-started
   turn out of the loop, which is not what the second criterion asks for. A

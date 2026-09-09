@@ -118,9 +118,12 @@ Decided 2026-09-06. Five things close before that changes, in this order:
 1. The wt-docs items 1-5 are green and merged.
 2. A clean install is driven through `lucia claude` and `lucia codex` — the
    public command, not `run --agent ... --provider ...`.
-3. The decision log reaches 3 of 3 workflows and 2 of 2 retros. Workflows
-   stand at 5 of 3 as of 2026-09-07; the retros stand at 1 of 2, the one being
-   `shrinkly-vplan-1`, where the wait blocked real work and was measured.
+3. The decision log reaches 3 of 3 workflows and 2 of 2 retros. Closed
+   2026-09-09 at 7 of 3 workflows and 2 of 2 retros: `shrinkly-vplan-1`, where
+   a review the tree could not proceed without came back after 14m19s, and
+   `wf6-r12b-newline`, where the operator waited 11m24s unable to merge until
+   the reviewer confirmed the regression. `wf5-r12b-round-trip` is kept and
+   does not count -- the work was blocked and the operator was not.
 4. Packaging `agentd/` is taken as its own decision, reviewed as a public
    contract and as a security question. It is not a `files` entry: it puts a
    Python daemon, a pty proxy and a launchd or systemd service onto machines

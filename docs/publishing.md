@@ -294,27 +294,45 @@ GREEN on Linux aarch64 -- no provider started, nothing written outside
 /tmp/lucia-gate` with exit 0 and no `gate5:` or `FAIL` line in it at all.
 
 The other half of the item -- that the operator's own configuration was left
-alone -- is recorded as it came out rather than as it was meant to come out. A
-single digest over `~/.claude` and `~/.codex` did not match: 26560 rows before
-and 26560 after, exactly one row different, and that row was the session
-transcript the harness doing the measuring appends to by existing. Nothing was
-added and nothing was removed, anywhere. The instrument was wrong, not the
-run: what item 5 asks is whether anything the installers can write changed,
-and no installer names `.claude/projects/` -- every write target in the four
-installers is a named leaf under the config directory.
-`scripts/gate-config-manifest.py` and `scripts/gate-config-compare.py` ask it
-that way now, per row and with the harness's own stores named, and `./test.sh`
-covers them. The comparison that ran over that machine's two listings was an
-earlier form of the same logic, and it exited 0 at `PASS: nothing changed
-outside the harness's own stores` on `changed=1 added=0 removed=0` -- counts
-the shipped comparator reads the same way, since its stricter rule is about
-added and removed paths and there were none.
+alone -- took three tries to ask correctly, and the record says so rather than
+showing only the last one. The first instrument hashed everything under
+`~/.claude` and `~/.codex` into a single digest and required a match. It did
+not match: 26560 rows before, 26560 after, one row different, nothing added
+and nothing removed, and that row was the session transcript the harness doing
+the measuring appends to by existing. The second named the harness's own
+directories and allowed a row that moved inside one of them. Run at `0b89977`
+on a fresh scratch root, it reported `rows before=26494 after=26494 |
+changed=3 added=1 removed=1` and failed on three paths -- two of them a
+`.claude/backups/.claude.json.backup.<epoch>` rotating out and its successor
+rotating in, the third `.claude/sessions/1403674.json` -- none of which any
+installer writes.
+
+That is the argument against a denylist, made twice by the same machine: the
+list of places a harness writes cannot be finished, and every gap in it is
+either a false failure or, worse, a silent pass. So the rule is taken from the
+four installers instead, which is where the claim comes from.
+`scripts/gate-config-compare.py` fails on any difference at a path they can
+write -- `CLAUDE.md`, `settings.json`, `luciazero.md`, `skills/`, `agents/`,
+`hooks/`, `bin/`, `AGENTS.md`, the codex `skills/`, each installer backup
+beside its file, and anything at all whose own name carries `luciazero`,
+wherever it lands -- and reports every other difference as noise it did not
+cause. `./test.sh` covers both scripts, with the three real paths above as the
+case that must pass and a `luciazero-verify.sh` appearing under
+`.claude/projects/` as the case that must not.
+
+Said plainly, because the rule was changed after a run that failed under the
+old one: the new rule is not the old one with the failures excused. It fails
+on strictly more of what item 5 is about -- an installer-owned path is now a
+failure everywhere, including inside a harness directory, which the denylist
+allowed -- and it stops failing on changes no installer could have made, which
+item 5 never claimed anything about. Those are listed in the output for a
+person to read.
 
 Three things this does not say. It does not say the digests matched: they did
 not, and the reason is above rather than left to be inferred.
 
-It does not say the instrument was right the first time. Review found three
-defects in it, two of them after it was already being called evidence. It
+It does not say the instrument was right the first time. Review found four
+defects in it, three of them after it was already being called evidence. It
 split each row at the first space, and a third of that machine's 26560 rows
 have a space in the path, so it died on the data instead of reading a third of
 it wrongly -- it splits from the right now. It recorded a symlink as a mode
@@ -325,27 +343,22 @@ allowance for the harness's stores covered appearing and disappearing paths as
 well as changed ones, so a file created or deleted under `.claude/projects/`
 passed -- the allowance is now for a row that moved and nothing else, because
 nothing here can tell a new transcript from a new `luciazero-` anything
-sharing that directory. Each of the three is a case in `./test.sh`, and
-reverting any one of the three fixes fails its case.
+sharing that directory. And the whole denylist approach was the fourth: it was
+replaced by the installer-owned rule above after it failed on a rotating
+harness backup. Each is a case in `./test.sh`, and reverting any one of the
+fixes fails its case.
 
-It does not say that no symlink under that machine's configuration was
-retargeted, and that is why the item stays open. The listings it saved were
-taken with the earlier logic, which recorded no target, so no re-reading of
-them answers that question either way -- a rerun with the shipped manifest is
-the only thing that does. What those two files can support is recorded above
-and no more: 26560 rows each, one changed row, nothing added, nothing removed.
-
-What closes item 5, then, is one more run on a second machine, with the tools
-fetched from the commit that is being judged rather than copied by hand -- an
-instrument that is not pinned to the checkout is not evidence about that
-checkout. In order: `python3 scripts/gate-config-manifest.py "$HOME" >
-before.txt`, then the gate against a scratch root that does not exist yet,
-then `... > after.txt`, then `python3 scripts/gate-config-compare.py
-before.txt after.txt`. It closes on the gate exiting 0 at its `GATE 5 GREEN`
-line and the comparison exiting 0 at `PASS: nothing changed outside the
-harness's own stores`. Until that is recorded here with its commit id and its
-`uname`, "clean uninstall" carries the qualifier that it has been proved on
-one Linux machine with an instrument that could not see a retargeted symlink.
+What is left is the comparison itself. The `0b89977` run's two listings were
+taken with the shipped manifest, so they carry symlink targets and every other
+thing the earlier ones could not answer; what judged them was the denylist
+that has since been replaced. Item 5 closes when
+`python3 scripts/gate-config-compare.py before.txt after.txt`, from a checkout
+of the commit being judged rather than a copy, exits 0 over those same two
+files -- an instrument that is not pinned to the checkout is not evidence
+about that checkout. Until that is recorded here with its commit id, its
+`uname` and the sha256 of the four files it rests on, "clean uninstall"
+carries the qualifier that the gate itself is green on one Linux machine and
+the configuration half is not yet judged by the rule that ships.
 
 The bus stays checkout-only regardless: that is ADR 0008's decision and not a
 consequence of this item, and a release note that implies otherwise is wrong.

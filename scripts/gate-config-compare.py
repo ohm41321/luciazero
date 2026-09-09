@@ -1,40 +1,64 @@
 #!/usr/bin/env python3
-"""Compare two `gate-config-manifest.py` listings and fail on a real change.
+"""Compare two `gate-config-manifest.py` listings and fail on a real footprint.
 
-The gate's claim is not that every byte under `~/.claude` held still. A
-harness that records the session doing the measuring writes to its own store
-while the measurement runs, so a whole-tree digest reports a difference on a
-run where nothing the installers can write was touched. The claim is that no
-row changed outside the harness's own stores, and that no path appeared or
-disappeared anywhere at all -- including inside those stores, where the
-allowance covers a row that moved and nothing else.
+The question release gate item 5 asks is whether a gate run touched anything
+the installers can write in the operator's own configuration. That is not the
+same as asking whether every byte under `~/.claude` held still: a harness
+rotates its own backups, writes session state, and appends this session's
+transcript while the measurement runs, and none of that is an installer.
 
-Rows are split from the right. Mode and digest never contain a space and a
-path often does: on the run that closed item 5, a third of the rows carried a
-space in the path, so a left split reads them as four fields and stops at the
-first one. A parser that skipped those rows instead would have gone blind to a
-third of the evidence while still printing a verdict.
+The first version of this asked the wrong one and then tried to patch it with
+a list of the harness's directories. That list can never be finished -- two
+runs found two more of them (`.claude/backups/`, `.claude/sessions/`) after it
+was already being called evidence, and a directory nobody has seen yet is
+always one release away. So the rule is turned around and taken from the four
+installers instead, which is where the claim comes from: a path they can write
+is named here, any difference at one of those paths fails, and everything else
+is reported as noise the run did not cause.
+
+That is stronger than the denylist for what item 5 claims, and it is weaker
+for a thing item 5 does not claim: an unrelated change under `~/.claude` no
+installer could have made is listed and does not fail. The listing is printed
+so a person can look at it.
 
 Usage: gate-config-compare.py <before.txt> <after.txt>
-Exit: 0 nothing changed outside the harness stores · 1 something did
+Exit: 0 no installer-owned path differs · 1 one does
 """
+import os
 import sys
 
-# Stores the harness owns and writes to on its own schedule. No installer
-# names any of them: `grep -rn projects install.sh uninstall.sh
-# install-codex.sh uninstall-codex.sh scripts/gate-linux-container.sh` is
-# empty, and every write target in those scripts is a named leaf under the
-# config directory.
-HARNESS = (
-    ".claude/projects/",
-    ".claude/todos/",
-    ".claude/shell-snapshots/",
-    ".claude/statsig/",
-    ".claude/history.jsonl",
-    ".claude/logs/",
-    ".claude/file-history/",
-    ".claude/plugins/cache/",
+# Every write target in install.sh, uninstall.sh, install-codex.sh and
+# uninstall-codex.sh, by location:
+#   CLAUDE.md, settings.json, luciazero.md, skills/, agents/, hooks/, bin/
+#   AGENTS.md, skills/ on the codex side
+# and by name: anything they own carries `luciazero` in its own name --
+# .luciazero-version, .luciazero-managed/, .luciazero-backups/,
+# .luciazero-import, .luciazero-agentd-home, luciazero-heuristics.md,
+# hooks/luciazero-*.sh, the launcher names. The name rule is what makes a
+# `luciazero-` anything appearing in a directory nobody expected still a
+# failure, wherever it lands.
+OWNED_DIRS = (
+    ".claude/skills/", ".claude/agents/", ".claude/hooks/", ".claude/bin/",
+    ".codex/skills/",
 )
+OWNED_EXACT = (
+    ".claude/skills", ".claude/agents", ".claude/hooks", ".claude/bin",
+    ".claude/CLAUDE.md", ".claude/settings.json", ".claude/luciazero.md",
+    ".codex/skills", ".codex/AGENTS.md",
+)
+# the installers' own backups: `<name>.bak.<timestamp>` beside the file
+BACKED_UP = ("CLAUDE.md", "AGENTS.md", "settings.json")
+
+
+def owned(path):
+    base = os.path.basename(path)
+    if "luciazero" in base.lower():
+        return True
+    if path in OWNED_EXACT or any(path.startswith(d) for d in OWNED_DIRS):
+        return True
+    if path.startswith((".claude/", ".codex/")):
+        return any(base.startswith(name + ".bak.") for name in BACKED_UP)
+    return False
 
 
 def rows(path):
@@ -44,16 +68,15 @@ def rows(path):
             line = line.rstrip("\n")
             if not line:
                 continue
+            # Split from the right: mode and digest never contain a space and a
+            # path often does. On the machine that ran this, 9151 of 26560 rows
+            # carried one, and a left split reads those as four fields.
             parts = line.rsplit(" ", 2)
             if len(parts) != 3 or not parts[0]:
                 raise SystemExit("%s:%d is not `<path> <mode> <digest>`: %r"
                                  % (path, number, line))
             out[parts[0]] = (parts[1], parts[2])
     return out
-
-
-def harness(path):
-    return any(path == entry or path.startswith(entry) for entry in HARNESS)
 
 
 def main():
@@ -63,24 +86,20 @@ def main():
     changed = sorted(p for p in set(before) & set(after) if before[p] != after[p])
     added = sorted(set(after) - set(before))
     removed = sorted(set(before) - set(after))
-    # The allowance is narrow on purpose, and it is only for `changed`: a
-    # harness rewrites its own stores while the measurement runs, so a row that
-    # moved inside one of them says nothing. An appearing or disappearing path
-    # is a footprint wherever it is. A new transcript file is ordinary and a new
-    # `luciazero-` anything under the same directory is not, and nothing here
-    # can tell those two apart -- so both fail, and a human reads the name.
-    bad = sorted([p for p in changed if not harness(p)] + added + removed)
-    print("rows before=%d after=%d | changed=%d added=%d removed=%d"
-          % (len(before), len(after), len(changed), len(added), len(removed)))
-    kinds = [("changed", changed), ("added", added), ("removed", removed)]
-    listed = [(kind, path) for kind, paths in kinds for path in paths]
-    for kind, path in sorted(listed, key=lambda row: row[1])[:20]:
-        print("  %s  %-7s  %s" % ("FAIL" if path in bad else "ok  ", kind, path))
+    listed = ([("changed", p) for p in changed] + [("added", p) for p in added]
+              + [("removed", p) for p in removed])
+    bad = sorted(p for _, p in listed if owned(p))
+
+    print("rows before=%d after=%d | changed=%d added=%d removed=%d | installer-owned=%d"
+          % (len(before), len(after), len(changed), len(added), len(removed), len(bad)))
+    for kind, path in sorted(listed, key=lambda row: row[1])[:40]:
+        print("  %s  %-7s  %s" % ("FAIL" if owned(path) else "noise", kind, path))
+    if len(listed) > 40:
+        print("  ... %d more not listed" % (len(listed) - 40))
     if bad:
-        print("FAIL: %d path(s) changed that the installers could have written,"
-              " or appeared, or disappeared" % len(bad))
+        print("FAIL: %d path(s) the installers can write differ" % len(bad))
         raise SystemExit(1)
-    print("PASS: nothing changed outside the harness's own stores")
+    print("PASS: no installer-owned path differs")
 
 
 if __name__ == "__main__":

@@ -203,12 +203,17 @@ for entries in (hooks or {}).values() if isinstance(hooks, dict) else ():
 want = "prompt skill-prompt bash-start edit bash bash-failure skill stop session".split()
 sys.stdout.write("".join(" " + s for s in want if s not in wired))
 WIREPY
-)" || WIRE_UNCHECKED=1
+)" || WIRE_UNCHECKED=reader
     else
-      WIRE_UNCHECKED=1
+      WIRE_UNCHECKED=python3
     fi
-    if [ -n "${WIRE_UNCHECKED}" ]; then
-      echo "  --    hook wiring not checked (python3 absent)"
+    # Two different unknowns, and neither is "wired": no python3 to ask with,
+    # and a reader that could not answer. Both are reported as what they are,
+    # because a status that says "ok" here is the one nobody re-checks.
+    if [ "${WIRE_UNCHECKED}" = python3 ]; then
+      echo "  MISS  hook wiring not checked — python3 not found"; STATUS_RC=1
+    elif [ "${WIRE_UNCHECKED}" = reader ]; then
+      echo "  MISS  hook wiring not checked — settings.json could not be read"; STATUS_RC=1
     elif [ -z "${WIRE_MISS}" ]; then
       echo "  ok    hooks wired in settings.json (prompt/skill-prompt/bash-start/edit/bash/bash-failure/skill/stop/session)"
     else

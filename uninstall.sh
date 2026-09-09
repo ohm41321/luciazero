@@ -209,17 +209,40 @@ fi
 # files we just deleted.
 SETTINGS="${CLAUDE_DIR}/settings.json"
 HOOKS_CLEAN=1
-if [ -f "${SETTINGS}" ] && grep -qF "${CLAUDE_DIR}/hooks/luciazero-" "${SETTINGS}"; then
+# No `grep` gate. The installer quotes the path it writes, so a config
+# directory whose name contains an apostrophe is stored as
+# `'/home/config with '"'"' quote/hooks/luciazero-verify.sh' edit` -- the bare
+# path is not a substring of that, and a grep for it answered "nothing of ours
+# here" while the hook files were deleted anyway, leaving settings.json
+# pointing at files that no longer exist. Only the parser knows what is ours,
+# so the parser is asked whenever there is a file to ask about. It reports
+# three separate outcomes and never writes a backup it did not need:
+#   0  nothing of ours -- settings.json untouched
+#   10 ours found and removed -- backup written first
+#   *  read, parse or write failed -- settings.json is left exactly as it was
+if [ -f "${SETTINGS}" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    cp "${SETTINGS}" "$(bakpath "${SETTINGS}")"
+    HOOKS_RC=0
     # exact-path matching only: never touch a user's own hook that merely
     # shares a basename with ours
-    if python3 - "${SETTINGS}" "${CLAUDE_DIR}" 2>/dev/null <<'PY'
-import json, os, shlex, sys
+    python3 - "${SETTINGS}" "${CLAUDE_DIR}" <<'PY' || HOOKS_RC=$?
+import json, os, shlex, shutil, sys, time
 
 path, claude_dir = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    settings = json.load(f)
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except (OSError, ValueError) as exc:
+    print("      " + str(exc), file=sys.stderr)
+    raise SystemExit(1)
+
+# settings.json is the user's file and may hold any JSON at all. A shape this
+# cannot walk is not "nothing of ours": it is a file we cannot prove clean, so
+# it stays as it is and the hook files stay with it.
+if not isinstance(settings, dict) or not isinstance(settings.get("hooks", {}), dict):
+    print("      settings.json is valid JSON but not the shape hooks live in",
+          file=sys.stderr)
+    raise SystemExit(1)
 
 MARKERS = (
     os.path.join(claude_dir, "hooks", "luciazero-verify.sh"),
@@ -268,23 +291,47 @@ if isinstance(sl, dict) and ours(sl.get("command", "")):
     del settings["statusLine"]
     changed = True
 
-if changed:
+if not changed:
+    raise SystemExit(0)
+
+# The user's file changes only once the new content is known, and only after a
+# copy of the old one exists. `bakpath` in the shell above cannot be called
+# from here, so the same collision-proof name is built the same way.
+stamp = time.strftime("%Y%m%d%H%M%S")
+backup = path + ".bak." + stamp
+n = 1
+while os.path.exists(backup):
+    backup = path + ".bak." + stamp + "." + str(n)
+    n += 1
+try:
+    shutil.copy2(path, backup)
     with open(path, "w") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
+except OSError as exc:
+    print("      " + str(exc), file=sys.stderr)
+    raise SystemExit(1)
+print("  ok  backup: " + os.path.basename(backup))
+raise SystemExit(10)
 PY
-    then
-      echo "  ok  removed hook entries from settings.json"
-    else
-      HOOKS_CLEAN=0
-      echo "  !!  could not clean settings.json (invalid JSON?) — hook files kept so nothing dangles; remove the luciazero-* entries manually, then delete ${CLAUDE_DIR}/hooks/luciazero-*.sh" >&2
-    fi
+    case "${HOOKS_RC}" in
+      0)
+        echo "  ok  no enforcement-pack entries in settings.json"
+        ;;
+      10)
+        echo "  ok  removed hook entries from settings.json"
+        ;;
+      *)
+        HOOKS_CLEAN=0
+        echo "  !!  could not clean settings.json (invalid JSON?) — hook files kept so nothing dangles; remove the luciazero-* entries manually, then delete ${CLAUDE_DIR}/hooks/luciazero-*.sh" >&2
+        ;;
+    esac
   else
     HOOKS_CLEAN=0
     echo "  !!  python3 not found — settings.json untouched; hook files kept so nothing dangles" >&2
   fi
 else
-  echo "  ok  no enforcement-pack entries in settings.json"
+  echo "  ok  no settings.json to clean"
 fi
 if [ "${HOOKS_CLEAN}" = 1 ]; then
   for H in luciazero-verify.sh luciazero-statusline.sh; do

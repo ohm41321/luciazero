@@ -2982,20 +2982,29 @@ PY
 rm -rf "${SB3}"
 echo "ok  enforcement pack install + idempotent + clean uninstall"
 
-# 5c2. A config directory whose name contains a space. Every hook command the
-# installer writes is a shell string, so an unquoted path ends at the space:
-# the stored command ran a prefix of the path and the shell answered 127,
-# which is a hook that silently does nothing on a machine where the install
-# reported success. The command has to be quoted at the write site, and the
-# two places that recognise our own entries -- `--status` and the uninstaller
-# -- have to read the quoted form as well as the bare one older installs
-# wrote. Running the stored command is the assertion; a grep for a quote
-# would pass on a string no shell can run.
-SPC="$(mktemp -d)/config with space"
-mkdir -p "${SPC}"
-SPC_FAIL() { rm -rf "$(dirname "${SPC}")"; fail "$1"; }
-CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --with-hooks >/dev/null   || SPC_FAIL "--with-hooks failed in a config directory whose name has a space"
-SPC_CMD="$(python3 - "${SPC}/settings.json" <<'PY'
+# 5c2. Three config directories whose names no shell survives unquoted: one
+# with a space, one with an apostrophe, one carrying a literal `$(...)`. Every
+# hook command the installer writes is a shell string, so an unquoted path
+# ends at the space -- the stored command runs a prefix of the path, the shell
+# answers 127, and the hook silently does nothing on a machine where the
+# install reported success. Running the stored command is the assertion; a
+# grep for a quote character would pass on a string no shell can run.
+#
+# The apostrophe is the case that also judges the uninstaller: quoting a path
+# that contains one splices the quote in from outside, so the directory name
+# stops being a substring of the stored command at all -- and an uninstall
+# that decided by grepping for that path answered "nothing of ours here",
+# skipped the cleanup, and deleted the hook files anyway, leaving every entry
+# in settings.json pointing at a file that no longer exists.
+FXR="$(mktemp -d)"
+SENTINEL="${FXR}/pwned"
+FX_FAIL() { rm -rf "${FXR}"; fail "$1"; }
+for FXNAME in "config with space" "config with ' quote" 'meta $(touch '"${SENTINEL}"') dir'; do
+  FX="${FXR}/${FXNAME}"
+  mkdir -p "${FX}"
+  CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --with-hooks >/dev/null \
+    || FX_FAIL "--with-hooks failed in a config directory named: ${FXNAME}"
+  FXCMD="$(python3 - "${FX}/settings.json" <<'FXPY'
 import json, sys
 settings = json.load(open(sys.argv[1]))
 for entries in settings["hooks"].values():
@@ -3005,20 +3014,31 @@ for entries in settings["hooks"].values():
                 print(hook["command"])
                 raise SystemExit(0)
 raise SystemExit("no edit hook wired")
-PY
-)" || SPC_FAIL "no edit hook wired in a config directory whose name has a space"
-RC=0; printf '{}' | sh -c "${SPC_CMD}" >/dev/null 2>&1 || RC=$?
-[ "${RC}" != 127 ] || SPC_FAIL "the stored hook command does not survive the shell: ${SPC_CMD}"
-[ "${RC}" = 0 ] || SPC_FAIL "the stored hook command failed (rc=${RC}): ${SPC_CMD}"
-CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --status >/dev/null   || SPC_FAIL "--status could not see hook entries whose path is quoted"
-cp "${SPC}/settings.json" "${SPC}/settings.snap"
-CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --with-hooks >/dev/null
-cmp -s "${SPC}/settings.json" "${SPC}/settings.snap"   || SPC_FAIL "reinstall changed settings.json in a spaced config directory (not idempotent)"
-CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
-if [ -f "${SPC}/settings.json" ]; then
-  grep -qF 'luciazero-' "${SPC}/settings.json"     && SPC_FAIL "uninstall left our hook entries behind when the path was quoted"
-fi
-rm -rf "$(dirname "${SPC}")"
+FXPY
+)" || FX_FAIL "no edit hook wired in: ${FXNAME}"
+  RC=0; printf '{}' | sh -c "${FXCMD}" >/dev/null 2>&1 || RC=$?
+  [ "${RC}" != 127 ] || FX_FAIL "the stored hook command does not survive the shell: ${FXCMD}"
+  [ "${RC}" = 0 ] || FX_FAIL "the stored hook command failed (rc=${RC}): ${FXCMD}"
+  [ ! -e "${SENTINEL}" ] || FX_FAIL "the stored hook command executed text from its own path: ${FXCMD}"
+  CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --status >/dev/null \
+    || FX_FAIL "--status could not see the hooks it had just wired: ${FXNAME}"
+  cp "${FX}/settings.json" "${FXR}/settings.snap"
+  CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --with-hooks >/dev/null
+  cmp -s "${FX}/settings.json" "${FXR}/settings.snap" \
+    || FX_FAIL "reinstall changed settings.json in: ${FXNAME}"
+  rm -f "${FXR}/settings.snap"
+  CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+  python3 - "${FX}/settings.json" <<'FXPY' || FX_FAIL "uninstall left hook entries behind in: ${FXNAME}"
+import os, sys
+path = sys.argv[1]
+if not os.path.exists(path):
+    raise SystemExit(0)
+raise SystemExit(1 if "luciazero-" in open(path).read() else 0)
+FXPY
+  [ ! -f "${FX}/hooks/luciazero-verify.sh" ] \
+    || FX_FAIL "uninstall cleaned settings.json but kept the hook file: ${FXNAME}"
+done
+rm -rf "${FXR}"
 
 # 5c3. The same directory, upgraded from an install that wrote the path bare.
 # Those entries are ours and are broken; the installer has to rewrite them in

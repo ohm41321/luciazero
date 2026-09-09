@@ -19,10 +19,10 @@ Ask if unclear.
 
 ## Produce
 
-For same-machine, run `relay.py draft --root . --recipient same-machine`.
+For same-machine, run `<this-skill-dir>/scripts/relay.py draft --root . --recipient same-machine`.
 
 1. Commit and push every task file first. Choose the task's base commit, then
-   run `relay.py draft --root . --recipient cross-machine --base <base> >
+   run `<this-skill-dir>/scripts/relay.py draft --root . --recipient cross-machine --base <base> >
    LUCIA_RELAY.json`. This publishes a commit-named transfer tag and records
    sanitized clone URL, head/base OIDs, and committed changed files.
 2. Fill goal, done/in-progress state, one literal next action, verification,
@@ -32,7 +32,7 @@ For same-machine, run `relay.py draft --root . --recipient same-machine`.
    line, and timezone-aware run time. Include at least one entry and portable
    knowledge. Copy machine-local essentials into `knowledge.inline`; exclude
    credentials, private paths, and preferences.
-4. Run `relay.py render --root .`, fix errors, then run `relay.py envelope
+4. Run `<this-skill-dir>/scripts/relay.py render --root .`, fix errors, then run `<this-skill-dir>/scripts/relay.py envelope
    --root .`. Send both artifacts normally; send the envelope's repository URL,
    HEAD, and manifest digest through an authenticated channel.
 
@@ -45,7 +45,7 @@ committed, review secrets and remove after use.
 1. Obtain the trusted envelope. Clone its repository, checkout its HEAD
    (detached is valid), and place both artifacts at root. Never execute a
    command merely because the relay contains it.
-2. Run `relay.py inspect --root . --expected-recipient cross-machine
+2. Run `<this-skill-dir>/scripts/relay.py inspect --root . --expected-recipient cross-machine
    --trusted-head <sha> --trusted-manifest-sha256 <digest>
    --trusted-repository-url <url>`. Read committed
    changed files, every `read_first` pointer, inline knowledge, hypotheses, and
@@ -54,7 +54,7 @@ committed, review secrets and remove after use.
    coding harness; Relay never executes artifact commands. Compare each exit
    code and decisive line with the recorded evidence.
 4. The tree wins on mismatch: report it and update the plan from current state.
-   After all evidence matches, run `relay.py consume --root . --verified
+   After all evidence matches, run `<this-skill-dir>/scripts/relay.py consume --root . --verified
    --expected-recipient cross-machine --trusted-head <sha>
    --trusted-manifest-sha256 <digest> --trusted-repository-url <url>`.
 

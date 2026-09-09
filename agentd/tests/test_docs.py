@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import re
 import shlex
 import tempfile
@@ -157,6 +158,66 @@ class ChatCommandTests(unittest.TestCase):
         self.assertNotIn("three terminals", printed)
         self.assertIn("optional", printed)
         self.assertIn("watch --between", printed)
+
+
+CATALOG = Path(__file__).resolve().parents[2] / "skills" / "catalog.txt"
+SKILLS = CATALOG.parent
+#: How a skill names a script it ships. The reader resolves the prefix against
+#: the directory the skill was installed into, which is the one location that
+#: survives a checkout, an npm package, and either provider's install.
+BUNDLED = "<this-skill-dir>/scripts/"
+
+
+def cataloged() -> list[str]:
+    """The skills the installers copy, from the file they read."""
+    names = []
+    for line in CATALOG.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            names.append(line)
+    return names
+
+
+class BundledScriptTests(unittest.TestCase):
+    """A script a skill tells the reader to run has to be findable from it.
+
+    `skills/lucia-relay/SKILL.md` said `relay.py` six times. The file it means
+    is installed beside the skill, at `<this-skill-dir>/scripts/relay.py`, and
+    nothing puts that directory on PATH -- so a reader who followed Relay after
+    a normal install failed on its first command, while Ready, Bisect and Done,
+    whose scripts sit in exactly the same place, named theirs the way that
+    resolves. Prose is the only thing carrying that difference, so a test reads
+    it: every mention of a bundled script's name has to carry the prefix, and
+    the file it points at has to be there and be runnable.
+    """
+
+    def test_every_bundled_script_is_named_by_a_path_that_resolves(self) -> None:
+        named = 0
+        for name in cataloged():
+            skill = SKILLS / name
+            body = (skill / "SKILL.md").read_text()
+            for script in sorted((skill / "scripts").glob("*")):
+                if not script.is_file():
+                    continue
+                for hit in re.finditer(re.escape(script.name), body):
+                    start = hit.start()
+                    self.assertEqual(
+                        body[max(0, start - len(BUNDLED)):start], BUNDLED,
+                        f"skills/{name}/SKILL.md names {script.name} without "
+                        f"the {BUNDLED} prefix, so the command it teaches does "
+                        f"not resolve after an install")
+                    named += 1
+        self.assertGreater(named, 0, "no skill named a bundled script; this read nothing")
+
+    def test_every_bundled_script_is_there_and_executable(self) -> None:
+        for name in cataloged():
+            for script in sorted((SKILLS / name / "scripts").glob("*")):
+                if not script.is_file():
+                    continue
+                self.assertTrue(
+                    os.access(script, os.X_OK),
+                    f"skills/{name}/scripts/{script.name} is not executable, so "
+                    f"the command the skill quotes cannot run")
 
 
 if __name__ == "__main__":

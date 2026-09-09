@@ -1,6 +1,6 @@
 # Luciazero improvement roadmap
 
-Review date: 2026-09-08. Baseline: `98b00e3`.
+Review date: 2026-09-09. Baseline: `d5d2798`.
 
 This is a repository-wide review and proposed work queue, not an implementation
 or release approval. Existing local commits belong to their owners. Release
@@ -34,14 +34,10 @@ execution context.
 
 ## Current gates and milestone status
 
-The declared critical path to the checkout-only v2.5.0 beta has two unmet
-pieces, both requiring external human evidence:
-
-1. A second qualifying retro from a distinct real workflow where a
-   user-started turn measurably blocked progress. The decision log stands at
-   1 of 2; a non-blocking wait remains useful evidence but does not qualify.
-2. Install/upgrade/uninstall proof on a second machine. The gate script has
-   passed on one Darwin arm64 machine only.
+The declared critical path to the checkout-only v2.5.0 beta has one unmet
+piece: install/upgrade/uninstall proof on a second machine. The gate script has
+passed on one Darwin arm64 machine only. The decision log now stands at 7 of 3
+workflows and 2 of 2 qualifying retros; that gate closed on 2026-09-09.
 
 M7's six managed-dispatch live tasks remain behind the same M4 decision gate;
 they are not part of v2.5.0. Do not run them merely to manufacture the missing
@@ -63,6 +59,37 @@ silently inserted into the historical five-item release gate. On 2026-09-08 the
 owner decided they are fixed rather than accepted, because R10, R11 and R12a
 touch the user's own files and R15 disables a credential that is still valid.
 The delivery sequence at the end of this document carries that order.
+
+## Skill re-review snapshot — 2026-09-09
+
+All 13 cataloged skill definitions were read again from the tree at `d5d2798`.
+The supporting-script inventory and install mapping were rechecked against the
+earlier script audit; the scripts were not exhaustively re-audited in this
+pass. `python3 scripts/check-skill-prompts.py` is green; that proves prompt
+structure and budgets, not that a model follows the prompts. This table is the
+current queue, not a claim that every proposal is a defect.
+
+| Skill | Current finding or improvement | Status |
+| --- | --- | --- |
+| `ready` | Replace the numeric 3–6 smoke-test target with risk-based selection; keep offline and service-dependent verification distinct | Proposal, R09 coverage |
+| `show` | Make its five-part response contract proportional so a one-fact request does not require a ceremonial report | Proposal |
+| `imouto-mode` | Its name suggests persistence but its contract is one invocation; `focus` permits no visible voice, invocation UX hides the arguments, and coexistence with persistent style plugins is undefined | Confirmed contract gaps plus one unproven interaction, R23 |
+| `plan` | Reuse authority already granted and pause only for a decision that changes the result | Proposal, R05 |
+| `debug` | Permit evidence-led hypotheses where production or intermittent failures cannot safely be reproduced; revert only the agent-owned edit | Proposal |
+| `bisect` | Explain per-revision dependency setup and that endpoint retries do not make flaky midpoints reliable | Proposal |
+| `done` | R01 is closed; still avoid rerunning an unchanged full suite and distinguish a reviewer prompt from an independent execution context | R04/R06 open |
+| `lucia-relay` | Resolve `relay.py` portably and make publication/tag creation an explicit user-authorized action | R03/R07 open |
+| `experiment` | Treat three samples as a minimum heuristic, model warmup/noise, and retain correctness or secondary benefits in keep/revert decisions | Proposal |
+| `discipline-report` | Give installed/standalone layouts a real command-resolution contract and state malformed/partial-data limits in reports | R03 open |
+| `lucia-bus` | Reuse verified identity before redundant registration, bound display of untrusted/private payloads, and expose queued-without-proxy state | R05/R20 open |
+| `lucia-chat` | Two-window flow, optional watcher, nudge/pull split, and three latency names now match the shipped CLI | R02 closed; no new finding |
+| `retro` | Preserve user testimony as testimony, route private evidence out of Git, deduplicate corrections, and keep nonqualifying outcomes visible | R08 open |
+
+Cross-skill priorities remain R03 (commands that work after every supported
+install), R05 (authority and missing-capability stops), R06 (actual review
+independence), R08 (evidence/testimony boundaries), and R09 (behavioral tests).
+R23 is deliberately not called a Caveman defect: the installed Caveman state
+conflicts with Imouto's voice, but no controlled A/B result exists yet.
 
 ## P1: proof and runtime contract correctness
 
@@ -96,6 +123,10 @@ as regression proof; a parent run whose failure fingerprint does not match the
 expected regression is reported as unassessable rather than as proof;
 current-code failure cannot yield success. Tests preserve the caller's
 dirty/untracked files and cleanup the isolated worktree.
+
+Closed 2026-09-08 by `5de14a8`. The probe now requires a current-tree green,
+attributes the parent failure to the changed tests, rejects infrastructure
+fingerprints, and reports mismatched failure evidence as unassessable.
 
 ### R02 — Chat skill describes pre-nudge behavior and misattributes wait [Confirmed]
 
@@ -282,6 +313,9 @@ Fix: return before all cleanup on unsafe ancestry and apply the same ownership
 policy to file/tree operations. Acceptance: external sentinels survive both
 provider uninstallers, with the managed destination present and absent.
 
+Closed 2026-09-08 by `0703fdf`. Unsafe ancestry returns before cleanup for
+both managed files and trees; external sentinels cover every refusal path.
+
 ### R11 — Codex uninstall predictable temporary path [Confirmed, P1]
 
 Source: `uninstall-codex.sh:109-110`.
@@ -291,6 +325,10 @@ Claude-side mktemp hardening did not cover this path.
 Fix: validated same-directory mktemp, cleanup, and conservative replacement.
 Acceptance: a decoy symlink and its target survive; failed writes preserve the
 original AGENTS.md. Source review only; no live user files were exercised.
+
+Closed 2026-09-08 by `dc8dc22`, with same-directory `mktemp`, cleanup, and a
+sentinel regression. File-mode preservation was closed separately by
+`c46421e` for both user instruction files.
 
 ### R12a — Malformed Codex markers rewrite the file anyway [Confirmed, P1]
 
@@ -310,6 +348,9 @@ command exits nonzero and the file's bytes are unchanged (compare hashes, not
 just content read back through the same rewriter); the well-formed case still
 installs and uninstalls as before.
 
+Closed 2026-09-08 by `e5c06dc`. Install and uninstall refuse malformed,
+nested, and incomplete markers before rewriting the user's file.
+
 ### R12b — Trailing whitespace round-trip and separator provenance [Confirmed, P2]
 
 Source: `install-codex.sh:100-115`.
@@ -322,6 +363,10 @@ rather than inferred.
 Acceptance: install then uninstall restores the original bytes for zero, one,
 and multiple trailing blank lines, and for user content rearranged around the
 managed block.
+
+Closed 2026-09-09 by `994d4a2` and `0fa38c9`, merged as `b86f2f0`. The block
+owns its separator inside its markers, records a final newline it had to add,
+and round-trips LF/CRLF files whose last line has no newline.
 
 ### R13 — Generated hook commands need shell quoting [Confirmed, P2]
 
@@ -356,6 +401,9 @@ calculation and liveness/expiry checks. Failed renewal retains existing access,
 expiry/state, and writes no renewal event; corrupt timestamps and programming
 errors still surface. Acceptance: read-only resolve succeeds while the valid
 binding's persisted fields and event count remain unchanged.
+
+Closed 2026-09-08 by `14bf3d6`. Only the renewal write transaction catches
+`sqlite3.Error`; a valid credential retains access without a false renewal.
 
 ### R16 — Renewal updates can shorten expiry under reordered requests [Confirmed, P2]
 
@@ -459,6 +507,50 @@ still serving afterwards. The 20000-level input stays, as malformed syntax,
 where its classification no longer depends on the interpreter. Verified on
 3.14.7 and 3.10.20.
 
+### R23 — Imouto is presented as a mode but is a one-invocation voice [Confirmed contract gaps, Investigate interaction, P2]
+
+Sources: `skills/imouto-mode/SKILL.md`,
+`skills/imouto-mode/agents/openai.yaml`, and the installed Caveman plugin's
+`plugin.json`, `caveman-activate.js`, and `caveman-mode-tracker.js`. The OpenAI
+YAML is interface metadata and is not evidence of Claude Code behavior.
+
+Three source-visible gaps are separate:
+
+1. The skill says the next request is off, while its name and “mode” vocabulary
+   can reasonably lead a user to expect session persistence. A prompt cannot
+   truthfully promise persistence without state and a lifecycle hook.
+2. `focus` requires a warm touch only in a greeting, transition, or handoff. A
+   normal coding answer may contain none of those and remain compliant, so the
+   activation can be invisible.
+3. Model invocation is disabled intentionally, but the skill exposes neither
+   an argument hint nor an activation acknowledgement. Natural-language “turn
+   Imouto on” is therefore not a supported activation, and an empty invocation
+   shows choices without enabling one.
+
+There is also a plausible conflict, not yet a confirmed cause: the installed
+Caveman plugin persists `full` in `.caveman-active`, injects its complete style
+at `SessionStart`, and reinforces it at every `UserPromptSubmit`. Imouto has no
+precedence or suspend/restore protocol. The presence of two conflicting prompts
+does not prove which one caused a particular silent answer.
+
+Decision before implementation: either rename and document Imouto as an
+explicit one-shot voice, or make it a real session mode. The persistent design
+needs its own symlink-safe state, `SessionStart` re-assertion after
+startup/resume/clear/compaction, `UserPromptSubmit` handling, and a defined
+suspend/restore contract with other persistent style plugins. Merely writing
+“Imouto wins” in the skill is not a state machine.
+
+Acceptance begins with a controlled A/B using the same prompt: invoke Imouto
+while Caveman is `full`, stop Caveman and verify its flag is absent, invoke
+Imouto again, then send one request without invoking it. Record the literal
+prompts and responses. Only an A-silent/B-voiced result attributes suppression
+to Caveman; B-silent routes to invocation/installation debugging; a voiced
+third request disproves the current one-shot contract or shows unbounded style
+carry-over. If one-shot is retained, `focus` has an observable per-response
+minimum and frontmatter advertises `[focus|on|off]`. If persistence is chosen,
+tests cover start, resume, clear, compaction, off, crash/corrupt state, and
+suspend/restore without modifying the other plugin's source.
+
 ## Delivery sequence
 
 The owner reviewed this order on 2026-09-08 and rejected accepting the P1
@@ -469,24 +561,23 @@ proven with it.
 
 0. R22, done first on 2026-09-08 at the owner's direction: the full suite is
    the proof for everything below it, and it was red.
-1. R01: repair the proof tool. The fix must go past "current tree green, parent
+1. R01 (closed `5de14a8`): repair the proof tool. The fix must go past "current tree green, parent
    tree red" — targeted verification plus a failure-fingerprint check, or a
    parent-only dependency failure still reads as regression proof.
-2. R10: the refusal must return before snapshot cleanup, in every path.
-3. R11: same-directory `mktemp` for the Codex uninstall rewrite. R10 and R11
+2. R10 (closed `0703fdf`): the refusal must return before snapshot cleanup, in every path.
+3. R11 (closed `dc8dc22`): same-directory `mktemp` for the Codex uninstall rewrite. R10 and R11
    are separate commits; they are separate defects in separate scripts.
-4. R12a: malformed, nested, and incomplete markers refuse, leaving the file
+4. R12a (closed `e5c06dc`): malformed, nested, and incomplete markers refuse, leaving the file
    byte-identical.
-5. R15: reproduce the read-only failure in a focused test first, then narrow
+5. R15 (closed `14bf3d6`): reproduce the read-only failure in a focused test first, then narrow
    the handling to the SQLite write alone.
-6. R02/R03/R12b/R13/R14: stale Bus guidance, portable installation, whitespace
-   round-trip, safe config updates, shell quoting. R02 was taken out of order
-   on 2026-09-08: it is public usage guidance, and the release gate is open on
-   items a user would follow it through.
+6. R02 and R12b are closed; R03/R13/R14 remain: portable installation, safe
+   config updates, and shell quoting. R02 was taken out of order on 2026-09-08
+   because it is public usage guidance.
 7. R04–R08 and R19: lifecycle, approval, reviewer, relay, testimony, and
    gate/release proposals.
-8. R16–R18, R20, R09 and remaining catalog items: evaluate behavior before
-   expanding prompts.
+8. R16–R18, R20, R09, R23 and remaining catalog items: evaluate behavior
+   before expanding prompts or adding persistent state.
 
 Implementation proposals here do not authorize bumping versions, tagging,
 publishing, changing existing release gates, or deploying to production.

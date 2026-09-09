@@ -3218,12 +3218,21 @@ echo "ok  codex uninstall restores AGENTS.md"
 # line longer and one ending in several came back shorter. The rearranged case
 # also reinstalls, because moving the block is what puts the installer's own
 # stripping pass -- the one that did the trimming -- over user content.
-for RT_CASE in none one several rearranged; do
+#
+# The noeol cases are the same defect from the other end: both rewrites went
+# through `awk`, whose print terminates every record it writes, so a file whose
+# last line carried no newline came back one byte longer -- 12 bytes to 13 for
+# the LF fixture, and the CRLF one the same way. The start marker needs a line
+# of its own, so the install has to add that newline; it records it inside the
+# block and the uninstall removes it again.
+for RT_CASE in none one several rearranged noeol crlf-noeol; do
   RT="$(mktemp -d)"
   case "${RT_CASE}" in
-    several) printf '# mine\n\nkeep\n\n\n\n' > "${RT}/AGENTS.md" ;;
-    one)     printf '# mine\n\nkeep\n\n'       > "${RT}/AGENTS.md" ;;
-    *)       printf '# mine\n\nkeep\n'          > "${RT}/AGENTS.md" ;;
+    several)    printf '# mine\n\nkeep\n\n\n\n' > "${RT}/AGENTS.md" ;;
+    one)        printf '# mine\n\nkeep\n\n'       > "${RT}/AGENTS.md" ;;
+    noeol)      printf '# mine\n\nkeep'             > "${RT}/AGENTS.md" ;;
+    crlf-noeol) printf '# mine\r\n\r\nkeep'         > "${RT}/AGENTS.md" ;;
+    *)          printf '# mine\n\nkeep\n'           > "${RT}/AGENTS.md" ;;
   esac
   cp "${RT}/AGENTS.md" "${RT}/AGENTS.md.orig"
   CODEX_HOME="${RT}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
@@ -3238,12 +3247,21 @@ for RT_CASE in none one several rearranged; do
     CODEX_HOME="${RT}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
       || { rm -rf "${RT}"; fail "codex reinstall failed on a rearranged AGENTS.md"; }
   fi
+  case "${RT_CASE}" in
+    *noeol)
+      # the record of the newline the install added is inside the block the
+      # next install strips, so a second install has to read it back out
+      CODEX_HOME="${RT}" "${ROOT}/install-codex.sh" >/dev/null 2>&1 \
+        || { rm -rf "${RT}"; fail "codex reinstall failed on the ${RT_CASE} round-trip fixture"; }
+      ;;
+  esac
   CODEX_HOME="${RT}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 \
     || { rm -rf "${RT}"; fail "codex uninstall failed on the ${RT_CASE} round-trip fixture"; }
   cmp -s "${RT}/AGENTS.md.orig" "${RT}/AGENTS.md" || {
     RT_DIFF="$(diff "${RT}/AGENTS.md.orig" "${RT}/AGENTS.md" | tr '\n' ' ')"
+    RT_SIZE="$(wc -c < "${RT}/AGENTS.md.orig" | tr -d ' ') -> $(wc -c < "${RT}/AGENTS.md" | tr -d ' ') bytes"
     rm -rf "${RT}"
-    fail "codex install/uninstall cycle did not restore AGENTS.md bytes (${RT_CASE}): ${RT_DIFF}"
+    fail "codex install/uninstall cycle did not restore AGENTS.md bytes (${RT_CASE}, ${RT_SIZE}): ${RT_DIFF}"
   }
   rm -rf "${RT}"
 done

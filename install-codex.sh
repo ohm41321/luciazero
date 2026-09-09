@@ -19,6 +19,9 @@ CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 AGENTS_MD="${CODEX_DIR}/AGENTS.md"
 START='<!-- luciazero:start -->'
 END='<!-- luciazero:end -->'
+# written inside the block, under the start marker, when the install had to add
+# a final newline to the user's content to make room for that marker
+ADDED_NL_MARK='<!-- luciazero:added-final-newline -->'
 MANAGED_DIR="${CODEX_DIR}/.luciazero-managed"
 BACKUP_DIR="${CODEX_DIR}/.luciazero-backups"
 
@@ -90,6 +93,45 @@ remove_legacy_tree() {
   fi
 }
 
+# Does $1 end in a newline? A last line without one is content like any other,
+# and `awk` cannot pass it through: print terminates every record it writes, so
+# a rewrite that goes through awk hands such a file back one byte longer.
+ends_with_newline() {
+  [ -s "$1" ] && [ -z "$(tail -c 1 "$1")" ]
+}
+
+# Write $1 with its marker block removed and every other byte kept, including a
+# last line that carries no newline.
+#
+# The newline directly above the start marker is removed with the block when
+# the block says the installer put it there. The install has to: a start marker
+# only counts on a line of its own, so a file whose last line was unterminated
+# needs one before the block can be appended. That newline is the installer's,
+# not the user's, and nothing in the finished file distinguishes it from a
+# newline the user typed -- so the installer records it, on the line under the
+# start marker, where the markers are its provenance exactly as they are the
+# blank line's. The record is honoured only while the block is still the last
+# thing in the file, which is where the install put it; a user who has moved
+# the block since has moved that newline into the middle of their own text,
+# where it is no longer provably ours and stays.
+strip_marker_block() {
+  if ends_with_newline "$1"; then SMB_SRC_NL=1; else SMB_SRC_NL=0; fi
+  awk -v s="${START}" -v e="${END}" -v mark="${ADDED_NL_MARK}" -v srcnl="${SMB_SRC_NL}" '
+    $0==s {inblock=1; head=1; blockend=NR; next}
+    $0==e {inblock=0; blockend=NR; next}
+    inblock {if (head && $0==mark) added=1; head=0; blockend=NR; next}
+    {n++; keep[n]=$0; lastkept=NR}
+    END {
+      chop = (added && n > 0 && blockend == NR)
+      for (i = 1; i <= n; i++) {
+        printf "%s", keep[i]
+        if (i < n) printf "\n"
+      }
+      if (n > 0 && !chop && !(lastkept == NR && srcnl == 0)) printf "\n"
+    }
+  ' "$1"
+}
+
 # Exactly one well-formed marker pair, or none at all. Anything else — a start
 # with no end, a second pair, a pair nested inside another — has no defined
 # meaning, and the awk rewrites below would answer it by dropping whatever
@@ -134,19 +176,24 @@ mkdir -p "${CODEX_DIR}/skills"
 # no blank line came back from a cycle one line longer, and one ending in
 # several came back shorter. The blank line that keeps the doctrine readable
 # now lives INSIDE the block, under the start marker, where the markers are its
-# provenance and the uninstaller takes it away without having to guess.
+# provenance and the uninstaller takes it away without having to guess. The
+# newline this installer has to add to an unterminated last line is recorded in
+# the same place, for the same reason.
 TMP="$(mktemp)"
 if [ -f "${AGENTS_MD}" ]; then
   cp "${AGENTS_MD}" "$(bakpath "${AGENTS_MD}")"
-  awk -v s="${START}" -v e="${END}" '
-    $0==s {inblock=1; next}
-    $0==e {inblock=0; next}
-    !inblock {print}
-  ' "${AGENTS_MD}" > "${TMP}"
+  strip_marker_block "${AGENTS_MD}" > "${TMP}"
 fi
+# A start marker counts only on a line of its own, so content whose last line
+# has no newline needs one before the block can follow it. That newline is the
+# only byte of the user's file this installer changes, and it is recorded under
+# the start marker so the uninstall takes it back with the block.
+if [ -s "${TMP}" ] && ! ends_with_newline "${TMP}"; then ADDED_NL=1; else ADDED_NL=0; fi
 {
   if [ -s "${TMP}" ]; then cat "${TMP}"; fi
+  if [ "${ADDED_NL}" = 1 ]; then printf '\n'; fi
   echo "${START}"
+  if [ "${ADDED_NL}" = 1 ]; then echo "${ADDED_NL_MARK}"; fi
   echo
   cat "${SRC}/claude/luciazero.md"
   echo "${END}"

@@ -225,6 +225,11 @@ should use. Two honest limits on what it has proved so far:
   guessing, since there is no record there, and a user who moved the block
   after installing would have lost a blank line of their own. Not writing one
   needs no record and no guess — a moved block carries its own blank with it.
+  The single byte that does need a record is a final newline added to content
+  that ended without one, since the start marker only counts on a line of its
+  own: the install writes that record inside the block, and the uninstall
+  honours it only while the block is still last in the file, which is where the
+  install put it.
   The distinction is not academic — a CLAUDE.md that already carries
   the import line makes `install.sh` leave the file alone entirely, so the
   blank line above it is the user's, and an uninstaller that assumed otherwise

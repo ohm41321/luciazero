@@ -85,6 +85,18 @@ if [ "${INNER}" = 0 ]; then
 fi
 
 # ---------------------------------------------------------------- inner ----
+# The installers below read their destination from the environment before they
+# fall back to $HOME: CLAUDE_CONFIG_DIR and CODEX_HOME name the two config
+# directories, LUCIAZERO_BIN_DIR the launcher directory, LUCIAZERO_SERVICE_ROOT
+# the service root the uninstaller sweeps, and LUCIAZERO_AGENT_BUS_HOME the bus
+# a read command opens. Every phase sets HOME, and HOME loses to all of them.
+# So a shell that exports one -- an operator's own dotfile, a wrapper, a CI job
+# -- sends these installs into the caller's real configuration, and the run
+# still ends by reporting that nothing was written outside its own root. The
+# gate is a claim about footprints; the environment it makes that claim in is
+# its own to control, not the runbook's to remember.
+unset CLAUDE_CONFIG_DIR CODEX_HOME LUCIAZERO_BIN_DIR LUCIAZERO_SERVICE_ROOT \
+  LUCIAZERO_AGENT_BUS_HOME
 GATE_ROOT="${LUCIAZERO_GATE_HOME:-}"
 [ -n "${GATE_ROOT}" ] || fail "set LUCIAZERO_GATE_HOME to a directory this may install into.
   It must not be your real home: the point of this check is that a home which

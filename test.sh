@@ -2881,6 +2881,24 @@ for USER_LINE in '# mine' 'keep' 'my new note' 'trailing note of mine'; do
 done
 ! grep -qF 'luciazero:start' "${SB3}/AGENTS.md" || SB3_FAIL "uninstall-codex.sh left its block behind"
 rm -rf "${SB3}"
+
+# (vii) The gate script proves a footprint, so its own environment is part of
+# what it proves. install.sh and uninstall.sh read CLAUDE_CONFIG_DIR,
+# CODEX_HOME, LUCIAZERO_BIN_DIR and LUCIAZERO_SERVICE_ROOT before they fall
+# back to $HOME, and the gate only sets HOME, which loses to every one of them.
+# Carried in from the caller's shell they redirect the gate's installs into the
+# operator's real configuration, and the run still reports that it wrote
+# nothing outside its own root.
+SB3="$(mktemp -d)"
+LEAK="${SB3}/leak"
+CLAUDE_CONFIG_DIR="${LEAK}/claude" CODEX_HOME="${LEAK}/codex" \
+  LUCIAZERO_BIN_DIR="${LEAK}/bin" LUCIAZERO_SERVICE_ROOT="${LEAK}/service" \
+  LUCIAZERO_GATE_HOME="${SB3}/root" \
+  "${ROOT}/scripts/gate-linux-container.sh" --inner >/dev/null 2>&1 \
+  || SB3_FAIL "the gate script did not run green with config env vars set in the caller's shell"
+[ ! -e "${LEAK}" ] \
+  || SB3_FAIL "the gate script installed outside its own root: $(find "${LEAK}" -maxdepth 2 | head -5)"
+rm -rf "${SB3}"
 echo "ok  installers refuse foreign provenance paths and keep rearranged user content"
 
 # 5c. enforcement pack: --with-hooks wiring is additive, idempotent, and

@@ -80,6 +80,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Backup creation no longer follows a dangling symlink planted at the
+  timestamped name. The settings uninstaller reserves its destination with
+  exclusive creation; all four shell backup helpers reject names already held
+  by symlinks. The shell helpers still check and then copy rather than reserve
+  atomically; that narrower concurrent race remains tracked as roadmap R24.
+
 - `/lucia-chat` describes the bus it ships with. It asked for three terminals
   and said nothing wakes an idle session, both true before the knock existed:
   it now opens one window per agent with `lucia claude` and `lucia codex`,

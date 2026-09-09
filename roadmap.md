@@ -402,6 +402,12 @@ Fix command construction, status detection, and uninstall matching together.
 Acceptance: generated hooks actually run from paths with spaces/apostrophes;
 metacharacter fixtures cannot execute an unintended sentinel command.
 
+Closed 2026-09-09 by `ff199fb` and `610b0c3`. Hook and status-line
+commands are quoted at the write site, legacy bare entries are normalized
+in place, and status/uninstall parse both spellings. Space, apostrophe and
+shell-metacharacter fixtures execute the stored command, preserve idempotency,
+remove every owned entry, and never execute path text.
+
 ### R14 — Settings updates need failure-safe publication [Proposal, P2]
 
 Sources: `install.sh:439-453,502-507`, `uninstall.sh:237-240`.
@@ -588,7 +594,7 @@ suspend/restore without modifying the other plugin's source.
 Sources: `install.sh`, `uninstall.sh`, `install-codex.sh`,
 `uninstall-codex.sh` — the `bakpath()` each of them defines.
 The helper picks `<file>.bak.<timestamp>[.n]` by testing the name and then
-returns it; the caller copies to it afterwards. f54ea56 closed the planted
+returns it; the caller copies to it afterwards. 550a656 closed the planted
 case — `[ -e ]` alone follows the name and calls a dangling symlink free, so
 `install.sh` copied a real settings.json through one and out of the config
 directory (reproduced: `escaped-0` outside a scratch config dir) — by refusing

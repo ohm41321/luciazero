@@ -153,12 +153,63 @@ if [ "${STATUS_ONLY}" = 1 ]; then
         echo "  MISS  hooks/${HFILE} differs from this checkout (stale or customized) — re-run ./install.sh --with-hooks"; STATUS_RC=1
       fi
     done
+    # The stored command is a shell string whose path may be quoted, so
+    # whether a subcommand is wired is asked of the parsed command rather
+    # than of the bytes: a `grep` for the bare path stops seeing a
+    # correctly quoted entry the moment the path needs quoting.
     WIRE_MISS=""
-    for SUB in prompt skill-prompt bash-start edit bash bash-failure skill stop session; do
-      grep -qF "${CLAUDE_DIR}/hooks/luciazero-verify.sh ${SUB}\"" "${CLAUDE_DIR}/settings.json" 2>/dev/null \
-        || WIRE_MISS="${WIRE_MISS} ${SUB}"
-    done
-    if [ -z "${WIRE_MISS}" ]; then
+    WIRE_UNCHECKED=""
+    if command -v python3 >/dev/null 2>&1; then
+      # a reader that crashed printed nothing, and nothing is what a fully
+      # wired settings.json prints too -- so its exit status decides
+      WIRE_MISS="$(python3 - "${CLAUDE_DIR}/settings.json" "${CLAUDE_DIR}/hooks/luciazero-verify.sh" <<'WIREPY'
+import json, shlex, sys
+
+path, verify = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except (OSError, ValueError):
+    settings = {}
+
+def sub_of(cmd):
+    """Which subcommand of ours this entry runs, or None if it is not ours."""
+    if not isinstance(cmd, str):
+        return None
+    if cmd == verify:
+        return ""
+    if cmd.startswith(verify + " "):
+        return cmd[len(verify) + 1:].strip()
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return None
+    if parts and parts[0] == verify:
+        return " ".join(parts[1:])
+    return None
+
+hooks = settings.get("hooks") if isinstance(settings, dict) else None
+wired = set()
+for entries in (hooks or {}).values() if isinstance(hooks, dict) else ():
+    for entry in entries if isinstance(entries, list) else ():
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        for hook in inner if isinstance(inner, list) else ():
+            if not isinstance(hook, dict):
+                continue
+            sub = sub_of(hook.get("command", ""))
+            if sub is not None:
+                wired.add(sub)
+
+want = "prompt skill-prompt bash-start edit bash bash-failure skill stop session".split()
+sys.stdout.write("".join(" " + s for s in want if s not in wired))
+WIREPY
+)" || WIRE_UNCHECKED=1
+    else
+      WIRE_UNCHECKED=1
+    fi
+    if [ -n "${WIRE_UNCHECKED}" ]; then
+      echo "  --    hook wiring not checked (python3 absent)"
+    elif [ -z "${WIRE_MISS}" ]; then
       echo "  ok    hooks wired in settings.json (prompt/skill-prompt/bash-start/edit/bash/bash-failure/skill/stop/session)"
     else
       echo "  MISS  settings.json missing hook entries:${WIRE_MISS} (re-run ./install.sh --with-hooks)"; STATUS_RC=1
@@ -451,11 +502,38 @@ if [ "${WITH_HOOKS}" = 1 ]; then
     cp "${SETTINGS}" "$(bakpath "${SETTINGS}")"
   fi
   python3 - "${SETTINGS}" "${CLAUDE_DIR}/hooks" <<'PY' || { echo "FAIL: could not update settings.json (invalid JSON?) — hook files copied but not wired" >&2; exit 1; }
-import json, os, sys
+import json, os, shlex, sys
 
 path, hooks_dir = sys.argv[1], sys.argv[2]
 verify_cmd = os.path.join(hooks_dir, "luciazero-verify.sh")
 status_cmd = os.path.join(hooks_dir, "luciazero-statusline.sh")
+MARKERS = (verify_cmd, status_cmd)
+
+# A hook command is a shell string, not an argv. A hooks directory whose name
+# contains a space ends the command at that byte -- the stored command runs a
+# prefix of the path and the shell answers 127 -- and a quote or a `$` in it
+# would be worse than a broken hook. `shlex.quote` leaves a path that needs
+# nothing exactly as it was, so an install that already worked keeps every
+# byte and only the ones that were broken change.
+def command(script, sub=""):
+    return shlex.quote(script) + (" " + sub if sub else "")
+
+# Ours in either spelling: what `command` writes now, and the bare path older
+# versions wrote -- including a bare path with a space in it, which shlex
+# cannot parse back because it was never a valid command in the first place.
+def parse(cmd):
+    for m in MARKERS:
+        if cmd == m:
+            return (m, "")
+        if cmd.startswith(m + " "):
+            return (m, cmd[len(m) + 1:].strip())
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return None
+    if parts and parts[0] in MARKERS:
+        return (parts[0], " ".join(parts[1:]))
+    return None
 
 settings = {}
 if os.path.exists(path):
@@ -465,39 +543,49 @@ if os.path.exists(path):
 changed = False
 hooks = settings.setdefault("hooks", {})
 
-def ensure(event, matcher, command):
+def ensure(event, matcher, sub):
     global changed
+    want = command(verify_cmd, sub)
     entries = hooks.setdefault(event, [])
     for e in entries:
         for h in e.get("hooks", []):
-            if h.get("command") == command:
+            if parse(h.get("command", "")) == (verify_cmd, sub):
+                if h.get("command") != want:
+                    h["command"] = want  # an older install's unquoted entry
+                    changed = True
                 return
-    entry = {"hooks": [{"type": "command", "command": command}]}
+    entry = {"hooks": [{"type": "command", "command": want}]}
     if matcher is not None:
         entry["matcher"] = matcher
     entries.append(entry)
     changed = True
 
-ensure("PostToolUse", "Edit|Write|NotebookEdit", verify_cmd + " edit")
-ensure("PostToolUse", "Bash", verify_cmd + " bash")
-ensure("PostToolUse", "Skill", verify_cmd + " skill")
-ensure("PostToolUseFailure", "Bash", verify_cmd + " bash-failure")
-ensure("PreToolUse", "Bash", verify_cmd + " bash-start")
-ensure("UserPromptSubmit", None, verify_cmd + " prompt")
-ensure("UserPromptExpansion", None, verify_cmd + " skill-prompt")
-ensure("Stop", None, verify_cmd + " stop")
-ensure("SessionStart", None, verify_cmd + " session")
+ensure("PostToolUse", "Edit|Write|NotebookEdit", "edit")
+ensure("PostToolUse", "Bash", "bash")
+ensure("PostToolUse", "Skill", "skill")
+ensure("PostToolUseFailure", "Bash", "bash-failure")
+ensure("PreToolUse", "Bash", "bash-start")
+ensure("UserPromptSubmit", None, "prompt")
+ensure("UserPromptExpansion", None, "skill-prompt")
+ensure("Stop", None, "stop")
+ensure("SessionStart", None, "session")
 
 sl = settings.get("statusLine")
+want_sl = command(status_cmd)
 if sl is None:
-    settings["statusLine"] = {"type": "command", "command": status_cmd}
+    settings["statusLine"] = {"type": "command", "command": want_sl}
     changed = True
     print("  ok  statusline wired")
-elif sl.get("command") == status_cmd:
-    print("  ok  statusline already wired")
+elif isinstance(sl, dict) and parse(sl.get("command", "")) == (status_cmd, ""):
+    if sl.get("command") != want_sl:
+        sl["command"] = want_sl
+        changed = True
+        print("  ok  statusline rewritten so its path survives the shell")
+    else:
+        print("  ok  statusline already wired")
 else:
     print("  !!  statusline SKIPPED — a custom statusLine exists; to use ours, set")
-    print("      settings.json statusLine.command to: " + status_cmd)
+    print("      settings.json statusLine.command to: " + want_sl)
 
 if changed:
     with open(path, "w") as f:

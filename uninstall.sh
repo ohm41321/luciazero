@@ -215,7 +215,7 @@ if [ -f "${SETTINGS}" ] && grep -qF "${CLAUDE_DIR}/hooks/luciazero-" "${SETTINGS
     # exact-path matching only: never touch a user's own hook that merely
     # shares a basename with ours
     if python3 - "${SETTINGS}" "${CLAUDE_DIR}" 2>/dev/null <<'PY'
-import json, os, sys
+import json, os, shlex, sys
 
 path, claude_dir = sys.argv[1], sys.argv[2]
 with open(path) as f:
@@ -226,7 +226,21 @@ MARKERS = (
     os.path.join(claude_dir, "hooks", "luciazero-statusline.sh"),
 )
 def ours(cmd):
-    return any(cmd == m or cmd.startswith(m + " ") for m in MARKERS)
+    """Both spellings of our own command, and nothing else.
+
+    The installer quotes the path now, so the bytes no longer start with it;
+    matching only the bare prefix would leave every entry it wrote behind,
+    still pointing at files this script is about to delete. The bare form
+    stays recognised because older installs wrote it -- including the broken
+    bare form with a space in it, which `shlex` cannot parse back.
+    """
+    if any(cmd == m or cmd.startswith(m + " ") for m in MARKERS):
+        return True
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return False
+    return bool(parts) and parts[0] in MARKERS
 
 changed = False
 hooks = settings.get("hooks") or {}

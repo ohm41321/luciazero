@@ -2982,6 +2982,80 @@ PY
 rm -rf "${SB3}"
 echo "ok  enforcement pack install + idempotent + clean uninstall"
 
+# 5c2. A config directory whose name contains a space. Every hook command the
+# installer writes is a shell string, so an unquoted path ends at the space:
+# the stored command ran a prefix of the path and the shell answered 127,
+# which is a hook that silently does nothing on a machine where the install
+# reported success. The command has to be quoted at the write site, and the
+# two places that recognise our own entries -- `--status` and the uninstaller
+# -- have to read the quoted form as well as the bare one older installs
+# wrote. Running the stored command is the assertion; a grep for a quote
+# would pass on a string no shell can run.
+SPC="$(mktemp -d)/config with space"
+mkdir -p "${SPC}"
+SPC_FAIL() { rm -rf "$(dirname "${SPC}")"; fail "$1"; }
+CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --with-hooks >/dev/null   || SPC_FAIL "--with-hooks failed in a config directory whose name has a space"
+SPC_CMD="$(python3 - "${SPC}/settings.json" <<'PY'
+import json, sys
+settings = json.load(open(sys.argv[1]))
+for entries in settings["hooks"].values():
+    for entry in entries:
+        for hook in entry["hooks"]:
+            if hook["command"].endswith(" edit"):
+                print(hook["command"])
+                raise SystemExit(0)
+raise SystemExit("no edit hook wired")
+PY
+)" || SPC_FAIL "no edit hook wired in a config directory whose name has a space"
+RC=0; printf '{}' | sh -c "${SPC_CMD}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" != 127 ] || SPC_FAIL "the stored hook command does not survive the shell: ${SPC_CMD}"
+[ "${RC}" = 0 ] || SPC_FAIL "the stored hook command failed (rc=${RC}): ${SPC_CMD}"
+CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --status >/dev/null   || SPC_FAIL "--status could not see hook entries whose path is quoted"
+cp "${SPC}/settings.json" "${SPC}/settings.snap"
+CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/install.sh" --with-hooks >/dev/null
+cmp -s "${SPC}/settings.json" "${SPC}/settings.snap"   || SPC_FAIL "reinstall changed settings.json in a spaced config directory (not idempotent)"
+CLAUDE_CONFIG_DIR="${SPC}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+if [ -f "${SPC}/settings.json" ]; then
+  grep -qF 'luciazero-' "${SPC}/settings.json"     && SPC_FAIL "uninstall left our hook entries behind when the path was quoted"
+fi
+rm -rf "$(dirname "${SPC}")"
+
+# 5c3. The same directory, upgraded from an install that wrote the path bare.
+# Those entries are ours and are broken; the installer has to rewrite them in
+# place rather than add a second, quoted copy beside them, and the uninstaller
+# has to recognise the bare spelling it no longer writes.
+SPL="$(mktemp -d)/legacy with space"
+mkdir -p "${SPL}"
+SPL_FAIL() { rm -rf "$(dirname "${SPL}")"; fail "$1"; }
+python3 - "${SPL}" <<'PY'
+import json, os, sys
+home = sys.argv[1]
+verify = os.path.join(home, "hooks", "luciazero-verify.sh")
+status = os.path.join(home, "hooks", "luciazero-statusline.sh")
+settings = {
+    "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit",
+                               "hooks": [{"type": "command", "command": verify + " edit"}]}]},
+    "statusLine": {"type": "command", "command": status},
+}
+json.dump(settings, open(os.path.join(home, "settings.json"), "w"), indent=2)
+PY
+CLAUDE_CONFIG_DIR="${SPL}" "${ROOT}/install.sh" --with-hooks >/dev/null   || SPL_FAIL "--with-hooks failed over an older unquoted install"
+python3 - "${SPL}/settings.json" <<'PY' || { rm -rf "$(dirname "${SPL}")"; fail "unquoted entries were not migrated"; }
+import json, shlex, sys
+settings = json.load(open(sys.argv[1]))
+commands = [h["command"] for entries in settings["hooks"].values()
+            for entry in entries for h in entry["hooks"]]
+edits = [c for c in commands if c.endswith(" edit")]
+assert len(edits) == 1, "the unquoted entry was left beside a new one: " + repr(edits)
+assert shlex.split(edits[0])[0].endswith("/hooks/luciazero-verify.sh"),     "migrated command does not parse back to the hook: " + repr(edits[0])
+PY
+CLAUDE_CONFIG_DIR="${SPL}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+if [ -f "${SPL}/settings.json" ]; then
+  grep -qF 'luciazero-' "${SPL}/settings.json"     && SPL_FAIL "uninstall left entries behind after the migration"
+fi
+rm -rf "$(dirname "${SPL}")"
+echo "ok  hook commands survive a config path with a space, old spelling included"
+
 # 5d. failed settings cleanup must NOT delete the hook files (no dangling refs)
 SB4="$(mktemp -d)"
 CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/install.sh" --with-hooks >/dev/null

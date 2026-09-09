@@ -2177,7 +2177,7 @@ mkdir -p "${RPX}/unrelated/tests"
   git init -q .
   printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
   printf 'assert False, "unrelated breakage"\n' > tests/test_broken.py
-  printf '#!/bin/sh\nfor f in tests/*.py; do PYTHONPATH=. python3 "$f" || exit 1; done\n' > run-all.sh
+  printf '%s\n' '#!/bin/sh' "for f in tests/*.py; do PYTHONPATH=. python3 \"\$f\" || exit 1; done" > run-all.sh
   git add -A
   git -c user.email=t@t -c user.name=t commit -qm 'plant bug and unrelated breakage'
   printf 'def add(a, b):\n    return a + b\n' > calc.py
@@ -2194,7 +2194,7 @@ mkdir -p "${RPX}/suite/tests"
   cd "${RPX}/suite"
   git init -q .
   printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
-  printf '#!/bin/sh\nfor f in tests/*.py; do PYTHONPATH=. python3 "$f" || exit 1; done\n' > run-all.sh
+  printf '%s\n' '#!/bin/sh' "for f in tests/*.py; do PYTHONPATH=. python3 \"\$f\" || exit 1; done" > run-all.sh
   git add -A
   git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
   printf 'def add(a, b):\n    return a + b\n' > calc.py
@@ -2244,7 +2244,7 @@ for README in "${ROOT}/README.md" "${ROOT}/README.th.md"; do
     || fail "$(basename "${README}") lost the Claude short-form Bus command"
   grep -qF 'lucia codex' "${README}" \
     || fail "$(basename "${README}") lost the Codex short-form Bus command"
-  grep -qF '| `/lucia-chat` |' "${README}" \
+  grep -qF "| \`/lucia-chat\` |" "${README}" \
     || fail "$(basename "${README}") lost lucia-chat from its skill table"
   grep -qF 'nudge ─►' "${README}" \
     || fail "$(basename "${README}") lost the nudge step from its Bus flow"
@@ -3139,7 +3139,7 @@ echo "ok  enforcement pack install + idempotent + clean uninstall"
 FXR="$(mktemp -d)"
 SENTINEL="${FXR}/pwned"
 FX_FAIL() { rm -rf "${FXR}"; fail "$1"; }
-for FXNAME in "config with space" "config with ' quote" 'meta $(touch '"${SENTINEL}"') dir'; do
+for FXNAME in "config with space" "config with ' quote" "meta \$(touch ${SENTINEL}) dir"; do
   FX="${FXR}/${FXNAME}"
   mkdir -p "${FX}"
   CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --with-hooks >/dev/null \
@@ -3788,8 +3788,10 @@ CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
 cmp -s "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md" \
   || { rm -rf "${SM}" "${EXP}"; fail "install then uninstall did not restore CLAUDE.md byte for byte"; }
 BK="$(find "${SM}" -maxdepth 1 -name 'CLAUDE.md.bak.*' -print -quit)"
-[ -n "${BK}" ] && [ "$(mode_of "${BK}")" = 640 ] \
-  || { rm -rf "${SM}" "${EXP}"; fail "the CLAUDE.md backup did not keep the file's mode"; }
+if [ -z "${BK}" ] || [ "$(mode_of "${BK}")" != 640 ]; then
+  rm -rf "${SM}" "${EXP}"
+  fail "the CLAUDE.md backup did not keep the file's mode"
+fi
 rm -rf "${SM}" "${EXP}"
 
 SM="$(mktemp -d)"
@@ -3805,8 +3807,10 @@ CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1
 grep -qxF '# my codex rules' "${SM}/AGENTS.md" \
   || { rm -rf "${SM}"; fail "codex install+uninstall lost the user's own line"; }
 BK="$(find "${SM}" -maxdepth 1 -name 'AGENTS.md.bak.*' -print -quit)"
-[ -n "${BK}" ] && [ "$(mode_of "${BK}")" = 640 ] \
-  || { rm -rf "${SM}"; fail "the AGENTS.md backup did not keep the file's mode"; }
+if [ -z "${BK}" ] || [ "$(mode_of "${BK}")" != 640 ]; then
+  rm -rf "${SM}"
+  fail "the AGENTS.md backup did not keep the file's mode"
+fi
 rm -rf "${SM}"
 
 # a rewrite that cannot be written leaves the file it was going to replace

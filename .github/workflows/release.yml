@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # test.sh exercises an upgrade from the last released tag.
+          fetch-depth: 0
       - name: Validate release versions
         env:
           RELEASE_TAG: ${{ github.ref_name }}

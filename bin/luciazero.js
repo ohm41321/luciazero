@@ -9,6 +9,7 @@
 //   npx luciazero discipline [options]       -> local stats report
 //   npx luciazero check-update [--json]       -> explicit npm version check
 //   npx luciazero update                      -> update detected classic installs
+//   npx luciazero global-install [--yes]       -> persistent user-owned CLI
 //   npx luciazero bus status [--json]         -> Agent Bus queue summary (beta)
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
@@ -21,6 +22,9 @@ const ROUTES = {
   discipline: { runtime: process.execPath, script: "bin/discipline-report.js" },
   "check-update": { runtime: process.execPath, script: "bin/update.js", args: ["check"] },
   update: { runtime: process.execPath, script: "bin/update.js", args: ["update"] },
+  "global-install": { runtime: process.execPath, script: "bin/global.js", args: ["install"] },
+  "global-status": { runtime: process.execPath, script: "bin/global.js", args: ["status"] },
+  "global-uninstall": { runtime: process.execPath, script: "bin/global.js", args: ["uninstall"] },
   bus: { runtime: process.execPath, script: "bin/bus.js" },
 };
 
@@ -30,7 +34,7 @@ if (args[0] && !args[0].startsWith("-")) {
   if (!Object.prototype.hasOwnProperty.call(ROUTES, args[0])) {
     console.error(
       `luciazero: unknown command '${args[0]}' ` +
-      "(install, codex, discipline, check-update, update, bus, uninstall, uninstall-codex)"
+      "(install, codex, discipline, check-update, update, global-install, global-status, global-uninstall, bus, uninstall, uninstall-codex)"
     );
     process.exit(64);
   }

@@ -7,6 +7,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-09-10
+
+### Added
+
+- `luciazero global-install` provides an explicit, sudo-free persistent CLI:
+  it installs `luciazero@latest` under the user's `~/.local/npm`, asks before
+  adding an owned PATH block to zsh or bash, and is paired with
+  `global-status` and `global-uninstall`. The uninstaller removes only the
+  exact block Luciazero wrote; symlinked, malformed, or customized shell
+  configuration is refused before npm runs. `npx luciazero@latest` remains
+  the one-off path and the package still has no lifecycle scripts.
+
 ## [2.5.0] - 2026-09-09
 
 ### Added

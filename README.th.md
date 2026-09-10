@@ -209,14 +209,30 @@ npx skills add ohm41321/luciazero
 <details>
 <summary><strong>Classic install · Claude Code หรือ Codex CLI</strong></summary>
 
-```bash
-npx luciazero                 # Claude Code
-npx luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Python 3.9+
-npx luciazero codex           # Codex CLI
+ติดตั้งคำสั่งแบบ global ครั้งเดียวโดยไม่ใช้ `sudo`:
 
-npx luciazero uninstall
-npx luciazero uninstall-codex
+```bash
+npx luciazero@latest global-install
 ```
+
+คำสั่งนี้ติดตั้ง CLI ไว้ใต้ `~/.local/npm` และหลังผู้ใช้ยืนยันจะเพิ่มไดเรกทอรี
+bin เข้า PATH ของ zsh หรือ bash เปิด shell ใหม่แล้วเรียกคำสั่ง global ได้จากทุก
+ไดเรกทอรี:
+
+```bash
+luciazero                 # Claude Code
+luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Python 3.9+
+luciazero codex           # Codex CLI
+
+luciazero uninstall             # ถอน classic files ฝั่ง Claude
+luciazero uninstall-codex       # ถอน classic files ฝั่ง Codex
+luciazero global-status         # ตรวจคำสั่ง global และ PATH
+luciazero global-uninstall      # ถอนคำสั่งและ PATH block ที่เป็นของ Luciazero
+```
+
+ถ้าต้องการรันครั้งเดียวโดยไม่เก็บคำสั่งไว้ ใช้ `npx luciazero@latest` ได้เหมือน
+เดิม งาน automation ส่ง `global-install --yes` ได้ ส่วนการใช้แบบโต้ตอบจะถาม
+ก่อนติดตั้งแพ็กเกจหรือเปลี่ยนไฟล์เริ่มต้นของ shell
 
 ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่งเพื่อไม่ต่อ hook
 ซ้ำ Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไม่มี hook/statusline
@@ -230,9 +246,12 @@ npx luciazero uninstall-codex
 Luciazero จะไม่แก้ไฟล์ของ classic หรือ Codex อยู่เบื้องหลัง
 
 ```bash
-npx luciazero@latest check-update   # อ่านอย่างเดียว ติดต่อ npm เฉพาะตอนนี้
-npx luciazero@latest update         # อัปเดต classic/Codex ทุกชุดที่ตรวจพบ
+luciazero check-update   # อ่านอย่างเดียว ติดต่อ npm เฉพาะตอนนี้
+luciazero update         # อัปเดต classic/Codex ทุกชุดที่ตรวจพบ
 ```
+
+ถ้าเลือกเส้นทางแบบรันครั้งเดียว ให้เรียกสองคำสั่งเดียวกันผ่าน
+`npx luciazero@latest` แทน
 
 `update` รักษาโหมดเดิมว่า Claude classic ใช้ hook หรือไม่ ซ่อมไฟล์ managed ที่
 เก่า จะไม่เริ่มติดตั้งใหม่ถ้าหา installation เดิมไม่พบ และจะหยุดเมื่อพบเวอร์ชัน

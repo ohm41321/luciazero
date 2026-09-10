@@ -215,14 +215,30 @@ This installs the 13 skills: no doctrine, reviewer, or hooks.
 <details>
 <summary><strong>Classic install · Claude Code or Codex CLI</strong></summary>
 
-```bash
-npx luciazero                 # Claude Code
-npx luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3.9+
-npx luciazero codex           # Codex CLI
+Install the command globally once, without `sudo`:
 
-npx luciazero uninstall
-npx luciazero uninstall-codex
+```bash
+npx luciazero@latest global-install
 ```
+
+This installs the CLI under `~/.local/npm` and, after confirmation, adds its
+bin directory to your zsh or bash PATH. Start a new shell, then use the global
+command from any directory:
+
+```bash
+luciazero                 # Claude Code
+luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3.9+
+luciazero codex           # Codex CLI
+
+luciazero uninstall             # remove the Claude classic files
+luciazero uninstall-codex       # remove the Codex classic files
+luciazero global-status         # check the global command and PATH
+luciazero global-uninstall      # remove the command and its exact PATH block
+```
+
+For a one-off install without keeping the command, `npx luciazero@latest`
+continues to work. Automation may pass `global-install --yes`; interactive use
+asks before installing the package and changing a shell startup file.
 
 Pick either plugin or classic for Claude Code so hooks are not wired twice.
 Classic installs support `--status`; Codex receives the doctrine and skills but
@@ -236,9 +252,12 @@ only exact Luciazero-managed copies on uninstall.
 Luciazero never changes classic or Codex files in the background.
 
 ```bash
-npx luciazero@latest check-update   # read-only; contacts npm only now
-npx luciazero@latest update         # updates every detected classic/Codex install
+luciazero check-update   # read-only; contacts npm only now
+luciazero update         # updates every detected classic/Codex install
 ```
+
+If you chose the one-off path, use the same commands through
+`npx luciazero@latest` instead.
 
 `update` preserves whether the Claude classic install uses hooks, repairs stale
 managed files, starts no fresh install when it cannot find one, and stops on a

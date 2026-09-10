@@ -2420,6 +2420,9 @@ for readme in ("README.md", "README.th.md"):
     assert named, f"{readme} no longer names its skill count"
     drift = sorted({n for n in named if int(n) != len(skills)})
     assert not drift, f"{readme} names {drift} skills, the catalog has {len(skills)}"
+    for command in ("npx luciazero@latest global-install", "luciazero global-status",
+                    "luciazero global-uninstall"):
+        assert command in text, f"{readme} lost the persistent CLI command: {command}"
 publishing = open(os.path.join(root, "docs/publishing.md")).read()
 assert "carries the 13 skills" in publishing, "publishing channel skill count drift"
 release_workflow = open(os.path.join(root, ".github/workflows/release.yml")).read()
@@ -2475,7 +2478,7 @@ readmes = [path for path in paths if os.path.basename(path).upper().startswith("
 assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
-for required in ("bin/luciazero.js", "bin/luciazero-agentd", "install.sh",
+for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "install.sh",
                  "install-codex.sh", "claude/luciazero.md"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
@@ -2503,6 +2506,101 @@ for required in ("bin/luciazero.js", "bin/luciazero-agentd", "install.sh",
   [ "${NRC}" -eq 1 ] || fail "npx wrapper --status on empty config dir: want rc 1, got ${NRC}"
   printf '%s\n' "${NOUT}" | grep -q 'MISS' || fail "npx wrapper --status lost install.sh's MISS output"
   rm -rf "${NB}"
+
+  # An explicit global install uses only a user-owned prefix and leaves a
+  # durable command on PATH.  The npm process is a fixture here: this tests
+  # the public CLI boundary without contacting the registry or this machine's
+  # real npm configuration.
+  GI="$(mktemp -d)"
+  mkdir -p "${GI}/home" "${GI}/bin"
+  cat > "${GI}/bin/npm" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "${LUCIAZERO_TEST_NPM_LOG}"
+if [ "$1" = install ]; then
+  [ "${LUCIAZERO_TEST_NPM_FAIL:-0}" != 1 ] || exit 42
+  mkdir -p "$4/bin"
+  printf '#!/bin/sh\n' > "$4/bin/luciazero"
+  chmod +x "$4/bin/luciazero"
+elif [ "$1" = uninstall ]; then
+  rm -f "$4/bin/luciazero"
+fi
+exit 0
+SH
+  chmod +x "${GI}/bin/npm"
+  printf '# user shell config\n' > "${GI}/home/.zshrc"
+  chmod 0640 "${GI}/home/.zshrc"
+  ( umask 077
+    HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+      PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null ) \
+    || { rm -rf "${GI}"; fail "global-install --yes failed"; }
+  printf '%s\n' install --global --prefix "${GI}/home/.local/npm" luciazero@latest \
+    > "${GI}/want.log"
+  cmp -s "${GI}/want.log" "${GI}/npm.log" \
+    || { rm -rf "${GI}"; fail "global-install invoked npm with the wrong contract"; }
+  grep -qF 'export PATH="$HOME/.local/npm/bin:$PATH"' "${GI}/home/.zshrc" \
+    || { rm -rf "${GI}"; fail "global-install did not put its user-owned bin on zsh PATH"; }
+  [ "$(stat -c '%a' "${GI}/home/.zshrc" 2>/dev/null || stat -f '%Lp' "${GI}/home/.zshrc")" = 640 ] \
+    || { rm -rf "${GI}"; fail "global-install changed the shell config mode under a restrictive umask"; }
+  FIRST_RC="$(cat "${GI}/home/.zshrc")"
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null \
+    || { rm -rf "${GI}"; fail "global-install reinstall failed"; }
+  [ "$(cat "${GI}/home/.zshrc")" = "${FIRST_RC}" ] \
+    || { rm -rf "${GI}"; fail "global-install duplicated or changed its PATH block on reinstall"; }
+  GSTATUS="$(HOME="${GI}/home" SHELL=/bin/zsh node "${ROOT}/bin/luciazero.js" global-status)" \
+    || { rm -rf "${GI}"; fail "global-status rejected the installed command"; }
+  printf '%s\n' "${GSTATUS}" | grep -qF 'luciazero is installed globally' \
+    || { rm -rf "${GI}"; fail "global-status omitted the installed state"; }
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-uninstall --yes >/dev/null \
+    || { rm -rf "${GI}"; fail "global-uninstall --yes failed"; }
+  printf '%s\n' uninstall --global --prefix "${GI}/home/.local/npm" luciazero \
+    > "${GI}/want.log"
+  cmp -s "${GI}/want.log" "${GI}/npm.log" \
+    || { rm -rf "${GI}"; fail "global-uninstall invoked npm with the wrong contract"; }
+  ! grep -qF 'luciazero:start global-npm-path' "${GI}/home/.zshrc" \
+    || { rm -rf "${GI}"; fail "global-uninstall left its PATH block behind"; }
+  RC=0
+  HOME="${GI}/home" SHELL=/bin/zsh node "${ROOT}/bin/luciazero.js" global-status >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] \
+    || { rm -rf "${GI}"; fail "global-status did not report the absent command (rc=${RC})"; }
+
+  # A shell startup file is user code.  A symlink or a block whose bytes no
+  # longer match ours is not authority to write, remove, or even run npm.
+  rm -f "${GI}/npm.log" "${GI}/home/.zshrc"
+  printf 'keep target\n' > "${GI}/target"
+  ln -s "${GI}/target" "${GI}/home/.zshrc"
+  RC=0
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && grep -qxF 'keep target' "${GI}/target" \
+    || { rm -rf "${GI}"; fail "global-install followed a shell-config symlink or ran npm after refusal"; }
+  rm "${GI}/home/.zshrc"
+  printf '%s\n' '# mine' '# luciazero:start global-npm-path' 'changed' \
+    '# luciazero:end global-npm-path' > "${GI}/home/.zshrc"
+  cp "${GI}/home/.zshrc" "${GI}/before"
+  RC=0
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-uninstall --yes >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && cmp -s "${GI}/before" "${GI}/home/.zshrc" \
+    || { rm -rf "${GI}"; fail "global-uninstall changed a customized PATH block or ran npm after refusal"; }
+
+  rm -f "${GI}/home/.zshrc" "${GI}/npm.log"
+  RC=0
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    LUCIAZERO_TEST_NPM_FAIL=1 PATH="${GI}/bin:${PATH}" \
+    node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/home/.zshrc" ] \
+    || { rm -rf "${GI}"; fail "a failed npm install changed the shell config"; }
+
+  rm -f "${GI}/npm.log"
+  RC=0
+  HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
+    PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install </dev/null >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && [ ! -e "${GI}/home/.zshrc" ] \
+    || { rm -rf "${GI}"; fail "a non-interactive global install proceeded without --yes"; }
+  rm -rf "${GI}"
+  echo "ok  global npm install is explicit, user-owned, reversible, and shell-config safe"
 
   # Explicit update checks are deterministic under an injected registry
   # response. Merely requiring the module must never perform network or writes.

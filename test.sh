@@ -2537,7 +2537,7 @@ SH
     > "${GI}/want.log"
   cmp -s "${GI}/want.log" "${GI}/npm.log" \
     || { rm -rf "${GI}"; fail "global-install invoked npm with the wrong contract"; }
-  grep -qF 'export PATH="$HOME/.local/npm/bin:$PATH"' "${GI}/home/.zshrc" \
+  grep -qF "export PATH=\"\$HOME/.local/npm/bin:\$PATH\"" "${GI}/home/.zshrc" \
     || { rm -rf "${GI}"; fail "global-install did not put its user-owned bin on zsh PATH"; }
   [ "$(stat -c '%a' "${GI}/home/.zshrc" 2>/dev/null || stat -f '%Lp' "${GI}/home/.zshrc")" = 640 ] \
     || { rm -rf "${GI}"; fail "global-install changed the shell config mode under a restrictive umask"; }
@@ -2573,8 +2573,10 @@ SH
   RC=0
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null 2>&1 || RC=$?
-  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && grep -qxF 'keep target' "${GI}/target" \
-    || { rm -rf "${GI}"; fail "global-install followed a shell-config symlink or ran npm after refusal"; }
+  if [ "${RC}" -ne 1 ] || [ -e "${GI}/npm.log" ] || ! grep -qxF 'keep target' "${GI}/target"; then
+    rm -rf "${GI}"
+    fail "global-install followed a shell-config symlink or ran npm after refusal"
+  fi
   rm "${GI}/home/.zshrc"
   printf '%s\n' '# mine' '# luciazero:start global-npm-path' 'changed' \
     '# luciazero:end global-npm-path' > "${GI}/home/.zshrc"
@@ -2582,23 +2584,30 @@ SH
   RC=0
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-uninstall --yes >/dev/null 2>&1 || RC=$?
-  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && cmp -s "${GI}/before" "${GI}/home/.zshrc" \
-    || { rm -rf "${GI}"; fail "global-uninstall changed a customized PATH block or ran npm after refusal"; }
+  if [ "${RC}" -ne 1 ] || [ -e "${GI}/npm.log" ] \
+    || ! cmp -s "${GI}/before" "${GI}/home/.zshrc"; then
+    rm -rf "${GI}"
+    fail "global-uninstall changed a customized PATH block or ran npm after refusal"
+  fi
 
   rm -f "${GI}/home/.zshrc" "${GI}/npm.log"
   RC=0
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     LUCIAZERO_TEST_NPM_FAIL=1 PATH="${GI}/bin:${PATH}" \
     node "${ROOT}/bin/luciazero.js" global-install --yes >/dev/null 2>&1 || RC=$?
-  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/home/.zshrc" ] \
-    || { rm -rf "${GI}"; fail "a failed npm install changed the shell config"; }
+  if [ "${RC}" -ne 1 ] || [ -e "${GI}/home/.zshrc" ]; then
+    rm -rf "${GI}"
+    fail "a failed npm install changed the shell config"
+  fi
 
   rm -f "${GI}/npm.log"
   RC=0
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-install </dev/null >/dev/null 2>&1 || RC=$?
-  [ "${RC}" -eq 1 ] && [ ! -e "${GI}/npm.log" ] && [ ! -e "${GI}/home/.zshrc" ] \
-    || { rm -rf "${GI}"; fail "a non-interactive global install proceeded without --yes"; }
+  if [ "${RC}" -ne 1 ] || [ -e "${GI}/npm.log" ] || [ -e "${GI}/home/.zshrc" ]; then
+    rm -rf "${GI}"
+    fail "a non-interactive global install proceeded without --yes"
+  fi
   rm -rf "${GI}"
   echo "ok  global npm install is explicit, user-owned, reversible, and shell-config safe"
 

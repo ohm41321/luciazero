@@ -1,0 +1,18 @@
+# Adapter-owned project fragment. A later materializer may merge this table.
+schema_version = 1
+preset = "pro"
+root_model = "gpt-6-astra"
+root_reasoning_effort = "medium"
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "max"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
+
+[role_models]
+"lucia-explorer" = "gpt-5.6-luna"
+"lucia-researcher" = "gpt-5.6-luna"
+"lucia-worker" = "gpt-5.6-luna"
+"lucia-tester" = "gpt-5.6-luna"
+"lucia-reviewer" = "gpt-6-astra"

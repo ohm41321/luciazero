@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "trivial-root-only",
+      "independently_bounded": true,
+      "measurable_benefit": false,
+      "runtime_authority": true,
+      "expected": "root-only"
+    },
+    {
+      "id": "authorized-parallel",
+      "independently_bounded": true,
+      "measurable_benefit": true,
+      "runtime_authority": true,
+      "expected": "delegate"
+    },
+    {
+      "id": "spawn-unavailable",
+      "independently_bounded": true,
+      "measurable_benefit": true,
+      "runtime_authority": false,
+      "expected": "root-only",
+      "required_report": "no delegation occurred"
+    },
+    {
+      "id": "worker-scope-expansion",
+      "worker_scope_expansion": true,
+      "expected": "stop-and-report"
+    },
+    {
+      "id": "failed-tester-verification",
+      "tester_verification": "failed",
+      "expected": "block-completion"
+    },
+    {
+      "id": "material-reviewer-finding",
+      "reviewer_finding": "major",
+      "expected": "surface-and-resolve"
+    }
+  ]
+}

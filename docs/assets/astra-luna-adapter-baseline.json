@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/donvito/codex-astra-luna-orchestrator.git",
+    "commit": "9c2a98435ca9ed2b85ac6b0e942b5ded75a4d194",
+    "tracked_file_count": 22,
+    "pinned_input_file_count": 9,
+    "role_file_count": 5,
+    "config_file_count": 2,
+    "skill_file_count": 1,
+    "instruction_file_count": 1
+  },
+  "runtime": {
+    "codex_version": "0.154.0",
+    "platform": "macos-aarch64",
+    "provider_turns": 0,
+    "global_files_changed": 0,
+    "project_adapter_files_installed": 0,
+    "root_threads_started": 1,
+    "repo_skills_discovered": 1,
+    "agent_directory_scans": 2,
+    "valid_role_project_thread_starts": 1,
+    "valid_role_loader_warnings": 0,
+    "malformed_agent_loader_errors": 1
+  },
+  "precedence": {
+    "same_directory_override_wins": 1,
+    "override_filename_count": 1,
+    "regular_filename_count": 1
+  },
+  "files": [
+    {
+      "path": ".agents/skills/astra-orchestrator/SKILL.md",
+      "bytes": 11840,
+      "sha256": "05f98f5746ecda137e3c9058b86428c002d1c9ae81e53711a3452a9be8bc98b3"
+    },
+    {
+      "path": ".codex/agents/explorer.toml",
+      "bytes": 917,
+      "sha256": "57f64f327d72097b84e5a4fce05d11163b4044d74808cde1ffdf14f69010d49a"
+    },
+    {
+      "path": ".codex/agents/researcher.toml",
+      "bytes": 705,
+      "sha256": "9b403be6324f5416a99de6e03c9be73ebf5589654586f414f2a4c90bf92479b0"
+    },
+    {
+      "path": ".codex/agents/reviewer.toml",
+      "bytes": 875,
+      "sha256": "9964bb2801d0279d7f54cddcc5c0c8eaf749cb47b390d9743f434f2cd5be4908"
+    },
+    {
+      "path": ".codex/agents/tester.toml",
+      "bytes": 782,
+      "sha256": "81a312ec5056ae8689b66b7cca32c40672dbfaad93355b399f8dd60b41625350"
+    },
+    {
+      "path": ".codex/agents/worker.toml",
+      "bytes": 932,
+      "sha256": "ba84db985184529c4f0910d3ea20ae20681178c9de9e16f4e32df03c7064eb96"
+    },
+    {
+      "path": ".codex/config.plus.toml",
+      "bytes": 1309,
+      "sha256": "3e77bbd3f8b4a1bfdf24c80c8218b25580bb02d8bd96036fbbf8160c99beaac8"
+    },
+    {
+      "path": ".codex/config.toml",
+      "bytes": 1054,
+      "sha256": "b3aee4920498a9e3c8505ec3d450fc0e6d43528ecb0772e15231e3ea1c4bf914"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 552,
+      "sha256": "1507220039ae0c43f8c862ed908a0397cc0fb7b5a2c5f8d206c1a586beba0dff"
+    }
+  ]
+}

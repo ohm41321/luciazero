@@ -1,0 +1,7 @@
+# Adapter-owned project fragment. A later materializer may merge this table.
+schema_version = 1
+preset = "model-neutral"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4

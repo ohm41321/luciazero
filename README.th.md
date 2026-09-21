@@ -165,6 +165,15 @@ Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พ
 artifact ปลอมไม่ได้ รองรับ detached checkout และ Relay ไม่ execute command
 จาก artifact ผู้รับต้องรันเองให้ครบก่อนใช้ `consume --verified`
 
+ทั้งหมดเหลือสองคำสั่งต่อฝั่ง ฝั่งส่งรัน `luciazero relay draft --write`
+(เพิ่ม `--recipient cross-machine --base <base>` เมื่อต้อง publish transfer tag)
+กรอก JSON แล้วรัน `luciazero relay finalize` ซึ่ง validate, สร้าง human view
+และถ้าเป็น cross-machine จะพิมพ์ trusted envelope ให้ (`--envelope-out <file>`
+บันทึกเป็นไฟล์) ฝั่งรับรัน `luciazero relay inspect --trusted-envelope <file>`
+และหลังรันหลักฐานซ้ำแล้วจึง `luciazero relay consume --verified --trusted-envelope <file>`
+envelope เชื่อถือได้ต่อเมื่อมาจากช่องทางที่ยืนยันตัวตนแล้วและระบุ path จากนอก clone
+อย่างชัดเจน ไฟล์ที่ส่งมาพร้อม artifact จะถูกปฏิเสธ
+
 <p align="center">
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
 </p>

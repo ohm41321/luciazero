@@ -11,6 +11,7 @@
 //   npx luciazero update                      -> update detected classic installs
 //   npx luciazero global-install [--yes]       -> persistent user-owned CLI
 //   npx luciazero bus status [--json]         -> Agent Bus queue summary (beta)
+//   npx luciazero relay <subcommand> [...]    -> Lucia Relay (draft, finalize, inspect, consume, ...)
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
@@ -26,6 +27,9 @@ const ROUTES = {
   "global-status": { runtime: process.execPath, script: "bin/global.js", args: ["status"] },
   "global-uninstall": { runtime: process.execPath, script: "bin/global.js", args: ["uninstall"] },
   bus: { runtime: process.execPath, script: "bin/bus.js" },
+  // python.org installers on Windows ship python.exe, and python3 there is
+  // usually the Store alias, so the wrapper names the interpreter that exists.
+  relay: { runtime: process.platform === "win32" ? "python" : "python3", script: "skills/lucia-relay/scripts/relay.py" },
 };
 
 const args = process.argv.slice(2);
@@ -34,7 +38,7 @@ if (args[0] && !args[0].startsWith("-")) {
   if (!Object.prototype.hasOwnProperty.call(ROUTES, args[0])) {
     console.error(
       `luciazero: unknown command '${args[0]}' ` +
-      "(install, codex, discipline, check-update, update, global-install, global-status, global-uninstall, bus, uninstall, uninstall-codex)"
+      "(install, codex, discipline, check-update, update, global-install, global-status, global-uninstall, bus, relay, uninstall, uninstall-codex)"
     );
     process.exit(64);
   }
@@ -52,7 +56,7 @@ if (process.platform === "win32" && selected.runtime === "bash") {
 
 const result = spawnSync(selected.runtime, [script, ...(selected.args || []), ...args], { stdio: "inherit" });
 if (result.error) {
-  console.error("luciazero: could not run bash: " + result.error.message);
+  console.error(`luciazero: could not run ${path.basename(selected.runtime)}: ${result.error.message}`);
   process.exit(1);
 }
 process.exit(result.status === null ? 1 : result.status);

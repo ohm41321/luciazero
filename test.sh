@@ -229,6 +229,8 @@ done
 # syntax and core in every other tier, so its output keeps its place); the
 # fast tier adds FAST_GATES; the full tier continues through FULL_GATES.
 # Every gate is also lint input: syntax, bash 3.2 parse and ShellCheck.
+# LZ_TEST_TIMINGS=1 prints `TIMING gate=<name> seconds=<n>` on stderr as each
+# gate finishes; off, nothing about the run changes.
 DISCIPLINE_GATES=(tests/gates/syntax.sh tests/gates/core.sh
                   tests/gates/contracts.sh tests/gates/hooks.sh)
 FAST_GATES=(tests/gates/agentd.sh tests/gates/relay.sh tests/gates/bisect.sh
@@ -237,19 +239,27 @@ FULL_GATES=(tests/gates/tiers.sh tests/gates/agent-bus.sh tests/gates/eval.sh
             tests/gates/packaging.sh tests/gates/install.sh
             tests/gates/codex-install.sh)
 SCRIPTS+=("${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}")
+gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
+  # The bash SECONDS counter: no process, nothing added to what it measures,
+  # whole seconds — enough to rank gates of ten to a hundred seconds. Off,
+  # this is a plain source. The name is dropped from the positional
+  # parameters first, so a gate sees none, as at the top level of a script.
+  local GATE_NAME="$1" GATE_T0="${SECONDS}"
+  set --
+  # shellcheck disable=SC1090
+  source "${ROOT}/tests/gates/${GATE_NAME}.sh"
+  if [ "${LZ_TEST_TIMINGS:-0}" = 1 ]; then
+    echo "TIMING gate=${GATE_NAME} seconds=$((SECONDS - GATE_T0))" >&2
+  fi
+}
 
-# shellcheck source=tests/gates/syntax.sh
-source "${ROOT}/tests/gates/syntax.sh"
+gate syntax
 if [ "${TIER}" != discipline ]; then
-  # shellcheck source=tests/gates/agentd.sh
-  source "${ROOT}/tests/gates/agentd.sh"
+  gate agentd
 fi
-# shellcheck source=tests/gates/core.sh
-source "${ROOT}/tests/gates/core.sh"
-# shellcheck source=tests/gates/contracts.sh
-source "${ROOT}/tests/gates/contracts.sh"
-# shellcheck source=tests/gates/hooks.sh
-source "${ROOT}/tests/gates/hooks.sh"
+gate core
+gate contracts
+gate hooks
 
 if [ "${TIER}" = discipline ]; then
   echo
@@ -257,14 +267,10 @@ if [ "${TIER}" = discipline ]; then
   exit 0
 fi
 
-# shellcheck source=tests/gates/relay.sh
-source "${ROOT}/tests/gates/relay.sh"
-# shellcheck source=tests/gates/bisect.sh
-source "${ROOT}/tests/gates/bisect.sh"
-# shellcheck source=tests/gates/evidence.sh
-source "${ROOT}/tests/gates/evidence.sh"
-# shellcheck source=tests/gates/astra-luna.sh
-source "${ROOT}/tests/gates/astra-luna.sh"
+gate relay
+gate bisect
+gate evidence
+gate astra-luna
 
 if [ "${TIER}" = fast ]; then
   echo
@@ -272,18 +278,12 @@ if [ "${TIER}" = fast ]; then
   exit 0
 fi
 
-# shellcheck source=tests/gates/tiers.sh
-source "${ROOT}/tests/gates/tiers.sh"
-# shellcheck source=tests/gates/agent-bus.sh
-source "${ROOT}/tests/gates/agent-bus.sh"
-# shellcheck source=tests/gates/eval.sh
-source "${ROOT}/tests/gates/eval.sh"
-# shellcheck source=tests/gates/packaging.sh
-source "${ROOT}/tests/gates/packaging.sh"
-# shellcheck source=tests/gates/install.sh
-source "${ROOT}/tests/gates/install.sh"
-# shellcheck source=tests/gates/codex-install.sh
-source "${ROOT}/tests/gates/codex-install.sh"
+gate tiers
+gate agent-bus
+gate eval
+gate packaging
+gate install
+gate codex-install
 
 echo
 echo "PASS  all checks green"

@@ -15,6 +15,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the hook state machine, in about 30 s. The full tier proves which gates
   each tier sources, in order, and that the discipline tier goes red on a
   hook, report or skill-prompt mutation.
+- `LZ_TEST_TIMINGS=1 ./test.sh [tier]` prints `TIMING gate=<name> seconds=<n>`
+  on stderr as each gate finishes (bash's own `SECONDS`, no extra process);
+  unset or 0, the run is byte-identical to before. The tiers gate proves both.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`

@@ -381,6 +381,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 ./test.sh --discipline  # แก้ hook, report หรือ skill prompt: ราว 30 วินาที
 ./test.sh --fast        # loop ระหว่างทำ: เพิ่ม agentd suite, Relay, bisect, evidence
 ./test.sh               # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
+LZ_TEST_TIMINGS=1 ./test.sh --fast   # เพิ่มบรรทัด `TIMING gate=<name> seconds=<n>` ต่อ gate ทาง stderr
 ```
 
 discipline tier เป็นคำสั่ง loop สำหรับ enforcement pack, discipline report และ

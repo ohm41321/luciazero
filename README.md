@@ -397,6 +397,7 @@ See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) f
 ./test.sh --discipline  # editing a hook, the report or a skill prompt: ~30 s
 ./test.sh --fast        # intermediate loop: adds the agentd suite, Relay, bisect, evidence
 ./test.sh               # closeout/CI: full eval, packaging, and install coverage
+LZ_TEST_TIMINGS=1 ./test.sh --fast   # plus one `TIMING gate=<name> seconds=<n>` per gate on stderr
 ```
 
 The discipline tier is the loop command for the enforcement pack, the

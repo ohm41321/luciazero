@@ -20,8 +20,10 @@ cp "${ROOT}/scripts/sanitize-luciazero-env.sh" "${TG}/scripts/"
 for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
   printf 'echo "gate %s"\n' "$(basename "${G}" .sh)" > "${TG}/${G}"
 done
+# The child runs drop LZ_TEST_TIMINGS: an outer timed run must see its own
+# gate lines only, never the stubs' (the timing checks below set it per run).
 tier_gates() { # tier_gates <tier flag> -> the gate names it sourced, in order
-  (cd "${TG}" && ./test.sh "$1") | sed -n 's/^gate //p' | tr '\n' ' ' | sed 's/ $//'
+  (cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh "$1") | sed -n 's/^gate //p' | tr '\n' ' ' | sed 's/ $//'
 }
 OUT="$(tier_gates --discipline)" || fail "discipline tier over stub gates exited red"
 [ "${OUT}" = "syntax core contracts hooks" ] \
@@ -32,10 +34,30 @@ OUT="$(tier_gates --fast)" || fail "fast tier over stub gates exited red"
 OUT="$(tier_gates --full)" || fail "full tier over stub gates exited red"
 [ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
   || fail "full tier sources the wrong gates: ${OUT}"
-(cd "${TG}" && ./test.sh --discipline) | grep -q '^PASS  discipline checks green$' \
+(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline) | grep -q '^PASS  discipline checks green$' \
   || fail "discipline tier over stub gates printed no PASS line"
+# (c) LZ_TEST_TIMINGS: unset or 0, stdout and stderr are exactly as before;
+# 1, one `TIMING gate=<name> seconds=<n>` line per sourced gate on stderr, in
+# order, with stdout unchanged. The hooks stub sleeps a second for that run
+# so the number is seen to measure something.
+(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline >"${TG}/out.unset" 2>"${TG}/err.unset") \
+  || fail "discipline tier over stub gates exited red with LZ_TEST_TIMINGS unset"
+(cd "${TG}" && LZ_TEST_TIMINGS=0 ./test.sh --discipline >"${TG}/out.0" 2>"${TG}/err.0") \
+  || fail "discipline tier over stub gates exited red with LZ_TEST_TIMINGS=0"
+printf 'sleep 1\necho "gate hooks"\n' > "${TG}/tests/gates/hooks.sh"
+(cd "${TG}" && LZ_TEST_TIMINGS=1 ./test.sh --discipline >"${TG}/out.1" 2>"${TG}/err.1") \
+  || fail "discipline tier over stub gates exited red with LZ_TEST_TIMINGS=1"
+[ ! -s "${TG}/err.unset" ] || fail "stderr is not empty with LZ_TEST_TIMINGS unset: $(head -1 "${TG}/err.unset")"
+[ ! -s "${TG}/err.0" ] || fail "stderr is not empty with LZ_TEST_TIMINGS=0: $(head -1 "${TG}/err.0")"
+cmp -s "${TG}/out.unset" "${TG}/out.0" || fail "LZ_TEST_TIMINGS=0 changed stdout"
+cmp -s "${TG}/out.unset" "${TG}/out.1" || fail "LZ_TEST_TIMINGS=1 changed stdout"
+OUT="$(sed 's/ seconds=[0-9]*$//' "${TG}/err.1" | tr '\n' ' ' | sed 's/ $//')"
+[ "${OUT}" = "TIMING gate=syntax TIMING gate=core TIMING gate=contracts TIMING gate=hooks" ] \
+  || fail "LZ_TEST_TIMINGS=1 printed the wrong timing lines: $(tr '\n' '|' < "${TG}/err.1")"
+grep -qE '^TIMING gate=hooks seconds=[1-9][0-9]*$' "${TG}/err.1" \
+  || fail "the hooks stub slept a second but its timing line disagrees: $(grep hooks "${TG}/err.1")"
 rm -rf "${TG}"
-echo "ok  tiers source their gates in order (discipline stops at hooks)"
+echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST_TIMINGS is opt-in"
 
 # (b) The discipline tier bites: a copy of this checkout with one mutation in
 # the hook, the discipline report or a skill prompt must exit 1 from the
@@ -60,7 +82,7 @@ PY
 }
 expect_red() { # expect_red <label> <failure line the discipline tier must print>
   local RC=0 ERR
-  ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 \
+  ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
     PATH="${TM}/bin:${PATH}" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
   [ "${RC}" = 1 ] || { rm -rf "${TM}"; fail "$1: discipline tier exited ${RC}, want 1"; }
   printf '%s\n' "${ERR}" | grep -qF "$2" \

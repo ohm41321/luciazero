@@ -36,6 +36,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ordinary work runs accumulate samples; `--report` prints median, p95, min
   and max per gate over the green samples and says how many red runs it
   skipped. Tier changes wait for ten fast/full samples.
+- `eval/run.sh --discard-work` removes each invocation's work copy and
+  provider logs once the row is recorded; by default they stay under
+  `TMPDIR` for inspection, as before. The eval gate passes it everywhere.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`
@@ -60,6 +63,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gate runs a green and three red children under a private TMPDIR and fails
   if anything is left. (macOS `mktemp` ignores TMPDIR without a template, so
   the helper passes one.)
+- `eval/run.sh` removes the sandbox config home on every exit path, not only
+  after a graded row: a run that died mid-task (a bad `--out`, a failing
+  setup) left it behind, and with `--use-login` it holds credentials. Its
+  work directories honor `TMPDIR` on macOS. The eval gate had left 46
+  directories per full run; it now proves both paths under a private
+  TMPDIR — kept by default, gone with `--discard-work`, gone on a red run.
+- A gate in the full-only group removes its `mktmp` directories when it ends:
+  the subshell it runs in does not run the dispatcher's EXIT trap, so it arms
+  its own over an empty list (the dispatcher's own directories stay until the
+  run ends). The tiers gate's stub gates each take one and record its path;
+  the check fails if any lands outside the private TMPDIR or outlives its
+  gate, on a green run, a red one, and with `LZ_TEST_PARALLEL=0`.
 - The codex-install gate owns its sandbox; it had used one the install gate
   created, so it could not run on its own.
 - The hook now reads a completed Bash tool call as green: Claude Code sends no

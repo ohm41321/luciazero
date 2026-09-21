@@ -16,13 +16,17 @@
 #               [--reasoning-effort LEVEL] [--runs N] [--out results.jsonl]
 #               [--seed SEED] [--campaign-id ID] [--run-offset N]
 #               [--resume] [--with-lessons] [--use-login] [--allow-dirty]
-#               [task-name ...]
+#               [--discard-work] [task-name ...]
 #
 # --runs N        repeat every (task, arm) N times (default 1)
 # --out F         append one JSON line per (task, arm, run) to F — criteria
 #                 parsed from the grader's CRIT lines, plus token/cost usage
 #                 parsed from the CLI's JSON output (null when unavailable);
 #                 render with eval/report.sh F
+# --discard-work  remove each invocation's work copy and provider logs once
+#                 it is graded and recorded, instead of keeping them under
+#                 TMPDIR for inspection (the sandbox config never survives
+#                 the run either way — with --use-login it holds credentials)
 # --with-lessons  add a third arm (lessons) to every task that ships a
 #                 lessons.md: same doctrine install, plus the task's ledger
 #                 pre-seeded as docs/lessons.md in the work copy — measures
@@ -52,6 +56,22 @@
 #                 "offline": true and report.sh brands the output SYNTHETIC.
 set -euo pipefail
 
+# Temp directories. The sandbox config (with --use-login: credentials) never
+# outlives the run, however it ends; the work copy and provider logs are
+# kept for inspection unless --discard-work, and then go the same way. The
+# explicit template keeps them under TMPDIR on macOS too, whose mktemp
+# ignores it otherwise. Nothing here runs in the background: every agent
+# and grader has returned before its directories are removed.
+TMP_DIRS=()
+mktmp() { # mktmp <var>: a fresh directory in <var>, removed on exit
+  local D
+  D="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-eval.XXXXXX")"
+  printf -v "$1" '%s' "${D}"
+  TMP_DIRS+=("${D}")
+}
+cleanup() { rm -rf ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; }
+trap cleanup EXIT
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVAL="${ROOT}/eval"
 
@@ -68,6 +88,7 @@ RUN_OFFSET=0
 OUT_FILE=""
 WITH_LESSONS=0
 OFFLINE=0
+DISCARD_WORK=0
 USE_LOGIN=0
 RUN_SEED=""
 RUN_SEED_EXPLICIT=0
@@ -91,6 +112,7 @@ while [ $# -gt 0 ]; do
     --with-lessons) WITH_LESSONS=1; shift ;;
     --use-login) USE_LOGIN=1; shift ;;
     --offline) OFFLINE=1; shift ;;
+    --discard-work) DISCARD_WORK=1; shift ;;
     -*) echo "unknown option: $1 (see eval/README.md)" >&2; exit 1 ;;
     *) TASKS+=("$1"); shift ;;
   esac
@@ -415,9 +437,10 @@ for TASK in "${TASKS[@]}"; do
         echo "== ${TASK} / ${ARM} (run ${R}): SKIP — already recorded =="
         continue
       fi
-      CFG="$(mktemp -d)"
-      WORK="$(mktemp -d)"
-      TRACE="$(mktemp -d)"
+      mktmp CFG
+      WORK="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-eval.XXXXXX")"
+      TRACE="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-eval.XXXXXX")"
+      if [ "${DISCARD_WORK}" = 1 ]; then TMP_DIRS+=("${WORK}" "${TRACE}"); fi
       cp -R "${TDIR}/project/." "${WORK}/"
 
       # A task may need deterministic local state that cannot be stored in the
@@ -625,8 +648,12 @@ print(json.dumps({"result_schema": 2,
           "${REPOSITORY_COMMIT}" "${REPOSITORY_DIRTY}" "${TASK_SHA256}" "${PROMPT_SHA256}" \
           "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" >> "${OUT_FILE}"
       fi
-      echo "   workdir kept for inspection: ${WORK}"
-      echo "   provider logs kept separately: ${TRACE}"
+      if [ "${DISCARD_WORK}" = 1 ]; then
+        rm -rf "${WORK}" "${TRACE}"
+      else
+        echo "   workdir kept for inspection: ${WORK}"
+        echo "   provider logs kept separately: ${TRACE}"
+      fi
       rm -rf "${CFG}"
       echo
     done

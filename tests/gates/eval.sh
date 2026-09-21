@@ -196,7 +196,7 @@ printf '%s\n' \
 exit 1
 FAKECODEX
 chmod +x "${CFX}/bin/codex"
-PATH="${CFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+PATH="${CFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --discard-work --provider codex \
   --model gpt-5.6-terra --reasoning-effort medium --allow-dirty \
   --out "${CFX}/result.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${CFX}"; fail "run.sh rejected a recorded invalid Codex run"; }
@@ -252,7 +252,7 @@ FAKECODEXOK
 chmod +x "${SFX}/bin/codex"
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" PATH="${SFX}/bin:${PATH}" \
-  "${ROOT}/eval/run.sh" --provider codex --model gpt-5.6-terra \
+  "${ROOT}/eval/run.sh" --discard-work --provider codex --model gpt-5.6-terra \
   --reasoning-effort medium --use-login --allow-dirty \
   --out "${SFX}/ok.jsonl" false-green \
   >/dev/null 2>&1 \
@@ -297,7 +297,7 @@ assert all(row["tokens_in"] == 12 and row["tokens_out"] == 3 for row in rows)
 PY
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=1 \
-  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --discard-work --provider codex \
   --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
   --out "${SFX}/bad.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "malformed Codex usage aborted run.sh"; }
@@ -312,7 +312,7 @@ assert all("usage.input_tokens" in row["invalid_reason"] for row in rows)
 PY
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=2 \
-  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --discard-work --provider codex \
   --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
   --out "${SFX}/nonobject.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "non-object Codex event aborted run.sh"; }
@@ -331,7 +331,7 @@ echo "ok  Codex success path isolates auth, config, arms, and usage errors"
 # 4d2c. offline smoke mode: full copy -> grade -> JSONL -> report loop with
 # zero API; rows must be branded offline and the report must say SYNTHETIC
 OFJ="$(mktemp -d)"
-"${ROOT}/eval/run.sh" --offline --with-lessons --seed fixture-seed \
+"${ROOT}/eval/run.sh" --discard-work --offline --with-lessons --seed fixture-seed \
   --campaign-id fixture-campaign --out "${OFJ}/r.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "run.sh --offline exited non-zero"; }
 python3 - "${OFJ}/r.jsonl" <<'PY' || { rm -rf "${OFJ}"; fail "offline JSONL rows wrong"; }
@@ -355,7 +355,7 @@ by = {r["arm"]: r for r in rows}
 assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
 assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
 PY
-"${ROOT}/eval/run.sh" --offline --seed relay-fixture-seed \
+"${ROOT}/eval/run.sh" --discard-work --offline --seed relay-fixture-seed \
   --campaign-id relay-fixture-campaign --out "${OFJ}/relay.jsonl" \
   relay-transfer >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "run.sh skipped or broke task setup"; }
@@ -369,32 +369,32 @@ assert by["doctrine"]["score"] == "6/6"
 assert by["bare"]["score"] == "1/6"
 assert all(row["invalid"] is False and row["offline"] is True for row in rows)
 PY
-if "${ROOT}/eval/run.sh" --offline --model gpt-5.6-terra false-green \
+if "${ROOT}/eval/run.sh" --discard-work --offline --model gpt-5.6-terra false-green \
   >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh accepted Codex-only flags for Claude"
 fi
-if "${ROOT}/eval/run.sh" --offline --runs 0 false-green >/dev/null 2>&1; then
+if "${ROOT}/eval/run.sh" --discard-work --offline --runs 0 false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh accepted zero repetitions"
 fi
-if "${ROOT}/eval/run.sh" --offline --run-offset nope false-green >/dev/null 2>&1; then
+if "${ROOT}/eval/run.sh" --discard-work --offline --run-offset nope false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh accepted a non-numeric run offset"
 fi
-if "${ROOT}/eval/run.sh" --offline --resume --out "${OFJ}/missing.jsonl" \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --out "${OFJ}/missing.jsonl" \
   false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed without explicit campaign ID and seed"
 fi
-if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --out "${OFJ}/missing.jsonl" \
   false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed a missing output file"
 fi
 : > "${OFJ}/empty.jsonl"
-if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --out "${OFJ}/empty.jsonl" \
   false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed an empty output file"
 fi
-"${ROOT}/eval/run.sh" --offline --seed resume-seed --campaign-id resume-campaign \
+"${ROOT}/eval/run.sh" --discard-work --offline --seed resume-seed --campaign-id resume-campaign \
   --runs 1 --out "${OFJ}/resume.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "run.sh initial resumable batch exited non-zero"; }
 # Simulate an interruption after the first arm: resume must skip that exact
@@ -404,7 +404,7 @@ import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 path.write_text(path.read_text().splitlines()[0] + "\n")
 PY
-"${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+"${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --runs 1 --out "${OFJ}/resume.jsonl" \
   false-green >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "run.sh resumed batch exited non-zero"; }
@@ -427,7 +427,7 @@ path = pathlib.Path(sys.argv[1])
 path.write_bytes(path.read_bytes().rstrip(b"\n"))
 PY
 cp "${OFJ}/no-newline.jsonl" "${OFJ}/no-newline.before"
-if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --runs 1 --out "${OFJ}/no-newline.jsonl" \
   false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed a JSONL file without a final newline"
@@ -447,7 +447,7 @@ pathlib.Path(sys.argv[2]).write_text(
 )
 PY
 BEFORE_LINES="$(wc -l < "${OFJ}/preflight.jsonl" | tr -d ' ')"
-if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --runs 1 --out "${OFJ}/preflight.jsonl" \
   false-green slugify >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed after a later task failed preflight"
@@ -461,7 +461,7 @@ row = json.loads(open(sys.argv[1]).readline())
 row["arm_order"] = list(reversed(row["arm_order"]))
 pathlib.Path(sys.argv[2]).write_text(json.dumps(row) + "\n")
 PY
-if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
   --campaign-id resume-campaign --runs 1 --out "${OFJ}/order-drift.jsonl" \
   false-green >/dev/null 2>&1; then
   rm -rf "${OFJ}"; fail "run.sh resumed after deterministic arm-order drift"
@@ -478,7 +478,7 @@ cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
 # settings even when no Codex CLI is installed in CI.
 mkdir -p "${OFJ}/codex-home"
 printf '{"fake":"codex-auth"}\n' > "${OFJ}/codex-home/auth.json"
-CODEX_HOME="${OFJ}/codex-home" "${ROOT}/eval/run.sh" --offline \
+CODEX_HOME="${OFJ}/codex-home" "${ROOT}/eval/run.sh" --discard-work --offline \
   --provider codex --model gpt-5.6-terra --reasoning-effort medium \
   --use-login --out "${OFJ}/codex.jsonl" false-green >/dev/null 2>&1 \
   || { rm -rf "${OFJ}"; fail "Codex offline adapter exited non-zero"; }
@@ -502,7 +502,7 @@ UL="$(mktemp -d)"
 mkdir -p "${UL}/home/.claude"
 printf '{"fake": "login-state"}\n' > "${UL}/home/.claude.json"
 printf '{"fake": "credentials"}\n' > "${UL}/home/.claude/.credentials.json"
-HOME="${UL}/home" "${ROOT}/eval/run.sh" --offline --use-login --out "${UL}/r.jsonl" false-green \
+HOME="${UL}/home" "${ROOT}/eval/run.sh" --discard-work --offline --use-login --out "${UL}/r.jsonl" false-green \
   > "${UL}/out.log" 2>"${UL}/err.log" \
   || { rm -rf "${UL}"; fail "run.sh --use-login exited non-zero"; }
 [ "$(grep -c 'login state seeded into sandbox config' "${UL}/out.log")" = 2 ] \
@@ -518,18 +518,48 @@ FAKESEC
 printf '#!/bin/sh\nexit 1\n' > "${UL}/nobin/security"
 chmod +x "${UL}/bin/security" "${UL}/nobin/security"
 HOME="${UL}/empty-home" PATH="${UL}/bin:${PATH}" \
-  "${ROOT}/eval/run.sh" --offline --use-login false-green > "${UL}/out2.log" 2>&1 \
+  "${ROOT}/eval/run.sh" --discard-work --offline --use-login false-green > "${UL}/out2.log" 2>&1 \
   || { rm -rf "${UL}"; fail "run.sh --use-login (keychain path) exited non-zero"; }
 [ "$(grep -c 'keychain credentials exported into sandbox config' "${UL}/out2.log")" = 2 ] \
   || { rm -rf "${UL}"; fail "--use-login did not export keychain credentials"; }
 HOME="${UL}/empty-home" PATH="${UL}/nobin:${PATH}" \
-  "${ROOT}/eval/run.sh" --offline --use-login false-green \
+  "${ROOT}/eval/run.sh" --discard-work --offline --use-login false-green \
   > /dev/null 2>"${UL}/err2.log" \
   || { rm -rf "${UL}"; fail "run.sh --use-login with no login state exited non-zero"; }
 grep -q 'warn: --use-login found no login state' "${UL}/err2.log" \
   || { rm -rf "${UL}"; fail "--use-login did not warn on missing login state"; }
 rm -rf "${UL}"
 echo "ok  --use-login seeds sandboxes and warns when no login state exists"
+
+# 4d2e. run.sh's temp directories live under TMPDIR, on every path: by
+# default an offline run keeps its work copy and provider logs (two
+# directories per arm) and nothing else — the sandbox config is gone;
+# --discard-work leaves none; a run that dies after the directories exist
+# (--out pointing at a directory) keeps them by default and leaves none with
+# --discard-work. The private TMPDIR is what gives the counts meaning: a bare
+# mktemp ignores TMPDIR on macOS, which is why run.sh passes a template.
+mktmp DW
+mkdir -p "${DW}/keep" "${DW}/discard" "${DW}/red" "${DW}/red-keep"
+count_in() { find "$1" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' '; }
+TMPDIR="${DW}/keep" "${ROOT}/eval/run.sh" --offline false-green >/dev/null 2>&1 \
+  || fail "offline run.sh (default) exited non-zero"
+[ "$(count_in "${DW}/keep")" = 4 ] \
+  || fail "a default offline run kept $(count_in "${DW}/keep") directories under TMPDIR, want 4 (work copy and logs per arm, no config)"
+[ "$(find "${DW}/keep" -maxdepth 2 -name test_csv_export.py | wc -l | tr -d ' ')" = 2 ] \
+  || fail "the kept directories are not the work copies"
+TMPDIR="${DW}/discard" "${ROOT}/eval/run.sh" --offline --discard-work false-green >/dev/null 2>&1 \
+  || fail "offline run.sh --discard-work exited non-zero"
+[ "$(count_in "${DW}/discard")" = 0 ] \
+  || fail "--discard-work left $(count_in "${DW}/discard") directories under TMPDIR"
+RC=0; TMPDIR="${DW}/red-keep" "${ROOT}/eval/run.sh" --offline --out "${DW}/red-keep" false-green >/dev/null 2>&1 || RC=$?
+[ "${RC}" != 0 ] || fail "--out pointing at a directory did not fail the run"
+[ "$(count_in "${DW}/red-keep")" = 2 ] \
+  || fail "a red run kept $(count_in "${DW}/red-keep") directories under TMPDIR, want 2 (work copy and logs; the config must not survive)"
+RC=0; TMPDIR="${DW}/red" "${ROOT}/eval/run.sh" --offline --discard-work --out "${DW}/red" false-green >/dev/null 2>&1 || RC=$?
+[ "${RC}" != 0 ] || fail "--out pointing at a directory did not fail the run"
+[ "$(count_in "${DW}/red")" = 0 ] \
+  || fail "a red --discard-work run left $(count_in "${DW}/red") directories under TMPDIR"
+echo "ok  run.sh work directories live under TMPDIR: kept by default, gone with --discard-work, gone on a red run"
 
 # 4d3. revert-probe: a biting test passes, a vacuous test fails, non-git is
 # unassessable — all in throwaway git fixtures, never the caller's tree

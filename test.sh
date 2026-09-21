@@ -304,11 +304,18 @@ fi
 # its own FAIL line and the summary names every red gate. LZ_TEST_PARALLEL=0
 # runs the same subshells one at a time, unbuffered.
 FULL_ORDER=(tiers agent-bus eval packaging install codex-install)
+gate_sub() { # gate_sub <name>: run a gate in this subshell, which does not run
+  # the parent's EXIT trap; it arms its own over an empty list, so the gate's
+  # mktmp directories go when the gate ends and the parent's stay until the run does
+  TMP_DIRS=()
+  trap cleanup EXIT
+  gate "$1"
+}
 gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
   if [ $# -gt 1 ]; then
-    ( gate "$1" ) >"$2" 2>"$3" &
+    ( gate_sub "$1" ) >"$2" 2>"$3" &
   else
-    ( gate "$1" ) &
+    ( gate_sub "$1" ) &
   fi
   GATE_PID=$!
 }

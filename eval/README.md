@@ -57,6 +57,7 @@ eval/run.sh --provider codex --model gpt-5.6-terra \
   --use-login --out terra.jsonl
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
 eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
+eval/run.sh --offline --discard-work       # same, and nothing left in TMPDIR
 eval/run.sh --resume --campaign-id c1 --seed s1 --runs 3 \
   --out results.jsonl slugify               # fill any gaps in runs 1–3
 eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
@@ -69,6 +70,12 @@ bug, and the full copy → grade → JSONL → report loop runs in seconds. It e
 try the harness before spending money — and it is **synthetic**: rows carry
 `"offline": true` and `report.sh` brands the output `SYNTHETIC OFFLINE
 SMOKE`. Never quote offline numbers as results.
+
+Every invocation works in a fresh copy under `TMPDIR` and keeps it, with the
+provider logs, for inspection — the run prints both paths. `--discard-work`
+removes them once the row is recorded, for a loop that runs the harness
+often (the test suite does). The sandbox config home is removed however the
+run ends, so with `--use-login` no credentials outlive it.
 
 Arm A (historically labeled `doctrine` in JSON output) installs the full classic
 Luciazero pack without hooks—doctrine, skills, and reviewer—into a sandbox

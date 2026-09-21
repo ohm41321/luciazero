@@ -18,6 +18,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `LZ_TEST_TIMINGS=1 ./test.sh [tier]` prints `TIMING gate=<name> seconds=<n>`
   on stderr as each gate finishes (bash's own `SECONDS`, no extra process);
   unset or 0, the run is byte-identical to before. The tiers gate proves both.
+- `scripts/test-timings.sh [--discipline|--fast|--full]` runs the tier with
+  timing on and keeps the run's stdout, stderr and a meta file (tier, OS,
+  commit, exit code, wall seconds) under the git-ignored `.test-timings/`, so
+  ordinary work runs accumulate samples; `--report` prints median, p95, min
+  and max per gate over the green samples and says how many red runs it
+  skipped. Tier changes wait for ten fast/full samples.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`

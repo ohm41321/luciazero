@@ -109,3 +109,39 @@ expect_red "skill prompt mutation" "FAIL: remaining skill prompt budget or contr
 restore skills/done/SKILL.md
 rm -rf "${TM}"
 echo "ok  discipline tier goes red on a hook, report or skill-prompt mutation"
+
+# (d) scripts/test-timings.sh keeps a sample per run (stdout, stderr with the
+# TIMING lines, meta with tier/os/commit/exit/wall), passes the tier's exit
+# code through, and its report ranks green samples by median with p95,
+# skipping red ones. Proven over a stub test.sh so no tier runs twice.
+TS="$(mktemp -d)"
+mkdir -p "${TS}/repo/scripts"
+cp "${ROOT}/scripts/test-timings.sh" "${TS}/repo/scripts/"
+cat > "${TS}/repo/test.sh" <<'STUB'
+#!/bin/sh
+echo "ok  stub"
+[ "${LZ_TEST_TIMINGS:-0}" = 1 ] && echo "TIMING gate=hooks seconds=${STUB_HOOKS:-0}" >&2
+[ "$1" = --fast ] && exit "${STUB_RC:-0}"
+exit 0
+STUB
+chmod +x "${TS}/repo/test.sh"
+for N in 10 30 20; do
+  STUB_HOOKS="${N}" LZ_TEST_TIMINGS_DIR="${TS}/samples" "${TS}/repo/scripts/test-timings.sh" --fast >/dev/null 2>&1 \
+    || fail "test-timings.sh exited red on a green stub run"
+  sleep 1  # the sample name is a whole-second stamp
+done
+RC=0; STUB_HOOKS=99 STUB_RC=3 LZ_TEST_TIMINGS_DIR="${TS}/samples" "${TS}/repo/scripts/test-timings.sh" --fast >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 3 ] || fail "test-timings.sh returned ${RC} for a tier that exited 3"
+[ "$(find "${TS}/samples" -name '*-fast.meta' | wc -l | tr -d ' ')" = 4 ] || fail "test-timings.sh kept $(find "${TS}/samples" -name '*.meta' | wc -l | tr -d ' ') samples, want 4"
+LAST="$(find "${TS}/samples" -name '*-fast.meta' | sort | tail -1)"  # stamps sort by time
+grep -q '^exit=3$' "${LAST}" || fail "the red run's meta does not record exit=3"
+grep -q '^tier=fast$' "${LAST}" || fail "the meta does not record the tier"
+grep -qx 'ok  stub' "${LAST%.meta}.out" || fail "the sample kept no stdout"
+REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
+echo "${REPORT}" | grep -qE '^fast +hooks +3 +20 +30 +10 +30$' \
+  || fail "test-timings.sh --report ranks wrong (want fast hooks n=3 median=20 p95=30 min=10 max=30): ${REPORT}"
+echo "${REPORT}" | grep -q '^skipped 1 red run(s)$' || fail "the report did not skip the red run: ${REPORT}"
+LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | grep -q '^no samples under ' \
+  || fail "the report over no samples is not the one-line notice"
+rm -rf "${TS}"
+echo "ok  test-timings.sh keeps a sample per run and ranks gates by median and p95"

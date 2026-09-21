@@ -398,6 +398,8 @@ See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) f
 ./test.sh --fast        # intermediate loop: adds the agentd suite, Relay, bisect, evidence
 ./test.sh               # closeout/CI: full eval, packaging, and install coverage
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # plus one `TIMING gate=<name> seconds=<n>` per gate on stderr
+scripts/test-timings.sh --fast       # same run, and keeps stdout/stderr/meta under .test-timings/
+scripts/test-timings.sh --report     # median and p95 per gate over the green samples kept so far
 ```
 
 The discipline tier is the loop command for the enforcement pack, the

@@ -197,6 +197,7 @@ export LUCIAZERO_SERVICE_ROOT
 SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          demo.sh
          scripts/sanitize-luciazero-env.sh
+         scripts/test-timings.sh
          scripts/agent-bus-spike.sh
          scripts/agent-bus-mcp.sh
          scripts/agent-bus-e2e.sh

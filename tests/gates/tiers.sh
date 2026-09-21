@@ -64,11 +64,13 @@ echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST
 # discipline tier with the failure that names it. A `shellcheck` shim keeps
 # the three runs to the checks under test; lint has its own coverage above.
 # Each mutation is applied by exact count, so a rewrite that misses its
-# target fails here instead of making the run vacuous.
+# target fails here instead of making the run vacuous. Every child runs
+# under a temp directory of its own, empty again afterwards: the gates
+# clean up on the green path and on the red one alike.
 TM="$(mktemp -d)"
 cp -R "${ROOT}" "${TM}/repo"
 rm -rf "${TM}/repo/.git" "${TM}/repo/node_modules"
-mkdir -p "${TM}/bin"
+mkdir -p "${TM}/bin" "${TM}/tmp"
 printf '#!/bin/sh\nexit 0\n' > "${TM}/bin/shellcheck"
 chmod +x "${TM}/bin/shellcheck"
 mutate() { # mutate <repo-relative file> <old> <new>  (exactly one occurrence)
@@ -80,15 +82,25 @@ assert s.count(old) == 1, f"{path}: expected exactly one match for {old!r}, foun
 p.write_text(s.replace(old, new))
 PY
 }
+no_leftovers() { # no_leftovers <label>: the child's temp directory is empty again
+  [ -z "$(ls -A "${TM}/tmp")" ] \
+    || { local LEFT; LEFT="$(find "${TM}/tmp" -mindepth 1 -maxdepth 1 | sed 's#.*/##' | tr '\n' ' ')"; rm -rf "${TM}"; fail "$1 left temp directories behind: ${LEFT}"; }
+}
 expect_red() { # expect_red <label> <failure line the discipline tier must print>
   local RC=0 ERR
   ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
-    PATH="${TM}/bin:${PATH}" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
+    PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
   [ "${RC}" = 1 ] || { rm -rf "${TM}"; fail "$1: discipline tier exited ${RC}, want 1"; }
   printf '%s\n' "${ERR}" | grep -qF "$2" \
     || { rm -rf "${TM}"; fail "$1: discipline tier went red for another reason: $(printf '%s\n' "${ERR}" | grep '^FAIL' | head -1)"; }
+  no_leftovers "$1"
 }
 restore() { cp "${ROOT}/$1" "${TM}/repo/$1"; }
+# green first: the unmodified copy passes and leaves its temp directory empty
+(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
+  PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline >/dev/null 2>&1) \
+  || { rm -rf "${TM}"; fail "the unmodified copy is red in the discipline tier"; }
+no_leftovers "a green discipline run"
 # hook: a prompt inside an open turn must not reset the turn (4c5). The
 # literal is the hook's own line, expansions and all.
 # shellcheck disable=SC2016
@@ -108,7 +120,7 @@ mutate skills/done/SKILL.md 'never two' 'never three'
 expect_red "skill prompt mutation" "FAIL: remaining skill prompt budget or contract drift"
 restore skills/done/SKILL.md
 rm -rf "${TM}"
-echo "ok  discipline tier goes red on a hook, report or skill-prompt mutation"
+echo "ok  discipline tier goes red on a hook, report or skill-prompt mutation; no temp directory outlives a run"
 
 # (d) scripts/test-timings.sh keeps a sample per run (stdout, stderr with the
 # TIMING lines, meta with tier/os/commit/exit/wall), passes the tier's exit

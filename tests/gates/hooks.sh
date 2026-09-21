@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # 4c. enforcement-pack hook state machine (isolated TMPDIR; fails open by design)
-HT="$(mktemp -d)"
+mktmp HT
 HJ='{"cwd":"/hook/test/proj"}'
 echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
 RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
@@ -56,7 +56,7 @@ echo "ok  enforcement-pack hook state machine"
 # a widened regex must not count an arbitrary command as a verify run, a
 # committed strict command must not be executed at stop, and the personal
 # settings.local.json must keep working.
-PEJ_DIR="$(mktemp -d)"
+mktmp PEJ_DIR
 mkdir -p "${PEJ_DIR}/.claude"
 cat > "${PEJ_DIR}/.claude/settings.json" <<'JSON'
 {"env": {"LUCIAZERO_VERIFY_REGEX": ".", "LUCIAZERO_STRICT_VERIFY_CMD": "touch strict-ran"}}
@@ -144,7 +144,7 @@ RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" 
 # channel dedupe is decided by the running copy's own path, never by
 # LUCIAZERO_CHANNEL: an env-driven dedupe let a repository label the CLASSIC
 # hook "plugin" so it stood itself down, disabling enforcement entirely
-CHD="$(mktemp -d)"
+mktmp CHD
 mkdir -p "${CHD}/cfg/hooks" "${CHD}/proj"
 cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/cfg/hooks/luciazero-verify.sh"
 chmod +x "${CHD}/cfg/hooks/luciazero-verify.sh"
@@ -200,7 +200,7 @@ echo "ok  committed settings cannot reconfigure the hook"
 # 4c1a. PROJECT scope only: the walk must stop before the user's own settings.
 # A global ~/.claude/settings.json and anything above the repository root belong
 # to the user; refusing them would break the documented way to configure this.
-GS="$(mktemp -d)"
+mktmp GS
 mkdir -p "${GS}/home/.claude" "${GS}/home/proj" \
          "${GS}/outer/.claude" "${GS}/outer/repo/.git" "${GS}/outer/repo/sub"
 echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/home/.claude/settings.json"
@@ -234,7 +234,7 @@ echo "ok  md5 state keys are FIPS-safe"
 
 # 4c2. strict gate: runs the configured command at stop, blocks on red quoting
 # the failure, fast-paths on green state, and degrades to the nudge on timeout
-SPJ="$(mktemp -d)"
+mktmp SPJ
 SJ="$(printf '{"cwd":"%s"}' "${SPJ}")"
 echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom; exit 1' \
@@ -287,28 +287,28 @@ echo "ok  strict verify gate"
 
 # 4c3. session subcommand: silent without a relay, points at one when
 # present, stale wording past the threshold, fails open on garbage stdin
-SD="$(mktemp -d)"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+mktmp SD
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 [ -z "${OUT}" ] || { rm -rf "${HT}" "${SD}"; fail "session hook spoke without a relay: ${OUT}"; }
 echo '{}' > "${SD}/LUCIA_RELAY.json"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 echo "${OUT}" | grep -q 'LUCIA_RELAY.json exists' || { rm -rf "${HT}" "${SD}"; fail "session hook missed the relay: ${OUT}"; }
 touch -t 202001010000 "${SD}/LUCIA_RELAY.json"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 echo "${OUT}" | grep -q 'stale' || { rm -rf "${HT}" "${SD}"; fail "session hook missed staleness: ${OUT}"; }
 rm -f "${SD}/LUCIA_RELAY.json"
 echo legacy > "${SD}/HANDOFF.md"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
 echo "${OUT}" | grep -q 'Legacy HANDOFF.md' || { rm -rf "${HT}" "${SD}"; fail "session hook missed legacy migration: ${OUT}"; }
-RC=0; printf 'not json' | "${ROOT}/claude/hooks/luciazero-verify.sh" session >/dev/null 2>&1 || RC=$?
+RC=0; printf 'not json' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SD}"; fail "session hook not fail-open on garbage stdin (rc=${RC})"; }
 rm -rf "${HT}" "${SD}"
 echo "ok  session relay pointer"
 
 # 4c5. discipline stats: stop outcomes logged to the config dir, capped, and
 # the learning-layer files survive uninstall
-SC="$(mktemp -d)"
-STMP="$(mktemp -d)"
+mktmp SC
+mktmp STMP
 SHK="${ROOT}/claude/hooks/luciazero-verify.sh"
 SPJ1="${STMP}/proj"; SPJ2="${STMP}/boom"; SPJ3="${STMP}/third"; SPJ4="${STMP}/timed"
 mkdir -p "${SPJ1}" "${SPJ2}" "${SPJ3}" "${SPJ4}"
@@ -488,7 +488,7 @@ sleep 0.01
 turn_hook turn-3 prompt
 [ "$(cat "${TD3}/turn_start_ms")" != "${T3_START}" ] || fail "the first prompt after a session start was taken for a notification"
 # A hostile pre-created state symlink must fail open without touching its target.
-EVILTMP="$(mktemp -d)"; EVILTARGET="$(mktemp -d)"
+mktmp EVILTMP; mktmp EVILTARGET
 echo sentinel > "${EVILTARGET}/keep"
 ln -s "${EVILTARGET}" "${EVILTMP}/luciazero-verify-state-$(id -u)"
 EVILKEY="$(printf '%s' "${SPJ4}" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read(), usedforsecurity=False).hexdigest()[:12])')"
@@ -522,7 +522,7 @@ echo "ok  discipline stats log"
 # 4c5b. discipline report: current + legacy schema, malformed input,
 # time/project filters, JSON output, and evidence-qualified recommendations
 if command -v node >/dev/null 2>&1; then
-  DR="$(mktemp -d)"
+  mktmp DR
   cat > "${DR}/stats.log" <<'EOF'
 {"schema":2,"timestamp":"2026-08-10T10:00:00+00:00","event":"stop-clean","project_id":"alpha1234567","project":"alpha","verify_mode":"exact","telemetry":{"turn_ms":1000,"bash_ms":300,"bash_count":1,"verify_count":1,"skill_count":0}}
 {"schema":2,"timestamp":"2026-08-11T23:30:00-05:00","event":"nudge","project_id":"alpha1234567","project":"alpha","verify_mode":"regex","telemetry":{"turn_ms":2000,"bash_ms":500,"bash_count":2,"verify_count":1,"skill_count":1}}

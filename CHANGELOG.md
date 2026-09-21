@@ -52,6 +52,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The hooks gate no longer leaves temp directories behind: its fixtures come
+  from a `mktmp` helper in `test.sh` that removes every directory on the EXIT
+  trap, so a red run cleans up like a green one, and its session-mode checks
+  run under the fixture TMPDIR — before, they wrote hook state into the
+  ambient one, for this checkout's own cwd when stdin carried none. The tiers
+  gate runs a green and three red children under a private TMPDIR and fails
+  if anything is left. (macOS `mktemp` ignores TMPDIR without a template, so
+  the helper passes one.)
 - The codex-install gate owns its sandbox; it had used one the install gate
   created, so it could not run on its own.
 - The hook now reads a completed Bash tool call as green: Claude Code sends no

@@ -163,9 +163,22 @@ fi
 # The hooks append a stats line to ${CLAUDE_CONFIG_DIR:-~/.claude}; no test is
 # ever allowed to touch the real one, so the whole run gets a sandbox default.
 # Tests that set their own CLAUDE_CONFIG_DIR still override per invocation.
-CLAUDE_CONFIG_DIR="$(mktemp -d)"
+# mktmp <var>: a fresh directory in <var>, under TMPDIR, removed when the run
+# ends however it ends — a fail() exits through the same EXIT trap. The
+# explicit template matters: macOS mktemp ignores TMPDIR without one, and the
+# suite proves cleanup by running a child under a private TMPDIR. Gates make
+# their fixture directories with this, not with a bare mktemp.
+TMP_DIRS=()
+mktmp() {
+  local D
+  D="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-test.XXXXXX")"
+  printf -v "$1" '%s' "${D}"
+  TMP_DIRS+=("${D}")
+}
+cleanup() { rm -rf ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; }
+trap cleanup EXIT
+mktmp CLAUDE_CONFIG_DIR
 export CLAUDE_CONFIG_DIR
-trap 'rm -rf "${CLAUDE_CONFIG_DIR}"' EXIT
 
 # Ambient LUCIAZERO_* configuration belongs to the developer's own install and
 # would silently change what the hooks under test do — an exported
@@ -306,8 +319,7 @@ if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then
     wait "${GATE_PID}" || RED="${RED} ${G}"
   done
 else
-  BUF="$(mktemp -d)"
-  trap 'rm -rf "${CLAUDE_CONFIG_DIR}" "${BUF}"' EXIT
+  mktmp BUF
   gate_bg agent-bus "${BUF}/agent-bus.out" "${BUF}/agent-bus.err"
   wait "${GATE_PID}" || RED="${RED} agent-bus"
   PARALLEL=(tiers eval packaging install codex-install)

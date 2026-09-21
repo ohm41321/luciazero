@@ -23,7 +23,9 @@ from urllib.parse import urlsplit, urlunsplit
 MANIFEST = "LUCIA_RELAY.json"
 HUMAN = "LUCIA_RELAY.md"
 RECEIPT = "LUCIA_RELAY_RECEIPT.json"
+ENVELOPE_KIND = "luciazero-relay-envelope"
 MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_ENVELOPE_BYTES = 64 * 1024
 MAX_HUMAN_BYTES = 2 * 1024 * 1024
 MAX_DEPTH = 20
 MAX_NODES = 8192
@@ -1037,6 +1039,116 @@ def manifest_sha256(root: Path) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def outside_root_error(root: Path, path: Path, label: str) -> Optional[str]:
+    """A file under the relay root travelled with the artifact, so it is not
+    a trusted channel and must not be produced or consumed as one."""
+    try:
+        resolved = path.resolve()
+    except OSError as exc:
+        return f"cannot resolve {label}: {exc}"
+    if resolved == root or root in resolved.parents:
+        return f"{label} must live outside the relay root {root}"
+    return None
+
+
+def refuse_existing_manifest(root: Path) -> None:
+    path = root / MANIFEST
+    if path.is_symlink() or path.exists():
+        raise ValueError(f"{MANIFEST} already exists; consume or remove it before drafting a new relay")
+
+
+def write_manifest(root: Path, data: dict[str, Any]) -> Path:
+    path = root / MANIFEST
+    refuse_existing_manifest(root)
+    try:
+        # Exclusive create: a symlink planted between the check and the write
+        # fails here instead of being followed.
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    except FileExistsError as exc:
+        raise ValueError(f"{MANIFEST} already exists; consume or remove it before drafting a new relay") from exc
+    except OSError as exc:
+        raise ValueError(f"cannot write {MANIFEST}: {exc}") from exc
+    return path
+
+
+def write_human(root: Path, data: dict[str, Any]) -> Path:
+    human = root / HUMAN
+    if human.is_symlink():
+        raise ValueError(f"{HUMAN} must not be a symlink")
+    try:
+        human.write_text(render_markdown(data), encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"cannot write {HUMAN}: {exc}") from exc
+    return human
+
+
+def envelope_payload(root: Path, data: dict[str, Any]) -> dict[str, Any]:
+    repository = data.get("repository") if isinstance(data.get("repository"), dict) else {}
+    remote = repository.get("remote") if isinstance(repository.get("remote"), dict) else {}
+    return {
+        "schema": 1,
+        "kind": ENVELOPE_KIND,
+        "repository_url": remote.get("url"),
+        "remote_ref": remote.get("ref"),
+        "trusted_head": repository.get("head"),
+        "trusted_manifest_sha256": manifest_sha256(root),
+    }
+
+
+def write_envelope(root: Path, payload: dict[str, Any], out: Path) -> Path:
+    problem = outside_root_error(root, out, "--envelope-out")
+    if problem:
+        raise ValueError(problem)
+    if out.is_symlink() or out.exists():
+        raise ValueError(f"--envelope-out already exists; send or remove {out} before writing a new envelope")
+    try:
+        # Exclusive create, like the manifest: an envelope that has not been
+        # sent yet must not be replaced by a later relay's digest.
+        with out.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    except FileExistsError as exc:
+        raise ValueError(f"--envelope-out already exists; send or remove {out} before writing a new envelope") from exc
+    except OSError as exc:
+        raise ValueError(f"cannot write --envelope-out: {exc}") from exc
+    return out
+
+
+def load_trusted_envelope(root: Path, path: Path) -> dict[str, str]:
+    """Read the three receiver-trusted values from an envelope file.
+
+    The path is always explicit; nothing is discovered. A file under the relay
+    root arrived with the artifact and is refused, because the envelope only
+    means something when it came through an authenticated channel.
+    """
+    label = "trusted envelope"
+    problem = outside_root_error(root, path, label)
+    if problem:
+        raise ValueError(f"{problem}; a file that arrived with the artifact is not a trusted channel")
+    data = load_json_object(path, label, MAX_ENVELOPE_BYTES)
+    if data.get("kind") != ENVELOPE_KIND or type(data.get("schema")) is not int or data.get("schema") != 1:
+        raise ValueError(f"{label} must declare kind {ENVELOPE_KIND} and schema 1")
+    values: dict[str, str] = {}
+    for key in ("trusted_head", "trusted_manifest_sha256", "repository_url"):
+        if not nonempty(data.get(key)):
+            raise ValueError(f"{label} lacks {key}")
+        values[key] = str(data[key])
+    return values
+
+
+def add_receiver_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--expected-recipient", choices=("same-machine", "cross-machine"))
+    command.add_argument("--trusted-head")
+    command.add_argument("--trusted-manifest-sha256")
+    command.add_argument("--trusted-repository-url")
+    command.add_argument(
+        "--trusted-envelope",
+        metavar="PATH",
+        help="read the three trusted values from an envelope file received through an authenticated channel; "
+        "the file must live outside --root and implies --expected-recipient cross-machine",
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(description=__doc__)
     sub = top.add_subparsers(dest="command", required=True)
@@ -1049,22 +1161,27 @@ def parser() -> argparse.ArgumentParser:
         help="where the receiver will consume this relay (default: same-machine for legacy callers)",
     )
     draft_command.add_argument("--base", help="task base revision; required for cross-machine")
-    for name in ("render", "validate", "envelope", "inspect"):
+    draft_command.add_argument(
+        "--write",
+        action="store_true",
+        help=f"write {MANIFEST} into --root instead of printing it; refuses to replace an existing one",
+    )
+    for name in ("render", "validate", "envelope", "finalize", "inspect"):
         command = sub.add_parser(name)
         command.add_argument("--root", default=".")
+        if name == "finalize":
+            command.add_argument(
+                "--envelope-out",
+                metavar="PATH",
+                help="cross-machine only: also write the trusted envelope to this path outside --root",
+            )
         if name == "inspect":
             command.add_argument("--json", action="store_true")
-            command.add_argument("--expected-recipient", choices=("same-machine", "cross-machine"))
-            command.add_argument("--trusted-head")
-            command.add_argument("--trusted-manifest-sha256")
-            command.add_argument("--trusted-repository-url")
+            add_receiver_arguments(command)
     consume = sub.add_parser("consume")
     consume.add_argument("--root", default=".")
     consume.add_argument("--verified", action="store_true")
-    consume.add_argument("--expected-recipient", choices=("same-machine", "cross-machine"))
-    consume.add_argument("--trusted-head")
-    consume.add_argument("--trusted-manifest-sha256")
-    consume.add_argument("--trusted-repository-url")
+    add_receiver_arguments(consume)
     return top
 
 
@@ -1073,7 +1190,13 @@ def main() -> int:
     root = Path(args.root).resolve()
     if args.command == "draft":
         try:
+            if args.write:
+                # Refuse before a cross-machine draft publishes its transfer tag.
+                refuse_existing_manifest(root)
             data = draft(root, args.recipient, args.base)
+            if args.write:
+                print(f"WROTE {write_manifest(root, data)}")
+                return 0
         except ValueError as exc:
             print(f"relay: {exc}", file=sys.stderr)
             return 1
@@ -1089,6 +1212,23 @@ def main() -> int:
     trusted_head = getattr(args, "trusted_head", None)
     trusted_manifest_sha256 = getattr(args, "trusted_manifest_sha256", None)
     trusted_repository_url = getattr(args, "trusted_repository_url", None)
+    trusted_envelope = getattr(args, "trusted_envelope", None)
+    if trusted_envelope is not None:
+        if any(value is not None for value in (trusted_head, trusted_manifest_sha256, trusted_repository_url)):
+            print("relay: pass --trusted-envelope or the three --trusted-* flags, not both", file=sys.stderr)
+            return 1
+        if expected_recipient == "same-machine":
+            print("relay: --trusted-envelope is a cross-machine channel; drop --expected-recipient same-machine", file=sys.stderr)
+            return 1
+        try:
+            trusted = load_trusted_envelope(root, Path(trusted_envelope))
+        except ValueError as exc:
+            print(f"relay: {exc}", file=sys.stderr)
+            return 1
+        expected_recipient = "cross-machine"
+        trusted_head = trusted["trusted_head"]
+        trusted_manifest_sha256 = trusted["trusted_manifest_sha256"]
+        trusted_repository_url = trusted["repository_url"]
     result = inspect(
         root,
         data,
@@ -1112,18 +1252,16 @@ def main() -> int:
             for message in result["errors"]:
                 print(f"ERROR {message}", file=sys.stderr)
             return 1
-        human = root / HUMAN
-        if human.is_symlink():
-            print(f"relay: {HUMAN} must not be a symlink", file=sys.stderr)
+        try:
+            human = write_human(root, data)
+        except ValueError as exc:
+            print(f"relay: {exc}", file=sys.stderr)
             return 1
-        human.write_text(render_markdown(data), encoding="utf-8")
         for message in result["warnings"]:
             print(f"WARN  {message}", file=sys.stderr)
-        print(f"WROTE {root / HUMAN}")
+        print(f"WROTE {human}")
         return 0
     if args.command == "envelope":
-        repository = data.get("repository") if isinstance(data.get("repository"), dict) else {}
-        remote = repository.get("remote") if isinstance(repository.get("remote"), dict) else {}
         result["errors"].extend(envelope_remote_errors(root, data))
         result["valid"] = not result["errors"]
         if not result["valid"] or data.get("schema") != 3 or result["recipient"] != "cross-machine":
@@ -1131,12 +1269,47 @@ def main() -> int:
                 print(f"ERROR {message}", file=sys.stderr)
             print("relay: trusted envelope requires a valid rendered cross-machine schema 3 relay", file=sys.stderr)
             return 1
-        print(json.dumps({
-            "repository_url": remote.get("url"),
-            "remote_ref": remote.get("ref"),
-            "trusted_head": repository.get("head"),
-            "trusted_manifest_sha256": manifest_sha256(root),
-        }, ensure_ascii=False, indent=2))
+        print(json.dumps(envelope_payload(root, data), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "finalize":
+        # validate, regenerate the human view, and for cross-machine print the
+        # trusted envelope: one command, one error report.
+        cross_machine = data.get("schema") == 3 and result["recipient"] == "cross-machine"
+        envelope_out = Path(args.envelope_out) if args.envelope_out else None
+        if envelope_out is not None:
+            problem = outside_root_error(root, envelope_out, "--envelope-out")
+            if not cross_machine:
+                problem = "--envelope-out needs a cross-machine schema 3 relay"
+            if problem:
+                print(f"relay: {problem}", file=sys.stderr)
+                return 1
+        if not result["valid"]:
+            for message in result["errors"]:
+                print(f"ERROR {message}", file=sys.stderr)
+            return 1
+        try:
+            print(f"WROTE {write_human(root, data)}")
+        except ValueError as exc:
+            print(f"relay: {exc}", file=sys.stderr)
+            return 1
+        for message in result["warnings"]:
+            print(f"WARN  {message}", file=sys.stderr)
+        if not cross_machine:
+            return 0
+        remote_errors = envelope_remote_errors(root, data)
+        if remote_errors:
+            for message in remote_errors:
+                print(f"ERROR {message}", file=sys.stderr)
+            print("relay: trusted envelope requires the pushed remote ref to still resolve to HEAD", file=sys.stderr)
+            return 1
+        payload = envelope_payload(root, data)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if envelope_out is not None:
+            try:
+                print(f"WROTE {write_envelope(root, payload, envelope_out)}")
+            except ValueError as exc:
+                print(f"relay: {exc}", file=sys.stderr)
+                return 1
         return 0
     if args.command == "inspect":
         if args.json:

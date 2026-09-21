@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Lucia Relay is two commands per side. `relay.py draft --write` lands
+  `LUCIA_RELAY.json` in the repository instead of printing it (stdout stays
+  the default; an existing manifest or a planted symlink is refused), and
+  `relay.py finalize` validates, renders `LUCIA_RELAY.md`, and for a
+  cross-machine relay prints the trusted envelope in one error report, with
+  `--envelope-out <file>` to save it outside the repository. The receiver
+  passes that file as `inspect --trusted-envelope <file>` and
+  `consume --verified --trusted-envelope <file>` in place of the three
+  `--trusted-*` flags; the file is never discovered, is refused inside the
+  relay root or mixed with the explicit flags, and must declare
+  `kind: luciazero-relay-envelope` and `schema: 1`. `luciazero relay
+  <command>` routes to the same script from the npm CLI.
 - `./test.sh --discipline`: the loop tier for a change to the hooks, the
   discipline report or a skill/agent prompt — syntax, bash 3.2 and ShellCheck
   over every shipped script and gate, the prompt and doctrine contracts, and

@@ -170,6 +170,17 @@ forged artifact cannot downgrade validation. Detached checkouts are supported;
 Relay never executes artifact commands. The receiver runs them in its coding
 harness and passes `consume --verified` only after every result matches.
 
+The whole exchange is two commands per side. The producer runs
+`luciazero relay draft --write` (add `--recipient cross-machine --base <base>`
+to publish the transfer tag), fills the JSON, then `luciazero relay finalize`,
+which validates, renders the human view, and for cross-machine prints the
+trusted envelope (`--envelope-out <file>` saves it). The receiver runs
+`luciazero relay inspect --trusted-envelope <file>` and, after re-running the
+evidence, `luciazero relay consume --verified --trusted-envelope <file>`. The
+envelope is only trusted when it arrived through an authenticated channel and
+is named explicitly from outside the clone; one shipped beside the artifact is
+refused.
+
 <p align="center">
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
 </p>

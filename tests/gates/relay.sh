@@ -122,6 +122,56 @@ echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
   || { rm -rf "${RR}"; fail "relay broke legacy draft callers without --recipient"; }
 rm -rf "${RR}"
 
+# `draft --write` lands the manifest in --root, refuses to replace one, and
+# never follows a planted symlink. `finalize` is validate + render in one
+# report; a same-machine relay has no envelope to write.
+RR="$(mktemp -d)"
+git -C "${RR}" init -q
+git -C "${RR}" config user.name test
+git -C "${RR}" config user.email test@example.invalid
+echo base > "${RR}/work.txt"
+git -C "${RR}" add work.txt && git -C "${RR}" commit -qm base
+"${RELAY}" draft --root "${RR}" --recipient same-machine --write >/dev/null \
+  || { rm -rf "${RR}"; fail "draft --write failed"; }
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] == "luciazero-relay" and d["route"]["recipient"] == "same-machine"' "${RR}/LUCIA_RELAY.json" \
+  || { rm -rf "${RR}"; fail "draft --write wrote something other than a same-machine draft"; }
+RC=0; "${RELAY}" draft --root "${RR}" --write >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] || { rm -rf "${RR}"; fail "draft --write replaced an existing manifest (rc=${RC})"; }
+RC=0; FOUT="$("${RELAY}" finalize --root "${RR}" 2>&1)" || RC=$?
+if ! { [ "${RC}" -eq 1 ] && echo "${FOUT}" | grep -q '^ERROR goal is required' && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
+  rm -rf "${RR}"; fail "finalize did not report validation errors before rendering (rc=${RC})"
+fi
+python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
+import json, sys
+p=sys.argv[1]; d=json.load(open(p))
+d["goal"]="Finish the parser change"
+d["state"]["next_step"]={"kind":"command","value":"./verify.sh"}
+d["verification"]=[{"command":"./verify.sh","exit_code":0,"decisive_line":"PASS","run_at":"2026-08-12T12:00:00+00:00"}]
+open(p,"w").write(json.dumps(d, indent=2)+"\n")
+PY
+FOUT="$("${RELAY}" finalize --root "${RR}")" \
+  || { rm -rf "${RR}"; fail "finalize failed on a valid same-machine relay"; }
+if ! { [ -f "${RR}/LUCIA_RELAY.md" ] && [ "$(echo "${FOUT}" | grep -c .)" -eq 1 ] && echo "${FOUT}" | grep -q '^WROTE .*LUCIA_RELAY.md$'; }; then
+  rm -rf "${RR}"; fail "same-machine finalize did not stop after rendering: ${FOUT}"
+fi
+RC=0; "${RELAY}" finalize --root "${RR}" --envelope-out "${RR}.envelope.json" >/dev/null 2>&1 || RC=$?
+if ! { [ "${RC}" -eq 1 ] && [ ! -e "${RR}.envelope.json" ]; }; then
+  rm -rf "${RR}" "${RR}.envelope.json"; fail "same-machine finalize accepted --envelope-out (rc=${RC})"
+fi
+"${RELAY}" inspect --root "${RR}" --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
+  || { rm -rf "${RR}"; fail "finalized same-machine relay does not inspect clean"; }
+if command -v node >/dev/null 2>&1; then
+  node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}" | grep -q '^VALID luciazero-relay' \
+    || { rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"; }
+fi
+rm -f "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md"
+ln -s "${RR}/outside.json" "${RR}/LUCIA_RELAY.json"
+RC=0; "${RELAY}" draft --root "${RR}" --write >/dev/null 2>&1 || RC=$?
+if ! { [ "${RC}" -eq 1 ] && [ ! -e "${RR}/outside.json" ]; }; then
+  rm -rf "${RR}"; fail "draft --write followed a planted manifest symlink (rc=${RC})"
+fi
+rm -rf "${RR}"
+
 # Cross-machine schema 3 must survive an actual fresh clone. The receiver
 # supplies the trusted route and HEAD, reruns approved argv-safe evidence in
 # its own harness, then explicitly asserts verification while consuming.
@@ -201,6 +251,27 @@ git -C "${RR}" config --unset-all remote.origin.pushurl
 RENVELOPE="$("${RELAY}" envelope --root "${RR}")" \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted relay envelope failed"; }
 RMANIFEST="$(printf '%s' "${RENVELOPE}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["trusted_manifest_sha256"])')"
+printf '%s' "${RENVELOPE}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["kind"] == "luciazero-relay-envelope" and d["schema"] == 1' \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "trusted envelope does not declare its kind and schema"; }
+# finalize = render + envelope in one call. The envelope file is refused
+# inside the relay root (it would travel with the artifact) and lands
+# outside it with the same digest the standalone command printed.
+RENVELOPE_FILE="${RREMOTE}/relay-envelope.json"
+RC=0; "${RELAY}" finalize --root "${RR}" --envelope-out "${RR}/relay-envelope.json" >/dev/null 2>&1 || RC=$?
+if ! { [ "${RC}" -eq 1 ] && [ ! -e "${RR}/relay-envelope.json" ]; }; then
+  rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "finalize wrote the trusted envelope inside the relay root (rc=${RC})"
+fi
+FOUT="$("${RELAY}" finalize --root "${RR}" --envelope-out "${RENVELOPE_FILE}")" \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize failed"; }
+echo "${FOUT}" | grep -q '"trusted_manifest_sha256": "'"${RMANIFEST}"'"' \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize did not print the trusted envelope"; }
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] == "luciazero-relay-envelope" and d["trusted_manifest_sha256"] == sys.argv[2] and d["trusted_head"] == sys.argv[3]' \
+  "${RENVELOPE_FILE}" "${RMANIFEST}" "${RHEAD}" \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "finalize --envelope-out wrote a different envelope"; }
+RC=0; "${RELAY}" finalize --root "${RR}" --envelope-out "${RENVELOPE_FILE}" >/dev/null 2>&1 || RC=$?
+if ! { [ "${RC}" -eq 1 ] && cmp -s "${RENVELOPE_FILE}" <(printf '%s\n' "${RENVELOPE}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=2))'); }; then
+  rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "finalize replaced an envelope that was not sent yet (rc=${RC})"
+fi
 python3 - "${RR}/LUCIA_RELAY.json" "${RBASE}" "${RHEAD}" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
@@ -224,6 +295,43 @@ RC=0; "${RELAY}" inspect --root "${RRECEIVER}" >/dev/null 2>&1 || RC=$?
   --trusted-head "${RHEAD}" --trusted-manifest-sha256 "${RMANIFEST}" \
   --trusted-repository-url "${RREMOTE_URL}" >/dev/null \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "fresh detached receiver rejected matching relay"; }
+# The envelope file replaces the three trusted flags only when it is named
+# explicitly, lives outside the relay root, declares its kind, and stands
+# alone; its values still have to match the artifact.
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RENVELOPE_FILE}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver rejected a trusted envelope file"; }
+cp "${RENVELOPE_FILE}" "${RRECEIVER}/relay-envelope.json"
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RRECEIVER}/relay-envelope.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver trusted an envelope that arrived inside the relay root (rc=${RC})"; }
+rm -f "${RRECEIVER}/relay-envelope.json"
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RENVELOPE_FILE}" \
+  --trusted-head "${RHEAD}" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver accepted an envelope mixed with explicit trust flags (rc=${RC})"; }
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RENVELOPE_FILE}" \
+  --expected-recipient same-machine >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver accepted an envelope for a same-machine expectation (rc=${RC})"; }
+python3 - "${RENVELOPE_FILE}" "${RREMOTE}/wrong-kind.json" "${RREMOTE}/wrong-digest.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+kind=dict(d); kind["kind"]="luciazero-relay"
+json.dump(kind, open(sys.argv[2], "w"))
+digest=dict(d); digest["trusted_manifest_sha256"]="0"*64
+json.dump(digest, open(sys.argv[3], "w"))
+PY
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RREMOTE}/wrong-kind.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "receiver accepted an envelope of another kind (rc=${RC})"; }
+RC=0
+"${RELAY}" inspect --root "${RRECEIVER}" --trusted-envelope "${RREMOTE}/wrong-digest.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -eq 1 ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "envelope digest did not reach the receiver check (rc=${RC})"; }
 python3 - "${RRECEIVER}/LUCIA_RELAY.json" <<'PY'
 import json, sys
 p=sys.argv[1]; d=json.load(open(p)); d["route"]["recipient"]="same-machine"
@@ -318,6 +426,18 @@ for TRANSIENT in LUCIA_RELAY.json LUCIA_RELAY.md LUCIA_RELAY_RECEIPT.json; do
   [ ! -e "${RRECEIVER}/${TRANSIENT}" ] \
     || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "${TRANSIENT} survived consumption"; }
 done
+# The same consumption through the envelope file: still gated on --verified.
+cp "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md" "${RRECEIVER}/"
+RC=0
+"${RELAY}" consume --root "${RRECEIVER}" --trusted-envelope "${RENVELOPE_FILE}" >/dev/null 2>&1 || RC=$?
+if [ "${RC}" -ne 2 ] || [ ! -f "${RRECEIVER}/LUCIA_RELAY.json" ]; then
+  rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"
+  fail "envelope consume skipped the --verified gate (rc=${RC})"
+fi
+"${RELAY}" consume --root "${RRECEIVER}" --verified --trusted-envelope "${RENVELOPE_FILE}" >/dev/null \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "verified receiver could not consume through the envelope file"; }
+[ ! -e "${RRECEIVER}/LUCIA_RELAY.json" ] \
+  || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "envelope consume left the manifest behind"; }
 
 # Reject stale tracking refs, incomplete knowledge/evidence, traversal, common
 # secret formats, route downgrade, and legacy cross-machine payloads.

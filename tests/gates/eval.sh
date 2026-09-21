@@ -1,0 +1,701 @@
+# tests/gates/eval.sh — eval graders, report rendering, revert-probe, demo scaffold.
+#
+# Sourced by ./test.sh into its own shell, in the order it lists the gates:
+# this file sees the helpers, the sandbox environment and every variable an
+# earlier gate set, exactly as when the suite was one file. Not a script;
+# the options below restate what ./test.sh already runs under.
+# shellcheck shell=bash
+set -euo pipefail
+
+# 4d. eval graders stay honest — auto-discovered, so no task can ship without
+# its proofs: PROMPT.md present, grader executable and following the output
+# contract, reference/ passes, unfixed project/ fails, and any checked-in
+# gamed/ cheat tree is rejected
+for TDIR in "${ROOT}/eval/tasks"/*/; do
+  TN="$(basename "${TDIR}")"
+  [ -f "${TDIR}PROMPT.md" ] || fail "eval task ${TN}: missing PROMPT.md"
+  [ -x "${TDIR}grade.sh" ] || fail "eval task ${TN}: grade.sh missing or not executable"
+  if [ -f "${TDIR}setup.sh" ] && [ ! -x "${TDIR}setup.sh" ]; then
+    fail "eval task ${TN}: setup.sh is not executable"
+  fi
+  [ -d "${TDIR}reference" ] || fail "eval task ${TN}: missing reference/"
+  [ -d "${TDIR}project" ] || fail "eval task ${TN}: missing project/"
+  # Mirror run.sh: project is the base tree, optional setup creates dynamic
+  # local state, and reference/gamed directories are solution overlays.
+  EWORK="$(mktemp -d)"
+  cp -R "${TDIR}project/." "${EWORK}/"
+  if [ -x "${TDIR}setup.sh" ]; then
+    "${TDIR}setup.sh" "${EWORK}"
+    "${TDIR}setup.sh" "${EWORK}"
+  fi
+  cp -R "${TDIR}reference/." "${EWORK}/"
+  OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" \
+    || { rm -rf "${EWORK}"; fail "eval grader ${TN} rejects its own reference solution: ${OUT}"; }
+  rm -rf "${EWORK}"
+  echo "${OUT}" | grep -q '^SCORE ' || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
+  EWORK="$(mktemp -d)"
+  cp -R "${TDIR}project/." "${EWORK}/"
+  if [ -x "${TDIR}setup.sh" ]; then
+    "${TDIR}setup.sh" "${EWORK}"
+    "${TDIR}setup.sh" "${EWORK}"
+  fi
+  if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
+    rm -rf "${EWORK}"
+    fail "eval grader ${TN} passes the unfixed project (grader cannot go red)"
+  fi
+  rm -rf "${EWORK}"
+  # every gamed*/ cheat variant must be rejected, and at least one must exist —
+  # an untested "cannot be gamed" grader may not ship
+  GAMED_SEEN=0
+  for GD in "${TDIR}"gamed*/; do
+    [ -d "${GD}" ] || continue
+    GAMED_SEEN=1
+    EWORK="$(mktemp -d)"
+    cp -R "${TDIR}project/." "${EWORK}/"
+    if [ -x "${TDIR}setup.sh" ]; then
+      "${TDIR}setup.sh" "${EWORK}"
+      "${TDIR}setup.sh" "${EWORK}"
+    fi
+    cp -R "${GD}." "${EWORK}/"
+    if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
+      rm -rf "${EWORK}"
+      fail "eval grader ${TN} passes its checked-in cheat tree ($(basename "${GD}")/)"
+    fi
+    rm -rf "${EWORK}"
+  done
+  [ "${GAMED_SEEN}" = 1 ] || fail "eval task ${TN}: missing gamed/ cheat tree"
+  echo "ok  eval grader ${TN} red/green/anti-gamed"
+done
+
+# 4d2. report.sh renders the frozen fixtures byte-exactly and rejects garbage
+RPT="$(mktemp)"
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results.jsonl" > "${RPT}" \
+  || { rm -f "${RPT}"; fail "report.sh failed on the checked-in fixture"; }
+cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report.md" \
+  || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report.md"; }
+# the three-arm + usage fixture: lessons column, per-arm deltas, resource means
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-lessons.jsonl" > "${RPT}" \
+  || { rm -f "${RPT}"; fail "report.sh failed on the lessons fixture"; }
+cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report-lessons.md" \
+  || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report-lessons.md"; }
+printf 'not json\n' > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh accepted malformed input"
+fi
+# criteria must be an object — a JSON array of pairs coerces via dict() into
+# fake criteria and would render a confident 100% table (regression)
+printf '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":["ab","cd"],"score":null,"duration_s":1}\n' > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh accepted a non-object criteria field"
+fi
+# Appended rows from unlike run configurations must never become one rate.
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"model-a","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"model-b","reasoning_effort":"medium","cli_version":"codex 1"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different models"
+fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"claude"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different providers"
+fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","campaign_id":"a"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","campaign_id":"b"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined different campaigns"
+fi
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","task_sha256":"aaa"}' \
+  '{"task":"t","arm":"bare","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m","task_sha256":"bbb"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh combined changed task fixtures"
+fi
+printf '%s\n' \
+  '{"result_schema":2,"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"provider":"codex","model":"m"}' \
+  > "${RPT}"
+if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+  rm -f "${RPT}"; fail "report.sh accepted incomplete schema-v2 metadata"
+fi
+for BAD_ROW in \
+  '{"result_schema":3,"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":"false","criteria":{"ok":true},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":"fail"},"score":"1/1","duration_s":1}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":"fast"}'; do
+  printf '%s\n' "${BAD_ROW}" > "${RPT}"
+  if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+    rm -f "${RPT}"; fail "report.sh accepted a type-invalid result row"
+  fi
+done
+rm -f "${RPT}"
+echo "ok  eval report fixture + malformed input"
+
+# 4d2b. check-result.sh: exit 0 does not prove the agent ran — the CLI has
+# wrapped a "Not logged in" error in subtype "success" (2026-08-11); each
+# rejection and acceptance path is proven against a fixture log
+CRF="$(mktemp -d)"
+CR="${ROOT}/eval/check-result.sh"
+printf '{"subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Not logged in · Please run /login"}' > "${CRF}/notlogged.json"
+printf '{"result":"Not logged in · Please run /login"}' > "${CRF}/sneaky.json"
+printf '{"subtype":"success","is_error":false,"result":"fixed the bug"}' > "${CRF}/good.json"
+printf 'plain text transcript\n' > "${CRF}/text.log"
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"t"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":3,"reasoning_output_tokens":1}}' \
+  > "${CRF}/codex-good.jsonl"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.failed","error":{"message":"rate limit"}}' \
+  > "${CRF}/codex-failed.jsonl"
+printf '{"type":"turn.started"}\n' > "${CRF}/codex-partial.jsonl"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":null,"output_tokens":"3"}}' \
+  > "${CRF}/codex-bad-usage.jsonl"
+RC=0; OUT="$("${CR}" "${CRF}/notlogged.json" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in result"; }
+echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
+RC=0; "${CR}" "${CRF}/sneaky.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a login error without is_error"; }
+"${CR}" "${CRF}/good.json" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected a healthy result"; }
+"${CR}" "${CRF}/text.log" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected plain-text output"; }
+"${CR}" --provider codex "${CRF}/codex-good.jsonl" >/dev/null 2>&1 \
+  || { rm -rf "${CRF}"; fail "check-result rejected a completed Codex run"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-failed.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a failed Codex turn"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-partial.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted an incomplete Codex stream"; }
+RC=0; "${CR}" --provider codex "${CRF}/codex-bad-usage.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted malformed Codex usage"; }
+RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
+rm -rf "${CRF}"
+echo "ok  check-result rejects error payloads behind exit 0"
+
+# The non-zero Codex path must preserve the structured error in JSONL, not
+# reduce a useful capacity/auth reason to only "codex exited 1". A fake CLI
+# proves this without inference or credentials.
+CFX="$(mktemp -d)"
+mkdir -p "${CFX}/bin"
+cat > "${CFX}/bin/codex" <<'FAKECODEX'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  echo 'codex-cli test'
+  exit 0
+fi
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"error","message":"Selected model is at capacity."}' \
+  '{"type":"turn.failed","error":{"message":"Selected model is at capacity."}}'
+exit 1
+FAKECODEX
+chmod +x "${CFX}/bin/codex"
+PATH="${CFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium --allow-dirty \
+  --out "${CFX}/result.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${CFX}"; fail "run.sh rejected a recorded invalid Codex run"; }
+python3 - "${CFX}/result.jsonl" <<'PY' \
+  || { rm -rf "${CFX}"; fail "Codex invalid reason was not preserved"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all("Selected model is at capacity" in row["invalid_reason"] for row in rows)
+PY
+rm -rf "${CFX}"
+echo "ok  Codex non-zero result preserves structured reason"
+
+# A successful fake Codex run proves the actual adapter boundary: auth is
+# copied into both disposable homes, only doctrine gets the pack, and every
+# safety/model flag reaches the CLI. A malformed usage variant proves paid
+# inference still records INVALID instead of crashing the harness.
+SFX="$(mktemp -d)"
+mkdir -p "${SFX}/bin" "${SFX}/real-home" "${SFX}/audit"
+printf '{"fake":"auth"}\n' > "${SFX}/real-home/auth.json"
+cat > "${SFX}/bin/codex" <<'FAKECODEXOK'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  echo 'codex-cli test-success'
+  exit 0
+fi
+ARM=bare
+PACK=no
+if [ -f "${CODEX_HOME}/AGENTS.md" ] && [ -d "${CODEX_HOME}/skills" ]; then
+  ARM=doctrine
+  PACK=yes
+fi
+AUTH=no
+[ -s "${CODEX_HOME}/auth.json" ] && AUTH=yes
+{
+  printf 'auth=%s\npack=%s\nparent-key=%s\n' \
+    "${AUTH}" "${PACK}" "${CODEX_API_KEY:+present}"
+  for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
+} > "${FAKE_CODEX_AUDIT_DIR}/${ARM}.txt"
+if [ "${FAKE_CODEX_BAD_USAGE:-0}" = 1 ]; then
+  printf '%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.completed","usage":{"input_tokens":null,"output_tokens":"bad"}}'
+elif [ "${FAKE_CODEX_BAD_USAGE:-0}" = 2 ]; then
+  printf '%s\n' '[]'
+else
+  printf '%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":3,"reasoning_output_tokens":1}}'
+fi
+FAKECODEXOK
+chmod +x "${SFX}/bin/codex"
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" PATH="${SFX}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --provider codex --model gpt-5.6-terra \
+  --reasoning-effort medium --use-login --allow-dirty \
+  --out "${SFX}/ok.jsonl" false-green \
+  >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "successful fake Codex adapter run failed"; }
+for ARM in doctrine bare; do
+  AUDIT="${SFX}/audit/${ARM}.txt"
+  [ -f "${AUDIT}" ] || { rm -rf "${SFX}"; fail "missing ${ARM} Codex audit"; }
+  grep -qx 'auth=yes' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex auth not copied into ${ARM} home"; }
+  grep -qx 'parent-key=present' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "fake Codex parent did not receive auth key"; }
+  grep -Fqx 'arg=--model' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex model flag missing"; }
+  grep -Fqx 'arg=gpt-5.6-terra' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex model value missing"; }
+  grep -Fqx 'arg=model_reasoning_effort="medium"' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex reasoning config missing"; }
+  grep -Fqx 'arg=shell_environment_policy.inherit="core"' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex core environment policy missing"; }
+  grep -Fqx 'arg=shell_environment_policy.ignore_default_excludes=false' "${AUDIT}" \
+    || { rm -rf "${SFX}"; fail "Codex secret exclusion policy missing"; }
+  for FLAG in --sandbox workspace-write --ephemeral --ignore-user-config \
+    --ignore-rules --skip-git-repo-check --json; do
+    grep -Fqx "arg=${FLAG}" "${AUDIT}" \
+      || { rm -rf "${SFX}"; fail "Codex adapter missing ${FLAG}"; }
+  done
+done
+grep -qx 'pack=yes' "${SFX}/audit/doctrine.txt" \
+  || { rm -rf "${SFX}"; fail "doctrine Codex home lacks installed pack"; }
+grep -qx 'pack=no' "${SFX}/audit/bare.txt" \
+  || { rm -rf "${SFX}"; fail "bare Codex home inherited the pack"; }
+if grep -R -q 'test-key-never-log' "${SFX}/audit" "${SFX}/ok.jsonl"; then
+  rm -rf "${SFX}"; fail "Codex credential value leaked into eval artifacts"
+fi
+python3 - "${SFX}/ok.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "successful fake Codex rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is False for row in rows)
+assert all(row["tokens_in"] == 12 and row["tokens_out"] == 3 for row in rows)
+PY
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=1 \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
+  --out "${SFX}/bad.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "malformed Codex usage aborted run.sh"; }
+python3 - "${SFX}/bad.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "malformed Codex usage rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all(row["tokens_in"] is None and row["tokens_out"] is None for row in rows)
+assert all("usage.input_tokens" in row["invalid_reason"] for row in rows)
+PY
+CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
+  FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=2 \
+  PATH="${SFX}/bin:${PATH}" "${ROOT}/eval/run.sh" --provider codex \
+  --model gpt-5.6-terra --reasoning-effort medium --use-login --allow-dirty \
+  --out "${SFX}/nonobject.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${SFX}"; fail "non-object Codex event aborted run.sh"; }
+python3 - "${SFX}/nonobject.jsonl" <<'PY' \
+  || { rm -rf "${SFX}"; fail "non-object Codex event rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["invalid"] is True for row in rows)
+assert all(row["tokens_in"] is None and row["tokens_out"] is None for row in rows)
+assert all("not an object" in row["invalid_reason"] for row in rows)
+PY
+rm -rf "${SFX}"
+echo "ok  Codex success path isolates auth, config, arms, and usage errors"
+
+# 4d2c. offline smoke mode: full copy -> grade -> JSONL -> report loop with
+# zero API; rows must be branded offline and the report must say SYNTHETIC
+OFJ="$(mktemp -d)"
+"${ROOT}/eval/run.sh" --offline --with-lessons --seed fixture-seed \
+  --campaign-id fixture-campaign --out "${OFJ}/r.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh --offline exited non-zero"; }
+python3 - "${OFJ}/r.jsonl" <<'PY' || { rm -rf "${OFJ}"; fail "offline JSONL rows wrong"; }
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+assert len(rows) == 3, f"want 3 arms, got {len(rows)}"
+assert {r["arm"] for r in rows} == {"doctrine", "bare", "lessons"}
+assert all(r["offline"] is True for r in rows), "rows not branded offline"
+assert all(r["provider"] == "claude" for r in rows), "default provider drifted"
+assert all(r["invalid"] is False for r in rows), "offline rows marked invalid"
+assert all(r["result_schema"] == 2 for r in rows)
+assert all(r["campaign_id"] == "fixture-campaign" for r in rows)
+assert len({r["pair_id"] for r in rows}) == 1
+assert [r["arm"] for r in rows] == rows[0]["arm_order"]
+assert all(r["seed"] == "fixture-seed" for r in rows)
+assert all(len(r["task_sha256"]) == 64 and len(r["prompt_sha256"]) == 64 for r in rows)
+assert all(r["repository_commit"] and r["system"] and r["architecture"] for r in rows)
+assert all(r["runner_profile"].startswith("claude -p ") for r in rows)
+assert len({r["invocation_id"] for r in rows}) == 3
+by = {r["arm"]: r for r in rows}
+assert by["doctrine"]["score"] == "6/6", by["doctrine"]["score"]
+assert by["bare"]["score"] != "6/6", "bare arm must keep the planted bug"
+PY
+"${ROOT}/eval/run.sh" --offline --seed relay-fixture-seed \
+  --campaign-id relay-fixture-campaign --out "${OFJ}/relay.jsonl" \
+  relay-transfer >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh skipped or broke task setup"; }
+python3 - "${OFJ}/relay.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "relay offline setup/overlay rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+by = {row["arm"]: row for row in rows}
+assert by["doctrine"]["score"] == "6/6"
+assert by["bare"]["score"] == "1/6"
+assert all(row["invalid"] is False and row["offline"] is True for row in rows)
+PY
+if "${ROOT}/eval/run.sh" --offline --model gpt-5.6-terra false-green \
+  >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted Codex-only flags for Claude"
+fi
+if "${ROOT}/eval/run.sh" --offline --runs 0 false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted zero repetitions"
+fi
+if "${ROOT}/eval/run.sh" --offline --run-offset nope false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh accepted a non-numeric run offset"
+fi
+if "${ROOT}/eval/run.sh" --offline --resume --out "${OFJ}/missing.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed without explicit campaign ID and seed"
+fi
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --out "${OFJ}/missing.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed a missing output file"
+fi
+: > "${OFJ}/empty.jsonl"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --out "${OFJ}/empty.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed an empty output file"
+fi
+"${ROOT}/eval/run.sh" --offline --seed resume-seed --campaign-id resume-campaign \
+  --runs 1 --out "${OFJ}/resume.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh initial resumable batch exited non-zero"; }
+# Simulate an interruption after the first arm: resume must skip that exact
+# invocation and fill only its missing pair mate.
+python3 - "${OFJ}/resume.jsonl" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().splitlines()[0] + "\n")
+PY
+"${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/resume.jsonl" \
+  false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "run.sh resumed batch exited non-zero"; }
+python3 - "${OFJ}/resume.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "run.sh resumed batch reused invocation IDs"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert {row["run"] for row in rows} == {1}
+assert len({row["pair_id"] for row in rows}) == 1
+assert len({row["invocation_id"] for row in rows}) == 2
+PY
+"${ROOT}/eval/report.sh" "${OFJ}/resume.jsonl" >/dev/null \
+  || { rm -rf "${OFJ}"; fail "report.sh rejected a correctly resumed campaign"; }
+# Appending to a final JSON object without a newline would corrupt JSONL.
+cp "${OFJ}/resume.jsonl" "${OFJ}/no-newline.jsonl"
+python3 - "${OFJ}/no-newline.jsonl" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_bytes(path.read_bytes().rstrip(b"\n"))
+PY
+cp "${OFJ}/no-newline.jsonl" "${OFJ}/no-newline.before"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/no-newline.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed a JSONL file without a final newline"
+fi
+cmp -s "${OFJ}/no-newline.before" "${OFJ}/no-newline.jsonl" \
+  || { rm -rf "${OFJ}"; fail "failed resume mutated no-newline JSONL"; }
+# Drift in a later task must abort before an earlier missing arm is appended.
+python3 - "${OFJ}/resume.jsonl" "${OFJ}/preflight.jsonl" <<'PY'
+import json, pathlib, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+first = rows[0]
+later = dict(first, task="slugify", pair_id="resume-campaign/slugify/1",
+             invocation_id="resume-campaign/slugify/1/" + first["arm"],
+             task_sha256="0" * 64, prompt_sha256="0" * 64)
+pathlib.Path(sys.argv[2]).write_text(
+    "\n".join(json.dumps(row) for row in (first, later)) + "\n"
+)
+PY
+BEFORE_LINES="$(wc -l < "${OFJ}/preflight.jsonl" | tr -d ' ')"
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/preflight.jsonl" \
+  false-green slugify >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed after a later task failed preflight"
+fi
+[ "${BEFORE_LINES}" = "$(wc -l < "${OFJ}/preflight.jsonl" | tr -d ' ')" ] \
+  || { rm -rf "${OFJ}"; fail "resume spent/appended before full task preflight"; }
+# A tampered deterministic order must also fail before filling a missing mate.
+python3 - "${OFJ}/resume.jsonl" "${OFJ}/order-drift.jsonl" <<'PY'
+import json, pathlib, sys
+row = json.loads(open(sys.argv[1]).readline())
+row["arm_order"] = list(reversed(row["arm_order"]))
+pathlib.Path(sys.argv[2]).write_text(json.dumps(row) + "\n")
+PY
+if "${ROOT}/eval/run.sh" --offline --resume --seed resume-seed \
+  --campaign-id resume-campaign --runs 1 --out "${OFJ}/order-drift.jsonl" \
+  false-green >/dev/null 2>&1; then
+  rm -rf "${OFJ}"; fail "run.sh resumed after deterministic arm-order drift"
+fi
+[ "$(wc -l < "${OFJ}/order-drift.jsonl" | tr -d ' ')" = 1 ] \
+  || { rm -rf "${OFJ}"; fail "arm-order drift appended before preflight"; }
+"${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
+  || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \
+  || { rm -rf "${OFJ}"; fail "report.sh failed on the offline fixture"; }
+cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
+  || { rm -rf "${OFJ}"; fail "report.sh output drifted from eval/testdata/sample-report-offline.md"; }
+# Codex adapter takes the same zero-quota route and records its locked model
+# settings even when no Codex CLI is installed in CI.
+mkdir -p "${OFJ}/codex-home"
+printf '{"fake":"codex-auth"}\n' > "${OFJ}/codex-home/auth.json"
+CODEX_HOME="${OFJ}/codex-home" "${ROOT}/eval/run.sh" --offline \
+  --provider codex --model gpt-5.6-terra --reasoning-effort medium \
+  --use-login --out "${OFJ}/codex.jsonl" false-green >/dev/null 2>&1 \
+  || { rm -rf "${OFJ}"; fail "Codex offline adapter exited non-zero"; }
+python3 - "${OFJ}/codex.jsonl" <<'PY' \
+  || { rm -rf "${OFJ}"; fail "Codex offline adapter rows wrong"; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2
+assert all(row["provider"] == "codex" for row in rows)
+assert all(row["model"] == "gpt-5.6-terra" for row in rows)
+assert all(row["reasoning_effort"] == "medium" for row in rows)
+assert all(row["offline"] is True for row in rows)
+PY
+rm -rf "${OFJ}"
+echo "ok  offline smoke mode end to end"
+
+# 4d2d. --use-login plumbing: with login state under a fake HOME the sandbox
+# seed line must appear once per arm; with an empty fake HOME the flag must
+# warn instead of failing the run. Both offline — no CLI, no auth, no spend.
+UL="$(mktemp -d)"
+mkdir -p "${UL}/home/.claude"
+printf '{"fake": "login-state"}\n' > "${UL}/home/.claude.json"
+printf '{"fake": "credentials"}\n' > "${UL}/home/.claude/.credentials.json"
+HOME="${UL}/home" "${ROOT}/eval/run.sh" --offline --use-login --out "${UL}/r.jsonl" false-green \
+  > "${UL}/out.log" 2>"${UL}/err.log" \
+  || { rm -rf "${UL}"; fail "run.sh --use-login exited non-zero"; }
+[ "$(grep -c 'login state seeded into sandbox config' "${UL}/out.log")" = 2 ] \
+  || { rm -rf "${UL}"; fail "--use-login did not seed both arms' sandboxes"; }
+# fake `security` binaries make the macOS Keychain branch deterministic on
+# any OS: one that answers with a credential blob, one that always denies
+mkdir -p "${UL}/bin" "${UL}/nobin" "${UL}/empty-home"
+cat > "${UL}/bin/security" <<'FAKESEC'
+#!/bin/sh
+[ "$1" = find-generic-password ] || exit 1
+printf '%s' '{}'
+FAKESEC
+printf '#!/bin/sh\nexit 1\n' > "${UL}/nobin/security"
+chmod +x "${UL}/bin/security" "${UL}/nobin/security"
+HOME="${UL}/empty-home" PATH="${UL}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --offline --use-login false-green > "${UL}/out2.log" 2>&1 \
+  || { rm -rf "${UL}"; fail "run.sh --use-login (keychain path) exited non-zero"; }
+[ "$(grep -c 'keychain credentials exported into sandbox config' "${UL}/out2.log")" = 2 ] \
+  || { rm -rf "${UL}"; fail "--use-login did not export keychain credentials"; }
+HOME="${UL}/empty-home" PATH="${UL}/nobin:${PATH}" \
+  "${ROOT}/eval/run.sh" --offline --use-login false-green \
+  > /dev/null 2>"${UL}/err2.log" \
+  || { rm -rf "${UL}"; fail "run.sh --use-login with no login state exited non-zero"; }
+grep -q 'warn: --use-login found no login state' "${UL}/err2.log" \
+  || { rm -rf "${UL}"; fail "--use-login did not warn on missing login state"; }
+rm -rf "${UL}"
+echo "ok  --use-login seeds sandboxes and warns when no login state exists"
+
+# 4d3. revert-probe: a biting test passes, a vacuous test fails, non-git is
+# unassessable — all in throwaway git fixtures, never the caller's tree
+RP="${ROOT}/skills/done/scripts/revert-probe.sh"
+RPX="$(mktemp -d)"
+# fixture: committed bug + committed always-green test, fix left uncommitted
+mkdir -p "${RPX}/bites/tests"
+(
+  cd "${RPX}/bites"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(0, 0) == 0\nprint("ok")\n' > tests/test_calc.py
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+)
+cp -R "${RPX}/bites" "${RPX}/vacuous"
+cp -R "${RPX}/bites" "${RPX}/nocmd"
+cp -R "${RPX}/bites" "${RPX}/bothred"
+# (i) working-tree fix + a new test that bites -> probe exits 0
+(
+  cd "${RPX}/bites"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(0, 0) == 0\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+ST1="$(cd "${RPX}/bites" && git status --porcelain)"
+RC=0; OUT="$(cd "${RPX}/bites" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a biting test: ${OUT}"; }
+echo "${OUT}" | grep -q '^PASS' || { rm -rf "${RPX}"; fail "revert-probe did not print PASS: ${OUT}"; }
+ST2="$(cd "${RPX}/bites" && git status --porcelain)"
+[ "${ST1}" = "${ST2}" ] || { rm -rf "${RPX}"; fail "revert-probe touched the caller's working tree"; }
+[ "$(cd "${RPX}/bites" && git worktree list | wc -l | tr -d ' ')" = 1 ] \
+  || { rm -rf "${RPX}"; fail "revert-probe left a worktree behind"; }
+# (ii) added test is vacuous (green with and without the fix) -> probe exits 1
+(
+  cd "${RPX}/vacuous"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(0, 0) == 0\nassert calc.add(1, 1) == 2\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/vacuous" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
+[ "${RC}" = 1 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a vacuous test (want 1): ${OUT}"; }
+echo "${OUT}" | grep -q 'stay green' || { rm -rf "${RPX}"; fail "vacuous-test verdict wrong: ${OUT}"; }
+# (iii) not a git repo -> UNASSESSABLE, exit 2
+mkdir -p "${RPX}/nogit"
+RC=0; OUT="$(cd "${RPX}/nogit" && "${RP}" 'true')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} outside git (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q '^UNASSESSABLE' || { rm -rf "${RPX}"; fail "missing UNASSESSABLE marker: ${OUT}"; }
+# (iv) a non-ASCII test filename (C-quoted in git's plain output, raw with
+# -z) must still be collected — regression: it was silently dropped
+mkdir -p "${RPX}/uni/tests"
+(
+  cd "${RPX}/uni"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > 'tests/test_héllo.py'
+)
+RC=0; OUT="$(cd "${RPX}/uni" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_h*.py')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a non-ASCII test filename: ${OUT}"; }
+# (v) this repository and many small projects keep assertions in root test.sh
+mkdir -p "${RPX}/root-script"
+(
+  cd "${RPX}/root-script"
+  git init -q .
+  printf 'bad\n' > value
+  printf '#!/bin/sh\ngrep -qx bad value\n' > test.sh
+  chmod +x test.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+  printf 'good\n' > value
+  printf '#!/bin/sh\ngrep -qx good value\n' > test.sh
+)
+RC=0; OUT="$(cd "${RPX}/root-script" && "${RP}" './test.sh')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe ignored root test.sh: ${OUT}"; }
+# (vi) a verify command that is not installed also fails on the old tree, for a
+# reason that has nothing to do with the change -> UNASSESSABLE, never PASS
+(
+  cd "${RPX}/nocmd"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/nocmd" && "${RP}" 'luciazero-not-a-real-command tests/test_calc.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a missing command (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'exit 127' || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
+# (vii) the old tree cannot import a module the change adds — a red run that
+# proves the file is new, not that the test asserts anything -> UNASSESSABLE
+mkdir -p "${RPX}/newmod/tests"
+(
+  cd "${RPX}/newmod"
+  git init -q .
+  printf 'print("base")\n' > main.py
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm base
+  printf 'def twice(n):\n    return n * 2\n' > helper.py
+  printf 'import helper\nassert helper.twice(2) == 4\nprint("ok")\n' > tests/test_helper.py
+)
+RC=0; OUT="$(cd "${RPX}/newmod" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_helper.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a parent-only import failure (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
+# (viii) a test that is red on the old code AND on the current code proves
+# nothing about the change -> UNASSESSABLE
+(
+  cd "${RPX}/bothred"
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 5\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/bothred" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} when current code fails too (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'also fails on the current code' \
+  || { rm -rf "${RPX}"; fail "current-code control verdict wrong: ${OUT}"; }
+# (ix) a whole-suite verify whose failure belongs to an unrelated broken test
+# is not attributable to the changed tests -> UNASSESSABLE
+mkdir -p "${RPX}/unrelated/tests"
+(
+  cd "${RPX}/unrelated"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  printf 'assert False, "unrelated breakage"\n' > tests/test_broken.py
+  printf '%s\n' '#!/bin/sh' "for f in tests/*.py; do PYTHONPATH=. python3 \"\$f\" || exit 1; done" > run-all.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug and unrelated breakage'
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/unrelated" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an unrelated failure (want 2): ${OUT}"; }
+echo "${OUT}" | grep -q 'cannot be attributed' \
+  || { rm -rf "${RPX}"; fail "attribution verdict wrong: ${OUT}"; }
+# (x) an untargeted suite still passes when the failure output names the
+# changed test, and says so
+mkdir -p "${RPX}/suite/tests"
+(
+  cd "${RPX}/suite"
+  git init -q .
+  printf 'def add(a, b):\n    return a - b if a == 2 else a + b\n' > calc.py
+  printf '%s\n' '#!/bin/sh' "for f in tests/*.py; do PYTHONPATH=. python3 \"\$f\" || exit 1; done" > run-all.sh
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -qm 'plant bug'
+  printf 'def add(a, b):\n    return a + b\n' > calc.py
+  printf 'import calc\nassert calc.add(2, 2) == 4\nprint("ok")\n' > tests/test_calc.py
+)
+RC=0; OUT="$(cd "${RPX}/suite" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an untargeted but attributable suite: ${OUT}"; }
+echo "${OUT}" | grep -q 'not targeted' || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
+rm -rf "${RPX}"
+echo "ok  revert-probe bites/vacuous/unassessable"
+
+# 4d4. demo.sh scaffolds the demo outside the repo; grader red on the untouched copy
+DT="$(mktemp -d)"
+"${ROOT}/demo.sh" "${DT}/demo" >/dev/null
+[ -f "${DT}/demo/slugify.py" ] || { rm -rf "${DT}"; fail "demo target missing slugify.py"; }
+[ -f "${DT}/demo/test_slugify.py" ] || { rm -rf "${DT}"; fail "demo target missing test_slugify.py"; }
+[ -d "${DT}/demo/.git" ] || { rm -rf "${DT}"; fail "demo target is not a git repo"; }
+# capture, then grep: grep -q on a pipe would SIGPIPE grade.sh under pipefail
+RC=0
+GOUT="$("${ROOT}/eval/tasks/slugify/grade.sh" "${DT}/demo" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${DT}"; fail "grader passed the untouched demo target: ${GOUT}"; }
+echo "${GOUT}" | grep -q ' fail' \
+  || { rm -rf "${DT}"; fail "grader exit ${RC} but no CRIT fail line in output: ${GOUT}"; }
+# a symlinked path into the repo must not slip past the in-repo refusal
+ln -s "${ROOT}" "${DT}/repolink"
+RC=0; "${DT}/repolink/demo.sh" "${DT}/repolink/scaffold-target" >/dev/null 2>&1 || RC=$?
+if [ "${RC}" -eq 0 ] || [ -e "${ROOT}/scaffold-target" ]; then
+  rm -rf "${ROOT}/scaffold-target" "${DT}"
+  fail "demo.sh scaffolded through a symlink into the repo (rc=${RC})"
+fi
+rm -rf "${DT}"
+echo "ok  demo.sh scaffold + red grader"

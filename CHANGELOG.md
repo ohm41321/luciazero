@@ -33,6 +33,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `test.sh` is now a dispatcher: the checks live in `tests/gates/*.sh`, one
+  file per subsystem (core, contracts, hooks, relay, bisect, evidence,
+  astra-luna, agent-bus, eval, packaging, install, codex-install), sourced in
+  the original order into the same shell. Every tier, flag, exit code and
+  output line is unchanged; the gate files are lint input like every script.
 - The enforcement hook starts python3 once per event instead of once per
   field (5–9 times before): roughly 100 ms per Bash tool call instead of
   ~730 ms, with the same state, refusal scan, and fail-open behavior.

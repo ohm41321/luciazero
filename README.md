@@ -403,7 +403,8 @@ more targeted command when changing a component it does not cover. The default
 full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
 plugin/npm manifests, self-proving eval graders, and sandboxed install →
 reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full
-tier.
+tier. `test.sh` is the dispatcher; the checks live in `tests/gates/*.sh`, one
+file per subsystem, sourced in order — read the gate a change touches.
 
 More detail:
 

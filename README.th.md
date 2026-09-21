@@ -387,6 +387,8 @@ fast tier เป็นคำสั่งระหว่างทำงานข�
 `./test.sh --full`) ครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ
 plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
 แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier
+`test.sh` เป็นตัว dispatch ส่วนตัวตรวจอยู่ใน `tests/gates/*.sh` แยกไฟล์ตาม
+subsystem และถูก source ตามลำดับ อ่านเฉพาะ gate ที่งานแตะ
 
 อ่านต่อ:
 

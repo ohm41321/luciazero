@@ -8,6 +8,8 @@
 set -euo pipefail
 
 # 6. sandbox Codex install cycle — never touches the real ~/.codex
+CX="$(mktemp -d)"
+trap 'rm -rf "${CX}"' EXIT
 printf '# pre-existing codex rules\n' > "${CX}/AGENTS.md"
 mkdir -p "${CX}/skills/plan"
 printf '%s\n' '---' 'name: plan' '---' '# pre-existing codex plan' > "${CX}/skills/plan/SKILL.md"

@@ -279,12 +279,61 @@ if [ "${TIER}" = fast ]; then
   exit 0
 fi
 
-gate tiers
-gate agent-bus
-gate eval
-gate packaging
-gate install
-gate codex-install
+# The full-only gates. agent-bus runs first and alone: it writes
+# agentd/.last-store-run.log like the agentd gate and must never overlap
+# another writer. Then tiers, eval, packaging, install and codex-install run
+# at once — each owns its sandboxes and only reads the checkout (the suite
+# proves each is green in a clean subshell). Every one of the six runs as a
+# background subshell that is waited for: a subshell in a || list would lose
+# errexit for its whole body. In the parallel run each gate's stdout and
+# stderr land in a buffer and are replayed in the original order once all are
+# done, so both streams are the serial run's byte for byte; a red gate keeps
+# its own FAIL line and the summary names every red gate. LZ_TEST_PARALLEL=0
+# runs the same subshells one at a time, unbuffered.
+FULL_ORDER=(tiers agent-bus eval packaging install codex-install)
+gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
+  if [ $# -gt 1 ]; then
+    ( gate "$1" ) >"$2" 2>"$3" &
+  else
+    ( gate "$1" ) &
+  fi
+  GATE_PID=$!
+}
+RED=""
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then
+  for G in "${FULL_ORDER[@]}"; do
+    gate_bg "${G}"
+    wait "${GATE_PID}" || RED="${RED} ${G}"
+  done
+else
+  BUF="$(mktemp -d)"
+  trap 'rm -rf "${CLAUDE_CONFIG_DIR}" "${BUF}"' EXIT
+  gate_bg agent-bus "${BUF}/agent-bus.out" "${BUF}/agent-bus.err"
+  wait "${GATE_PID}" || RED="${RED} agent-bus"
+  PARALLEL=(tiers eval packaging install codex-install)
+  PIDS=()
+  for G in "${PARALLEL[@]}"; do
+    gate_bg "${G}" "${BUF}/${G}.out" "${BUF}/${G}.err"
+    PIDS+=("${GATE_PID}")
+  done
+  I=0
+  for G in "${PARALLEL[@]}"; do
+    wait "${PIDS[${I}]}" || RED="${RED} ${G}"
+    I=$((I + 1))
+  done
+  for G in "${FULL_ORDER[@]}"; do
+    cat "${BUF}/${G}.out"
+    cat "${BUF}/${G}.err" >&2
+  done
+  rm -rf "${BUF}"
+fi
+if [ -n "${RED}" ]; then
+  SUMMARY=""
+  for G in "${FULL_ORDER[@]}"; do
+    case " ${RED} " in *" ${G} "*) SUMMARY="${SUMMARY} ${G}" ;; esac
+  done
+  fail "red gates:${SUMMARY}"
+fi
 
 echo
 echo "PASS  all checks green"

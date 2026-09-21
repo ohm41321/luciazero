@@ -52,6 +52,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The codex-install gate owns its sandbox; it had used one the install gate
+  created, so it could not run on its own.
 - The hook now reads a completed Bash tool call as green: Claude Code sends no
   exit code in the PostToolUse response (a non-zero exit fires
   PostToolUseFailure instead), so every green had been recorded as `ran` —
@@ -60,6 +62,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The full tier runs the tiers, eval, packaging, install and codex-install
+  gates at once, each in its own subshell, after agent-bus has run alone; each
+  gate's stdout and stderr are buffered and replayed in the original order, so
+  both streams are the serial run's byte for byte and `TIMING` lines still name
+  each gate. A red gate keeps its own `FAIL` line and one summary names every
+  red gate. `LZ_TEST_PARALLEL=0` runs them one at a time. The tiers gate proves
+  all of it over stub gates.
 - `test.sh` is now a dispatcher: the checks live in `tests/gates/*.sh`, one
   file per subsystem (syntax, agentd, core, contracts, hooks, relay, bisect,
   evidence, astra-luna, tiers, agent-bus, eval, packaging, install,

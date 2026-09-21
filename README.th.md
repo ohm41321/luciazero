@@ -403,7 +403,9 @@ prompt/doctrine และ state machine ของ hook เท่านั้น 
 plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
 แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier
 `test.sh` เป็นตัว dispatch ส่วนตัวตรวจอยู่ใน `tests/gates/*.sh` แยกไฟล์ตาม
-subsystem และถูก source ตามลำดับ อ่านเฉพาะ gate ที่งานแตะ
+subsystem และถูก source ตามลำดับ อ่านเฉพาะ gate ที่งานแตะ ใน full tier gate
+tiers, eval, packaging, install และ codex-install รันพร้อมกันคนละ subshell แล้ว
+replay output ตามลำดับเดิมจึงอ่านเหมือนรันเรียง; `LZ_TEST_PARALLEL=0` รันทีละ gate
 
 อ่านต่อ:
 

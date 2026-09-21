@@ -9,8 +9,7 @@ set -euo pipefail
 
 # 5. sandbox install cycle — never touches the real ~/.claude
 SB="$(mktemp -d)"
-CX="$(mktemp -d)"
-trap 'rm -rf "${CLAUDE_CONFIG_DIR}" "${SB}" "${CX}"' EXIT
+trap 'rm -rf "${SB}"' EXIT
 printf '@RTK.md\n\n# pre-existing user content\n' > "${SB}/CLAUDE.md"
 mkdir -p "${SB}/skills/handoff"
 cp "${ROOT}/migrations/handoff-v1.5.0.SKILL.md" "${SB}/skills/handoff/SKILL.md"

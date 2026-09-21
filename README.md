@@ -422,7 +422,10 @@ full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
 plugin/npm manifests, self-proving eval graders, and sandboxed install →
 reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full
 tier. `test.sh` is the dispatcher; the checks live in `tests/gates/*.sh`, one
-file per subsystem, sourced in order — read the gate a change touches.
+file per subsystem, sourced in order — read the gate a change touches. In the
+full tier the tiers, eval, packaging, install and codex-install gates run at
+once, each in its own subshell, with their output replayed in order so it
+reads as the serial run; `LZ_TEST_PARALLEL=0` runs them one at a time.
 
 More detail:
 

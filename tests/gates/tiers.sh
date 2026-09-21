@@ -145,3 +145,64 @@ LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | gr
   || fail "the report over no samples is not the one-line notice"
 rm -rf "${TS}"
 echo "ok  test-timings.sh keeps a sample per run and ranks gates by median and p95"
+
+# (e) The full-only gates run at once, each in its own subshell, with agent-bus
+# serial; their stdout and stderr are replayed in the original order, so both
+# streams are byte-identical to the serial run (LZ_TEST_PARALLEL=0). Proven
+# over stub gates that write to both streams and sleep: the parallel run
+# finishes well under the sum of the sleeps, a red gate and a gate that dies
+# without fail() are both named in one summary line with the run still
+# exiting 1, and the buffer directory is gone afterwards either way.
+TP="$(mktemp -d)"
+mkdir -p "${TP}/repo/tests/gates" "${TP}/repo/scripts" "${TP}/tmp"
+cp "${ROOT}/test.sh" "${TP}/repo/test.sh"
+cp "${ROOT}/scripts/sanitize-luciazero-env.sh" "${TP}/repo/scripts/"
+for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}"; do
+  printf 'echo "gate %s"\n' "$(basename "${G}" .sh)" > "${TP}/repo/${G}"
+done
+for G in tiers agent-bus eval packaging install codex-install; do
+  printf 'echo "gate %s"\necho "err %s" >&2\n' "${G}" "${G}" > "${TP}/repo/tests/gates/${G}.sh"
+done
+for G in tiers eval install; do echo 'sleep 2' >> "${TP}/repo/tests/gates/${G}.sh"; done
+par_full() { # par_full <label> [env assignments...]: run the stub full tier, keep both streams
+  local LABEL="$1"; shift
+  (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
+    >"${TP}/${LABEL}.out" 2>"${TP}/${LABEL}.err")
+}
+PAR_T0="${SECONDS}"
+par_full parallel || fail "stub full tier exited red when run in parallel"
+PAR_WALL=$((SECONDS - PAR_T0))
+par_full serial LZ_TEST_PARALLEL=0 || fail "stub full tier exited red with LZ_TEST_PARALLEL=0"
+cmp -s "${TP}/parallel.out" "${TP}/serial.out" || fail "parallel gates changed stdout: $(diff "${TP}/serial.out" "${TP}/parallel.out" | head -3)"
+cmp -s "${TP}/parallel.err" "${TP}/serial.err" || fail "parallel gates changed stderr: $(diff "${TP}/serial.err" "${TP}/parallel.err" | head -3)"
+OUT="$(sed -n 's/^gate //p' "${TP}/parallel.out" | tr '\n' ' ' | sed 's/ $//')"
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+  || fail "parallel full tier replayed stdout out of order: ${OUT}"
+OUT="$(sed -n 's/^err //p' "${TP}/parallel.err" | tr '\n' ' ' | sed 's/ $//')"
+[ "${OUT}" = "tiers agent-bus eval packaging install codex-install" ] \
+  || fail "parallel full tier replayed stderr out of order: ${OUT}"
+[ "${PAR_WALL}" -lt 6 ] \
+  || fail "three stub gates sleeping 2 s each took ${PAR_WALL} s in parallel, want under the 6 s they add up to"
+[ -z "$(ls -A "${TP}/tmp")" ] || fail "a green parallel run left buffers behind: $(ls "${TP}/tmp")"
+# timing lines: one per gate, still in order, still named right
+(cd "${TP}/repo" && LZ_TEST_TIMINGS=1 TMPDIR="${TP}/tmp" ./test.sh --full >/dev/null 2>"${TP}/timed.err") \
+  || fail "stub full tier exited red with LZ_TEST_TIMINGS=1"
+OUT="$(sed -n 's/^TIMING gate=\([a-z-]*\) seconds=[0-9]*$/\1/p' "${TP}/timed.err" | tr '\n' ' ' | sed 's/ $//')"
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+  || fail "parallel full tier printed the wrong timing lines: ${OUT}"
+grep -qE '^TIMING gate=eval seconds=[2-9]$' "${TP}/timed.err" \
+  || fail "the eval stub slept 2 s but its timing line disagrees: $(grep 'gate=eval' "${TP}/timed.err")"
+# red: eval fails through fail(), install dies on a bare failing command
+printf 'echo "gate eval"\nfail "eval stub is red"\n' > "${TP}/repo/tests/gates/eval.sh"
+printf 'echo "gate install"\nfalse\necho "install stub ran past a failing command" >&2\n' > "${TP}/repo/tests/gates/install.sh"
+RC=0; par_full red || RC=$?
+[ "${RC}" = 1 ] || fail "parallel full tier with two red gates exited ${RC}, want 1"
+grep -q '^FAIL: eval stub is red$' "${TP}/red.err" || fail "the red gate's own FAIL line was not replayed"
+grep -q '^FAIL: red gates: eval install$' "${TP}/red.err" \
+  || fail "the summary does not name every red gate: $(grep '^FAIL' "${TP}/red.err" | tr '\n' '|')"
+grep -q 'ran past a failing command' "${TP}/red.err" && fail "set -e did not stop a gate inside its subshell"
+grep -q '^gate codex-install$' "${TP}/red.out" || fail "a green gate's output was dropped because another gate was red"
+grep -q '^PASS' "${TP}/red.out" && fail "a red parallel run still printed PASS"
+[ -z "$(ls -A "${TP}/tmp")" ] || fail "a red parallel run left buffers behind: $(ls "${TP}/tmp")"
+rm -rf "${TP}"
+echo "ok  full-only gates run in parallel with serial-identical output; red gates are all named"

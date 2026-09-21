@@ -378,12 +378,15 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 ## พัฒนา Luciazero
 
 ```bash
-./test.sh --fast   # loop ระหว่างทำ: ตรวจ doctrine/hook/report/Relay ส่วนหลัก
-./test.sh          # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
+./test.sh --discipline  # แก้ hook, report หรือ skill prompt: ราว 30 วินาที
+./test.sh --fast        # loop ระหว่างทำ: เพิ่ม agentd suite, Relay, bisect, evidence
+./test.sh               # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
 ```
 
-fast tier เป็นคำสั่งระหว่างทำงานของ repo นี้; ถ้าแก้ส่วนที่ fast tier ไม่ครอบคลุม
-ให้ใช้คำสั่ง targeted ของส่วนนั้น ส่วน full tier (`./test.sh` หรือ
+discipline tier เป็นคำสั่ง loop สำหรับ enforcement pack, discipline report และ
+prompt: syntax, bash 3.2 และ ShellCheck ของทุก script ที่ ship, contract ของ
+prompt/doctrine และ state machine ของ hook เท่านั้น fast tier เป็นคำสั่งระหว่างทำงาน
+ของส่วนอื่น; ถ้าแก้ส่วนที่ fast tier ไม่ครอบคลุมให้ใช้คำสั่ง targeted ของส่วนนั้น ส่วน full tier (`./test.sh` หรือ
 `./test.sh --full`) ครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ
 plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
 แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier

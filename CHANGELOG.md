@@ -9,6 +9,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `./test.sh --discipline`: the loop tier for a change to the hooks, the
+  discipline report or a skill/agent prompt — syntax, bash 3.2 and ShellCheck
+  over every shipped script and gate, the prompt and doctrine contracts, and
+  the hook state machine, in about 30 s. The full tier proves which gates
+  each tier sources, in order, and that the discipline tier goes red on a
+  hook, report or skill-prompt mutation.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`
@@ -34,9 +40,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - `test.sh` is now a dispatcher: the checks live in `tests/gates/*.sh`, one
-  file per subsystem (core, contracts, hooks, relay, bisect, evidence,
-  astra-luna, agent-bus, eval, packaging, install, codex-install), sourced in
-  the original order into the same shell. Every tier, flag, exit code and
+  file per subsystem (syntax, agentd, core, contracts, hooks, relay, bisect,
+  evidence, astra-luna, tiers, agent-bus, eval, packaging, install,
+  codex-install), sourced in the original order into the same shell. Every tier, flag, exit code and
   output line is unchanged; the gate files are lint input like every script.
 - The enforcement hook starts python3 once per event instead of once per
   field (5–9 times before): roughly 100 ms per Bash tool call instead of

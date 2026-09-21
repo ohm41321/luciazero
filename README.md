@@ -394,12 +394,16 @@ See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) f
 ## Developing Luciazero
 
 ```bash
-./test.sh --fast   # intermediate loop: core doctrine/hooks/report/Relay checks
-./test.sh          # closeout/CI: full eval, packaging, and install coverage
+./test.sh --discipline  # editing a hook, the report or a skill prompt: ~30 s
+./test.sh --fast        # intermediate loop: adds the agentd suite, Relay, bisect, evidence
+./test.sh               # closeout/CI: full eval, packaging, and install coverage
 ```
 
-The fast tier is the default intermediate check for this repository; use a
-more targeted command when changing a component it does not cover. The default
+The discipline tier is the loop command for the enforcement pack, the
+discipline report and the prompts: syntax, bash 3.2 and ShellCheck over every
+shipped script, the prompt and doctrine contracts, and the hook state machine,
+nothing else. The fast tier is the default intermediate check for everything
+else; use a more targeted command when changing a component it does not cover. The default
 full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
 plugin/npm manifests, self-proving eval graders, and sandboxed install →
 reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full

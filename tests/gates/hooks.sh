@@ -225,7 +225,7 @@ echo "ok  refusal stays inside project scope"
 
 # 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
 # raises on a bare md5() call and the tracker would fail open, doing nothing.
-for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh test.sh "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
+for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
   if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
     fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
   fi

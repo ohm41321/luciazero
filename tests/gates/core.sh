@@ -1,4 +1,4 @@
-# tests/gates/core.sh — shell syntax, bash 3.2 parse, ShellCheck, the agentd suite, ambient-env sanitation, detect.sh, example settings.
+# tests/gates/core.sh — bash 3.2 parse, ShellCheck over every shipped script and gate file, ambient-env sanitation, detect.sh, example settings.
 #
 # Sourced by ./test.sh into its own shell, in the order it lists the gates:
 # this file sees the helpers, the sandbox environment and every variable an
@@ -6,15 +6,6 @@
 # the options below restate what ./test.sh already runs under.
 # shellcheck shell=bash
 set -euo pipefail
-
-# 1. shell syntax
-for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
-echo "ok  shell syntax"
-
-PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
-  "${ROOT}/scripts/agent_bus_spike.py" || fail "agent bus M0 Python syntax"
-echo "ok  agent bus M0 Python syntax"
-agent_bus_store
 
 # 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
 # macOS. Verified against a real 3.2: a here-document inside a command

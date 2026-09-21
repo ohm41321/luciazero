@@ -78,6 +78,18 @@ version_of() {
   awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }' \
     "${SRC}/package.json" 2>/dev/null || true
 }
+# A plugin install of Luciazero beside this classic one loads every skill and
+# the reviewer agent twice in each session, as `/x` and `/luciazero:x` (the
+# hook and the doctrine dedupe themselves; skills and agents cannot). Only the
+# harness's own registry is consulted, read-only; when it is absent or says
+# nothing, nothing is printed.
+plugin_double_install_note() {
+  REGISTRY="${CLAUDE_DIR}/plugins/installed_plugins.json"
+  [ -f "${REGISTRY}" ] && grep -q '"luciazero@' "${REGISTRY}" 2>/dev/null || return 0
+  echo "  !!    Luciazero is also installed as a Claude Code plugin: every skill and the"
+  echo "        reviewer agent load twice per session. Keep one channel — /plugin uninstall"
+  echo "        luciazero@luciazero for the plugin, or ./uninstall.sh for this copy."
+}
 
 if [ "${STATUS_ONLY}" = 1 ]; then
   echo "Status of ${CLAUDE_DIR} (read-only)"
@@ -132,6 +144,7 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   else
     echo "  MISS  CLAUDE.md import line (${IMPORT_LINE} exactly once; found ${N:-0})"; STATUS_RC=1
   fi
+  plugin_double_install_note
   V_SRC="$(version_of)"
   V_INST="$(cat "${CLAUDE_DIR}/.luciazero-version" 2>/dev/null || true)"
   if [ -z "${V_INST}" ]; then
@@ -631,4 +644,5 @@ if [ "${WITH_HOOKS}" = 1 ]; then
 else
   echo "Optional: ./install.sh --with-hooks adds the verify-nudge hooks + statusline."
 fi
+plugin_double_install_note
 echo "The doctrine applies from the next Claude Code session."

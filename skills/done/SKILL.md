@@ -7,12 +7,12 @@ description: Run the closeout ritual before handing back non-trivial work; full 
 
 ## 1. Full verify
 
-Run the **full** tier now: `verify-full` when present, otherwise verify. Quote
-the shortest decisive line.
+The **full** tier — `verify-full` when present, otherwise verify — must be
+green after the last code edit. Run it only when no such result exists; an
+older green does not count. Quote the shortest decisive line.
 
 - Red → you are not here yet. Return to the loop.
 - No verify command exists → use `/ready`; do not claim done.
-- It must actually have run **now**, not earlier in the session.
 
 ## 2. Skeptic diff pass
 
@@ -24,9 +24,9 @@ Re-read the final diff as a hostile reviewer. Check:
 - **Accidental content**: unrelated files, debug code, secrets, loose pins.
 - **Test honesty**: would changed tests fail if implementation is reverted?
 
-When applicable run
-`<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"`, preferring a command
-aimed at the changed tests. Exit 2 is UNASSESSABLE: report it as no proof, not
+Only when the diff adds or changes tests, run
+`<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"` aimed at those tests.
+Exit 2 is UNASSESSABLE: report it as no proof, not
 as a pass. Weakened checks are findings. Fix findings and repeat full verify.
 
 ## 3. Risk-routed independent review
@@ -37,13 +37,14 @@ Choose focus:
 - `contract`: public API/CLI, schema, config, migration, consumers.
 - `general`: money, concurrency, resources, or a wide uncertain diff.
 
-Prefer the harness's built-in review command; otherwise use one reviewer agent.
-If security and contract both apply, request two independent focused passes.
-The reviewer reads callers and consumers.
+A small, well-understood diff with no routed risk stops after the skeptic
+pass: no review is the default, not an exception. Otherwise run **one** pass —
+the harness's built-in review command when it exists, else one reviewer agent
+— scoped to the diff and its direct callers, naming both `security` and
+`contract` when both apply; never two.
 
 Fix and re-verify every `blocker` or `major`, unless the user explicitly
-accepts the named risk. A `minor` may be deferred only when reported. A small,
-well-understood diff with no routed risk may stop after the skeptic pass.
+accepts the named risk. A `minor` may be deferred only when reported.
 
 ## 4. Scope check
 

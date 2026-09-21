@@ -308,8 +308,9 @@ technical evidence plain. Plugin users invoke `/luciazero:imouto-mode focus`;
 Codex users invoke `$imouto-mode focus`.
 
 Risky diffs also pass through one read-only `reviewer` with `security`,
-`contract`, or `general` focus. Security and contract risk together receive two
-separate passes.
+`contract`, or `general` focus. Security and contract risk together get one
+pass that names both focuses, never two. A small diff with no routed risk gets
+no review.
 
 ## Evidence & limitations
 

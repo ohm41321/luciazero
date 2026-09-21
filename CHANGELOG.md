@@ -7,6 +7,42 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
+  commands) and `telemetry.redundant_green_count` (green verify runs that
+  followed a green with no code edit between them). `luciazero discipline`
+  reads schema 2 and 3, reports the verify line and a `Likely:` recommendation
+  when redundant greens exist, and treats a row whose verify aggregates are
+  missing or garbled as unmeasured rather than malformed.
+- The hook keeps a turn open from its first prompt until a clean stop: a
+  background task's completion notice, which the harness delivers as another
+  prompt, no longer wipes the turn's telemetry mid-turn. A stop that blocks
+  keeps the turn open; a session start clears a marker a crashed session left.
+- `install.sh` and `install.sh --status` say so when the harness's plugin
+  registry also lists Luciazero: with both channels present every skill and
+  the reviewer agent load twice per session.
+
+### Fixed
+
+- The hook now reads a completed Bash tool call as green: Claude Code sends no
+  exit code in the PostToolUse response (a non-zero exit fires
+  PostToolUseFailure instead), so every green had been recorded as `ran` —
+  `redundant_green_count` never counted, the strict gate never took its fast
+  path, and the statusline never showed a green check.
+
+### Changed
+
+- The enforcement hook starts python3 once per event instead of once per
+  field (5–9 times before): roughly 100 ms per Bash tool call instead of
+  ~730 ms, with the same state, refusal scan, and fail-open behavior.
+- `/done` runs the full tier only when no green result exists after the last
+  code edit, runs the revert probe only when the diff touches tests, and
+  defaults to no independent review for a small diff with no routed risk —
+  one review pass otherwise, never two. The reviewer stays inside the changed
+  hunks and their direct callers. Both READMEs say the same, and `./test.sh`
+  fails if either promises two passes again.
+
 ## [2.5.1] - 2026-09-10
 
 ### Added

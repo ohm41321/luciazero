@@ -36,8 +36,10 @@ Confirm each suspected defect in source before reporting it. Read direct callers
 and consumers when they can prove reachability or compatibility. Use cheap,
 read-only commands when decisive. Never edit, commit, or push.
 
-Stay inside the diff's causal scope. No style or formatting findings unless they
-change behavior. Do not narrate the search. Report every verified
+Stay inside the diff's causal scope. Read the changed hunks and their direct
+callers and consumers, never a repository sweep or a module the diff does not
+reach, and stop once every routed risk is checked. No style or formatting
+findings unless they change behavior. Do not narrate the search. Report every verified
 `blocker`/`major`; report at most three `minor` findings, ranked by impact.
 
 ## Output

@@ -300,7 +300,8 @@ GitHub **Watch → Custom → Releases**
 `$imouto-mode focus`
 
 Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
-หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจแยกสองรอบ
+หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจรอบเดียวโดยระบุทั้งสอง
+focus ไม่ใช่รอบละ focus diff เล็กที่ไม่เข้า route ใดไม่ต้อง review
 
 ## หลักฐานและข้อจำกัด
 

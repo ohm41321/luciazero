@@ -49,7 +49,10 @@ function parseLine(line) {
   if (trimmed.startsWith("{")) {
     let row;
     try { row = JSON.parse(trimmed); } catch (_) { return { malformed: true }; }
-    if (row.schema !== 2 || !["stop-clean", "nudge", "strict-block"].includes(row.event)) {
+    // Schema 2 rows carry turn/Bash/skill aggregates; schema 3 adds how long
+    // verify commands ran and how many greens repeated a green with no edit
+    // between. Either is read; anything else is a row this reader cannot vouch for.
+    if (![2, 3].includes(row.schema) || !["stop-clean", "nudge", "strict-block"].includes(row.event)) {
       return { malformed: true };
     }
     const timestamp = new Date(row.timestamp);
@@ -58,9 +61,16 @@ function parseLine(line) {
     }
     let telemetry = null;
     if (row.telemetry && typeof row.telemetry === "object") {
+      const count = (key) => Number.isSafeInteger(row.telemetry[key]) && row.telemetry[key] >= 0;
       const keys = ["turn_ms", "bash_ms", "bash_count", "verify_count", "skill_count"];
-      if (keys.every((key) => Number.isSafeInteger(row.telemetry[key]) && row.telemetry[key] >= 0)) {
+      if (keys.every(count)) {
         telemetry = Object.fromEntries(keys.map((key) => [key, row.telemetry[key]]));
+        // The verify aggregates are optional on purpose: a schema-2 row never
+        // had them, and a schema-3 row missing or garbling them still counts
+        // for everything else. `null` means "not measured", never zero.
+        const verifyKeys = ["verify_ms", "redundant_green_count"];
+        const measured = verifyKeys.every(count);
+        for (const key of verifyKeys) telemetry[key] = measured ? row.telemetry[key] : null;
       }
     }
     return {
@@ -123,6 +133,7 @@ const modes = { regex: 0, exact: 0, strict: 0, unknown: 0 };
 const telemetry = {
   measured_turns: 0, turn_ms: 0, bash_ms: 0, non_bash_ms: 0,
   bash_count: 0, verify_count: 0, skill_count: 0,
+  verify_measured_turns: 0, verify_ms: 0, redundant_green_count: 0,
 };
 const projects = new Map();
 for (const row of rows) {
@@ -136,6 +147,11 @@ for (const row of rows) {
     telemetry.bash_count += row.telemetry.bash_count;
     telemetry.verify_count += row.telemetry.verify_count;
     telemetry.skill_count += row.telemetry.skill_count;
+    if (row.telemetry.verify_ms !== null) {
+      telemetry.verify_measured_turns += 1;
+      telemetry.verify_ms += row.telemetry.verify_ms;
+      telemetry.redundant_green_count += row.telemetry.redundant_green_count;
+    }
   }
   const current = projects.get(row.projectId) || {
     project: row.project,
@@ -166,6 +182,13 @@ if (counts.nudge > 0) {
 }
 if (counts["strict-block"] > 0) {
   recommendations.push(`Investigate the configured strict command: it returned red at ${counts["strict-block"]} stop attempt(s).`);
+}
+if (telemetry.redundant_green_count > 0) {
+  recommendations.push(
+    `Likely: ${telemetry.redundant_green_count} verify run(s) came back green with no edit since the previous green` +
+    ` (${Math.round(telemetry.verify_ms / telemetry.verify_measured_turns)} ms of verify per measured turn);` +
+    " re-run the verify command after an edit, not to reconfirm a result nothing changed."
+  );
 }
 if (total > 0 && recommendations.length === 0) {
   recommendations.push("No recurring gap is supported by the selected records.");
@@ -215,6 +238,12 @@ if (telemetry.measured_turns === 0) {
   console.log(`  Average Bash time: ${average(telemetry.bash_ms)} ms`);
   console.log(`  Average non-Bash:  ${average(telemetry.non_bash_ms)} ms`);
   console.log(`  Bash / verify / skill calls: ${telemetry.bash_count} / ${telemetry.verify_count} / ${telemetry.skill_count}`);
+  if (telemetry.verify_measured_turns > 0) {
+    const perTurn = Math.round(telemetry.verify_ms / telemetry.verify_measured_turns);
+    console.log(`  Verify time:       ${perTurn} ms per turn over ${telemetry.verify_measured_turns} turn(s), ${telemetry.redundant_green_count} redundant green(s)`);
+  } else {
+    console.log("  Verify time:       not measured yet (schema-3 hooks record it)");
+  }
 }
 console.log("");
 console.log("Top Nudged Repositories:");

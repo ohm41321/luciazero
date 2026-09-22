@@ -15,8 +15,8 @@
 #   eval/run.sh [--provider claude|codex] [--model MODEL]
 #               [--reasoning-effort LEVEL] [--runs N] [--out results.jsonl]
 #               [--seed SEED] [--campaign-id ID] [--run-offset N]
-#               [--resume] [--with-lessons] [--use-login] [--allow-dirty]
-#               [--discard-work] [task-name ...]
+#               [--resume] [--arms LIST] [--with-lessons] [--use-login]
+#               [--allow-dirty] [--discard-work] [task-name ...]
 #
 # --runs N        repeat every (task, arm) N times (default 1)
 # --out F         append one JSON line per (task, arm, run) to F — criteria
@@ -27,6 +27,13 @@
 #                 it is graded and recorded, instead of keeping them under
 #                 TMPDIR for inspection (the sandbox config never survives
 #                 the run either way — with --use-login it holds credentials)
+# --arms LIST     which arms every task runs, comma-separated, from
+#                 doctrine (the full pack: doctrine, catalog skills, reviewer
+#                 agent; no hooks), noskills (the same install with the
+#                 catalog skills removed — doctrine and reviewer stay, so the
+#                 pair doctrine,noskills isolates the skills) and bare (empty
+#                 config). Default doctrine,bare. The arm set is part of a
+#                 campaign: --resume refuses another one.
 # --with-lessons  add a third arm (lessons) to every task that ships a
 #                 lessons.md: same doctrine install, plus the task's ledger
 #                 pre-seeded as docs/lessons.md in the work copy — measures
@@ -75,10 +82,14 @@ trap cleanup EXIT
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVAL="${ROOT}/eval"
 
-# --output-format json makes the CLI print one result object (usage, cost,
-# turn count) to the provider log; the usage parse below fails open to nulls if an
-# EVAL_CLAUDE_ARGS override drops it.
-CLAUDE_ARGS=${EVAL_CLAUDE_ARGS:-"--permission-mode bypassPermissions --max-turns 40 --output-format json"}
+# --output-format stream-json (which needs --verbose under -p) makes the CLI
+# print every event to the provider log — the init event with the skills it
+# loaded, each assistant message with its tool calls, and the result object
+# (usage, cost, turn count) last. The tool calls are what eval/skill_use.py
+# reads for skill-invocation evidence; with --output-format json (the
+# result object alone) that evidence is "unknown", and the usage parse below
+# fails open to nulls if an EVAL_CLAUDE_ARGS override drops JSON altogether.
+CLAUDE_ARGS=${EVAL_CLAUDE_ARGS:-"--permission-mode bypassPermissions --max-turns 40 --output-format stream-json --verbose"}
 
 PROVIDER=claude
 MODEL=""
@@ -87,6 +98,7 @@ RUNS=1
 RUN_OFFSET=0
 OUT_FILE=""
 WITH_LESSONS=0
+ARM_LIST="doctrine,bare"
 OFFLINE=0
 DISCARD_WORK=0
 USE_LOGIN=0
@@ -97,19 +109,30 @@ CAMPAIGN_ID_EXPLICIT=0
 ALLOW_DIRTY=0
 RESUME=0
 TASKS=()
+# A flag's value, or a red exit. Not `${2:?...}`: with an EXIT trap armed,
+# bash 3.2 reports that expansion failure as exit status 0, so the message
+# would print and the run would go on as if the flag had been given.
+flag_value() { # flag_value <flag> <what it needs> [value]
+  if [ $# -lt 3 ] || [ -z "$3" ]; then
+    echo "FAIL: $1 needs $2" >&2
+    exit 1
+  fi
+  printf '%s' "$3"
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --provider) PROVIDER="${2:?--provider needs claude or codex}"; shift 2 ;;
-    --model) MODEL="${2:?--model needs an exact model ID}"; shift 2 ;;
-    --reasoning-effort) REASONING_EFFORT="${2:?--reasoning-effort needs a level}"; shift 2 ;;
-    --runs) RUNS="${2:?--runs needs a number}"; shift 2 ;;
-    --run-offset) RUN_OFFSET="${2:?--run-offset needs a number}"; shift 2 ;;
-    --out)  OUT_FILE="${2:?--out needs a path}"; shift 2 ;;
-    --seed) RUN_SEED="${2:?--seed needs a value}"; RUN_SEED_EXPLICIT=1; shift 2 ;;
-    --campaign-id) CAMPAIGN_ID="${2:?--campaign-id needs a value}"; CAMPAIGN_ID_EXPLICIT=1; shift 2 ;;
+    --provider) PROVIDER="$(flag_value "$1" 'claude or codex' "${@:2:1}")"; shift 2 ;;
+    --model) MODEL="$(flag_value "$1" 'an exact model ID' "${@:2:1}")"; shift 2 ;;
+    --reasoning-effort) REASONING_EFFORT="$(flag_value "$1" 'a level' "${@:2:1}")"; shift 2 ;;
+    --runs) RUNS="$(flag_value "$1" 'a number' "${@:2:1}")"; shift 2 ;;
+    --run-offset) RUN_OFFSET="$(flag_value "$1" 'a number' "${@:2:1}")"; shift 2 ;;
+    --out)  OUT_FILE="$(flag_value "$1" 'a path' "${@:2:1}")"; shift 2 ;;
+    --seed) RUN_SEED="$(flag_value "$1" 'a value' "${@:2:1}")"; RUN_SEED_EXPLICIT=1; shift 2 ;;
+    --campaign-id) CAMPAIGN_ID="$(flag_value "$1" 'a value' "${@:2:1}")"; CAMPAIGN_ID_EXPLICIT=1; shift 2 ;;
     --resume) RESUME=1; shift ;;
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
     --with-lessons) WITH_LESSONS=1; shift ;;
+    --arms) ARM_LIST="$(flag_value "$1" 'a comma-separated list' "${@:2:1}")"; shift 2 ;;
     --use-login) USE_LOGIN=1; shift ;;
     --offline) OFFLINE=1; shift ;;
     --discard-work) DISCARD_WORK=1; shift ;;
@@ -135,6 +158,27 @@ case "${PROVIDER}" in
     ;;
   *) echo "FAIL: --provider must be claude or codex" >&2; exit 1 ;;
 esac
+
+# The arm set, validated once: known names, no repeats, at least one. The
+# lessons arm is not chosen here — --with-lessons adds it per task.
+BASE_ARMS=()
+case "${ARM_LIST}" in
+  ''|,*|*,|*,,*) echo "FAIL: --arms needs a comma-separated list such as doctrine,noskills" >&2; exit 1 ;;
+esac
+IFS=, read -r -a ARM_WORDS <<< "${ARM_LIST}"
+for ARM_WORD in ${ARM_WORDS[@]+"${ARM_WORDS[@]}"}; do
+  case "${ARM_WORD}" in
+    doctrine|noskills|bare) ;;
+    *) echo "FAIL: --arms accepts doctrine, noskills and bare (got '${ARM_WORD}')" >&2; exit 1 ;;
+  esac
+  for SEEN_ARM in ${BASE_ARMS[@]+"${BASE_ARMS[@]}"}; do
+    [ "${SEEN_ARM}" != "${ARM_WORD}" ] \
+      || { echo "FAIL: --arms lists ${ARM_WORD} twice" >&2; exit 1; }
+  done
+  BASE_ARMS+=("${ARM_WORD}")
+done
+[ "${#BASE_ARMS[@]}" -gt 0 ] || { echo "FAIL: --arms needs at least one arm" >&2; exit 1; }
+BASE_ARM_LIST="$(IFS=,; printf '%s' "${BASE_ARMS[*]}")"
 
 case "${RUNS}" in
   ''|*[!0-9]*) echo "FAIL: --runs must be a positive integer" >&2; exit 1 ;;
@@ -202,6 +246,14 @@ for path in sorted(p for p in root.rglob("*") if p.is_file()):
 print(digest.hexdigest())
 PY
 }
+
+# The catalog skills, as the installers read them (comments and blanks
+# dropped). Size is fixed for the run so the per-arm count check is cheap.
+skill_catalog() {
+  sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "${ROOT}/skills/catalog.txt" "${ROOT}/skills/aliases.txt"
+}
+SKILL_CATALOG_SIZE="$(skill_catalog | wc -l | tr -d ' ')"
+SKILL_CATALOG_CSV="$(skill_catalog | paste -sd, -)"
 
 ordered_arms() {
   python3 - "${RUN_SEED}" "$1" "$2" "${@:3}" <<'PY'
@@ -365,10 +417,10 @@ invocation_recorded() {
 # Validate every requested fixture before any provider invocation. This avoids
 # spending part of a resumed batch before discovering that a later task drifted.
 if [ "${RESUME}" = 1 ]; then
-  python3 - "${OUT_FILE}" "${EVAL}" "${WITH_LESSONS}" "${TASKS[@]}" <<'PY'
+  python3 - "${OUT_FILE}" "${EVAL}" "${WITH_LESSONS}" "${BASE_ARM_LIST}" "${TASKS[@]}" <<'PY'
 import hashlib, json, pathlib, sys
 
-path, eval_dir, with_lessons, *tasks = sys.argv[1:]
+path, eval_dir, with_lessons, base_arms, *tasks = sys.argv[1:]
 eval_root = pathlib.Path(eval_dir)
 
 def tree_hash(root):
@@ -390,7 +442,7 @@ for task in tasks:
     prompt = task_dir / "PROMPT.md"
     if not prompt.is_file():
         continue
-    expected_arms = {"doctrine", "bare"}
+    expected_arms = set(base_arms.split(","))
     if with_lessons == "1" and (task_dir / "lessons.md").is_file():
         expected_arms.add("lessons")
     expected_task = tree_hash(task_dir)
@@ -405,7 +457,8 @@ for task in tasks:
             f"{row['seed']}\0{task}\0{row['run']}\0{arm}".encode()
         ).digest())
         if row.get("arm_order") != expected_order:
-            raise SystemExit(f"FAIL: --resume arm order changed for {task}")
+            raise SystemExit(f"FAIL: --resume arm set or order changed for {task} "
+                             f"(recorded {row.get('arm_order')}, now {expected_order})")
 PY
 fi
 
@@ -415,10 +468,10 @@ for TASK in "${TASKS[@]}"; do
   TASK_SHA256="$(tree_hash "${TDIR}")"
   PROMPT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${TDIR}/PROMPT.md")"
 
-  ARMS=(doctrine bare)
+  ARMS=("${BASE_ARMS[@]}")
   if [ "${WITH_LESSONS}" = 1 ]; then
     if [ -f "${TDIR}/lessons.md" ]; then
-      ARMS=(doctrine bare lessons)
+      ARMS+=(lessons)
     else
       echo "note ${TASK}: no lessons.md — lessons arm skipped"
     fi
@@ -465,6 +518,29 @@ for TASK in "${TASKS[@]}"; do
           CLAUDE_CONFIG_DIR="${CFG}" "${ROOT}/install.sh" >/dev/null
         fi
       fi
+      # noskills: the full install minus the catalog skills, removed by name
+      # so that everything else the installer put there — the doctrine, the
+      # reviewer agent (a skill directory of its own under Codex) — stays.
+      # Both harnesses keep skills under <config>/skills/<name>/.
+      if [ "${ARM}" = noskills ]; then
+        while IFS= read -r SKILL; do
+          rm -rf "${CFG}/skills/${SKILL}" "${CFG}/.luciazero-managed/skills/${SKILL}"
+        done < <(skill_catalog)
+      fi
+      # What the sandbox holds is recorded from the sandbox, not from the arm
+      # name: every catalog skill present, none, or (a bug) something between.
+      SKILLS_PRESENT=0
+      while IFS= read -r SKILL; do
+        [ -f "${CFG}/skills/${SKILL}/SKILL.md" ] && SKILLS_PRESENT=$((SKILLS_PRESENT + 1))
+      done < <(skill_catalog)
+      if [ "${SKILLS_PRESENT}" -eq "${SKILL_CATALOG_SIZE}" ]; then
+        SKILLS_INSTALLED=true
+      elif [ "${SKILLS_PRESENT}" -eq 0 ]; then
+        SKILLS_INSTALLED=false
+      else
+        echo "FAIL: ${ARM} sandbox holds ${SKILLS_PRESENT} of ${SKILL_CATALOG_SIZE} catalog skills" >&2
+        exit 1
+      fi
       if [ "${ARM}" = lessons ]; then
         mkdir -p "${WORK}/docs"
         cp "${TDIR}/lessons.md" "${WORK}/docs/lessons.md"
@@ -496,8 +572,11 @@ for TASK in "${TASKS[@]}"; do
           "$(cat "${TDIR}/PROMPT.md")" >"${LOG}" 2>"${ERR_LOG}") || RC=$?
       else
         # shellcheck disable=SC2086  # CLAUDE_ARGS is intentionally word-split
+        # stderr apart from the stream: a warning the CLI prints would sit
+        # between two events and be skipped, but nothing it prints should be
+        # mistaken for one either
         (cd "${WORK}" && CLAUDE_CONFIG_DIR="${CFG}" \
-          claude -p "$(cat "${TDIR}/PROMPT.md")" ${CLAUDE_ARGS} >"${LOG}" 2>&1) || RC=$?
+          claude -p "$(cat "${TDIR}/PROMPT.md")" ${CLAUDE_ARGS} >"${LOG}" 2>"${ERR_LOG}") || RC=$?
       fi
       T1="$(date +%s)"
 
@@ -541,13 +620,35 @@ for TASK in "${TASKS[@]}"; do
           echo "== ${TASK} / ${ARM}: FAIL"
         fi
       fi
+      # Trace evidence of skill invocation, read while the sandbox still
+      # exists so a path can be tied to its install. Offline never ran an
+      # agent, so the trace cannot say. A reader failure is not a reason to
+      # lose the row: the record says unknown and why.
+      if [ "${OFFLINE}" = 1 ]; then
+        SKILL_USE='{"status": "unknown", "names": [], "evidence": [], "visible": null, "reason": "offline smoke — no agent was run"}'
+      elif ! SKILL_USE="$(python3 "${EVAL}/skill_use.py" --provider "${PROVIDER}" \
+          --catalog "${SKILL_CATALOG_CSV}" --skills-dir "${CFG}/skills" "${LOG}" \
+          2>"${TRACE}/skill_use.stderr")"; then
+        # the reader's last stderr line is the reason, so a traceback is not
+        # mistaken for an unreadable file; the whole of it stays in TRACE
+        SKILL_USE="$(python3 -c '
+import json, sys
+tail = open(sys.argv[1], errors="replace").read().strip().splitlines()
+why = (tail[-1] if tail else "no output")[:160]
+print(json.dumps({"status": "unknown", "names": [], "evidence": [], "visible": None,
+                  "reason": "skill_use.py failed: " + why}, ensure_ascii=False))' \
+          "${TRACE}/skill_use.stderr")"
+      fi
       if [ -n "${OUT_FILE}" ]; then
-        GRADE_OUT="${GRADE_OUT}" INVALID_REASON="${INVALID_REASON}" python3 -c '
+        GRADE_OUT="${GRADE_OUT}" INVALID_REASON="${INVALID_REASON}" \
+          SKILL_USE="${SKILL_USE}" SKILLS_INSTALLED="${SKILLS_INSTALLED}" python3 -c '
 import datetime, json, math, os, sys
 (task, arm, run, invalid, dur, log, offline, provider, requested_model,
  effort, cli_version, campaign_id, pair_id, arm_order, seed, started_at,
  repository_commit, repository_dirty, task_sha256, prompt_sha256,
- system_name, system_arch, runner_profile) = sys.argv[1:24]
+ system_name, system_arch, runner_profile, eval_dir) = sys.argv[1:25]
+sys.path.insert(0, eval_dir)
+from agent_log import load_claude_log, stream_result
 crit = {}
 score = None
 for line in os.environ.get("GRADE_OUT", "").splitlines():
@@ -596,7 +697,11 @@ try:
         num_turns = len(completed) or None
     else:
         with open(log) as f:
-            res = json.load(f)
+            shape, payload = load_claude_log(f.read())
+        # the result object alone, or the last event of a stream
+        res = stream_result(payload) if shape == "stream" else payload
+        if not isinstance(res, dict):
+            raise ValueError("no result object")
         usage = res.get("usage") or {}
         tokens_in = usage.get("input_tokens")
         tokens_out = usage.get("output_tokens")
@@ -640,13 +745,15 @@ print(json.dumps({"result_schema": 2,
                   "reasoning_effort": effort or None,
                   "cli_version": cli_version or None,
                   "invalid_reason": os.environ.get("INVALID_REASON") or None,
-                  "offline": offline == "1"},
+                  "offline": offline == "1",
+                  "skills_installed": os.environ["SKILLS_INSTALLED"] == "true",
+                  "skill_use": json.loads(os.environ["SKILL_USE"])},
                  ensure_ascii=False))' \
           "${TASK}" "${ARM}" "${R}" "${INVALID}" "$((T1 - T0))" "${LOG}" "${OFFLINE}" \
           "${PROVIDER}" "${MODEL}" "${REASONING_EFFORT}" "${AGENT_VERSION}" \
           "${CAMPAIGN_ID}" "${PAIR_ID}" "${ARM_ORDER}" "${RUN_SEED}" "${STARTED_AT}" \
           "${REPOSITORY_COMMIT}" "${REPOSITORY_DIRTY}" "${TASK_SHA256}" "${PROMPT_SHA256}" \
-          "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" >> "${OUT_FILE}"
+          "${SYSTEM_NAME}" "${SYSTEM_ARCH}" "${RUNNER_PROFILE}" "${EVAL}" >> "${OUT_FILE}"
       fi
       if [ "${DISCARD_WORK}" = 1 ]; then
         rm -rf "${WORK}" "${TRACE}"

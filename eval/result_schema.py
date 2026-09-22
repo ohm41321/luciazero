@@ -10,7 +10,8 @@ from typing import Any
 
 
 SUPPORTED_SCHEMAS = {1, 2}
-SUPPORTED_ARMS = {"doctrine", "lessons", "bare"}
+SUPPORTED_ARMS = {"doctrine", "noskills", "lessons", "bare"}
+SKILL_USE_STATUSES = {"observed", "not observed", "unknown"}
 SUPPORTED_PROVIDERS = {"claude", "codex"}
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 SCORE = re.compile(r"^(0|[1-9][0-9]*)/(0|[1-9][0-9]*)$")
@@ -62,6 +63,66 @@ def _timestamp(row: dict[str, Any], field: str, source: str) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         _fail(source, f"{field} must include a timezone")
     return value
+
+
+def _string_list(value: Any, field: str, source: str) -> list[str]:
+    if (not isinstance(value, list)
+            or any(not isinstance(item, str) or not item for item in value)
+            or len(value) != len(set(value))):
+        _fail(source, f"{field} is not a unique non-empty string list")
+    return value
+
+
+SKILL_USE_SOURCES = {"sandbox", "other", "unresolved"}
+
+
+def _skill_evidence(value: Any, source: str) -> list[dict[str, Any]]:
+    """One object per distinct observation: channel, name, path, source."""
+    if not isinstance(value, list):
+        _fail(source, "skill_use.evidence is not a list")
+    seen = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"channel", "name", "path", "source"}:
+            _fail(source, "skill_use.evidence items need channel, name, path and source")
+        for field in ("channel", "name", "path"):
+            if not isinstance(item[field], str) or not item[field]:
+                _fail(source, f"skill_use.evidence {field} is not a non-empty string")
+        if item["source"] not in SKILL_USE_SOURCES:
+            _fail(source, f"skill_use.evidence source is not one of {sorted(SKILL_USE_SOURCES)}")
+        if item in seen:
+            _fail(source, "skill_use.evidence repeats an observation")
+        seen.append(item)
+    return value
+
+
+def _skill_use(row: dict[str, Any], source: str) -> None:
+    """skill_use is trace evidence of skill invocation, written by run.sh from
+    eval/skill_use.py: status observed / not observed / unknown, the catalog
+    skills named, one evidence object per observation, the skills the harness
+    listed at start (or null) and, for unknown, why the trace could not say."""
+    record = row.get("skill_use")
+    if record is None:
+        return
+    if not isinstance(record, dict):
+        _fail(source, "skill_use is not an object")
+    status = record.get("status")
+    if status not in SKILL_USE_STATUSES:
+        _fail(source, f"skill_use.status is not one of {sorted(SKILL_USE_STATUSES)}")
+    names = _string_list(record.get("names", []), "skill_use.names", source)
+    evidence = _skill_evidence(record.get("evidence", []), source)
+    if status == "observed" and (not names or not evidence):
+        _fail(source, "skill_use observed needs at least one name and one evidence object")
+    if status != "observed" and (names or evidence):
+        _fail(source, f"skill_use {status!r} must carry no names or evidence")
+    if status == "observed" and set(names) != {item["name"] for item in evidence}:
+        _fail(source, "skill_use.names does not match the names in evidence")
+    if record.get("visible") is not None:
+        _string_list(record["visible"], "skill_use.visible", source)
+    reason = record.get("reason")
+    if reason is not None and (not isinstance(reason, str) or not reason):
+        _fail(source, "skill_use.reason is not a non-empty string or null")
+    if status == "unknown" and reason is None:
+        _fail(source, "skill_use unknown needs a reason")
 
 
 def validate_result_row(raw: Any, *, source: str = "result row") -> dict[str, Any]:
@@ -132,6 +193,9 @@ def validate_result_row(raw: Any, *, source: str = "result row") -> dict[str, An
         _optional_string(row, field, source)
     row["offline"] = _boolean(row, "offline", source, default=False)
     row["repository_dirty"] = _boolean(row, "repository_dirty", source, default=False)
+    if "skills_installed" in row and row["skills_installed"] is not None:
+        _boolean(row, "skills_installed", source)
+    _skill_use(row, source)
 
     arm_order = row.get("arm_order")
     if arm_order is not None:

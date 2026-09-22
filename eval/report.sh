@@ -51,6 +51,7 @@ with open(path) as f:
                          "result_schema": result_schema,
                          "invalid": row["invalid"],
                          "criteria": dict(row["criteria"]),
+                         "skill_use": row.get("skill_use"),
                          "duration_s": row.get("duration_s"),
                          "tokens_out": row.get("tokens_out"),
                          "cost_usd": row.get("cost_usd"),
@@ -132,13 +133,19 @@ for label, field in (("provider", "provider"), ("model", "model"),
         run_config.append(f"{label}={next(iter(values))}")
 
 # arm columns are discovered from the data, in a fixed preferred order, so a
-# --with-lessons results file grows a third column without a flag here
-PREFERRED = ("doctrine", "lessons", "bare")
+# --with-lessons results file grows a third column without a flag here.
+# Deltas: every non-bare arm against bare when bare ran, and doctrine
+# against noskills when both ran — the skills-ablation pair.
+PREFERRED = ("doctrine", "noskills", "lessons", "bare")
 seen = {r["arm"] for r in rows}
 ARMS = [a for a in PREFERRED if a in seen] + sorted(seen - set(PREFERRED))
 DELTA_ARMS = [a for a in ARMS if a != "bare"] if "bare" in seen else []
 DELTA_HDRS = ["delta"] if DELTA_ARMS == ["doctrine"] else \
              [f"{a}-bare" for a in DELTA_ARMS]
+DELTAS = [(a, "bare") for a in DELTA_ARMS]
+if {"doctrine", "noskills"} <= seen:
+    DELTAS.append(("doctrine", "noskills"))
+    DELTA_HDRS.append("doctrine-noskills")
 
 def mean(vals):
     vals = [v for v in vals if v is not None]
@@ -195,16 +202,59 @@ for task in tasks:
     for c in crits:
         by_arm = {a: rate(a, lambda r: r["criteria"].get(c, False)) for a in ARMS}
         cells = [cell(by_arm[a]) for a in ARMS] + \
-                [delta(by_arm[a], by_arm.get("bare")) for a in DELTA_ARMS]
+                [delta(by_arm[a], by_arm.get(b)) for a, b in DELTAS]
         print(f"| {c} | " + " | ".join(cells) + " |")
     ok = lambda r: bool(r["criteria"]) and all(r["criteria"].values())
     by_arm = {a: rate(a, ok) for a in ARMS}
     cells = [cell(by_arm[a]) for a in ARMS] + \
-            [delta(by_arm[a], by_arm.get("bare")) for a in DELTA_ARMS]
+            [delta(by_arm[a], by_arm.get(b)) for a, b in DELTAS]
     print("| **all criteria** | " + " | ".join(cells) + " |")
     inv = ", ".join(f"{arm} {invalid[arm]}" for arm in ARMS if invalid[arm])
     if inv:
         print(f"\ninvalid runs excluded: {inv}")
+    # skill use, from the rows' trace evidence (eval/skill_use.py): per arm,
+    # how many valid runs observed a catalog skill and which, how many showed
+    # none, how many could not say and why. Names are counted per run and
+    # per source: a run whose evidence for a name never resolved to the
+    # sandbox install — the same name as a built-in, or no source at all —
+    # counts under the starred name, apart from the runs that did.
+    if any(r["skill_use"] for arm in ARMS for r in valid[arm]):
+        parts = []
+        starred = False
+        for arm in ARMS:
+            use = [r["skill_use"] for r in valid[arm] if r["skill_use"]]
+            if not use:
+                continue
+            total = len(use)
+            bits = []
+            observed = [u for u in use if u["status"] == "observed"]
+            if observed:
+                counts = {}
+                for u in observed:
+                    tied = {e["name"] for e in u["evidence"] if e["source"] == "sandbox"}
+                    for name in u["names"]:
+                        key = (name, name in tied)
+                        counts[key] = counts.get(key, 0) + 1
+                names = []
+                for name, is_tied in sorted(counts, key=lambda k: (k[0], not k[1])):
+                    mark = "" if is_tied else "*"
+                    starred = starred or bool(mark)
+                    names.append(f"{name} x{counts[(name, is_tied)]}{mark}")
+                bits.append(f"observed {len(observed)}/{total} ({', '.join(names)})")
+            absent = sum(1 for u in use if u["status"] == "not observed")
+            if absent:
+                bits.append(f"not observed {absent}/{total}")
+            unknown = [u for u in use if u["status"] == "unknown"]
+            if unknown:
+                reasons = sorted({u["reason"] for u in unknown if u.get("reason")})
+                bits.append(f"unknown {len(unknown)}/{total}"
+                            + (" — " + "; ".join(reasons) if reasons else ""))
+            parts.append(f"{arm} " + ", ".join(bits))
+        if parts:
+            print("\nskill use (trace evidence, valid runs): " + "; ".join(parts))
+            if starred:
+                print("(* no evidence tied to the sandbox install: a built-in "
+                      "skill of the same name, or an unresolved source)")
     # resource means, only when the results actually carry usage data — older
     # files (and runs without --output-format json) render exactly as before
     if any(r["cost_usd"] is not None or r["tokens_out"] is not None

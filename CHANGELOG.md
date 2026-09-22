@@ -49,6 +49,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `eval/run.sh --discard-work` removes each invocation's work copy and
   provider logs once the row is recorded; by default they stay under
   `TMPDIR` for inspection, as before. The eval gate passes it everywhere.
+- `eval/run.sh --arms LIST` chooses the arms every task runs, from
+  `doctrine` (the full pack: doctrine, catalog skills, reviewer agent; no
+  hooks), `noskills` (the same install with the catalog skills removed by
+  name, so the doctrine and the reviewer stay in both) and `bare`; the
+  default `doctrine,bare` is unchanged. `--arms doctrine,noskills` is the
+  pair that isolates the skills; `--resume` refuses another arm set, and
+  `report.sh` adds a `doctrine-noskills` delta column when both ran. Rows
+  record `skills_installed`, read from the sandbox itself. The eval gate
+  proves the arrangement for both harnesses with fake CLIs that audit their
+  sandbox config.
+- Every row records `skill_use`: trace evidence of skill invocation read by
+  `eval/skill_use.py` from the provider log — a Skill tool call, the skill
+  body the harness injects after one, a Read of a `SKILL.md`, a shell
+  command running a skill script — as `observed` (with the names and one
+  evidence object per distinct observation: channel, name, path fragment,
+  and whether the source resolved to the sandbox install, elsewhere, or not
+  at all), `not observed` (the log carries assistant messages, or completed
+  turns under Codex, and none of them show one), or `unknown` (a result-only
+  log, plain text, offline: the trace cannot say, with the reason), plus the
+  catalog skills the harness listed at start. Installed is not used, and not
+  observed is not unread. `report.sh` prints the counts per arm, per name
+  and per source. For this the Claude runner profile is now `--output-format
+  stream-json --verbose` (every event, the result object last), with the
+  CLI's stderr kept in its own file so a warning never lands in the stream;
+  `check-result.sh` and the usage parse read that shape as well as the single
+  result object. A campaign recorded under the old profile resumes with the
+  old profile: `EVAL_CLAUDE_ARGS="--permission-mode bypassPermissions
+  --max-turns 40 --output-format json"`. `evidence.py` and the campaign
+  registry still know only `doctrine`, `bare` and `lessons`, so a
+  `noskills` campaign is read through `report.sh` for now.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`
@@ -102,6 +132,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gate, on a green run, a red one, and with `LZ_TEST_PARALLEL=0`.
 - The codex-install gate owns its sandbox; it had used one the install gate
   created, so it could not run on its own.
+- `eval/run.sh` exits red when a flag is given without its value. Its
+  `${2:?…}` guards had stopped working when the EXIT trap arrived: under an
+  armed trap, bash 3.2 reports that expansion failure with exit status 0, so
+  the message printed and the run went on. An explicit check replaces them;
+  the eval gate proves the red exit for four flags.
 - The hook now reads a completed Bash tool call as green: Claude Code sends no
   exit code in the PostToolUse response (a non-zero exit fires
   PostToolUseFailure instead), so every green had been recorded as `ran` —

@@ -78,6 +78,14 @@ cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report.md" \
   || { rm -f "${RPT}"; fail "report.sh failed on the lessons fixture"; }
 cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report-lessons.md" \
   || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report-lessons.md"; }
+# the skills-ablation fixture: doctrine vs noskills column, the
+# doctrine-noskills delta, and the per-arm skill-use line read from the
+# rows' trace evidence (a starred name is one with no evidence tied to the
+# sandbox install; unknown rows carry their reason)
+"${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-skills.jsonl" > "${RPT}" \
+  || { rm -f "${RPT}"; fail "report.sh failed on the skills fixture"; }
+cmp -s "${RPT}" "${ROOT}/eval/testdata/sample-report-skills.md" \
+  || { rm -f "${RPT}"; fail "report.sh output drifted from eval/testdata/sample-report-skills.md"; }
 printf 'not json\n' > "${RPT}"
 if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
   rm -f "${RPT}"; fail "report.sh accepted malformed input"
@@ -133,6 +141,38 @@ for BAD_ROW in \
     rm -f "${RPT}"; fail "report.sh accepted a type-invalid result row"
   fi
 done
+# skill_use is evidence, so a malformed record must not render as a rate:
+# a made-up status, a non-list names field, "observed" without a name,
+# names outside "observed", string evidence (the old ad-hoc line format),
+# a repeated observation, names that do not match the evidence, an
+# unknown source, an arm outside the supported set
+EV='{"channel":"Skill","name":"done","path":"skills/done/","source":"sandbox"}'
+for BAD_ROW in \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"maybe","names":[],"evidence":[]}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":"done","evidence":['"${EV}"']}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":[],"evidence":[]}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"not observed","names":["done"],"evidence":[]}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["done"],"evidence":["Skill:done source=sandbox"]}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["done"],"evidence":['"${EV}"','"${EV}"']}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["ready"],"evidence":['"${EV}"']}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["done"],"evidence":[{"channel":"Skill","name":"done","path":"skills/done/","source":"builtin"}]}}' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skills_installed":"yes"}' \
+  '{"task":"t","arm":"doctrine-only","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1}'; do
+  printf '%s\n' "${BAD_ROW}" > "${RPT}"
+  if "${ROOT}/eval/report.sh" "${RPT}" >/dev/null 2>&1; then
+    rm -f "${RPT}"; fail "report.sh accepted a malformed skill_use record: ${BAD_ROW}"
+  fi
+done
+# a name is counted per run and per source: one run tied to the sandbox and
+# one that was not render apart, so a built-in of the same name cannot hide
+# behind a sandbox observation from another run
+printf '%s\n' \
+  '{"task":"t","arm":"doctrine","run":1,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"sandbox"}]}}' \
+  '{"task":"t","arm":"doctrine","run":2,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"other"}]}}' \
+  '{"task":"t","arm":"doctrine","run":3,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"unresolved"}]}}' \
+  > "${RPT}"
+"${ROOT}/eval/report.sh" "${RPT}" 2>/dev/null | grep -q '^skill use (trace evidence, valid runs): doctrine observed 3/3 (debug x1, debug x2\*)$' \
+  || { rm -f "${RPT}"; fail "report.sh pooled sandbox and untied observations of one name: $("${ROOT}/eval/report.sh" "${RPT}" 2>&1 | grep '^skill use')"; }
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
 
@@ -175,6 +215,42 @@ RC=0; "${CR}" --provider codex "${CRF}/codex-bad-usage.jsonl" >/dev/null 2>&1 ||
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted malformed Codex usage"; }
 RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
+# --output-format stream-json writes one event per line and the result
+# object last; the same acceptance and rejection rules apply to that final
+# event, and a stream that never reached it is a run that died mid-way
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["debug","done"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"fixed the bug","usage":{"input_tokens":12,"output_tokens":3},"total_cost_usd":0.05,"num_turns":2}' \
+  > "${CRF}/stream-good.jsonl"
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["debug"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"Not logged in · Please run /login"}]}}' \
+  '{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Not logged in · Please run /login","num_turns":1,"total_cost_usd":0}' \
+  > "${CRF}/stream-notlogged.jsonl"
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["debug"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}' \
+  > "${CRF}/stream-noresult.jsonl"
+"${CR}" "${CRF}/stream-good.jsonl" >/dev/null 2>&1 \
+  || { rm -rf "${CRF}"; fail "check-result rejected a healthy stream-json log"; }
+RC=0; OUT="$("${CR}" "${CRF}/stream-notlogged.jsonl" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in stream-json result"; }
+echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "stream-json rejection lost the reason: ${OUT}"; }
+RC=0; OUT="$("${CR}" "${CRF}/stream-noresult.jsonl" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a stream-json log with no result event"; }
+echo "${OUT}" | grep -q 'no result event' || { rm -rf "${CRF}"; fail "stream-json no-result rejection lost the reason: ${OUT}"; }
+# a stray non-JSON line between two events (a warning on the same
+# descriptor) does not turn the stream into "plain text": the result event
+# after it is still read, and still refused
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["debug"]}' \
+  'warning: something the CLI printed' \
+  '{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Not logged in · Please run /login","num_turns":1}' \
+  > "${CRF}/stream-noise.jsonl"
+RC=0; OUT="$("${CR}" "${CRF}/stream-noise.jsonl" 2>&1)" || RC=$?
+[ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result read a stream with a stray line as plain text and accepted an error result"; }
+echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "noisy stream rejection lost the reason: ${OUT}"; }
 rm -rf "${CRF}"
 echo "ok  check-result rejects error payloads behind exit 0"
 
@@ -230,11 +306,17 @@ if [ -f "${CODEX_HOME}/AGENTS.md" ] && [ -d "${CODEX_HOME}/skills" ]; then
   ARM=doctrine
   PACK=yes
 fi
+# under Codex the reviewer agent is a skill directory too, so the catalog
+# count and the reviewer are audited apart: noskills keeps the reviewer
+CATALOG=$(ls -d "${CODEX_HOME}"/skills/*/SKILL.md 2>/dev/null | grep -vc '/skills/reviewer/' || true)
+REVIEWER=no
+[ -f "${CODEX_HOME}/skills/reviewer/SKILL.md" ] && REVIEWER=yes
+if [ "${PACK}" = yes ] && [ "${CATALOG}" = 0 ]; then ARM=noskills; fi
 AUTH=no
 [ -s "${CODEX_HOME}/auth.json" ] && AUTH=yes
 {
-  printf 'auth=%s\npack=%s\nparent-key=%s\n' \
-    "${AUTH}" "${PACK}" "${CODEX_API_KEY:+present}"
+  printf 'auth=%s\npack=%s\nparent-key=%s\ncatalog=%s\nreviewer=%s\n' \
+    "${AUTH}" "${PACK}" "${CODEX_API_KEY:+present}" "${CATALOG}" "${REVIEWER}"
   for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
 } > "${FAKE_CODEX_AUDIT_DIR}/${ARM}.txt"
 if [ "${FAKE_CODEX_BAD_USAGE:-0}" = 1 ]; then
@@ -253,11 +335,11 @@ chmod +x "${SFX}/bin/codex"
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" PATH="${SFX}/bin:${PATH}" \
   "${ROOT}/eval/run.sh" --discard-work --provider codex --model gpt-5.6-terra \
-  --reasoning-effort medium --use-login --allow-dirty \
+  --reasoning-effort medium --use-login --allow-dirty --arms doctrine,noskills,bare \
   --out "${SFX}/ok.jsonl" false-green \
   >/dev/null 2>&1 \
   || { rm -rf "${SFX}"; fail "successful fake Codex adapter run failed"; }
-for ARM in doctrine bare; do
+for ARM in doctrine noskills bare; do
   AUDIT="${SFX}/audit/${ARM}.txt"
   [ -f "${AUDIT}" ] || { rm -rf "${SFX}"; fail "missing ${ARM} Codex audit"; }
   grep -qx 'auth=yes' "${AUDIT}" \
@@ -282,8 +364,19 @@ for ARM in doctrine bare; do
 done
 grep -qx 'pack=yes' "${SFX}/audit/doctrine.txt" \
   || { rm -rf "${SFX}"; fail "doctrine Codex home lacks installed pack"; }
+CATALOG_N="$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "${ROOT}/skills/catalog.txt" "${ROOT}/skills/aliases.txt" | wc -l | tr -d ' ')"
+grep -qx "catalog=${CATALOG_N}" "${SFX}/audit/doctrine.txt" \
+  || { rm -rf "${SFX}"; fail "doctrine Codex home: $(grep '^catalog=' "${SFX}/audit/doctrine.txt"), want catalog=${CATALOG_N}"; }
 grep -qx 'pack=no' "${SFX}/audit/bare.txt" \
   || { rm -rf "${SFX}"; fail "bare Codex home inherited the pack"; }
+# noskills under Codex: doctrine (AGENTS.md) and the reviewer skill stay,
+# every catalog skill is gone
+grep -qx 'pack=yes' "${SFX}/audit/noskills.txt" \
+  || { rm -rf "${SFX}"; fail "noskills Codex home lost the doctrine"; }
+grep -qx 'reviewer=yes' "${SFX}/audit/noskills.txt" \
+  || { rm -rf "${SFX}"; fail "noskills Codex home lost the reviewer skill"; }
+grep -qx 'catalog=0' "${SFX}/audit/noskills.txt" \
+  || { rm -rf "${SFX}"; fail "noskills Codex home kept catalog skills: $(grep '^catalog=' "${SFX}/audit/noskills.txt")"; }
 if grep -R -q 'test-key-never-log' "${SFX}/audit" "${SFX}/ok.jsonl"; then
   rm -rf "${SFX}"; fail "Codex credential value leaked into eval artifacts"
 fi
@@ -291,9 +384,15 @@ python3 - "${SFX}/ok.jsonl" <<'PY' \
   || { rm -rf "${SFX}"; fail "successful fake Codex rows wrong"; }
 import json, sys
 rows = [json.loads(line) for line in open(sys.argv[1])]
-assert len(rows) == 2
+assert len(rows) == 3
 assert all(row["invalid"] is False for row in rows)
 assert all(row["tokens_in"] == 12 and row["tokens_out"] == 3 for row in rows)
+by = {row["arm"]: row for row in rows}
+assert by["doctrine"]["skills_installed"] is True
+assert by["noskills"]["skills_installed"] is False and by["bare"]["skills_installed"] is False
+# the fake ran no command, so the Codex trace shows a completed turn and no
+# skill: not observed, never unknown
+assert all(row["skill_use"]["status"] == "not observed" for row in rows), rows
 PY
 CODEX_HOME="${SFX}/real-home" CODEX_API_KEY='test-key-never-log' \
   FAKE_CODEX_AUDIT_DIR="${SFX}/audit" FAKE_CODEX_BAD_USAGE=1 \
@@ -560,6 +659,281 @@ RC=0; TMPDIR="${DW}/red" "${ROOT}/eval/run.sh" --offline --discard-work --out "$
 [ "$(count_in "${DW}/red")" = 0 ] \
   || fail "a red --discard-work run left $(count_in "${DW}/red") directories under TMPDIR"
 echo "ok  run.sh work directories live under TMPDIR: kept by default, gone with --discard-work, gone on a red run"
+
+# 4d2f. skills ablation: an arm pair that differs in the catalog skills only.
+# (i) skill_use.py reads trace evidence of skill invocation from a provider
+# log and classifies it observed / not observed / unknown — a Skill tool call,
+# the skill body the harness injects after it, a Read of a SKILL.md, a Bash
+# command running a skill script; a log without tool events is unknown, never
+# "not observed". Evidence names skills and paths only, never content.
+SU="${ROOT}/eval/skill_use.py"
+# the catalog as the installers and run.sh read it, never a literal list
+CATALOG="$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "${ROOT}/skills/catalog.txt" "${ROOT}/skills/aliases.txt" | paste -sd, -)"
+CATALOG_N="$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "${ROOT}/skills/catalog.txt" "${ROOT}/skills/aliases.txt" | wc -l | tr -d ' ')"
+mktmp SUF
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["code-review","debug","done","ready","verify"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"done"}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Launching skill: done"}]}}' \
+  '{"type":"user","message":{"content":[{"type":"text","text":"Base directory for this skill: /sb/skills/done\n\n# Done\n\nsecret body text"}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/sb/skills/ready/SKILL.md"}}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"sh /sb/skills/done/scripts/revert-probe.sh . && echo prompt-secret"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","usage":{"input_tokens":1,"output_tokens":1},"num_turns":4}' \
+  > "${SUF}/observed.jsonl"
+printf '%s\n' \
+  '{"type":"system","subtype":"init","slash_commands":["debug"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"luciazero:debug","args":"x"}}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"code-review"}}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/elsewhere/skills/plan/SKILL.md"}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"text","text":"Base directory for this skill: /builtin/skills/debug\n\n# Debug"}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":3}' \
+  > "${SUF}/prefixed.jsonl"
+printf '%s\n' \
+  '{"type":"system","subtype":"init","skills":["debug"]}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"reading skills/done/SKILL.md would be nice"}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"python3 -m unittest"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":2}' \
+  > "${SUF}/none.jsonl"
+# the same observation twice is one: a file read twice, a skill called
+# twice with its body injected twice
+printf '%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"done"}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"text","text":"Base directory for this skill: /sb/skills/done\n\n# Done"}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"done"}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"text","text":"Base directory for this skill: /sb/skills/done\n\n# Done"}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Skill","input":{"skill":"done"}}]}}' \
+  '{"type":"user","message":{"content":[{"type":"text","text":"Base directory for this skill: /sb/skills/done\n\n# Done"}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t4","name":"Read","input":{"file_path":"/sb/skills/done/SKILL.md"}}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t5","name":"Read","input":{"file_path":"/sb/skills/done/SKILL.md"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":5}' \
+  > "${SUF}/dup.jsonl"
+# the path a command names is read back to its start whatever sits before
+# it: a quote, a VAR= assignment, a newline; trailing shell punctuation is
+# not part of it; `myskills/` is not a skill directory
+# shellcheck disable=SC2016  # the literal is the command as the agent typed it, $PROBE and all
+printf '%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat \"/sb/skills/done/SKILL.md\"; PROBE=/sb/skills/done/scripts/revert-probe.sh; bash $PROBE\n/sb/skills/ready/scripts/detect.sh .; ls /x/myskills/plan/"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
+  > "${SUF}/paths.jsonl"
+# the sandbox reached through a symlink still resolves to the sandbox
+mkdir -p "${SUF}/real/skills/done"
+ln -s "${SUF}/real" "${SUF}/link"
+printf '%s\n' \
+  "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Read\",\"input\":{\"file_path\":\"${SUF}/real/skills/done/SKILL.md\"}}]}}" \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
+  > "${SUF}/symlink.jsonl"
+printf '{"subtype":"success","is_error":false,"result":"fixed the bug","num_turns":9}\n' > "${SUF}/legacy.json"
+printf 'offline smoke — no agent was run\n' > "${SUF}/text.log"
+: > "${SUF}/empty.jsonl"
+# one Codex command is started, updated and completed: one observation
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"t"}' \
+  '{"type":"item.started","item":{"type":"command_execution","command":"bash /sb/skills/done/scripts/revert-probe.sh ."}}' \
+  '{"type":"item.updated","item":{"type":"command_execution","command":"bash /sb/skills/done/scripts/revert-probe.sh ."}}' \
+  '{"type":"item.completed","item":{"type":"command_execution","command":"bash /sb/skills/done/scripts/revert-probe.sh ."}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}' \
+  > "${SUF}/codex-observed.jsonl"
+printf '{"type":"thread.started","thread_id":"t"}\n' > "${SUF}/codex-started.jsonl"
+printf '%s\n' \
+  '{"type":"item.completed","item":{"type":"command_execution","command":"python3 -m unittest"}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}' \
+  > "${SUF}/codex-none.jsonl"
+SU_SKILLS_DIR=/sb/skills
+su_check() { # su_check <label> <provider> <log> <python assertions on `r`>
+  local OUT
+  OUT="$(python3 "${SU}" --provider "$2" --catalog "${CATALOG}" --skills-dir "${SU_SKILLS_DIR}" "$3" 2>&1)" \
+    || fail "skill_use.py failed on $1: ${OUT}"
+  python3 - "${OUT}" "$4" <<'PY' || fail "skill_use.py misread $1: ${OUT}"
+import json, sys
+r = json.loads(sys.argv[1])
+assert set(r) == {"status", "names", "evidence", "visible", "reason"}, sorted(r)
+def ev(channel, name, path, source):
+    return {"channel": channel, "name": name, "path": path, "source": source}
+exec(sys.argv[2])
+PY
+}
+su_check observed claude "${SUF}/observed.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["done", "ready"], r
+assert r["evidence"] == [ev("Skill", "done", "skills/done/", "sandbox"),
+                         ev("Read", "ready", "skills/ready/SKILL.md", "sandbox"),
+                         ev("Bash", "done", "skills/done/scripts/revert-probe.sh", "sandbox")], r
+assert r["visible"] == ["debug", "done", "ready"], r
+assert r["reason"] is None
+blob = json.dumps(r)
+assert "secret body text" not in blob and "prompt-secret" not in blob, blob'
+su_check prefixed claude "${SUF}/prefixed.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["debug", "plan"], r
+assert r["evidence"] == [ev("Skill", "debug", "skills/debug/", "other"),
+                         ev("Read", "plan", "skills/plan/SKILL.md", "other")], r
+assert r["visible"] == ["debug"], r'
+su_check none claude "${SUF}/none.jsonl" '
+assert r["status"] == "not observed" and r["names"] == [] and r["evidence"] == [], r
+assert r["visible"] == ["debug"] and r["reason"] is None, r'
+su_check dup claude "${SUF}/dup.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["done"], r
+assert r["evidence"] == [ev("Skill", "done", "skills/done/", "sandbox"),
+                         ev("Read", "done", "skills/done/SKILL.md", "sandbox")], r'
+su_check paths claude "${SUF}/paths.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["done", "ready"], r
+assert r["evidence"] == [ev("Bash", "done", "skills/done/SKILL.md", "sandbox"),
+                         ev("Bash", "done", "skills/done/scripts/revert-probe.sh", "sandbox"),
+                         ev("Bash", "ready", "skills/ready/scripts/detect.sh", "sandbox")], r'
+SU_SKILLS_DIR="${SUF}/link/skills" su_check symlink claude "${SUF}/symlink.jsonl" '
+assert r["status"] == "observed", r
+assert r["evidence"] == [ev("Read", "done", "skills/done/SKILL.md", "sandbox")], r'
+su_check legacy claude "${SUF}/legacy.json" '
+assert r["status"] == "unknown" and r["reason"] == "result-only log (no tool events)", r
+assert r["names"] == [] and r["evidence"] == [] and r["visible"] is None, r'
+su_check text claude "${SUF}/text.log" '
+assert r["status"] == "unknown" and r["reason"] == "no structured events in log", r'
+su_check empty claude "${SUF}/empty.jsonl" '
+assert r["status"] == "unknown" and r["reason"] == "no structured events in log", r'
+su_check codex-observed codex "${SUF}/codex-observed.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["done"], r
+assert r["evidence"] == [ev("command", "done", "skills/done/scripts/revert-probe.sh", "sandbox")], r
+assert r["visible"] is None'
+su_check codex-none codex "${SUF}/codex-none.jsonl" '
+assert r["status"] == "not observed" and r["evidence"] == [], r'
+su_check codex-started codex "${SUF}/codex-started.jsonl" '
+assert r["status"] == "unknown" and r["reason"] == "stream has no completed turns", r'
+su_check codex-empty codex "${SUF}/empty.jsonl" '
+assert r["status"] == "unknown" and r["reason"] == "no structured events in log", r'
+RC=0; python3 "${SU}" --provider claude --catalog "${CATALOG}" "${SUF}/absent.jsonl" >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || fail "skill_use.py accepted a missing log"
+echo "ok  skill_use.py classifies trace evidence: observed, not observed, unknown"
+
+# (ii) --arms doctrine,noskills runs the pair that isolates the skills: both
+# arms get the doctrine and the reviewer agent, neither gets hooks, only
+# doctrine keeps the catalog skills. A fake claude on PATH audits its
+# sandbox config, answers with a stream-json transcript (a Skill call and a
+# Read of a SKILL.md when skills are present, a plain Bash call otherwise)
+# and a result object, so the rows, their skill-use evidence, the parsed
+# usage and the report are all proven without inference or credentials.
+mktmp SKA
+mkdir -p "${SKA}/bin" "${SKA}/audit"
+cat > "${SKA}/bin/claude" <<'FAKECLAUDE'
+#!/bin/sh
+if [ "${1:-}" = --version ]; then
+  echo '9.9.9 (fake)'
+  exit 0
+fi
+CFG="${CLAUDE_CONFIG_DIR:?}"
+DOCTRINE=no; [ -f "${CFG}/luciazero.md" ] && DOCTRINE=yes
+REVIEWER=no; [ -f "${CFG}/agents/reviewer.md" ] && REVIEWER=yes
+HOOKS=no; [ -f "${CFG}/settings.json" ] && grep -q hooks "${CFG}/settings.json" && HOOKS=yes
+SKILLS=$(find "${CFG}/skills" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
+ARM=bare
+if [ "${DOCTRINE}" = yes ]; then ARM=noskills; fi
+if [ "${SKILLS}" != 0 ]; then ARM=doctrine; fi
+{
+  printf 'doctrine=%s\nreviewer=%s\nhooks=%s\nskills=%s\n' \
+    "${DOCTRINE}" "${REVIEWER}" "${HOOKS}" "${SKILLS}"
+  for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
+} > "${FAKE_CLAUDE_AUDIT_DIR}/${ARM}.txt"
+echo 'warning: a line the real CLI prints on stderr' >&2
+printf '%s\n' '{"type":"system","subtype":"init","skills":["code-review","debug","verify"]}'
+if [ "${SKILLS}" != 0 ]; then
+  printf '%s\n' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"done"}}]}}' \
+    "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Base directory for this skill: ${CFG}/skills/done\\n\\n# Done\"}]}}" \
+    "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"Read\",\"input\":{\"file_path\":\"${CFG}/skills/ready/SKILL.md\"}}]}}"
+else
+  printf '%s\n' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"python3 -m unittest"}}]}}'
+fi
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":12,"output_tokens":3},"total_cost_usd":0.05,"num_turns":3,"modelUsage":{"fake-model":{}}}'
+FAKECLAUDE
+chmod +x "${SKA}/bin/claude"
+FAKE_CLAUDE_AUDIT_DIR="${SKA}/audit" PATH="${SKA}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --discard-work --arms doctrine,noskills --allow-dirty \
+  --seed skills-seed --campaign-id skills-campaign \
+  --out "${SKA}/r.jsonl" false-green >"${SKA}/run.out" 2>&1 \
+  || fail "run.sh --arms doctrine,noskills failed with the fake claude: $(tail -5 "${SKA}/run.out")"
+[ ! -e "${SKA}/audit/bare.txt" ] || fail "--arms doctrine,noskills ran a bare arm"
+for ARM in doctrine noskills; do
+  AUDIT="${SKA}/audit/${ARM}.txt"
+  [ -f "${AUDIT}" ] || fail "missing ${ARM} claude audit (arms recorded: $(find "${SKA}/audit" -name '*.txt' | tr '\n' ' '))"
+  grep -qx 'doctrine=yes' "${AUDIT}" || fail "${ARM} sandbox lacks the doctrine"
+  grep -qx 'reviewer=yes' "${AUDIT}" || fail "${ARM} sandbox lacks the reviewer agent"
+  grep -qx 'hooks=no' "${AUDIT}" || fail "${ARM} sandbox has hooks wired"
+  grep -Fqx 'arg=--output-format' "${AUDIT}" || fail "${ARM}: no --output-format reached the CLI"
+  grep -Fqx 'arg=stream-json' "${AUDIT}" || fail "${ARM}: the CLI was not asked for stream-json (tool events)"
+  grep -Fqx 'arg=--verbose' "${AUDIT}" || fail "${ARM}: stream-json needs --verbose in -p mode"
+done
+grep -qx "skills=${CATALOG_N}" "${SKA}/audit/doctrine.txt" \
+  || fail "doctrine sandbox skill count: $(grep '^skills=' "${SKA}/audit/doctrine.txt"), want ${CATALOG_N}"
+grep -qx 'skills=0' "${SKA}/audit/noskills.txt" \
+  || fail "noskills sandbox kept skills: $(grep '^skills=' "${SKA}/audit/noskills.txt")"
+python3 - "${SKA}/r.jsonl" <<'PY' || fail "skills-ablation rows wrong"
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert len(rows) == 2, len(rows)
+by = {r["arm"]: r for r in rows}
+assert set(by) == {"doctrine", "noskills"}, set(by)
+assert all(r["arm_order"] == rows[0]["arm_order"] and set(r["arm_order"]) == {"doctrine", "noskills"} for r in rows)
+assert all(r["invalid"] is False and r["offline"] is False for r in rows), rows
+assert all(r["tokens_in"] == 12 and r["tokens_out"] == 3 and r["cost_usd"] == 0.05
+           and r["num_turns"] == 3 and r["model"] == "fake-model" for r in rows), rows
+assert all(r["cli_version"] == "9.9.9 (fake)" for r in rows)
+assert by["doctrine"]["skills_installed"] is True and by["noskills"]["skills_installed"] is False
+d = by["doctrine"]["skill_use"]
+assert d["status"] == "observed" and d["names"] == ["done", "ready"], d
+assert d["evidence"] == [{"channel": "Skill", "name": "done", "path": "skills/done/", "source": "sandbox"},
+                         {"channel": "Read", "name": "ready", "path": "skills/ready/SKILL.md", "source": "sandbox"}], d
+assert d["visible"] == ["debug"], d
+n = by["noskills"]["skill_use"]
+assert n["status"] == "not observed" and n["names"] == [] and n["evidence"] == [], n
+assert n["visible"] == ["debug"], n
+PY
+"${ROOT}/eval/report.sh" "${SKA}/r.jsonl" > "${SKA}/report.md" \
+  || fail "report.sh rejected the skills-ablation rows"
+grep -q '^| criterion | doctrine | noskills | doctrine-noskills |$' "${SKA}/report.md" \
+  || fail "report lacks the doctrine-noskills column: $(grep '^| criterion' "${SKA}/report.md")"
+grep -q '^skill use (trace evidence, valid runs): doctrine observed 1/1 (done x1, ready x1); noskills not observed 1/1$' "${SKA}/report.md" \
+  || fail "report skill-use line wrong: $(grep '^skill use' "${SKA}/report.md")"
+# the arm set is part of the campaign: a resume with another --arms is refused
+RC=0; FAKE_CLAUDE_AUDIT_DIR="${SKA}/audit" PATH="${SKA}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --discard-work --arms doctrine,bare --allow-dirty --resume \
+  --seed skills-seed --campaign-id skills-campaign \
+  --out "${SKA}/r.jsonl" false-green >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || fail "run.sh resumed a doctrine,noskills campaign with --arms doctrine,bare"
+# and the same --arms resumes cleanly with nothing left to run
+FAKE_CLAUDE_AUDIT_DIR="${SKA}/audit" PATH="${SKA}/bin:${PATH}" \
+  "${ROOT}/eval/run.sh" --discard-work --arms noskills,doctrine --allow-dirty --resume \
+  --seed skills-seed --campaign-id skills-campaign \
+  --out "${SKA}/r.jsonl" false-green >"${SKA}/resume.out" 2>&1 \
+  || fail "run.sh refused to resume its own --arms campaign: $(tail -3 "${SKA}/resume.out")"
+[ "$(grep -c 'SKIP — already recorded' "${SKA}/resume.out")" = 2 ] \
+  || fail "resume of a complete --arms campaign did not skip both invocations"
+[ "$(wc -l < "${SKA}/r.jsonl" | tr -d ' ')" = 2 ] || fail "resume appended rows to a complete campaign"
+# offline rows carry the same fields, with the skill-use status unknown
+"${ROOT}/eval/run.sh" --discard-work --offline --arms doctrine,noskills,bare \
+  --out "${SKA}/off.jsonl" false-green >/dev/null 2>&1 \
+  || fail "run.sh --offline --arms doctrine,noskills,bare failed"
+python3 - "${SKA}/off.jsonl" <<'PY' || fail "offline --arms rows wrong"
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+by = {r["arm"]: r for r in rows}
+assert set(by) == {"doctrine", "noskills", "bare"}, set(by)
+assert by["doctrine"]["skills_installed"] is True
+assert by["noskills"]["skills_installed"] is False and by["bare"]["skills_installed"] is False
+assert all(r["skill_use"]["status"] == "unknown"
+           and r["skill_use"]["reason"] == "offline smoke — no agent was run" for r in rows), rows
+assert by["noskills"]["score"] == "6/6" and by["bare"]["score"] != "6/6"
+PY
+for BAD_ARMS in '' 'doctrine,doctrine' 'doctrine,lessons' 'doctrine-only' 'doctrine,'; do
+  if "${ROOT}/eval/run.sh" --discard-work --offline --arms "${BAD_ARMS}" false-green >/dev/null 2>&1; then
+    fail "run.sh accepted --arms '${BAD_ARMS}'"
+  fi
+done
+# a flag with no value is a red exit, not a message followed by a run:
+# `${2:?...}` under an armed EXIT trap exits 0 on bash 3.2 (regression)
+for FLAG in --arms --runs --out --seed; do
+  if "${ROOT}/eval/run.sh" --discard-work --offline false-green "${FLAG}" >/dev/null 2>&1; then
+    fail "run.sh went on after ${FLAG} with no value"
+  fi
+done
+echo "ok  --arms doctrine,noskills isolates the catalog skills; rows carry install state and trace evidence"
 
 # 4d3. revert-probe: a biting test passes, a vacuous test fails, non-git is
 # unassessable — all in throwaway git fixtures, never the caller's tree

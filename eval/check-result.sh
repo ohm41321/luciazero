@@ -20,9 +20,12 @@ case "${PROVIDER}" in
   *) echo "usage: check-result.sh [--provider claude|codex] <agent.log>" >&2; exit 2 ;;
 esac
 LOG="${1:?usage: check-result.sh [--provider claude|codex] <agent.log>}"
-python3 - "${PROVIDER}" "${LOG}" <<'PY'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 - "${PROVIDER}" "${LOG}" "${SCRIPT_DIR}" <<'PY'
 import json, sys
-provider, path = sys.argv[1:3]
+provider, path, script_dir = sys.argv[1:4]
+sys.path.insert(0, script_dir)
+from agent_log import load_claude_log, stream_result
 try:
     raw = open(path).read()
 except OSError as e:
@@ -65,12 +68,19 @@ if provider == "codex":
         sys.exit("INVALID: Codex log has no turn.completed event")
     sys.exit(0)
 
-try:
-    d = json.loads(raw)
-except ValueError:
-    # plain-text output (an EVAL_CLAUDE_ARGS override without
-    # --output-format json): no structured signal to refute the run
+shape, payload = load_claude_log(raw)
+if shape == "text":
+    # plain-text output (an EVAL_CLAUDE_ARGS override without a JSON output
+    # format): no structured signal to refute the run
     sys.exit(0)
+if shape == "stream":
+    # --output-format stream-json: the result object is the last event; a
+    # stream that never reached one is a run that died before finishing
+    d = stream_result(payload)
+    if d is None:
+        sys.exit("INVALID: stream-json log has no result event")
+else:
+    d = payload
 if not isinstance(d, dict):
     sys.exit("INVALID: result log is JSON but not an object")
 if d.get("is_error") is True:

@@ -43,7 +43,9 @@ transcript. `false-green` is the `/done` outcome test; `pipeline` and
 `flaky-report` probe `/debug` outcomes; `relay-transfer` probes
 `/lucia-relay`. Only Relay produces a durable artifact whose protocol can be
 graded directly. The other tasks cannot prove that a specific skill was
-invoked, and the documentation does not claim that they do.
+invoked, and the documentation does not claim that they do. What a row does
+carry, next to the grades, is trace evidence of skill invocation — see
+[Skills: the ablation pair and what the trace can say](#skills-the-ablation-pair-and-what-the-trace-can-say).
 
 ## Running
 
@@ -56,6 +58,8 @@ eval/run.sh --provider codex --model gpt-5.6-terra \
   --reasoning-effort medium --seed 20260812 --campaign-id terra-screen-v1 \
   --use-login --out terra.jsonl
 eval/run.sh --with-lessons --runs 5 --out r.jsonl   # + third arm (see below)
+eval/run.sh --arms doctrine,noskills --runs 5 --out skills.jsonl \
+  false-green pipeline flaky-report       # the skills-ablation pair (see below)
 eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
 eval/run.sh --offline --discard-work       # same, and nothing left in TMPDIR
 eval/run.sh --resume --campaign-id c1 --seed s1 --runs 3 \
@@ -81,7 +85,8 @@ Arm A (historically labeled `doctrine` in JSON output) installs the full classic
 Luciazero pack without hooks—doctrine, skills, and reviewer—into a sandbox
 config home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); arm B runs with an empty
 config. This measures the installed
-bundle, not a doctrine-only ablation. Same prompt, same fixture, same grader. `--with-lessons`
+bundle, not a doctrine-only ablation; for that, `--arms doctrine,noskills`
+runs the pair below instead. Same prompt, same fixture, same grader. `--with-lessons`
 adds a third arm to every task that ships a `lessons.md`: doctrine install
 *plus* the task's ledger pre-seeded as `docs/lessons.md` in the work copy —
 the A/B/C comparison that tests whether `/retro`'s learning layer actually
@@ -143,11 +148,97 @@ Real runs refuse a dirty checkout by default because a commit cannot reproduce
 uncommitted treatment or fixture changes. `--allow-dirty` exists for private
 diagnostics; rows record `repository_dirty: true` and must not be published.
 
+## Skills: the ablation pair and what the trace can say
+
+`doctrine` versus `bare` measures the whole pack. To measure what the
+thirteen catalog skills add on top of the doctrine, `--arms doctrine,noskills`
+runs a pair whose only difference is those skills:
+
+| Arm | Doctrine | Catalog skills | Reviewer agent | Hooks |
+|---|---|---|---|---|
+| `doctrine` | yes | yes | yes | no |
+| `noskills` | yes | **removed by name after the install** | yes | no |
+| `bare` | no | no | no | no |
+
+`noskills` is the same installer run as `doctrine`, followed by removing
+each name in `skills/catalog.txt` (and `aliases.txt`) from the sandbox's
+`skills/` directory — under Codex the reviewer is a skill directory too, and
+it stays. Nothing else about the arms differs; the eval gate proves the
+arrangement for both harnesses with fake CLIs that audit their sandbox. Two
+caveats travel with the pair: the doctrine text names the skills
+(`procedure: /done`), so in `noskills` the model reads about a command it
+does not have — that is the ablation, not a bug, but read the traces before
+attributing a delta; and Claude Code ships built-in skills of its own
+(`debug`, `verify`, `code-review`, … — its init event lists them, seen from a
+sandbox with nothing installed), so for `debug` the pair compares
+Luciazero's `/debug` with the harness's, not with nothing.
+
+Every row records what the sandbox held (`skills_installed`, read from the
+sandbox, not from the arm's name) and what the trace showed
+(`skill_use`, from `eval/skill_use.py` over the provider log):
+
+- `observed` — the log names a catalog skill through a channel the trace
+  shows: a `Skill` tool call, the skill body the harness injects after one
+  (`Base directory for this skill: …`), a `Read` of a `SKILL.md`, or a shell
+  command running a skill script. `names` lists the skills; `evidence` has
+  one object per distinct observation — `channel` (`Skill`, `Read`, `Bash`,
+  or `command` under Codex), `name`, `path` (the fragment from `skills/`
+  on), and `source`: `sandbox` when the path resolved to the sandbox
+  install, `other` when it resolved elsewhere (a built-in of the same name),
+  `unresolved` when a `Skill` call was never followed by a body. Evidence
+  carries skill names and path fragments only — never prompt text, file
+  content or command output.
+- `not observed` — the log carries assistant messages (Claude) or completed
+  turns (Codex) and none of them show one.
+- `unknown` — the log carries no tool events at all: the single result
+  object of `--output-format json`, plain text, an empty file, or an offline
+  smoke row. The trace cannot say either way, and the row says so with a
+  `reason`.
+- `visible` — the catalog skills the harness listed in its init event, or
+  null when the log has no such list.
+
+Read these as evidence, not as a criterion. Installed is not used: a skill can
+sit in the sandbox and never be invoked. Not observed is not unread: a harness
+can put a skill's description in front of the model without any tool call
+appearing in the trace. `report.sh` prints the per-arm counts under each
+task's table (`observed 3/5 (done x3, ready x1)`, `not observed 2/5`,
+`unknown 5/5 — result-only log (no tool events)`), counting a name per run
+and per source, so `debug x2, debug x1*` is two runs whose `debug` evidence
+tied to the sandbox install and one whose evidence never did.
+`eval/evidence.py` and the campaign registry still know only `doctrine`,
+`bare` and `lessons`; a `noskills` campaign is read through `report.sh`.
+
+Which tasks to run for which skill — matched on the grader's criteria, not on
+the task's theme:
+
+| Skill | Task | Criteria that would move | Gap |
+|---|---|---|---|
+| `/done` | `false-green` | `regression-red` (what `revert-probe.sh` checks), `pristine-tests`, `no-debug-leftovers` | — |
+| `/debug` | `flaky-report`, `pipeline` | `deterministic-suite`, `pristine-sweep`; `root-cause`, `locality`, `regression-red` | the built-in `debug` sits in both arms |
+| `/ready` | none | — | every fixture ships a discoverable green suite, so "no verify command exists" never arises; a fixture with no tests and a grader that requires a biting one is needed first |
+| `/bisect` | none | — | needs a fixture with a regression history (`setup.sh` building a Git log whose first bad commit is the planted one) |
+
+Before the first real pair: check how the runs are charged. `--use-login`
+runs on the subscription's usage windows, and the `total_cost_usd` in the
+result object is the CLI's estimate, not a bill. Run one invocation
+(`eval/run.sh --use-login --arms noskills false-green --runs 1 --out
+probe.jsonl`), compare the account's usage before and after, and only then
+size the pilot; three runs per arm on three tasks is eighteen invocations,
+and the honesty box below still applies to three.
+
 Current rows use result schema 2. Every invocation records a UTC timestamp,
 campaign/pair/invocation IDs, repository commit and dirty state, task and prompt
 SHA-256, requested model, observed model, CLI version, reasoning effort, OS and
 architecture, and the exact non-prompt runner profile (including any
-`EVAL_CLAUDE_ARGS` override). Arm order is deterministically randomized within
+`EVAL_CLAUDE_ARGS` override; the default asks Claude for `--output-format
+stream-json --verbose`, every event with the result object last, which is
+what the skill-use reader and the usage parse consume, and keeps the CLI's
+stderr in `trace/agent.stderr` so a warning never lands in the stream — a
+`json` override still yields usage, with skill use `unknown`). `--resume`
+compares the runner profile, so a campaign recorded before this default
+resumes only under the old one: `EVAL_CLAUDE_ARGS="--permission-mode
+bypassPermissions --max-turns 40 --output-format json"`. Arm order is
+deterministically randomized within
 each task/run from `--seed`, then stored in every row. This reduces fixed-order
 bias and lets another operator reconstruct the ordering without revealing
 credentials. Never put credentials in `EVAL_CLAUDE_ARGS`; its value becomes

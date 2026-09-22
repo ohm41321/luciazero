@@ -17,10 +17,18 @@ RESULTS = ROOT / "eval" / "results"
 REGISTRY = RESULTS / "campaigns.json"
 BEGIN = "<!-- BEGIN GENERATED: benchmark-evidence -->"
 END = "<!-- END GENERATED: benchmark-evidence -->"
+# The arms a campaign can run per task (eval/run.sh --arms), and the set a
+# registry entry means when it names none. The lessons arm is per task.
+BASE_ARMS = ("doctrine", "noskills", "bare")
+DEFAULT_ARMS = ["doctrine", "bare"]
 
 
-def load_registry() -> list[dict]:
-    data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+def campaign_arms(campaign: dict) -> list[str]:
+    return list(campaign.get("arms") or DEFAULT_ARMS)
+
+
+def load_registry(registry: Path = REGISTRY) -> list[dict]:
+    data = json.loads(registry.read_text(encoding="utf-8"))
     if (not isinstance(data, dict) or data.get("schema_version") != 1
             or not isinstance(data.get("campaigns"), list)):
         raise SystemExit("FAIL: eval/results/campaigns.json has an unsupported schema")
@@ -55,6 +63,12 @@ def load_registry() -> list[dict]:
                 or any(not isinstance(task, str) or task not in tasks for task in lessons)
                 or len(lessons) != len(set(lessons))):
             raise SystemExit(f"FAIL: {source} has malformed lessons_tasks")
+        arms = campaign.get("arms")
+        if arms is not None and (
+                not isinstance(arms, list) or not arms
+                or any(arm not in BASE_ARMS for arm in arms)
+                or len(arms) != len(set(arms))):
+            raise SystemExit(f"FAIL: {source} has malformed arms (each of {', '.join(BASE_ARMS)} at most once)")
         runs = campaign.get("expected_runs_per_cell")
         model_rows = campaign.get("expected_model_rows")
         result_schema = campaign.get("expected_result_schema")
@@ -67,7 +81,7 @@ def load_registry() -> list[dict]:
         expected_invalid = campaign.get("expected_invalid")
         if not isinstance(expected_invalid, dict):
             raise SystemExit(f"FAIL: {source} has malformed expected_invalid")
-        valid_cells = {f"{task}/{arm}" for task in tasks for arm in ("doctrine", "bare")}
+        valid_cells = {f"{task}/{arm}" for task in tasks for arm in campaign_arms(campaign)}
         valid_cells.update(f"{task}/lessons" for task in lessons)
         for cell, count in expected_invalid.items():
             if (cell not in valid_cells or isinstance(count, bool)
@@ -147,7 +161,7 @@ def validate_campaign_rows(campaign: dict, rows: list[dict], path: Path) -> None
     expected_cells = {
         (task, arm)
         for task in campaign["tasks"]
-        for arm in ("doctrine", "bare")
+        for arm in campaign_arms(campaign)
     }
     expected_cells.update((task, "lessons") for task in campaign["lessons_tasks"])
     actual_cells = {(row["task"], row["arm"]) for row in rows}
@@ -218,7 +232,7 @@ def validate_campaign_rows(campaign: dict, rows: list[dict], path: Path) -> None
             orders = {tuple(row["arm_order"]) for row in pair}
             if len(orders) != 1:
                 raise SystemExit(f"FAIL: {path}: inconsistent arm_order in {pair_id}")
-            expected_arms = {"doctrine", "bare"}
+            expected_arms = set(campaign_arms(campaign))
             if pair[0]["task"] in campaign["lessons_tasks"]:
                 expected_arms.add("lessons")
             task = pair[0]["task"]
@@ -270,14 +284,103 @@ def percent(rows: list[dict]) -> int:
     return int(100 * sum(passed(row) for row in rows) / len(rows) + 0.5)
 
 
-def valid_range(rows: list[dict], tasks: list[str]) -> str:
+def valid_range(rows: list[dict], tasks: list[str], arms=("doctrine", "bare")) -> str:
     counts = [len(arm_rows(rows, arm, task))
-              for task in tasks for arm in ("doctrine", "bare")]
+              for task in tasks for arm in arms]
     return str(counts[0]) if len(set(counts)) == 1 else f"{min(counts)}–{max(counts)}"
 
 
+def with_arms(campaigns: list[dict], *arms: str) -> list[dict]:
+    """The campaigns that ran every one of these arms: a table comparing two
+    arms lists only campaigns that have both."""
+    return [campaign for campaign in campaigns
+            if all(arm in campaign_arms(campaign) for arm in arms)]
+
+
 def claude_campaigns(campaigns: list[dict]) -> list[dict]:
-    return [campaign for campaign in campaigns if campaign["provider"] == "claude"]
+    return with_arms(
+        [campaign for campaign in campaigns if campaign["provider"] == "claude"],
+        "doctrine", "bare")
+
+
+def skill_use_cell(rows: list[dict]) -> str:
+    """How many valid runs showed a catalog skill in their trace, out of the
+    runs whose trace could say (eval/skill_use.py); em dash when no row
+    carries the record (older runners) or none could say."""
+    known = [row for row in rows
+             if isinstance(row.get("skill_use"), dict)
+             and row["skill_use"].get("status") in ("observed", "not observed")]
+    if not known:
+        return "—"
+    observed = sum(row["skill_use"]["status"] == "observed" for row in known)
+    return f"{observed}/{len(known)}"
+
+
+def skills_ablation(campaigns: list[dict], data: dict[str, list[dict]],
+                    thai: bool = False, per_task: bool = False) -> list[str]:
+    """The doctrine-vs-noskills pair, for every campaign that ran both: the
+    same install with and without the catalog skills, so the delta is what
+    the skill bodies add. Empty when no campaign ran the pair."""
+    paired = with_arms(campaigns, "doctrine", "noskills")
+    if not paired:
+        return []
+    if thai:
+        lines = [
+            "### ผลของ skills (doctrine กับ doctrine ที่ไม่มี skills)",
+            "",
+            "ทั้งสอง arm ติดตั้งชุดเดียวกัน — doctrine, reviewer, ไม่มี hook — ต่างกันเฉพาะ",
+            "catalog skills ที่ถูกถอดออกใน arm `noskills` ผลต่างจึงเป็นสิ่งที่ตัว skill",
+            "เพิ่มให้ (ข้อความ doctrine ยังเอ่ยชื่อ skill อยู่ และ skill ในตัวของ harness",
+            "มีทั้งสอง arm) คอลัมน์ skill use คือจำนวน run ที่ valid ของ arm ที่มี skills",
+            "ซึ่ง trace แสดงการเรียก catalog skill (ติดตั้งแล้วไม่ได้แปลว่าถูกใช้)",
+            "",
+            "| โมเดล | จำนวน task | มี skills | ไม่มี skills | ผลต่าง | skill use | valid run ต่อ task | สถานะ |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    else:
+        lines = [
+            "### Skills ablation (doctrine with and without the catalog skills)",
+            "",
+            "Both arms get the same install — doctrine, reviewer, no hooks — and differ",
+            "only in the catalog skills, removed in the `noskills` arm, so the delta is",
+            "what the skill bodies add: the doctrine text still names them, and the",
+            "harness's own built-in skills sit in both arms. The skill-use column counts",
+            "the valid runs of the with-skills arm whose trace shows a catalog skill",
+            "being invoked (installed is not used).",
+            "",
+            "| Model | Tasks | With skills | Without skills | Difference | Skill use | Valid runs per task | Status |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    for campaign in paired:
+        rows = data[campaign["id"]]
+        doctrine = arm_rows(rows, "doctrine")
+        noskills = arm_rows(rows, "noskills")
+        delta = (f"{percent(doctrine) - percent(noskills):+d}pp"
+                 if doctrine and noskills else "n/a")
+        lines.append(
+            f"| {campaign['display_model']} | {len(campaign['tasks'])} | "
+            f"{rate_cell(doctrine)} | {rate_cell(noskills)} | "
+            f"{delta} | {skill_use_cell(doctrine)} | "
+            f"{valid_range(rows, campaign['tasks'], ('doctrine', 'noskills'))} | "
+            f"{campaign['status']} |"
+        )
+    if per_task:
+        for campaign in paired:
+            rows = data[campaign["id"]]
+            lines += ["", f"#### {campaign['display_model']}: per task", "",
+                      "| Task | With skills | Without skills | Difference | Skill use |",
+                      "|---|---:|---:|---:|---:|"]
+            for task in campaign["tasks"]:
+                doctrine = arm_rows(rows, "doctrine", task)
+                noskills = arm_rows(rows, "noskills", task)
+                delta = (f"{percent(doctrine) - percent(noskills):+d}pp"
+                         if doctrine and noskills else "n/a")
+                lines.append(
+                    f"| {task} | {sum(passed(row) for row in doctrine)}/{len(doctrine)} | "
+                    f"{sum(passed(row) for row in noskills)}/{len(noskills)} | {delta} | "
+                    f"{skill_use_cell(doctrine)} |"
+                )
+    return lines
 
 
 def featured_codex(campaigns: list[dict]) -> dict:
@@ -331,6 +434,11 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "†Model provenance is incomplete for Haiku: only 70/140 rows encode model",
         "identity. The other 70 are attributed at campaign-file/report level and",
         "cannot be independently verified per row.",
+    ]
+    ablation = skills_ablation(campaigns, data)
+    if ablation:
+        lines += [""] + ablation
+    lines += [
         "",
         "### GPT/Codex pilot — exploratory",
         "",
@@ -383,6 +491,7 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
                  .replace("Valid invocations", "invocation ที่ valid")
                  .replace("Paired tasks", "task ที่จับคู่ได้")
                  .replace("Observed difference", "ผลต่างที่พบ"))
+    ablation = skills_ablation(campaigns, data, thai=True)
     return "\n".join(
         [
             "### ผล Claude",
@@ -404,6 +513,9 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
             "†Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก",
             "model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign",
             "จึงตรวจสอบโมเดลซ้ำแบบราย row ไม่ได้",
+        ]
+        + ([""] + ablation if ablation else [])
+        + [
             "",
             "### GPT/Codex pilot — ผลสำรวจเบื้องต้น",
             "",
@@ -477,6 +589,12 @@ def benchmark_doc(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
             if lessons:
                 lines[-1] += " |"
         lines += ["", f"Raw: [`{campaign['file']}`](../eval/results/{campaign['file']}) · SHA-256 `{campaign['sha256']}`"]
+    ablation = skills_ablation(campaigns, data, per_task=True)
+    if ablation:
+        lines += [""] + ablation
+        for campaign in with_arms(campaigns, "doctrine", "noskills"):
+            if campaign not in claude:
+                lines += ["", f"Raw: [`{campaign['file']}`](../eval/results/{campaign['file']}) · SHA-256 `{campaign['sha256']}`"]
     terra = featured_codex(campaigns)
     rows = data[terra["id"]]
     lines += [

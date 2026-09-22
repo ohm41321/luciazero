@@ -10,7 +10,10 @@ Each task starts from the same planted bug. The `doctrine` arm (its historical
 JSON label) receives the classic Luciazero install without hooks: doctrine,
 skills, and reviewer. The bare arm receives none of them. Both receive the same
 prompt and are graded from the final tree by an offline deterministic grader.
-This is a treatment-bundle comparison, not a doctrine-only ablation.
+This is a treatment-bundle comparison, not a doctrine-only ablation. A
+`noskills` arm (the same install with the catalog skills removed; doctrine
+and reviewer stay) isolates the skills against `doctrine`; a campaign that
+ran that pair renders a skills-ablation table below.
 Tasks may run an offline deterministic `setup.sh` before either arm when the
 scenario needs local state that cannot live in a fixture, such as a Git
 repository. Provider transcripts stay outside the worked tree and are never

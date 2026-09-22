@@ -294,6 +294,36 @@ echo "ok  Codex non-zero result preserves structured reason"
 SFX="$(mktemp -d)"
 mkdir -p "${SFX}/bin" "${SFX}/real-home" "${SFX}/audit"
 printf '{"fake":"auth"}\n' > "${SFX}/real-home/auth.json"
+# arm_diff_is_catalog_only <doctrine.files> <noskills.files>: the two
+# inventories (cksum lines) differ only by files under skills/<name>/ or
+# .luciazero-managed/skills/<name>/ for a catalog name, every catalog name
+# lost at least one file, and noskills added nothing.
+arm_diff_is_catalog_only() {
+  python3 - "$1" "$2" "${ROOT}/skills/catalog.txt" "${ROOT}/skills/aliases.txt" <<'PY'
+import re, sys
+full, stripped = (set(open(p).read().splitlines()) for p in sys.argv[1:3])
+catalog = set()
+for path in sys.argv[3:5]:
+    for line in open(path):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            catalog.add(line)
+added = stripped - full
+if added:
+    sys.exit(f"noskills holds files doctrine does not: {sorted(added)[:5]}")
+lost = {}
+for line in full - stripped:
+    path = line.split(None, 2)[2]
+    m = re.match(r"\./(\.luciazero-managed/)?skills/([^/]+)/", path)
+    if not m or m.group(2) not in catalog:
+        sys.exit(f"doctrine and noskills differ outside the catalog skills: {path}")
+    lost.setdefault(m.group(2), 0)
+    lost[m.group(2)] += 1
+missing = catalog - set(lost)
+if missing:
+    sys.exit(f"noskills still holds every file of {sorted(missing)}")
+PY
+}
 cat > "${SFX}/bin/codex" <<'FAKECODEXOK'
 #!/bin/sh
 if [ "${1:-}" = --version ]; then
@@ -319,6 +349,8 @@ AUTH=no
     "${AUTH}" "${PACK}" "${CODEX_API_KEY:+present}" "${CATALOG}" "${REVIEWER}"
   for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
 } > "${FAKE_CODEX_AUDIT_DIR}/${ARM}.txt"
+# every file the home holds, with a checksum, so two arms can be diffed
+(cd "${CODEX_HOME}" && find . -type f | sort | xargs cksum) > "${FAKE_CODEX_AUDIT_DIR}/${ARM}.files"
 if [ "${FAKE_CODEX_BAD_USAGE:-0}" = 1 ]; then
   printf '%s\n' \
     '{"type":"turn.started"}' \
@@ -377,6 +409,14 @@ grep -qx 'reviewer=yes' "${SFX}/audit/noskills.txt" \
   || { rm -rf "${SFX}"; fail "noskills Codex home lost the reviewer skill"; }
 grep -qx 'catalog=0' "${SFX}/audit/noskills.txt" \
   || { rm -rf "${SFX}"; fail "noskills Codex home kept catalog skills: $(grep '^catalog=' "${SFX}/audit/noskills.txt")"; }
+# the pair differs in the catalog skills and nothing else: same command
+# line (model, reasoning, sandbox flags), same files with the same content
+# everywhere but under skills/<catalog>/ and its managed copy
+if ! diff <(grep -v '^catalog=' "${SFX}/audit/doctrine.txt") <(grep -v '^catalog=' "${SFX}/audit/noskills.txt") >/dev/null; then
+  rm -rf "${SFX}"; fail "doctrine and noskills Codex invocations differ beyond the catalog count: $(diff "${SFX}/audit/doctrine.txt" "${SFX}/audit/noskills.txt" | head -5)"
+fi
+arm_diff_is_catalog_only "${SFX}/audit/doctrine.files" "${SFX}/audit/noskills.files" \
+  || { rm -rf "${SFX}"; fail "Codex doctrine/noskills homes differ beyond the catalog skills"; }
 if grep -R -q 'test-key-never-log' "${SFX}/audit" "${SFX}/ok.jsonl"; then
   rm -rf "${SFX}"; fail "Codex credential value leaked into eval artifacts"
 fi
@@ -830,6 +870,8 @@ if [ "${SKILLS}" != 0 ]; then ARM=doctrine; fi
     "${DOCTRINE}" "${REVIEWER}" "${HOOKS}" "${SKILLS}"
   for ARG in "$@"; do printf 'arg=%s\n' "${ARG}"; done
 } > "${FAKE_CLAUDE_AUDIT_DIR}/${ARM}.txt"
+# every file the sandbox holds, with a checksum, so two arms can be diffed
+(cd "${CFG}" && find . -type f | sort | xargs cksum) > "${FAKE_CLAUDE_AUDIT_DIR}/${ARM}.files"
 echo 'warning: a line the real CLI prints on stderr' >&2
 printf '%s\n' '{"type":"system","subtype":"init","skills":["code-review","debug","verify"]}'
 if [ "${SKILLS}" != 0 ]; then
@@ -864,6 +906,14 @@ grep -qx "skills=${CATALOG_N}" "${SKA}/audit/doctrine.txt" \
   || fail "doctrine sandbox skill count: $(grep '^skills=' "${SKA}/audit/doctrine.txt"), want ${CATALOG_N}"
 grep -qx 'skills=0' "${SKA}/audit/noskills.txt" \
   || fail "noskills sandbox kept skills: $(grep '^skills=' "${SKA}/audit/noskills.txt")"
+# the pair differs in the catalog skills and nothing else: the same command
+# line reached the CLI (the prompt is the same file), and the sandboxes hold
+# the same files with the same content everywhere but under skills/<catalog>/
+# and its managed copy — doctrine text, reviewer agent, settings included
+diff <(grep -v '^skills=' "${SKA}/audit/doctrine.txt") <(grep -v '^skills=' "${SKA}/audit/noskills.txt") >/dev/null \
+  || fail "doctrine and noskills claude invocations differ beyond the skill count: $(diff "${SKA}/audit/doctrine.txt" "${SKA}/audit/noskills.txt" | head -5)"
+arm_diff_is_catalog_only "${SKA}/audit/doctrine.files" "${SKA}/audit/noskills.files" \
+  || fail "claude doctrine/noskills sandboxes differ beyond the catalog skills"
 python3 - "${SKA}/r.jsonl" <<'PY' || fail "skills-ablation rows wrong"
 import json, sys
 rows = [json.loads(line) for line in open(sys.argv[1])]

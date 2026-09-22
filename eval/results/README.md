@@ -5,6 +5,14 @@ is the registry: it records each file's SHA-256, publication status, expected
 schema and task/arm/run identities, row and invalid counts, model-identity
 coverage, and historical limitations.
 
+A campaign that ran an arm set other than `doctrine,bare` names it in the
+registry (`"arms": ["doctrine", "noskills"]`, each of `doctrine`, `noskills`,
+`bare` at most once); the row checks, the `expected_invalid` cells and the
+generated tables follow that set. A campaign with both `doctrine` and
+`noskills` renders the skills-ablation table, with the skill-use count read
+from the rows' trace evidence; one without `bare` stays out of the
+doctrine-versus-bare tables.
+
 Do not edit a published JSONL file. Add a new campaign instead. Then run:
 
 ```bash

@@ -76,9 +76,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `check-result.sh` and the usage parse read that shape as well as the single
   result object. A campaign recorded under the old profile resumes with the
   old profile: `EVAL_CLAUDE_ARGS="--permission-mode bypassPermissions
-  --max-turns 40 --output-format json"`. `evidence.py` and the campaign
-  registry still know only `doctrine`, `bare` and `lessons`, so a
-  `noskills` campaign is read through `report.sh` for now.
+  --max-turns 40 --output-format json"`.
+- The campaign registry takes an optional `arms` list (each of `doctrine`,
+  `noskills`, `bare` at most once; default `doctrine,bare`): `evidence.py`
+  checks a campaign's cells, invalid counts and seeded arm order against it,
+  keeps a campaign without `bare` out of the doctrine-versus-bare tables, and
+  renders a skills-ablation table (with and without the catalog skills, the
+  delta, and how many valid with-skills runs showed a skill in their trace)
+  in both READMEs and `docs/benchmark.md` for every campaign that ran
+  `doctrine` and `noskills`. The eval gate proves the pair differs only in
+  the skills: the fake CLIs inventory their sandbox with checksums and
+  record their arguments, and doctrine and noskills may differ only under
+  `skills/<catalog name>/` and its managed copy.
 - Stats rows are schema 3: `telemetry.verify_ms` (time spent inside verify
   commands) and `telemetry.redundant_green_count` (green verify runs that
   followed a green with no code edit between them). `luciazero discipline`

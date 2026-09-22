@@ -204,9 +204,17 @@ appearing in the trace. `report.sh` prints the per-arm counts under each
 task's table (`observed 3/5 (done x3, ready x1)`, `not observed 2/5`,
 `unknown 5/5 — result-only log (no tool events)`), counting a name per run
 and per source, so `debug x2, debug x1*` is two runs whose `debug` evidence
-tied to the sandbox install and one whose evidence never did.
-`eval/evidence.py` and the campaign registry still know only `doctrine`,
-`bare` and `lessons`; a `noskills` campaign is read through `report.sh`.
+tied to the sandbox install and one whose evidence never did. To publish a
+pair, register the campaign with `"arms": ["doctrine", "noskills"]`
+([results/README.md](results/README.md)); `evidence.py` then checks its cells
+against that set and renders the skills-ablation table in both READMEs and
+`docs/benchmark.md`.
+
+The eval gate proves the pair differs only in the skills: the fake CLIs
+inventory their sandbox (every file, checksummed) and record their command
+line, and the doctrine and noskills inventories may differ only under
+`skills/<catalog name>/` and its managed copy — same doctrine text, reviewer,
+settings, hooks (none) and arguments.
 
 Which tasks to run for which skill — matched on the grader's criteria, not on
 the task's theme:

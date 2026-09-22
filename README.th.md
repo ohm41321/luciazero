@@ -26,9 +26,10 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
-เอกสารใน checkout นี้อธิบาย source ปัจจุบัน รวมรายการใน
-[`Unreleased`](CHANGELOG.md#unreleased) โดย manifest ยังระบุ **2.5.1**
-คำสั่งที่ยังไม่ release ต้องใช้จาก checkout นี้จนกว่าจะเผยแพร่เวอร์ชันใหม่
+checkout นี้คือ tree ของ **2.6.0**: manifest กับรายการบนสุดใน
+[changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
+eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
+skills-ablation กับ model จริง
 
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก

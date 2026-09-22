@@ -26,9 +26,10 @@ Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
 
-This checkout documents the current source, including changes under
-[`Unreleased`](CHANGELOG.md#unreleased). The manifests still declare **2.5.1**;
-unreleased commands require this checkout until a new version is published.
+This checkout is the **2.6.0** tree: the manifests and the top
+[changelog](CHANGELOG.md) entry agree, and this document describes that
+source. Its twelve eval fixtures pass offline under `./test.sh`; no real-model
+skills-ablation pilot has run yet.
 
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.

@@ -90,11 +90,15 @@ for SHA in $(git -C "${RHW}" rev-list --reverse "v1.0^..HEAD"); do
   (cd "${RHC}" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s . -p 'test_*.py' >/dev/null 2>&1) \
     || fail "regression-history: suite red at $(git -C "${RHW}" log -1 --format=%s "${SHA}") — the bug would not have slipped through"
 done
-# git's "first bad commit" line is translated; read it under the C locale
+# the answer is read from refs/bisect/bad, which a finished run leaves on
+# the first bad commit, not from the "is the first bad commit" line: that
+# line is translated, and git 2.55 quotes the term ("first 'bad' commit")
 RHPROBE='import linewrap, sys; sys.exit(0 if linewrap.wrap("aaaa bbbb", 9) == ["aaaa bbbb"] else 1)'
 git -C "${RHW}" bisect start HEAD v1.0 >/dev/null 2>&1 || fail "regression-history: git bisect start failed"
-FOUND="$(LC_ALL=C git -C "${RHW}" bisect run python3 -c "${RHPROBE}" 2>&1 | sed -n 's/^\([0-9a-f]\{40\}\) is the first bad commit$/\1/p')"
-[ -n "${FOUND}" ] || fail "regression-history: bisect run named no first bad commit"
+OUT="$(git -C "${RHW}" bisect run python3 -c "${RHPROBE}" 2>&1)" \
+  || fail "regression-history: git bisect run failed: ${OUT}"
+FOUND="$(git -C "${RHW}" rev-parse --verify -q refs/bisect/bad 2>/dev/null || true)"
+[ -n "${FOUND}" ] || fail "regression-history: bisect run left no refs/bisect/bad: ${OUT}"
 [ "$(git -C "${RHW}" log -1 --format=%s "${FOUND}")" = "${PLANTED}" ] \
   || fail "regression-history: first bad commit is '$(git -C "${RHW}" log -1 --format=%s "${FOUND}")', not the planted refactor"
 # the bisect is still in progress: the reference fix on top of it is graded

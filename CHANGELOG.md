@@ -9,6 +9,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Two eval fixtures close the `/ready` and `/bisect` gaps in the
+  skill-coverage table. `no-verify` ships a project with no tests, no CI and
+  no verify command and a lexical version compare as its bug; the grader
+  finds a verify command by convention in the final tree (root script,
+  executable or run through bash; Makefile target; pytest when installed;
+  else test modules under unittest), requires it green — a unittest or
+  pytest run must report at least one test — red with the bug restored, and
+  named in a human-facing document, any candidate present counting. `regression-history` has `setup.sh` replay a
+  sixteen-commit Git history from `history/` overlays — suite green at every
+  commit, a "refactor" that wraps one column early planted under the
+  features built on it, `v1.0` good and `v1.1` bad — and grades the fix at
+  its source, the later features kept, consumers untouched, and no bisect,
+  detached HEAD or worktree left behind. `test.sh` proves the planted commit
+  is the first bad one under an exact-fit probe, that `project/` is the
+  history's final state, and that a bisect left in progress is graded red.
 - Lucia Relay is two commands per side. `relay.py draft --write` lands
   `LUCIA_RELAY.json` in the repository instead of printing it (stdout stays
   the default; an existing manifest or a planted symlink is refused), and

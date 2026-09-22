@@ -1,0 +1,16 @@
+01-wrapper	fixture: greedy line wrapper
+02-tests	test: cover greedy wrapping
+03-cli	feat: cli entrypoint
+04-report	feat: fixed-width status report
+05-usage	docs: command line and report usage
+06-changelog	docs: start a changelog	v1.0
+07-report-tests	test: report separators, width, and rejection
+08-contributing	docs: how to verify
+09-cli-env	feat: cli takes its default width from WRAP_WIDTH
+10-running-length	refactor: track the running line length instead of re-joining
+11-indent	feat: indent option
+12-indent-tests	test: cover the indent option
+13-long-words	feat: hard-break words longer than the room left
+14-cli-indent	feat: cli --indent
+15-docs-indent	docs: describe indent and long words
+16-release	chore: release 1.1	v1.1

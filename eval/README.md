@@ -37,12 +37,15 @@ and exit zero only on a full score.
 | `schema-migration` | schema upgrade drops extension fields and rewrites in place | preserve scope and contracts; verify failure paths (rules 2, 4, 7) | opaque fields, input immutability, invalid-file preservation, replace-failure injection, idempotence, and restored-bug probe |
 | `paginated-sync` | integration reads one page and can loop on cursors | trace the full contract across files and prove the edge (rules 2, 4, 6) | three-page cursor fidelity, cycle detection before repeated I/O, CLI completeness, immutability, and restored-bug probe |
 | `relay-transfer` | unfinished state must cross a session/agent/harness boundary without transcript dumping | `/lucia-relay` transfer outcome | explicit recipient route, canonical JSON + matching human view, exact red evidence, one literal next edit, negative knowledge, unchanged task files, and a matching repository fingerprint; generic prose and a stale fingerprint are rejected |
+| `no-verify` | the project ships no tests, no CI, and no verify command; the bug is a lexical version compare | a missing verification command is the first bug — create the smallest one that covers the change (rule 2, the `/ready` outcome) | a verify command found by convention from the final tree (root script, executable or run through bash; Makefile target; pytest when installed; else test modules under unittest), green on the worked tree — a unittest or pytest run must report at least one test — red with the bug restored, and named in a human-facing document (any candidate present counts, not only the one run first); a fix with no command, an import-only smoke script, and an undocumented test file are rejected |
+| `regression-history` | `setup.sh` builds a sixteen-commit history: suite green at every commit, a "refactor" commit plants an off-by-one that wraps one column early, features built on top of it, tag `v1.0` good and `v1.1` bad | find the first bad commit and fix it there, keep the repository usable (the `/bisect` outcome, rules 4+6) | exact-fit probes on the wrapper itself, the features shipped after the good tag still work, restored bug turns the worked suite red, consumers AST-identical, no bisect in progress / detached HEAD / extra worktree left behind; compensating in the consumer, reverting to `v1.0`, and fixing without a test are rejected; `test.sh` proves the planted commit is the first bad one under an exact-fit probe and that the suite was green at every commit since the good tag |
 
 The suite grades outcomes, not whether a slash command literally appeared in a
 transcript. `false-green` is the `/done` outcome test; `pipeline` and
-`flaky-report` probe `/debug` outcomes; `relay-transfer` probes
-`/lucia-relay`. Only Relay produces a durable artifact whose protocol can be
-graded directly. The other tasks cannot prove that a specific skill was
+`flaky-report` probe `/debug` outcomes; `no-verify` probes the `/ready`
+outcome and `regression-history` the `/bisect` outcome; `relay-transfer`
+probes `/lucia-relay`. Only Relay produces a durable artifact whose protocol
+can be graded directly. The other tasks cannot prove that a specific skill was
 invoked, and the documentation does not claim that they do. What a row does
 carry, next to the grades, is trace evidence of skill invocation — see
 [Skills: the ablation pair and what the trace can say](#skills-the-ablation-pair-and-what-the-trace-can-say).
@@ -226,8 +229,8 @@ the task's theme:
 |---|---|---|---|
 | `/done` | `false-green` | `regression-red` (what `revert-probe.sh` checks), `pristine-tests`, `no-debug-leftovers` | — |
 | `/debug` | `flaky-report`, `pipeline` | `deterministic-suite`, `pristine-sweep`; `root-cause`, `locality`, `regression-red` | the built-in `debug` sits in both arms |
-| `/ready` | none | — | no fixture specifically grades creating a missing verify command; a fixture with no tests and a grader that requires a biting one is needed first |
-| `/bisect` | none | — | needs a fixture with a regression history (`setup.sh` building a Git log whose first bad commit is the planted one) |
+| `/ready` | `no-verify` | `verify-exists`, `verify-green`, `regression-red`, `documented` | no campaign has run it yet |
+| `/bisect` | `regression-history` | `exact-fit-fixed`, `later-features-kept`, `locality`, `repo-clean-state` | no campaign has run it yet; the built-in `bisect` sits in both arms |
 
 Before the first real pair: check how the runs are charged. `--use-login`
 runs with the copied login; confirm its billing mode first. For a subscription

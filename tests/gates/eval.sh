@@ -67,6 +67,154 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   echo "ok  eval grader ${TN} red/green/anti-gamed"
 done
 
+# 4d1b. regression-history: the fixture's premise is a history whose first bad
+# commit is the planted refactor and whose suite was green at every commit
+# since the good tag — prove both from the replayed repository, not from the
+# overlay text; then prove repo-clean-state can go red (no gamed*/ overlay can
+# leave .git state behind, so the leftover bisect is staged here)
+RH="${ROOT}/eval/tasks/regression-history"
+mktmp RHW
+cp -R "${RH}/project/." "${RHW}/"
+"${RH}/setup.sh" "${RHW}"
+"${RH}/setup.sh" "${RHW}"
+[ "$(git -C "${RHW}" tag | paste -sd, -)" = "v1.0,v1.1" ] \
+  || fail "regression-history: expected tags v1.0 and v1.1, got $(git -C "${RHW}" tag | paste -sd, -)"
+[ -z "$(git -C "${RHW}" status --porcelain)" ] || fail "regression-history: setup.sh leaves the work copy dirty"
+PLANTED="refactor: track the running line length instead of re-joining"
+RHLOG="$(git -C "${RHW}" log --format=%s)"
+printf '%s\n' "${RHLOG}" | grep -qxF "${PLANTED}" || fail "regression-history: planted commit missing from the log"
+mktmp RHC
+for SHA in $(git -C "${RHW}" rev-list --reverse "v1.0^..HEAD"); do
+  rm -rf "${RHC:?}"/* "${RHC}"/.[!.]* 2>/dev/null || true
+  git -C "${RHW}" archive "${SHA}" | tar -x -C "${RHC}"
+  (cd "${RHC}" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s . -p 'test_*.py' >/dev/null 2>&1) \
+    || fail "regression-history: suite red at $(git -C "${RHW}" log -1 --format=%s "${SHA}") — the bug would not have slipped through"
+done
+# git's "first bad commit" line is translated; read it under the C locale
+RHPROBE='import linewrap, sys; sys.exit(0 if linewrap.wrap("aaaa bbbb", 9) == ["aaaa bbbb"] else 1)'
+git -C "${RHW}" bisect start HEAD v1.0 >/dev/null 2>&1 || fail "regression-history: git bisect start failed"
+FOUND="$(LC_ALL=C git -C "${RHW}" bisect run python3 -c "${RHPROBE}" 2>&1 | sed -n 's/^\([0-9a-f]\{40\}\) is the first bad commit$/\1/p')"
+[ -n "${FOUND}" ] || fail "regression-history: bisect run named no first bad commit"
+[ "$(git -C "${RHW}" log -1 --format=%s "${FOUND}")" = "${PLANTED}" ] \
+  || fail "regression-history: first bad commit is '$(git -C "${RHW}" log -1 --format=%s "${FOUND}")', not the planted refactor"
+# the bisect is still in progress: the reference fix on top of it is graded
+# red on repo-clean-state, and the line names why
+cp -R "${RH}/reference/." "${RHW}/"
+OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
+echo "${OUT}" | grep -qx 'CRIT repo-clean-state fail' \
+  || fail "regression-history: a bisect left in progress is not graded red: ${OUT}"
+echo "${OUT}" | grep -q 'bisect-in-progress' || fail "regression-history: leftover bisect not named: ${OUT}"
+git -C "${RHW}" checkout -q -- .
+git -C "${RHW}" bisect reset >/dev/null 2>&1 || fail "regression-history: git bisect reset failed"
+cp -R "${RH}/reference/." "${RHW}/"
+"${RH}/grade.sh" "${RHW}" >/dev/null 2>&1 || fail "regression-history: reference red after bisect reset"
+git -C "${RHW}" checkout -q -- .
+git -C "${RHW}" checkout -q --detach v1.1
+cp -R "${RH}/reference/." "${RHW}/"
+OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
+echo "${OUT}" | grep -q 'detached-HEAD' || fail "regression-history: detached HEAD not graded red: ${OUT}"
+echo "ok  regression-history history premises + leftover bisect graded red"
+
+# 4d1c. no-verify: the grader finds a verify command by convention, and
+# "green because nothing ran" is not green. Proved on trees an honest agent
+# leaves: tests under tests/ without __init__.py, a 0644 verify.sh run
+# through bash, a README naming the test module rather than `unittest`,
+# pytest-style tests with no configuration; and on a test module that runs
+# nothing, which fails verify-green (unittest itself exits 5 for that on
+# Python 3.12+; the grader's own test count is what carries older
+# interpreters, so this check cannot go red here by dropping the count
+# alone). The pytest branch runs against a stub `pytest` package on
+# PYTHONPATH — CI's interpreter has no pytest, and the stub prints the real
+# summary shape (`N passed in …`) the grader must parse — and proves it ran
+# by touching a marker file.
+NV="${ROOT}/eval/tasks/no-verify"
+nv_tree() {   # nv_tree VAR: a fresh work copy with the fixture history, in VAR
+  mktmp "$1"
+  cp -R "${NV}/project/." "${!1}/"
+  "${NV}/setup.sh" "${!1}"
+}
+nv_tree NVW
+cp -R "${NV}/reference/." "${NVW}/"
+mkdir "${NVW}/tests"
+{ printf 'import os, sys\nsys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))\n'
+  cat "${NVW}/test_versions.py"; } > "${NVW}/tests/test_versions.py"
+rm "${NVW}/test_versions.py"
+OUT="$("${NV}/grade.sh" "${NVW}" 2>&1)" || fail "no-verify: tests/ without __init__.py not discovered: ${OUT}"
+printf 'import unittest\n' > "${NVW}/tests/test_versions.py"
+OUT="$("${NV}/grade.sh" "${NVW}" 2>&1 || true)"
+echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+  || fail "no-verify: a test module that runs no tests counts as green: ${OUT}"
+nv_tree NVW
+cp "${NV}/reference/versions.py" "${NVW}/versions.py"
+cat > "${NVW}/verify.sh" <<'SH'
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")"
+python3 -c 'from versions import compare; assert compare("1.10", "1.9") == 1'
+SH
+chmod 0644 "${NVW}/verify.sh"
+{ cat "${NV}/project/README.md"; printf '\n## Verify\n\nRun: bash verify.sh\n'; } > "${NVW}/README.md"
+OUT="$("${NV}/grade.sh" "${NVW}" 2>&1)" || fail "no-verify: a 0644 verify.sh run through bash not accepted: ${OUT}"
+nv_tree NVW
+cp -R "${NV}/reference/." "${NVW}/"
+{ cat "${NV}/project/README.md"; printf '\n## Verify\n\nRun: python3 test_versions.py\n'; } > "${NVW}/README.md"
+OUT="$("${NV}/grade.sh" "${NVW}" 2>&1)" || fail "no-verify: a README naming the test module not accepted as documentation: ${OUT}"
+mktmp NVSTUB
+mkdir -p "${NVSTUB}/pytest"
+: > "${NVSTUB}/pytest/__init__.py"
+cat > "${NVSTUB}/pytest/__main__.py" <<'PY'
+"""Stand-in for `python3 -m pytest -q`: runs unittest discovery plus plain
+module-level test_* functions from the working directory, prints pytest's
+summary line, exits 0 on green, 1 on red, 5 when nothing ran."""
+import importlib.util, os, pathlib, sys, unittest
+root = pathlib.Path.cwd()
+sys.path.insert(0, str(root))
+result = unittest.TextTestRunner(stream=open(os.devnull, "w")).run(
+    unittest.TestLoader().discover(str(root), pattern="test_*.py", top_level_dir=str(root)))
+failed = len(result.failures) + len(result.errors)
+passed = result.testsRun - failed
+for path in sorted(root.glob("test_*.py")):
+    spec = importlib.util.spec_from_file_location("stub_" + path.stem, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for name in sorted(dir(module)):
+        member = getattr(module, name)
+        if name.startswith("test_") and callable(member) and not isinstance(member, type):
+            try:
+                member()
+                passed += 1
+            except Exception:
+                failed += 1
+mark = os.environ.get("LZ_PYTEST_STUB_MARK")
+if mark:
+    open(mark, "a").close()
+print(f"{failed} failed, {passed} passed in 0.01s" if failed else f"{passed} passed in 0.01s")
+sys.exit(1 if failed else (5 if passed == 0 else 0))
+PY
+nv_tree NVW
+cp "${NV}/reference/versions.py" "${NVW}/versions.py"
+cat > "${NVW}/test_versions.py" <<'PY'
+from versions import compare, latest
+
+
+def test_components_compare_as_numbers():
+    assert compare("1.10.0", "1.9.0") == 1
+
+
+def test_latest_is_numeric():
+    assert latest(["1.9.0", "1.10.0", "1.2.0"]) == "1.10.0"
+PY
+{ cat "${NV}/project/README.md"; printf '\n## Verify\n\nRun: python3 -m pytest\n'; } > "${NVW}/README.md"
+rm -f "${NVSTUB}/ran"
+OUT="$(PYTHONPATH="${NVSTUB}" LZ_PYTEST_STUB_MARK="${NVSTUB}/ran" "${NV}/grade.sh" "${NVW}" 2>&1)" \
+  || fail "no-verify: pytest-style tests with no configuration not accepted: ${OUT}"
+[ -f "${NVSTUB}/ran" ] || fail "no-verify: the pytest branch did not run the pytest command"
+printf 'import unittest\n' > "${NVW}/test_versions.py"
+OUT="$(PYTHONPATH="${NVSTUB}" "${NV}/grade.sh" "${NVW}" 2>&1 || true)"
+echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+  || fail "no-verify: a pytest run that reports no tests counts as green: ${OUT}"
+echo "ok  no-verify discovery: tests/, bash verify.sh, module-named docs, pytest stub, zero-test runs red"
+
 # 4d2. report.sh renders the frozen fixtures byte-exactly and rejects garbage
 RPT="$(mktemp)"
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results.jsonl" > "${RPT}" \

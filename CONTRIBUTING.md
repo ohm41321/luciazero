@@ -70,9 +70,12 @@ declined:
 - **Eval tasks prove their own graders.** `test.sh` auto-discovers
   `eval/tasks/*/`; a task ships with `PROMPT.md`, `project/`, `reference/`
   (grader passes), and a `gamed/` cheat tree (grader rejects), and its
-  grader speaks the `CRIT <id> pass|fail` + `SCORE n/m` contract. A new
-  grading criterion without a fixture that proves it can fail will be
-  declined — an untested grader manufactures fake eval deltas.
+  grader speaks the `CRIT <id> pass|fail` + `SCORE n/m` contract. An
+  optional executable `setup.sh <workdir>` builds deterministic local state
+  (a Git history, for one) and must be idempotent. A new grading criterion
+  without a fixture that proves it can fail will be declined — an untested
+  grader manufactures fake eval deltas; when no overlay can stage the
+  failure (state under `.git/`), stage it in `tests/gates/eval.sh`.
 
 ## Releasing
 

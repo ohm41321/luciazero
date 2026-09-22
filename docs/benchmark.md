@@ -206,8 +206,9 @@ can reject two realistic shortcuts. It is **not behavioral model evidence** on
 its own: the 2026-09-02 Sonnet campaign carries the only model rows for this
 task (2/5 against 0/5, in the per-task table above), and no GPT rows exist.
 Existing `false-green`, `pipeline`, and `flaky-report` tasks measure `/done`
-and `/debug` outcomes, but final-tree grading cannot prove that a named skill
-was literally invoked. Rows from the current runner add trace evidence for
+and `/debug` outcomes, and `no-verify` and `regression-history` measure the
+`/ready` and `/bisect` outcomes (no campaign has run those two yet), but
+final-tree grading cannot prove that a named skill was literally invoked. Rows from the current runner add trace evidence for
 that (`skill_use`, read from the provider log by `eval/skill_use.py`): a
 catalog skill observed being invoked, none observed, or a trace that cannot
 say. Observed is evidence; not observed is not proof of non-use, because a

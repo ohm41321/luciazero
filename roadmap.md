@@ -324,9 +324,10 @@ retros. Where routing itself must be measured, use consented test-harness
 instrumentation: final-tree grading alone cannot identify the invoked skill.
 
 Implemented since this review: `--arms doctrine,noskills`, sandbox-inventory
-and argument parity checks, skill-use trace evidence, and campaign/report
-support. These have offline coverage. A real skills-ablation pilot and dedicated
-`ready`/`bisect` fixtures remain open; no quota was spent to close them.
+and argument parity checks, skill-use trace evidence, campaign/report
+support, and the `no-verify` (`/ready` outcome) and `regression-history`
+(`/bisect` outcome) fixtures. These have offline coverage. A real
+skills-ablation pilot remains open; no quota was spent.
 
 Measure task correctness, verified defects, false findings, avoidable user
 turns, redundant verification runs, wall time, and tokens when available.

@@ -655,7 +655,13 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
             except (ValueError, OSError):
                 pass
         if restore is not None:
-            termios.tcsetattr(stdin, termios.TCSADRAIN, restore)
+            # TCSANOW, not TCSADRAIN: draining waits for whatever is already
+            # written to be read, and the way out must not depend on the
+            # reader. A SIGTERM that arrives while the terminal is backed up
+            # (a test that had stopped reading; a pane nobody is looking at)
+            # would otherwise wait here forever, with the provider still
+            # running and the signal's sender waiting on this process.
+            termios.tcsetattr(stdin, termios.TCSANOW, restore)
         try:
             os.close(master)
         except OSError:

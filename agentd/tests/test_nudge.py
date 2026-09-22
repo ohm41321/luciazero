@@ -16,6 +16,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -962,18 +963,116 @@ class RunTests(unittest.TestCase):
         self.assertGreaterEqual(knocks[0]["payload"]["provider_quiet_for"], nudge.QUIET_SECONDS)
         self.assertTrue(held, "the wait for the pane is a record, not a silence")
 
-    def _end(self, pid: int, master: int) -> None:
-        import signal as _signal
+    def test_a_sigterm_ends_run_while_its_terminal_has_output_nobody_read(self) -> None:
+        """The suite's own deadlock, end to end.
 
-        for sig in (_signal.SIGTERM, _signal.SIGKILL):
+        `run` restores the terminal on its way out. It did so with TCSADRAIN,
+        which waits for everything already written to the terminal to be
+        read -- and here the reader is the test, which had stopped reading
+        before it sent SIGTERM, as every cleanup in this class did. `run`
+        waited for the test and the test waited for `run`, for as long as the
+        suite was allowed to live: a full run once spent 28 minutes there.
+        A real terminal always drains, so only a test ever saw it; the stand-in
+        prints without pause so that output is pending when the signal lands,
+        and that is checked before the signal goes.
+        """
+        import select
+
+        provider = self.state / "talker.sh"
+        pidfile = self.state / "talker.pid"
+        provider.write_text(f"#!/bin/sh\necho $$ > '{pidfile}'\nexec yes\n")
+        provider.chmod(0o755)
+        package_root = str(Path(__file__).resolve().parents[1])
+        pid, master = nudge.spawn(
+            [sys.executable, "-m", "luciazero_agentd", "run", "--agent", "codex-architect",
+             "--provider", "claude", "--state-dir", str(self.state), "--", str(provider)],
+            {**os.environ, "PYTHONPATH": package_root, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.addCleanup(self._end, pid, master)
+        seen = bytearray()
+        deadline = time.time() + 30
+        while time.time() < deadline and b"bound as" not in seen:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen.extend(chunk)
+        self.assertIn(b"bound as", bytes(seen), bytes(seen))
+
+        def lflag() -> int:
+            # Asked of the master, tcgetattr answers for the slave on both
+            # macOS and Linux (tty_pair_get_tty); the test never has the
+            # slave's fd, pty.fork keeps it in the child.
+            return termios.tcgetattr(master)[3]
+
+        # The proxy holds the terminal once it has put it in raw mode; the
+        # restore check at the end means nothing unless that happened.
+        deadline = time.time() + 5
+        while time.time() < deadline and lflag() & termios.ICANON:
+            time.sleep(0.05)
+        self.assertFalse(lflag() & termios.ICANON, "the proxy never put the terminal in raw mode")
+        # Nobody reads from here on. The stand-in keeps printing, so the
+        # terminal backs up: a readable master is output the slave has not
+        # drained, which is exactly what TCSADRAIN waited for.
+        deadline = time.time() + 5
+        pending = False
+        while time.time() < deadline and not pending:
+            pending = bool(select.select([master], [], [], 0.05)[0])
+        self.assertTrue(pending, "the stand-in never backed the terminal up; the check would be vacuous")
+        time.sleep(0.5)  # let the queue fill and the proxy block in its write, as the real hang had it
+        os.kill(pid, signal.SIGTERM)
+        status = self._reap(pid, 5.0)
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            self.fail("run did not exit within 5 s of SIGTERM with output pending on its terminal")
+        self.assertTrue(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 130,
+                        f"run left through something other than its SIGTERM path: status {status}")
+        # The provider went with it, and the terminal came back as it was.
+        talker = int(pidfile.read_text().strip())
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                os.kill(talker, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("the provider outlived the run that was told to stop")
+        self.assertTrue(lflag() & termios.ICANON and lflag() & termios.ECHO,
+                        "the terminal was not restored on the way out")
+
+    @staticmethod
+    def _reap(pid: int, seconds: float) -> Optional[int]:
+        """The exit status of `pid` once it has ended, within `seconds`; None
+        if it is still running then. Never blocks on the process."""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            try:
+                done, status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                return 0
+            if done == pid:
+                return status
+            time.sleep(0.05)
+        return None
+
+    def _end(self, pid: int, master: int) -> None:
+        """Stop `run` without ever waiting on it forever: one that ignores
+        SIGTERM for five seconds is killed, so a regression hangs one test,
+        not the suite."""
+        for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.kill(pid, sig)
-                os.waitpid(pid, 0)
-                break
-            except ChildProcessError:
-                break
             except OSError:
-                continue
+                break
+            if self._reap(pid, 5.0) is not None:
+                break
         try:
             os.close(master)
         except OSError:

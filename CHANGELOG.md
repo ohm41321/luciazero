@@ -55,6 +55,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `luciazero-agentd run` no longer waits for its terminal to drain on the way
+  out: the proxy restores the terminal with `TCSANOW`, where `TCSADRAIN`
+  waited for every byte already written to be read, so a SIGTERM that
+  arrived while the terminal was backed up left `run` blocked in
+  `tcsetattr` with the provider still alive and the signal's sender waiting
+  on it. The suite hit exactly that — a test stopped reading its pty before
+  sending SIGTERM and one full run spent 28 minutes there. A regression test
+  backs a real `run` up, stops reading, sends SIGTERM and requires an exit
+  within five seconds with the provider gone and the terminal restored; the
+  `run` cleanups now kill after five seconds instead of waiting forever.
 - The hooks gate no longer leaves temp directories behind: its fixtures come
   from a `mktmp` helper in `test.sh` that removes every directory on the EXIT
   trap, so a red run cleans up like a green one, and its session-mode checks

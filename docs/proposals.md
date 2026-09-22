@@ -3,7 +3,7 @@
 Current decisions come first. The original proposal remains below them for
 design history, not as usage documentation.
 
-## Decision record — 2026-08-12
+## Decision record — 2026-08-12; implementation status updated 2026-09-22
 
 This RFC is preserved as the input proposal. The table below is authoritative where the original sketches differ from the implementation.
 
@@ -12,8 +12,8 @@ This RFC is preserved as the input proposal. The table below is authoritative wh
 | `/plan` | Accepted with revision | Observable pass/fail evidence; approval only for ambiguity, high stakes, destructive action, public-contract choice, or scope change |
 | `/bisect` | Accepted with safety redesign | Detached temporary worktree, repeated endpoints, exit-125 skip, missing-command distinction, trap cleanup; reports first bad commit, then routes to `/debug` |
 | `/security-audit` | Merged, no standalone skill | The existing reviewer receives a `security` focus; blocker/major must be fixed or explicitly waived, rather than forcing every warning to be fixed |
-| Specialized reviewers | Accepted as focus routing | One portable `reviewer` with `security`, `contract`, and `general` modes; separate focused passes when both risks apply |
-| `/discipline-report` | Accepted | `npx luciazero discipline`, schema-v2 privacy-preserving JSONL, legacy reader, `--days`, `--project`, and `--json` |
+| Specialized reviewers | Accepted as focus routing | One portable `reviewer` with `security`, `contract`, and `general` modes; one pass naming both focuses when both risks apply; no independent pass for a small diff without routed risk |
+| `/discipline-report` | Accepted | Local `luciazero discipline`; schema-3 JSONL adds verify time and redundant-green counts, with schema-2 and legacy readers; `--days`, `--project`, and `--json` |
 | Smart target verification | Accepted as repo-owned policy | A monorepo owns `verify-changed` via its native task graph and conservative full fallback; the global hook does not guess path mappings |
 | `/handoff` naming/transfer | Superseded by implementation request | `/lucia-relay`: recipient-first routing; full paths on the same machine, pushed repo-relative or inline knowledge across machines; portable JSON + generated Markdown, fingerprint, evidence, drift inspection, and explicit consume |
 

@@ -2,6 +2,11 @@
 
 Review date: 2026-09-09. Baseline: `d5d2798`.
 
+Source status refreshed 2026-09-22. Findings retain their original rationale;
+dated closure notes and the current-status section supersede old source line
+numbers and pre-release ordering. The manifests are at 2.5.1 with additional
+work under `CHANGELOG.md`'s `Unreleased` heading.
+
 This is a repository-wide review and proposed work queue, not an implementation
 or release approval. Existing local commits belong to their owners. Release
 decisions remain in [publishing](docs/publishing.md), distribution in
@@ -34,10 +39,11 @@ execution context.
 
 ## Current gates and milestone status
 
-The declared critical path to the checkout-only v2.5.0 beta has one unmet
-piece: install/upgrade/uninstall proof on a second machine. The gate script has
-passed on one Darwin arm64 machine only. The decision log now stands at 7 of 3
-workflows and 2 of 2 qualifying retros; that gate closed on 2026-09-09.
+The historical five-item checkout-beta release gate is closed, including
+install/upgrade/uninstall on a second Linux aarch64 machine through `--inner`.
+The container path remains untested; see [the pinned evidence](docs/publishing.md).
+The decision log stands at 7 of 3 workflows and 2 of 2 qualifying retros.
+This is not approval for a new release or for npm distribution of Agent Bus.
 
 M7's six managed-dispatch live tasks remain behind the same M4 decision gate;
 they are not part of v2.5.0. Do not run them merely to manufacture the missing
@@ -77,20 +83,19 @@ current queue, not a claim that every proposal is a defect.
 | `plan` | Reuse authority already granted and pause only for a decision that changes the result | Proposal, R05 |
 | `debug` | Permit evidence-led hypotheses where production or intermittent failures cannot safely be reproduced; revert only the agent-owned edit | Proposal |
 | `bisect` | Explain per-revision dependency setup and that endpoint retries do not make flaky midpoints reliable | Proposal |
-| `done` | R01 is closed; still avoid rerunning an unchanged full suite and distinguish a reviewer prompt from an independent execution context | R04/R06 open |
-| `lucia-relay` | Resolve all five bare `relay.py` commands relative to the installed skill before release; keep publication/tag creation explicit | R03 pre-release; R07 open |
+| `done` | R01 and R04 are closed; one routed review pass is implemented; runtime review-quality evidence remains open | R06 partly addressed |
+| `lucia-relay` | Bundled script paths, opt-in draft writes, finalize, explicit external trusted envelopes, and CLI wrapper are implemented; keep publication/tag creation explicit | R03 Relay portion closed; R07 open |
 | `experiment` | Treat three samples as a minimum heuristic, model warmup/noise, and retain correctness or secondary benefits in keep/revert decisions | Proposal |
 | `discipline-report` | Give installed/standalone layouts a real command-resolution contract and state malformed/partial-data limits in reports | R03 open |
 | `lucia-bus` | Reuse verified identity before redundant registration, bound display of untrusted/private payloads, and expose queued-without-proxy state | R05/R20 open |
 | `lucia-chat` | Two-window flow, optional watcher, nudge/pull split, and three latency names now match the shipped CLI | R02 closed; no new finding |
 | `retro` | Preserve user testimony as testimony, route private evidence out of Git, deduplicate corrections, and keep nonqualifying outcomes visible | R08 open |
 
-Pre-release skill order is now R03 first, then the source-confirmed contract
-half of R23. After that come R04/R06, then R05/R20, R08, and the remaining
-proposals. R03 moved ahead because an installed Relay user reaches a command
-that does not resolve, not because portable discovery would merely be nicer.
-R23 is deliberately not called a Caveman defect: the installed Caveman state
-conflicts with Imouto's voice, but no controlled A/B result exists yet.
+The old pre-release ordering below is historical. R03's Relay command paths,
+R04's full-verify reuse, and R23's source-confirmed contract portion are now
+implemented. Remaining workflow proposals need their own evidence; prompt
+contracts do not prove model behavior. R23's plugin-interaction portion still
+requires a controlled A/B before any claim about Caveman.
 
 ## P1: proof and runtime contract correctness
 
@@ -159,7 +164,13 @@ quotes is parsed by the real CLI parser (extracted as `build_parser`), every
 flag it names has to exist, and the cooldown and cap it quotes come from the
 constants in `nudge`.
 
-### R03 — Installed Relay commands do not resolve their bundled script [Confirmed, pre-release]
+### R03 — Installed Relay commands do not resolve their bundled script [Relay fixed; Discipline layout investigation remains]
+
+Current status: Relay uses `<this-skill-dir>/scripts/relay.py` throughout;
+`scripts/check-skill-prompts.py` validates bundled references. The CLI also
+offers `luciazero relay`. Discipline documents local PATH and checkout/package
+fallbacks, and reports offline unavailability for other layouts. The original
+finding and acceptance rationale follow for traceability.
 
 Sources: `skills/discipline-report/SKILL.md:12`,
 `skills/lucia-relay/SKILL.md`, `install-codex.sh:121-153`.
@@ -192,7 +203,12 @@ network access or config writes.
 
 ## P2: autonomy, cost, and consistent skill behavior
 
-### R04 — Reuse verification for unchanged tested state [Proposal]
+### R04 — Reuse verification for unchanged tested state [Implemented]
+
+Closed in the current `/done` prompt: full verification must be green after
+the last code edit and runs only when no such result exists. Prompt contracts
+check that rule. This does not prove every model will reuse evidence correctly.
+The original proposal follows.
 
 Source: `skills/done/SKILL.md:10-15`; doctrine asks for full verification once
 at closeout. Done's literal "now, not earlier" can cause repeated full suites
@@ -293,7 +309,7 @@ discoverable and cannot silently increase qualifying counts.
 
 ## R09 — Extend the existing behavioral evaluation suite [Proposal, P2]
 
-Sources: `eval/README.md`, `eval/tasks/`, `test.sh:497-503`,
+Sources: `eval/README.md`, `eval/tasks/`, `tests/gates/eval.sh`,
 `scripts/check-skill-prompts.py`.
 The repository already has behavioral outcome graders and anti-gaming
 fixtures. The gap is targeted skill selection, unnecessary pauses, tool
@@ -306,6 +322,11 @@ approval reuse, sandbox denial, missing Bus tools, clean review, long untrusted
 inbox content, committed/uncommitted revert probes, and zero-blocking-cost
 retros. Where routing itself must be measured, use consented test-harness
 instrumentation: final-tree grading alone cannot identify the invoked skill.
+
+Implemented since this review: `--arms doctrine,noskills`, sandbox-inventory
+and argument parity checks, skill-use trace evidence, and campaign/report
+support. These have offline coverage. A real skills-ablation pilot and dedicated
+`ready`/`bisect` fixtures remain open; no quota was spent to close them.
 
 Measure task correctness, verified defects, false findings, avoidable user
 turns, redundant verification runs, wall time, and tokens when available.
@@ -647,16 +668,16 @@ proven with it.
    byte-identical.
 5. R15 (closed `14bf3d6`): reproduce the read-only failure in a focused test first, then narrow
    the handling to the SQLite write alone.
-6. R03 before v2.5.0: make all five Relay commands resolve the bundled script
+6. R03 Relay portion closed: all Relay commands resolve the bundled script
    and bind cataloged skill script references to real files in a test. R02 and
    R12b are already closed.
-7. R13 before v2.5.0: quote generated hook/status commands, then keep install,
+7. R13 closed: quote generated hook/status commands, then keep install,
    status detection, and uninstall matching on the same canonical contract.
 8. R23 contract half, done 2026-09-09: observable `focus`, explicit one-shot
    UX, argument hint, and a deliberate prompt-budget revision (319 to 470).
    Caveman suspend/restore remains behind the controlled A/B.
-9. R04/R06 next: unchanged-state verification reuse and actual review
-   independence.
+9. R04 implemented; remaining R06 work is runtime review quality and actual
+   independence, beyond the one-pass scoped review prompt now shipped.
 10. R05/R20, R08, R14, R16–R19, R21, R24, R09 and remaining proposals after
    that, ordered by reproduced impact rather than catalog order.
 

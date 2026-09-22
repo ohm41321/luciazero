@@ -202,7 +202,14 @@ remote refs, route downgrade, incomplete evidence/knowledge, and unsafe file
 pointers; local-only knowledge travels inline.
 
 This proves that Relay has a falsifiable transfer contract and that the grader
-can reject two realistic shortcuts. It is **not behavioral model evidence**:
-no Claude or GPT rows exist for this task yet. Existing `false-green`,
-`pipeline`, and `flaky-report` tasks measure `/done` and `/debug` outcomes, but
-final-tree grading cannot prove that a named skill was literally invoked.
+can reject two realistic shortcuts. It is **not behavioral model evidence** on
+its own: the 2026-09-02 Sonnet campaign carries the only model rows for this
+task (2/5 against 0/5, in the per-task table above), and no GPT rows exist.
+Existing `false-green`, `pipeline`, and `flaky-report` tasks measure `/done`
+and `/debug` outcomes, but final-tree grading cannot prove that a named skill
+was literally invoked. Rows from the current runner add trace evidence for
+that (`skill_use`, read from the provider log by `eval/skill_use.py`): a
+catalog skill observed being invoked, none observed, or a trace that cannot
+say. Observed is evidence; not observed is not proof of non-use, because a
+harness can put a skill in front of the model without a tool call. No
+published campaign carries that field yet.

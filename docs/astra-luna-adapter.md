@@ -1,7 +1,8 @@
-# Astra/Luna adapter — Slice 0 evidence
+# Astra/Luna adapter — source fixtures and canary plan
 
-Status: source pinned and discovery probes captured. No adapter file was
-installed into a real user or project configuration.
+Status: Slices 0–2 have source/discovery and offline fixture evidence; Slice 3
+remains a manual canary plan with supporting attestation/budget tooling.
+No provider-backed canary or real project installation is claimed here.
 
 ## Ownership and source
 

@@ -17,7 +17,7 @@ Do not edit a published JSONL file. Add a new campaign instead. Then run:
 
 ```bash
 python3 eval/evidence.py --write
-./test.sh
+scripts/test-timings.sh --full
 ```
 
 `eval/evidence.py --check` verifies every registered digest, validates every
@@ -29,7 +29,9 @@ hand-edited table from becoming a public claim.
 The historical Claude files predate the current reproducibility schema. Their
 missing metadata is recorded explicitly rather than reconstructed. In
 particular, only 70/140 Haiku rows encode model identity; the other 70 have only
-campaign-level attribution and cannot be verified per row. The canonical
-Sonnet file is preliminary: eight replacement rows
+campaign-level attribution and cannot be verified per row. The historical
+2026-08-11 Sonnet pilot file is preliminary: eight replacement rows
 mentioned by commit `b24f6a2` could not be recovered, so the old `+37pp` claim
 is retired unless those exact raw rows are found.
+The canonical Sonnet campaign is now the 2026-09-02 run over ten tasks with
+five valid runs per arm/task; see [the benchmark](../../docs/benchmark.md).

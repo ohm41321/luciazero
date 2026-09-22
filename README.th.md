@@ -26,6 +26,10 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
+เอกสารใน checkout นี้อธิบาย source ปัจจุบัน รวมรายการใน
+[`Unreleased`](CHANGELOG.md#unreleased) โดย manifest ยังระบุ **2.5.1**
+คำสั่งที่ยังไม่ release ต้องใช้จาก checkout นี้จนกว่าจะเผยแพร่เวอร์ชันใหม่
+
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
 
@@ -243,8 +247,9 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 เดิม งาน automation ส่ง `global-install --yes` ได้ ส่วนการใช้แบบโต้ตอบจะถาม
 ก่อนติดตั้งแพ็กเกจหรือเปลี่ยนไฟล์เริ่มต้นของ shell
 
-ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่งเพื่อไม่ต่อ hook
-ซ้ำ Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไม่มี hook/statusline
+ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่ง เพราะติดตั้งทั้งคู่
+จะโหลด skill และ reviewer ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้
+Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไม่มี hook/statusline
 เฉพาะ Claude Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
 ยืนยันความเป็นเจ้าของได้
 
@@ -368,8 +373,9 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   เรียก model CLI และใช้เครดิต API หรือโควตา subscription
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
 - Telemetry ของ hook อยู่ใน private state แยกตาม session ภายในเครื่อง เก็บเวลา
-  wall time ของ turn/Bash และจำนวน Bash, verify, skill ที่ model/user เรียก
-  โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
+  wall time ของ turn/Bash/verify, จำนวน green ซ้ำโดยไม่มี edit คั่น และจำนวน
+  Bash, verify, skill ที่ model/user เรียก โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
+  ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,

@@ -40,11 +40,13 @@ demo to show drift detection, evidence replay, and explicit consumption.
 
 Safe claims for the README or a release post:
 
-- 11 on-demand skills
+- 13 on-demand skills (the canonical inventory is `skills/catalog.txt`)
 - Claude Code, Codex CLI, and compatible skill-runtime install paths
 - Relay protocol fixture: reference 6/6; generic Markdown handoff 1/6; stale
   fingerprint 5/6
-- Claude snapshot (2026-08-11): Haiku +15pp; Sonnet +31pp preliminary
+- Claude snapshots: Haiku +15pp (2026-08-11, model-provenance caveat);
+  Sonnet +32pp across ten tasks (2026-09-02, five valid runs per arm/task).
+  The older Sonnet +31pp pilot remains preliminary.
 - Codex pilot (2026-08-12): 5 paired tasks, 0pp observed difference, exploratory
 
 The Relay scores are mechanical protocol checks, not model-uplift results. The
@@ -103,11 +105,13 @@ Do not publish a new uplift claim until all of these are true:
    token/cost fields when available.
 4. Run `eval/report.sh` and regenerate evidence with
    `python3 eval/evidence.py --write`.
-5. Run `./test.sh` before publishing.
+5. Run `scripts/test-timings.sh --full` before publishing.
 
-Candidate Claude screen: one run per arm on `archive-security`,
+Example of a new Claude screen: one run per arm on `archive-security`,
 `schema-migration`, and `paginated-sync`. This is six real model invocations
-before scaling to five per arm. It consumes Claude subscription quota or API
+before scaling to five per arm. These tasks already have results in the
+2026-09-02 campaign; a new screen needs its own pinned model/revision and
+campaign identity. It consumes Claude subscription quota or API
 credit; obtain explicit budget approval first.
 
 Example after authorization:

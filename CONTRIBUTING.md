@@ -3,7 +3,7 @@
 ## Verify
 
 ```bash
-./test.sh
+scripts/test-timings.sh --full
 ```
 
 Must pass before any PR. It covers:
@@ -14,7 +14,18 @@ Must pass before any PR. It covers:
 - install → reinstall → uninstall for Claude Code and Codex in sandbox config
   directories, including the opt-in enforcement pack.
 
-CI runs the same command. Real behavioral eval runs are separate and manual:
+The collector runs `./test.sh --full` and saves stdout, stderr, and revision
+metadata under `.test-timings/`. Use `--discipline` for hook/report/prompt
+iterations and `--fast` for the broader loop. Collect samples during ordinary
+work; do not rerun just to fill a sample quota. Compare timings only within a
+matching gate configuration and revision; one `sha+dirty` can represent
+different trees. `scripts/test-timings.sh --report` lists revisions and warns
+when they are mixed.
+
+CI runs `./test.sh` directly. Gates live in `tests/gates/`; full-only `tiers`,
+`eval`, `packaging`, `install`, and `codex-install` run in isolated subshells
+with buffered output replayed in order. Use `LZ_TEST_PARALLEL=0` for a serial
+diagnostic run. Real behavioral eval runs are separate and manual:
 they invoke the selected Claude or Codex CLI and consume API credit or
 subscription quota.
 
@@ -38,8 +49,10 @@ declined:
   `claude/agents/catalog.txt`. Install, status, uninstall, and `test.sh` read
   them; the test rejects inventory drift across both harnesses.
 - **Scripts stay idempotent and contained.** `install.sh`/`uninstall.sh`
-  must be safe to run twice, must back up before editing, and must never
-  write outside the Claude config dir.
+  must be safe to run twice and back up managed collisions before editing.
+  Config writes stay in the selected harness config dir; checkout-only Bus
+  launchers and explicitly requested service/global-CLI operations have the
+  separate destinations documented in `SECURITY.md`.
 - **Example hooks ship inert.** Nothing in `examples/` may execute
   anything as shipped.
 - **The hooks must parse under bash 3.2** — the `/bin/bash` on stock macOS.
@@ -66,5 +79,12 @@ declined:
 1. Update `CHANGELOG.md` (move entries from Unreleased, set the date) AND
    bump `.claude-plugin/plugin.json` + `package.json` to the same version —
    `./test.sh` fails on any mismatch, and the release workflow runs it.
-2. `git tag vX.Y.Z && git push --tags` — the release workflow verifies,
-   builds the zip, and publishes a GitHub Release.
+2. Run `scripts/test-timings.sh --full` on the final release tree, commit the
+   release preparation, push `main`, and require CI to pass on that commit.
+3. Tag that commit with `git tag vX.Y.Z`, then push only the intended tag with
+   `git push origin vX.Y.Z`. The release workflow verifies version agreement
+   and the full suite, builds the source ZIP, publishes a GitHub Release, then
+   publishes the staged npm package through OIDC.
+4. Confirm both workflow jobs succeeded and npm serves the intended version.
+   A tag or GitHub Release alone is not proof of npm publication. See
+   [the publishing checklist](docs/publishing.md).

@@ -26,6 +26,10 @@ Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
 
+This checkout documents the current source, including changes under
+[`Unreleased`](CHANGELOG.md#unreleased). The manifests still declare **2.5.1**;
+unreleased commands require this checkout until a new version is published.
+
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
 
@@ -251,7 +255,8 @@ For a one-off install without keeping the command, `npx luciazero@latest`
 continues to work. Automation may pass `global-install --yes`; interactive use
 asks before installing the package and changing a shell startup file.
 
-Pick either plugin or classic for Claude Code so hooks are not wired twice.
+Pick either plugin or classic for Claude Code: installing both loads every
+skill and the reviewer twice, even though hooks and doctrine deduplicate.
 Classic installs support `--status`; Codex receives the doctrine and skills but
 not Claude-only hooks/statusline. Installers back up name collisions and remove
 only exact Luciazero-managed copies on uninstall.
@@ -386,8 +391,9 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.
 - Hook telemetry stays local in private per-session state and records aggregate
-  turn/Bash wall time plus Bash, verify, and model/user skill counts—never raw
-  commands, skill names, or paths.
+  turn/Bash/verify wall time, redundant-green counts, and Bash, verify, and
+  model/user skill counts—never raw commands, skill names, or paths. Older rows
+  without verify timing are reported as not measured, not zero.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
   edit event in its state directory (tool name, opaque key, whether

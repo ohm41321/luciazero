@@ -1,8 +1,14 @@
 # Publishing checklist
 
 How luciazero reaches each distribution channel, in dependency order. Facts
-below were verified 2026-08-13; re-check anything marked (†) before relying
-on it, since third-party processes change.
+about repository behavior were refreshed 2026-09-22. External directory and
+marketplace notes retain their historical verification date (2026-08-13);
+re-check anything marked (†) before relying on it.
+
+The manifests currently declare **2.5.1**. Features under `Unreleased` describe
+the current checkout, not a completed new publication. Prepare a release using
+[CONTRIBUTING](../CONTRIBUTING.md#releasing); do not infer its public status
+from this document or from a manifest bump alone.
 
 ## 0. Prerequisites (everything depends on this)
 
@@ -153,17 +159,18 @@ to assume:
   real CLIs ran, bound, and answered each other through the public command.
   What it costs to do that is not in this evidence and must not be claimed
   from it.
-- **It is not the third workflow.** The exchange was a handshake with no work
+- **It was not the third workflow.** The exchange was a handshake with no work
   attached, and the roadmap excludes demonstrations from the ledger by name —
-  the same reason M7b's live chat is not a row. The decision log stands at 2
-  of 3 workflows and 0 of 2 retros.
+  the same reason M7b's live chat is not a row. At that point the decision log
+  stood at 2 of 3 workflows and 0 of 2 retros; later task evidence closed the
+  gate at 7 of 3 and 2 of 2, as recorded above.
 
 Item 4 was closed on 2026-09-07 by ADR 0008: the bus stays an opt-in,
 checkout-only beta, and `agentd/` enters no installer or npm payload. One
 channel does carry it, and the first draft of that ADR was wrong to say
 otherwise: `release.yml` builds the GitHub release asset with `git archive
 --format=zip ... HEAD` against a repository with no `.gitattributes`, so the
-ZIP holds all 42 entries under `agentd/`, and `bin/lucia` as a symlink entry
+ZIP holds the tracked entries under `agentd/`, and `bin/lucia` as a symlink entry
 besides. ADR 0008 now records that as the checkout channel rather than an
 exception — the ZIP asks the same acts of a user as `git clone` does — and
 says why an `export-ignore` was rejected.

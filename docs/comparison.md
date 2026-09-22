@@ -2,16 +2,18 @@
 
 Honest positioning against the alternatives a visitor will find in one
 search. Every claim below was checked against the named project's public
-README/source on **2026-08-12**; these projects move fast, so treat the date
-as part of each claim. Corrections welcome — an unfair line here would break
-this repo's own first rule.
+README/source on **2026-08-12**. The external comparison is a historical
+snapshot, not a current ranking; third-party counts and capabilities have not
+been revalidated in this documentation refresh. Luciazero's own status below
+was updated against the source on **2026-09-22**.
 
 **What this repo is:** a minimal, self-verifying *discipline layer* — a text
 install (doctrine + procedures + opt-in enforcement) for Claude Code and
-Codex CLI. It runs nothing by itself. That framing decides most of the
-trade-offs below.
+Codex CLI. Ordinary installs start no daemon. The separate, opt-in,
+checkout-only Agent Bus now provides local durable coordination and managed
+dispatch; see [its guide](agent-bus.md) for its limits.
 
-## The short version
+## External comparison snapshot — 2026-08-12
 
 | | They have, we don't | We have, they don't (verified) |
 |---|---|---|
@@ -60,14 +62,16 @@ trade-offs below.
 
 ## Known weaknesses (ours)
 
-- The published campaigns cover six small Python tasks. Haiku has n=10 per arm;
-  Sonnet is preliminary at n=4–5 because eight invalid rows could not be
-  replaced from auditable raw data. Three harder coding candidates and one
-  transfer-protocol task now pass offline grader validation but have no model
-  results yet. Larger, multi-language campaigns and independent replications
-  are still needed.
-- No runtime, no orchestration, no durable state — by design, but it means
-  this repo alone does not give you overnight autonomy.
+- The canonical Sonnet campaign covers ten tasks with five valid runs per
+  arm/task (2026-09-02); Haiku covers six, with incomplete model provenance.
+  The older Sonnet pilot remains preliminary. These measure the full pack
+  against bare, not each skill's contribution. The new `doctrine,noskills`
+  pair and trace reader have offline coverage; no real skills-ablation
+  campaign is published. Larger, multi-language campaigns and independent
+  replications are still needed. See [the benchmark](benchmark.md).
+- Agent Bus has local durable state and opt-in dispatch, but remains a
+  checkout-only beta. Core npm/plugin installs do not provide an unattended
+  orchestration runtime.
 - Ecosystem listing: published on npm (`luciazero`) and the Claude
   Code plugin marketplace (`ohm41321/luciazero`), but not yet listed in
   [awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code).

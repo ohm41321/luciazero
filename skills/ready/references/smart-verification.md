@@ -13,7 +13,7 @@ Create a repository command named by its convention, conceptually `verify-change
 5. Exit non-zero if any selected check fails and run unattended/offline.
 6. Print the selected projects and the reason for a full fallback so the scope is auditable.
 
-Set `LUCIAZERO_VERIFY_CMD` to this repo-owned fast command. `/done` still runs `verify-full`; change targeting reduces iteration latency, not closeout coverage.
+Set `LUCIAZERO_VERIFY_CMD` to this repo-owned fast command. `/done` requires a green `verify-full` after the last code edit and reuses that result when it already exists; change targeting reduces iteration latency, not closeout coverage.
 
 ## Proof fixtures
 

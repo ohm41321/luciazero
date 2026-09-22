@@ -39,6 +39,13 @@ way around any of them is a reportable vulnerability, not expected behavior:
   evidence through its own coding harness and sandbox, compares exit codes and
   decisive lines, then explicitly passes `consume --verified`. The flag is a
   receiver assertion, not an artifact-provided proof.
+- **Relay envelopes come from a separate trusted channel.**
+  `--trusted-envelope PATH` requires an explicit file outside the relay root,
+  validates `kind: luciazero-relay-envelope` and `schema: 1`, and is for
+  cross-machine transfers only. Location alone does not authenticate its
+  sender; the receiver must obtain it through an authenticated channel.
+  `draft --write` refuses an existing or symlink manifest, and
+  `finalize --envelope-out` refuses an existing, symlink, or repo-local target.
 - **Local executables are trusted prerequisites.** As with the installers and
   hooks, the Python, Git, and SSH executables resolved from the operator's OS
   environment must be trusted; a compromised local `PATH` is outside Relay's
@@ -57,17 +64,28 @@ way around any of them is a reportable vulnerability, not expected behavior:
 - **Hooks fail open.** Every internal error — timeout, missing command,
   unparseable stdin — degrades to the one-shot nudge. A hook must never
   block on an error path or fabricate a RED verdict it did not observe.
-- **Installers stay in the config dir.** Writes land only inside
+- **Harness configuration stays in its selected config dir.** Writes land inside
   `~/.claude/` (or `$CLAUDE_CONFIG_DIR`) and `~/.codex/` (or `$CODEX_HOME`),
   collisions and customized components are backed up, and uninstall removes
-  only exact Luciazero-managed copies and settings entries.
+  only exact Luciazero-managed copies and settings entries. A checkout install
+  also writes Bus launchers under `LUCIAZERO_BIN_DIR` (default
+  `~/.claude/bin`); explicit service installation uses the per-user service
+  location. Explicit `global-install` uses `~/.local/npm` and, with approval,
+  a managed PATH block in the user's shell startup file. These are separate,
+  documented destinations, not a guarantee that all commands write only config.
 - **Hook state stays in `$TMPDIR`**, except the documented, size-capped
   `luciazero-stats.log` in the config dir. Stats are local JSONL and identify
   a repository by a truncated SHA-256 plus basename, never its absolute path
   or verify command. Hook scratch state uses a user-owned `0700` base and
-  per-session telemetry directories. Optional rows store only aggregate turn
-  and merged Bash wall-clock milliseconds plus Bash/verify/skill counts; raw
-  commands, tool IDs, skill names, and paths are never written to state or log.
+  per-session telemetry directories. Schema-3 rows store aggregate turn, merged
+  Bash and verify wall-clock milliseconds, Bash/verify/skill counts, and
+  redundant-green counts; the report also reads schema 2 and legacy rows.
+  Raw commands, skill names, and absolute paths are not persisted by telemetry.
+  With the explicit `LUCIAZERO_EDIT_DIAG=1` opt-in, `edit-diag.log` additionally
+  records timestamps, mode, tool name, an opaque tool key, path presence,
+  extension, whether the path is under cwd, and whether the edit counted.
+  It does not record the path or file contents. Missing path metadata does not
+  identify which harness component emitted an event.
 
 ## Hostile-repository configuration
 

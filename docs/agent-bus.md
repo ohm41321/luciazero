@@ -3,7 +3,9 @@
 A local queue that lets Codex CLI and Claude Code CLI sessions hand work to
 each other without you copying messages between terminals. One daemon owns
 a SQLite database under `~/.luciazero/agent-bus`; each agent talks to it
-through MCP tools; you start each agent turn yourself. Design and evidence:
+through MCP tools. Plain sessions pull work when you start a turn;
+`lucia claude`/`lucia codex` can nudge an idle provider with a fixed inbox notice,
+and explicitly enrolled managed workers can use dispatch. Design and evidence:
 [the roadmap](agent-bus-roadmap.md) and the ADRs under [`adr/`](adr/).
 
 The bus is beta and separate from the core install: `npx luciazero` never

@@ -1,5 +1,10 @@
 # Roadmap: Project-scoped Astra/Luna Adapter for Luciazero
 
+Source status (2026-09-22): Slices 0–2 are implemented and checked offline.
+Slice 3 has a plan and attestation/budget helpers, but no live canary result.
+The remaining phases are acceptance work, not shipped behavior; see
+[the evidence and canary guide](docs/astra-luna-adapter.md).
+
 ## Summary
 
 Use the orchestration capabilities of this repository as an optional,

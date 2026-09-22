@@ -1,4 +1,4 @@
-# Eval — does the doctrine actually change behavior?
+# Eval — does the installed pack or its skills change behavior?
 
 The repo's own rule applies to the repo itself: a claim ("this setup makes
 agents better") needs a measurement, not vibes. This harness is that
@@ -64,8 +64,8 @@ eval/run.sh --offline --out smoke.jsonl    # zero API, no key: pipeline smoke
 eval/run.sh --offline --discard-work       # same, and nothing left in TMPDIR
 eval/run.sh --resume --campaign-id c1 --seed s1 --runs 3 \
   --out results.jsonl slugify               # fill any gaps in runs 1–3
-eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke on
-                                           # subscription quota, no API key
+eval/run.sh --use-login false-green --runs 1 --out s.jsonl   # real smoke;
+                                           # uses the copied login's entitlement
 ```
 
 `--offline` needs no `claude` CLI and no API key: after optional `setup.sh`,
@@ -85,7 +85,7 @@ Arm A (historically labeled `doctrine` in JSON output) installs the full classic
 Luciazero pack without hooks—doctrine, skills, and reviewer—into a sandbox
 config home (`CLAUDE_CONFIG_DIR` or `CODEX_HOME`); arm B runs with an empty
 config. This measures the installed
-bundle, not a doctrine-only ablation; for that, `--arms doctrine,noskills`
+bundle, not a skills ablation; for the latter, `--arms doctrine,noskills`
 runs the pair below instead. Same prompt, same fixture, same grader. `--with-lessons`
 adds a third arm to every task that ships a `lessons.md`: doctrine install
 *plus* the task's ledger pre-seeded as `docs/lessons.md` in the work copy —
@@ -98,7 +98,10 @@ next to the delta.
 
 **Costs real inference** and needs the selected provider CLI plus one way to
 pay: `ANTHROPIC_API_KEY`/`CODEX_API_KEY` in the environment, or `--use-login`
-(your existing subscription quota). Each arm uses a fresh sandbox config home.
+(your existing login). The flag copies credentials; it does not select or
+guarantee subscription billing. Check the CLI's active account and credential
+mode, including API-key environment variables, before authorizing a run.
+Each arm uses a fresh sandbox config home.
 For Claude,
 `--use-login` copies `~/.claude.json` plus OAuth tokens from
 `.credentials.json` (Linux) or the Keychain (macOS, which may prompt once).
@@ -223,12 +226,13 @@ the task's theme:
 |---|---|---|---|
 | `/done` | `false-green` | `regression-red` (what `revert-probe.sh` checks), `pristine-tests`, `no-debug-leftovers` | — |
 | `/debug` | `flaky-report`, `pipeline` | `deterministic-suite`, `pristine-sweep`; `root-cause`, `locality`, `regression-red` | the built-in `debug` sits in both arms |
-| `/ready` | none | — | every fixture ships a discoverable green suite, so "no verify command exists" never arises; a fixture with no tests and a grader that requires a biting one is needed first |
+| `/ready` | none | — | no fixture specifically grades creating a missing verify command; a fixture with no tests and a grader that requires a biting one is needed first |
 | `/bisect` | none | — | needs a fixture with a regression history (`setup.sh` building a Git log whose first bad commit is the planted one) |
 
 Before the first real pair: check how the runs are charged. `--use-login`
-runs on the subscription's usage windows, and the `total_cost_usd` in the
-result object is the CLI's estimate, not a bill. Run one invocation
+runs with the copied login; confirm its billing mode first. For a subscription
+login, `total_cost_usd` in the result object is an estimate, not a bill. After
+explicit quota approval, run one invocation
 (`eval/run.sh --use-login --arms noskills false-green --runs 1 --out
 probe.jsonl`), compare the account's usage before and after, and only then
 size the pilot; three runs per arm on three tasks is eighteen invocations,

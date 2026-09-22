@@ -1,6 +1,10 @@
 # Luciazero Agent Bus roadmap
 
-Status: proposed, revised 2026-09-02 after the first M0 gate run
+Status: implemented checkout-only beta with remaining live gates; source
+status reviewed 2026-09-22. Milestone entries below retain their dated evidence
+and unchecked acceptance items. Distribution is governed by ADR 0008;
+second-machine install/upgrade/uninstall evidence is in
+[publishing](publishing.md#5-agent-bus--checkout-only-and-deliberately-so).
 
 Working name: Luciazero Agent Bus
 

@@ -220,10 +220,13 @@ if mode == "session":
         age = str(int((time.time() - os.path.getmtime(os.path.join(cwd, "LUCIA_RELAY.json"))) // 86400))
     except OSError:
         pass
+tool_input = d.get("tool_input")
+fp_state = ("missing" if not isinstance(tool_input, dict) or "file_path" not in tool_input
+            else "empty" if tool_input["file_path"] in ("", None) else "present")
 lines = [cwd, key, digest(session, 16), digest(raw, 16), str(int(time.time() * 1000)),
          " ".join(refused), field("tool_input", "file_path"), field("expansion_type"),
          field("stop_hook_active"), status, json_ok, digest(cmd, 64) if cmd else "", age,
-         field("source")]
+         field("source"), field("tool_name"), fp_state]
 sys.stdout.write("\n".join(v.replace("\n", " ") for v in lines) + "\n" + cmd)
 '
 PRE="$(printf '%s' "${IN}" | python3 -c "${PRELUDE_PY}" "${PPID}" "${MODE}" 2>/dev/null || true)"
@@ -242,6 +245,8 @@ PRE="$(printf '%s' "${IN}" | python3 -c "${PRELUDE_PY}" "${PPID}" "${MODE}" 2>/d
   IFS= read -r CMD_HASH
   IFS= read -r RELAY_AGE
   IFS= read -r SESSION_SOURCE
+  IFS= read -r TOOL_NAME
+  IFS= read -r FP_STATE
   CMD="$(cat)"
 } <<EOF
 ${PRE}
@@ -251,7 +256,7 @@ if [ -n "${REFUSED_ENV_KEYS}" ]; then
   # `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
   case "${REFUSED_ENV_KEYS}" in
     *'LUCIAZERO_*'*)
-      REFUSED_ENV_KEYS='LUCIAZERO_VERIFY_CMD LUCIAZERO_VERIFY_REGEX LUCIAZERO_DOC_REGEX LUCIAZERO_STRICT_VERIFY_CMD LUCIAZERO_STRICT_TIMEOUT LUCIAZERO_RELAY_STALE_DAYS LUCIAZERO_HANDOFF_STALE_DAYS CLAUDE_CONFIG_DIR' ;;
+      REFUSED_ENV_KEYS='LUCIAZERO_VERIFY_CMD LUCIAZERO_VERIFY_REGEX LUCIAZERO_DOC_REGEX LUCIAZERO_STRICT_VERIFY_CMD LUCIAZERO_STRICT_TIMEOUT LUCIAZERO_RELAY_STALE_DAYS LUCIAZERO_HANDOFF_STALE_DAYS LUCIAZERO_EDIT_DIAG CLAUDE_CONFIG_DIR' ;;
   esac
   # names are [A-Z_]* only, so splitting the line on spaces is exact; globbing
   # is off for the loop so a key that carries a wildcard never names a file
@@ -410,8 +415,12 @@ PY
 # When LUCIAZERO_VERIFY_CMD is set (the repo's exact verify command, e.g.
 # "./test.sh"), only commands that ARE it or START with it count — the broad
 # regex also marks `cat test.sh` or `grep pytest README` as a verify run,
-# flipping the state green without any test having run.
-VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-verify|test\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)}"
+# flipping the state green without any test having run. The default also
+# knows `python -m unittest` and this repository's timing collector,
+# scripts/test-timings.sh, which runs a tier -- except with --report, which
+# only reads the samples kept so far; that case is carved out of the default
+# below and is no concern of a regex somebody set themselves.
+VERIFY_RE="${LUCIAZERO_VERIFY_REGEX:-verify|test\.sh|python[0-9.]* -m unittest|test-timings\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)}"
 VERIFY_CMD="${LUCIAZERO_VERIFY_CMD:-}"
 
 case "${MODE}" in
@@ -435,17 +444,34 @@ case "${MODE}" in
     # Closeout skills write docs AFTER the final green verify. Relay's JSON is
     # also a transient knowledge artifact, not implementation code.
     DOC_RE="${LUCIAZERO_DOC_REGEX:-\.(md|markdown|rst|txt)\$}"
+    COUNTED=yes
     case "${FP}" in
-      */LUCIA_RELAY.json|*/LUCIA_RELAY.md) : ;;
+      */LUCIA_RELAY.json|*/LUCIA_RELAY.md) COUNTED=no ;;
       *)
         if [ -n "${FP}" ] && printf '%s' "${FP}" | grep -qE "${DOC_RE}"; then
-          :  # doc-only write; verify state unchanged
+          COUNTED=no  # doc-only write; verify state unchanged
         else
           touch "${STATE}/last_edit"
           rm -f "${STATE}/nudged"    # new code edits re-arm the one-shot nudge
         fi
         ;;
     esac
+    # Opt-in diagnostic (LUCIAZERO_EDIT_DIAG=1): one line per edit event in
+    # the state directory, next to last_edit, saying what the event carried
+    # and what the hook made of it -- the tool's name, the opaque tool key,
+    # whether file_path was missing, empty or present, its suffix, whether it
+    # lay under cwd, and whether the edit counted. Never the path, never the
+    # content. For finding out what touched last_edit when no visible edit did.
+    if [ "${LUCIAZERO_EDIT_DIAG:-}" = 1 ]; then
+      IN_CWD="-"; EXT="-"
+      if [ -n "${FP}" ]; then
+        case "${FP}" in "${CWD}"/*) IN_CWD=yes ;; *) IN_CWD=no ;; esac
+        case "${FP##*/}" in *.*) EXT="${FP##*.}" ;; esac
+      fi
+      printf 'ts=%s mode=%s tool=%s key=%s file_path=%s ext=%s in_cwd=%s counted=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${MODE}" "${TOOL_NAME:--}" "${TK}" "${FP_STATE:-unknown}" \
+        "${EXT}" "${IN_CWD}" "${COUNTED}" >> "${STATE}/edit-diag.log" 2>/dev/null || true
+    fi
     ;;
   bash|bash-failure)
     mkdir -p "${TELEMETRY}/bash_count" "${TELEMETRY}/bash_intervals" 2>/dev/null || true
@@ -469,6 +495,9 @@ case "${MODE}" in
         esac
       elif printf '%s' "${CMD}" | grep -qE "${VERIFY_RE}"; then
         IS_VERIFY=yes
+        if [ -z "${LUCIAZERO_VERIFY_REGEX:-}" ] && printf '%s' "${CMD}" | grep -qE 'test-timings\.sh +--report'; then
+          IS_VERIFY=no  # the collector's report runs nothing
+        fi
       fi
     fi
     if [ "${IS_VERIFY}" = yes ]; then

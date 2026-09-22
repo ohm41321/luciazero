@@ -9,8 +9,9 @@
 # A sample is three files under LZ_TEST_TIMINGS_DIR (default
 # .test-timings/ in the checkout, git-ignored): <stamp>-<tier>.out, .err
 # (the TIMING lines live here) and .meta (tier, os, commit, exit, wall). The
-# tier's exit code is passed through. The report reads only green samples
-# and says how many it skipped.
+# tier's exit code is passed through. The report reads only green samples,
+# names the commits they came from (warning when a tier's samples span more
+# than one: a baseline is one revision's) and says how many red it skipped.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="${LZ_TEST_TIMINGS_DIR:-${ROOT}/.test-timings}"
@@ -32,6 +33,7 @@ if not os.path.isdir(d):
     print(f"no samples under {d}"); sys.exit(0)
 samples = defaultdict(list)   # (tier, gate) -> [seconds]
 runs, skipped, walls, oses = defaultdict(int), 0, defaultdict(list), defaultdict(set)
+commits = defaultdict(lambda: defaultdict(int))   # tier -> commit -> runs
 for name in sorted(os.listdir(d)):
     if not name.endswith(".meta"):
         continue
@@ -41,6 +43,7 @@ for name in sorted(os.listdir(d)):
     tier = meta.get("tier", "?")
     runs[tier] += 1
     oses[tier].add(meta.get("os", "?"))
+    commits[tier][meta.get("commit", "?")] += 1
     if meta.get("wall", "").isdigit():
         walls[tier].append(int(meta["wall"]))
     err = os.path.join(d, name[:-5] + ".err")
@@ -57,6 +60,12 @@ for tier in sorted(runs):
     w = walls[tier]
     wall = f", wall median {statistics.median(w):g}s p95 {p95(w)}s" if w else ""
     print(f"{tier}: {runs[tier]} green run(s) on {', '.join(sorted(oses[tier]))}{wall}")
+    seen = commits[tier]
+    print(f"{tier}: commits " + ", ".join(f"{c} x{n}" for c, n in sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))))
+    if len(seen) > 1:
+        # the samples are history, not one revision's baseline
+        print(f"warning: {tier} samples span {len(seen)} revisions -- split them before reading a baseline; "
+              "one sha+dirty can still be different trees")
 if skipped:
     print(f"skipped {skipped} red run(s)")
 PY

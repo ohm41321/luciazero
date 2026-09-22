@@ -371,6 +371,10 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   wall time ของ turn/Bash และจำนวน Bash, verify, skill ที่ model/user เรียก
   โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
+- `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
+  ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,
+  นามสกุล, อยู่ใต้ cwd หรือไม่, นับเป็น edit หรือไม่ — ไม่เก็บ path หรือเนื้อหา)
+  ไว้หาว่าอะไร re-arm nudge ทั้งที่ไม่เห็น edit
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
@@ -393,6 +397,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # เพิ่มบรรทัด `TIMING gate=<name> seconds=<n>` ต่อ gate ทาง stderr
 scripts/test-timings.sh --fast       # รันแบบเดียวกัน และเก็บ stdout/stderr/meta ไว้ใต้ .test-timings/
 scripts/test-timings.sh --report     # median กับ p95 ต่อ gate จาก sample สีเขียวที่เก็บไว้
+                                     # พร้อม commit ที่ sample มาจาก (เตือนเมื่อปนมากกว่าหนึ่ง revision)
 ```
 
 discipline tier เป็นคำสั่ง loop สำหรับ enforcement pack, discipline report และ

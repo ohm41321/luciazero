@@ -581,3 +581,60 @@ JS
 else
   echo "skip discipline report fixtures (node not installed)"
 fi
+
+# 4c6. default verify detection knows `python -m unittest` and this
+# repository's timing collector, and knows that the collector's --report runs
+# nothing. A regex somebody set themselves is left alone: the carve-out
+# belongs to the default. Each case: an edit, the command, then a stop that
+# must nudge (rc 2) or stay quiet (rc 0).
+mktmp VD
+verify_counts() { # verify_counts <command> <want rc: 0 counted, 2 not> <label>
+  local CJ='{"cwd":"/hook/test/detect"}'
+  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  printf '{"cwd":"/hook/test/detect","tool_input":{"command":%s}}\n' "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+    | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+  local RC=0
+  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  [ "${RC}" = "$2" ] || fail "$3 (stop rc=${RC}, want $2): $1"
+}
+verify_counts 'cd agentd && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_nudge' 0 "python3 -m unittest was not read as a verify run"
+verify_counts 'python -m unittest discover -s tests -t .' 0 "python -m unittest discover was not read as a verify run"
+# shellcheck disable=SC2016  # the literal is the command as typed, $PATH and all
+verify_counts 'PATH=/x/bin:$PATH LZ_BASH32=/bin/bash scripts/test-timings.sh --full' 0 "the timing collector was not read as a verify run"
+verify_counts 'scripts/test-timings.sh' 0 "the collector with no tier (full) was not read as a verify run"
+verify_counts 'scripts/test-timings.sh --report' 2 "the collector's --report, which runs nothing, was read as a verify run"
+verify_counts 'scripts/test-timings.sh --report | head -20' 2 "the collector's --report in a pipeline was read as a verify run"
+# a regex of one's own keeps its own meaning, carve-out included
+CJ='{"cwd":"/hook/test/detect"}'
+echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo '{"cwd":"/hook/test/detect","tool_input":{"command":"scripts/test-timings.sh --report"}}' \
+  | TMPDIR="${VD}" LUCIAZERO_VERIFY_REGEX='test-timings' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+[ "${RC}" = 0 ] || fail "the --report carve-out leaked into a regex the user set (stop rc=${RC})"
+echo "ok  default verify detection covers unittest and the timing collector, not its --report"
+
+# 4c7. LUCIAZERO_EDIT_DIAG=1 writes one line per edit event next to
+# last_edit -- tool name, opaque key, whether file_path was missing, empty or
+# present, its suffix, whether it lay under cwd, whether the edit counted --
+# and never the path or the content. Off by default: no file at all.
+mktmp ED
+EDJ='{"cwd":"/hook/test/diag"'
+ED_STATE="${ED}/luciazero-verify-state-$(id -u)/$(python3 -c 'import hashlib,sys; print(hashlib.md5(sys.argv[1].encode(), usedforsecurity=False).hexdigest()[:12])' /hook/test/diag)"
+echo "${EDJ},\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/hook/test/diag/a.py\"}}" \
+  | TMPDIR="${ED}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+[ ! -e "${ED_STATE}/edit-diag.log" ] || fail "the edit diagnostic wrote a log without being asked"
+diag_edit() { printf '%s\n' "$1" | TMPDIR="${ED}" LUCIAZERO_EDIT_DIAG=1 "${ROOT}/claude/hooks/luciazero-verify.sh" edit; }
+diag_edit "${EDJ},\"tool_name\":\"Write\"}"
+diag_edit "${EDJ},\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"\"}}"
+diag_edit "${EDJ},\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/hook/test/diag/src/a.py\"}}"
+diag_edit "${EDJ},\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/elsewhere/notes.md\"}}"
+diag_edit "${EDJ},\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/hook/test/diag/Makefile\"}}"
+DIAG_LINES="$( (wc -l < "${ED_STATE}/edit-diag.log" 2>/dev/null || echo 0) | tr -d ' ')"
+[ "${DIAG_LINES}" = 5 ] || fail "the edit diagnostic wrote ${DIAG_LINES} lines for five edit events"
+DIAG="$(sed 's/^ts=[0-9T:Z-]* mode=edit tool=\([A-Za-z]*\) key=[0-9a-f]\{16\} /\1 /' "${ED_STATE}/edit-diag.log" | tr '\n' '|')"
+WANT='Write file_path=missing ext=- in_cwd=- counted=yes|Edit file_path=empty ext=- in_cwd=- counted=yes|Edit file_path=present ext=py in_cwd=yes counted=yes|Write file_path=present ext=md in_cwd=no counted=no|Write file_path=present ext=- in_cwd=yes counted=yes|'
+[ "${DIAG}" = "${WANT}" ] || fail "the edit diagnostic lines are not the expected ones:
+got  ${DIAG}
+want ${WANT}"
+grep -q '/hook/test/diag\|/elsewhere\|notes\|Makefile' "${ED_STATE}/edit-diag.log" && fail "the edit diagnostic recorded a path or a file name"
+echo "ok  LUCIAZERO_EDIT_DIAG=1 records what each edit event carried, never the path"

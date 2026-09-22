@@ -389,6 +389,11 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   turn/Bash wall time plus Bash, verify, and model/user skill counts—never raw
   commands, skill names, or paths.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
+- `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
+  edit event in its state directory (tool name, opaque key, whether
+  `file_path` was missing, empty or present, its suffix, under cwd or not,
+  counted or not — never the path or the content), for finding out what
+  re-armed the nudge when no visible edit did.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
   committed repository config. Strict mode fails open on internal errors.
 - A repository's committed `.claude/settings.json` cannot configure Luciazero
@@ -410,7 +415,8 @@ See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) f
 ./test.sh               # closeout/CI: full eval, packaging, and install coverage
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # plus one `TIMING gate=<name> seconds=<n>` per gate on stderr
 scripts/test-timings.sh --fast       # same run, and keeps stdout/stderr/meta under .test-timings/
-scripts/test-timings.sh --report     # median and p95 per gate over the green samples kept so far
+scripts/test-timings.sh --report     # median and p95 per gate over the green samples kept so far,
+                                     # and the commits they came from (a warning when they span more than one)
 ```
 
 The discipline tier is the loop command for the enforcement pack, the

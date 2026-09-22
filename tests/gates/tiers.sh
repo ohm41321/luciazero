@@ -153,10 +153,21 @@ REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" 
 echo "${REPORT}" | grep -qE '^fast +hooks +3 +20 +30 +10 +30$' \
   || fail "test-timings.sh --report ranks wrong (want fast hooks n=3 median=20 p95=30 min=10 max=30): ${REPORT}"
 echo "${REPORT}" | grep -q '^skipped 1 red run(s)$' || fail "the report did not skip the red run: ${REPORT}"
+# the samples' commits are named; the stub repo has no git, so all say unknown
+echo "${REPORT}" | grep -q '^fast: commits unknown x3$' || fail "the report does not name the samples' commit: ${REPORT}"
+echo "${REPORT}" | grep -q '^warning:' && fail "the report warned about mixed revisions over one: ${REPORT}"
+# one sample from another revision (a green one; the red run is skipped anyway)
+FIRST="$(find "${TS}/samples" -name '*-fast.meta' | sort | head -1)"
+sed 's/^commit=.*/commit=abc1234+dirty/' "${FIRST}" > "${FIRST}.new" && mv "${FIRST}.new" "${FIRST}"
+REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
+echo "${REPORT}" | grep -q '^fast: commits unknown x2, abc1234+dirty x1$' \
+  || fail "the report does not list every commit with its count: ${REPORT}"
+echo "${REPORT}" | grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' \
+  || fail "the report did not warn that the samples span two revisions: ${REPORT}"
 LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | grep -q '^no samples under ' \
   || fail "the report over no samples is not the one-line notice"
 rm -rf "${TS}"
-echo "ok  test-timings.sh keeps a sample per run and ranks gates by median and p95"
+echo "ok  test-timings.sh keeps a sample per run, ranks gates by median and p95, and names the revisions"
 
 # (e) The full-only gates run at once, each in its own subshell, with agent-bus
 # serial; their stdout and stderr are replayed in the original order, so both

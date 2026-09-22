@@ -35,7 +35,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commit, exit code, wall seconds) under the git-ignored `.test-timings/`, so
   ordinary work runs accumulate samples; `--report` prints median, p95, min
   and max per gate over the green samples and says how many red runs it
-  skipped. Tier changes wait for ten fast/full samples.
+  skipped. Tier changes wait for ten fast/full samples. The report also
+  names the commits each tier's samples came from, with their counts, and
+  warns when they span more than one revision: those samples are history,
+  not a baseline, and one `sha+dirty` can still be two different trees.
+- `LUCIAZERO_EDIT_DIAG=1` (from your own shell; a repository's settings
+  cannot set it) makes the hook append one line per edit event to
+  `edit-diag.log` in its state directory, next to `last_edit`: the tool's
+  name, the opaque tool key, whether `file_path` was missing, empty or
+  present, its suffix, whether it lay under cwd, and whether the edit
+  counted — never the path or the content. For finding out what re-armed
+  the nudge when no visible edit did.
 - `eval/run.sh --discard-work` removes each invocation's work copy and
   provider logs once the row is recorded; by default they stay under
   `TMPDIR` for inspection, as before. The eval gate passes it everywhere.
@@ -55,6 +65,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The hook's default verify detection reads `python -m unittest …` and
+  `scripts/test-timings.sh [tier]` as verify runs — a turn that ran either
+  after an edit was nudged as unverified — while `scripts/test-timings.sh
+  --report`, which runs nothing, is not one. A `LUCIAZERO_VERIFY_REGEX` of
+  your own keeps its own meaning, carve-out included.
 - `luciazero-agentd run` no longer waits for its terminal to drain on the way
   out: the proxy restores the terminal with `TCSANOW`, where `TCSADRAIN`
   waited for every byte already written to be read, so a SIGTERM that

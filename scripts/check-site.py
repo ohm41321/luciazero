@@ -27,7 +27,8 @@ PAGES = {
     "th/index.html": ("th", BASE + "th/"),
 }
 ALTERNATES = {"en": BASE, "th": BASE + "th/", "x-default": BASE}
-SKILL_COUNT = {"en": r"\b(\d+) skills\b", "th": r"skill (\d+) ตัว"}
+# How either language states the skill count, wherever it appears on a page.
+SKILL_COUNT = (r"\b(\d+) skills\b", r"skill (\d+) ตัว")
 
 
 class Page(HTMLParser):
@@ -106,11 +107,16 @@ def local_target(site: pathlib.Path, page: str, ref: str) -> pathlib.Path | None
     return target
 
 
-def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[str]) -> list[str]:
+def in_site(site: pathlib.Path, target: pathlib.Path) -> bool:
+    """Pages publishes only the site directory; a file beyond it would 404."""
+    return target.is_file() and target.is_relative_to(site)
+
+
+def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[str],
+               parsed: dict[pathlib.Path, Page]) -> list[str]:
     problems: list[str] = []
     bad = lambda msg: problems.append(f"{name}: {msg}")  # noqa: E731
-    p = Page()
-    p.feed((site / name).read_text(encoding="utf-8"))
+    p = parsed[(site / name).resolve()]
 
     if p.lang != lang:
         bad(f'<html lang="{p.lang}">, expected "{lang}"')
@@ -131,7 +137,7 @@ def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[
             bad(f"needs exactly one non-empty {key}")
     for image in p.meta.get("og:image", []):
         target = local_target(site, name, image) if image.startswith(BASE) else None
-        if target is None or not target.is_file():
+        if target is None or not in_site(site, target):
             bad(f"og:image {image!r} must be an absolute URL to a file in the site")
     if p.meta.get("twitter:card") != ["summary_large_image"]:
         bad("twitter:card must be summary_large_image")
@@ -154,16 +160,21 @@ def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[
             bad(f"JSON-LD has no node named Luciazero with url {BASE}")
 
     for ref in p.refs:
-        if ref.startswith("#"):
-            if ref[1:] not in p.ids:
-                bad(f"fragment {ref} has no matching id")
+        target = (site / name).resolve() if ref.startswith("#") else local_target(site, name, ref)
+        if target is None:
             continue
-        target = local_target(site, name, ref)
-        if target is not None and not target.is_file():
+        if not in_site(site, target):
             bad(f"{ref} does not resolve to a file in the site")
+            continue
+        fragment = urlsplit(ref).fragment
+        if fragment and fragment not in (parsed[target].ids if target in parsed else set()):
+            bad(f"{ref} points at an id its page does not have")
 
     text = " ".join(" ".join(p.text).split())
-    counts = re.findall(SKILL_COUNT[lang], text)
+    # The count search engines show lives in the title, meta and JSON-LD, not
+    # only in the body, and that copy is the one most likely to be left stale.
+    stated = " ".join([p.title, text, *p.jsonld, *(v for vs in p.meta.values() for v in vs)])
+    counts = [n for pattern in SKILL_COUNT for n in re.findall(pattern, stated)]
     if not counts:
         bad("no longer states its skill count")
     elif any(int(n) != len(skills) for n in counts):
@@ -183,9 +194,14 @@ def main() -> int:
     found = sorted(str(f.relative_to(site)) for f in site.rglob("*.html"))
     if found != sorted(PAGES):
         problems.append(f"site pages {found} != checked pages {sorted(PAGES)}; register new pages in PAGES")
-    for name, (lang, url) in PAGES.items():
+    parsed: dict[pathlib.Path, Page] = {}
+    for name in PAGES:
         if (site / name).is_file():
-            problems += check_page(site, name, lang, url, skills)
+            parsed[(site / name).resolve()] = page = Page()
+            page.feed((site / name).read_text(encoding="utf-8"))
+    for name, (lang, url) in PAGES.items():
+        if (site / name).resolve() in parsed:
+            problems += check_page(site, name, lang, url, skills, parsed)
 
     try:
         tree = ET.parse(site / "sitemap.xml")

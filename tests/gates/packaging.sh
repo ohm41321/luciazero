@@ -46,8 +46,9 @@ echo "ok  Thai README present + in sync"
 
 # 4d6. the GitHub Pages site the manifests name as homepage: search metadata,
 # hreflang, sitemap, local links and the stated skill count agree. The Pages
-# workflow runs the same checker before it deploys; the fixture copy proves
-# the checker fails on a page that lost its canonical link.
+# workflow runs the same checker before it deploys; the fixture copies prove
+# it fails, for the right reason, on a page that lost its canonical link and
+# on one whose meta description states a stale skill count.
 python3 "${ROOT}/scripts/check-site.py" || fail "site check (scripts/check-site.py)"
 mktmp SITE_FX
 cp -R "${ROOT}/site/." "${SITE_FX}/"
@@ -56,11 +57,17 @@ SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a page without its canonical link"
 printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: canonical must be exactly' \
   || fail "site check failed the canonical fixture for another reason: ${SITE_OUT}"
+# The count a search result shows is the meta description's, not the body's.
+sed '/name="description"/s/13 skills/12 skills/' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
+SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
+  && fail "site check accepted a stale skill count in the meta description"
+printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: states \['12', '13'\] skills" \
+  || fail "site check failed the skill-count fixture for another reason: ${SITE_OUT}"
 grep -qF '(https://ohm41321.github.io/luciazero/)' "${ROOT}/README.md" \
   || fail "README.md lost its link to the website"
 grep -qF '(https://ohm41321.github.io/luciazero/th/)' "${ROOT}/README.th.md" \
   || fail "README.th.md lost its link to the Thai website"
-echo "ok  site checker rejects a page without its canonical link"
+echo "ok  site checker rejects a missing canonical link and a stale meta skill count"
 
 # 4e. luciazero-ci example stays inert and shaped right
 CI_EX="${ROOT}/examples/luciazero-ci.example.yml"

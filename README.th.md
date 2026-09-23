@@ -15,7 +15,7 @@
   </p>
 </div>
 
-[English](README.md) · **ภาษาไทย**
+[English](README.md) · **ภาษาไทย** · [เว็บไซต์](https://ohm41321.github.io/luciazero/th/)
 
 <p align="center">
   <strong>13 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>

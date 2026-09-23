@@ -7,6 +7,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A project website at <https://ohm41321.github.io/luciazero/>, with a Thai
+  page at `/th/`, so a search for "luciazero" has one canonical page to rank.
+  The source is `site/` (outside the npm payload); `.github/workflows/pages.yml`
+  deploys it from `main` once `scripts/check-site.py` passes. The checker
+  requires a title, description, single canonical URL, reciprocal hreflang,
+  Open Graph card and parseable JSON-LD on every page, resolves every local
+  link, matches the sitemap to the canonical URLs, and fails when the stated
+  skill count or list drifts from `skills/catalog.txt`. `./test.sh` runs it in
+  the packaging gate, along with a copy of the site that lost its canonical
+  link, which it must reject.
+
+### Changed
+
+- `homepage` in `package.json` and `.claude-plugin/plugin.json` now points at
+  the website, and both READMEs link to it next to the language switch.
+
 ## [2.6.0] - 2026-09-22
 
 ### Added

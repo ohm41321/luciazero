@@ -44,6 +44,24 @@ grep -qF '**Agent Bus เป็น beta แบบ opt-in และใช้ไ�
   || fail "README.th.md no longer labels its Agent Bus demo checkout-only"
 echo "ok  Thai README present + in sync"
 
+# 4d6. the GitHub Pages site the manifests name as homepage: search metadata,
+# hreflang, sitemap, local links and the stated skill count agree. The Pages
+# workflow runs the same checker before it deploys; the fixture copy proves
+# the checker fails on a page that lost its canonical link.
+python3 "${ROOT}/scripts/check-site.py" || fail "site check (scripts/check-site.py)"
+mktmp SITE_FX
+cp -R "${ROOT}/site/." "${SITE_FX}/"
+sed '/rel="canonical"/d' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
+SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
+  && fail "site check accepted a page without its canonical link"
+printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: canonical must be exactly' \
+  || fail "site check failed the canonical fixture for another reason: ${SITE_OUT}"
+grep -qF '(https://ohm41321.github.io/luciazero/)' "${ROOT}/README.md" \
+  || fail "README.md lost its link to the website"
+grep -qF '(https://ohm41321.github.io/luciazero/th/)' "${ROOT}/README.th.md" \
+  || fail "README.th.md lost its link to the Thai website"
+echo "ok  site checker rejects a page without its canonical link"
+
 # 4e. luciazero-ci example stays inert and shaped right
 CI_EX="${ROOT}/examples/luciazero-ci.example.yml"
 [ -f "${CI_EX}" ] || fail "examples/luciazero-ci.example.yml missing"

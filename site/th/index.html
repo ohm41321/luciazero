@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luciazero — ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ</title>
+<meta name="description" content="Luciazero ให้ Claude Code และ Codex CLI พิสูจน์งานด้วยคำสั่งจริง: ลูป วางแผน → แก้ → ตรวจ → แก้ซ้ำ, skill 13 ตัว, reviewer ตามความเสี่ยง และ hook แบบ fail-open">
+<link rel="canonical" href="https://ohm41321.github.io/luciazero/th/">
+<link rel="alternate" hreflang="en" href="https://ohm41321.github.io/luciazero/">
+<link rel="alternate" hreflang="th" href="https://ohm41321.github.io/luciazero/th/">
+<link rel="alternate" hreflang="x-default" href="https://ohm41321.github.io/luciazero/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Luciazero">
+<meta property="og:locale" content="th_TH">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:url" content="https://ohm41321.github.io/luciazero/th/">
+<meta property="og:title" content="Luciazero — ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ">
+<meta property="og:description" content="ลูป วางแผน → แก้ → ตรวจ → แก้ซ้ำ สำหรับ Claude Code และ Codex CLI งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent">
+<meta property="og:image" content="https://ohm41321.github.io/luciazero/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Luciazero: make coding agents prove their work">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;600&display=swap">
+<link rel="stylesheet" href="../style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://ohm41321.github.io/luciazero/#website",
+      "url": "https://ohm41321.github.io/luciazero/",
+      "name": "Luciazero",
+      "inLanguage": "th"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://ohm41321.github.io/luciazero/#software",
+      "name": "Luciazero",
+      "url": "https://ohm41321.github.io/luciazero/",
+      "description": "ชั้น verification และ handoff สำหรับ Claude Code, Codex CLI และ runtime ที่ใช้ skill ได้: ลูป วางแผน → แก้ → ตรวจ → แก้ซ้ำ, skill 13 ตัว, reviewer ตามความเสี่ยง และ hook แบบ fail-open",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows (WSL)",
+      "license": "https://opensource.org/licenses/MIT",
+      "downloadUrl": "https://www.npmjs.com/package/luciazero",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": [
+        "https://github.com/ohm41321/luciazero",
+        "https://www.npmjs.com/package/luciazero"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header class="wrap top">
+  <a class="brand" href="./">Luciazero</a>
+  <nav aria-label="เว็บไซต์">
+    <a href="#install">ติดตั้ง</a>
+    <a href="#skills">Skill</a>
+    <a href="https://github.com/ohm41321/luciazero/blob/main/README.th.md">GitHub</a>
+    <a href="../" hreflang="en" lang="en">English</a>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div>
+      <p class="eyebrow">สำหรับ Claude Code, Codex CLI และ runtime ที่ใช้ skill ได้</p>
+      <h1>ให้ coding agent <em>พิสูจน์</em> งานก่อนบอกว่าเสร็จ</h1>
+      <p class="lede">Luciazero เพิ่มลูป <code>วางแผน → แก้ → ตรวจ → แก้ซ้ำ</code> ให้ coding agent จับการบอกว่า “เสร็จ” ทั้งที่ยังไม่มีการตรวจที่ผ่าน กัน scope หายเงียบ ๆ และส่งงานที่ยังไม่เสร็จต่อให้ session ถัดไปพร้อมหลักฐาน</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">ติดตั้ง Luciazero</a>
+        <a class="btn" href="https://github.com/ohm41321/luciazero/blob/main/README.th.md">ดูบน GitHub</a>
+      </div>
+    </div>
+    <figure class="term" aria-label="statusline ของ Luciazero และความหมายของแต่ละสถานะ">
+      <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>statusline</span></div>
+      <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="384" height="485" alt="ลูเซีย มาสคอตของ Luciazero กอดตุ๊กตาแมว">
+      <ol class="states">
+        <li class="s-edit"><code>✎ unverified</code><span>มีการแก้หลังการตรวจครั้งล่าสุด</span></li>
+        <li class="s-red"><code>❌ verify RED</code><span>การตรวจครั้งล่าสุดไม่ผ่าน</span></li>
+        <li class="s-green"><code>✅ verify 3m</code><span>การตรวจผ่านเมื่อสามนาทีก่อน</span></li>
+      </ol>
+    </figure>
+  </div>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>ติดตั้งใน 30 วินาที</h2>
+      <p class="intro">เลือกช่องทางตาม agent ที่ใช้ แล้วเริ่ม session ใหม่</p>
+      <div class="install">
+        <div class="card">
+          <h3><small>Claude Code</small>Full pack</h3>
+          <div class="cmd"><pre><code>/plugin marketplace add ohm41321/luciazero
+/plugin install luciazero@luciazero</code></pre><button class="copy" type="button">คัดลอก</button></div>
+          <p>ใน session ใหม่รัน <code>/luciazero:ready</code></p>
+        </div>
+        <div class="card">
+          <h3><small>Codex CLI</small>Doctrine + skill</h3>
+          <div class="cmd"><pre><code>npx luciazero codex</code></pre><button class="copy" type="button">คัดลอก</button></div>
+          <p>ใน session ใหม่รัน <code>$ready</code></p>
+        </div>
+        <div class="card">
+          <h3><small>agent ที่รองรับ skill</small>เฉพาะ skill</h3>
+          <div class="cmd"><pre><code>npx skills add ohm41321/luciazero</code></pre><button class="copy" type="button">คัดลอก</button></div>
+          <p>ติดตั้งเฉพาะ skill ไม่รวม doctrine, reviewer หรือ hook</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="protects">
+    <div class="wrap">
+      <h2>จับอะไรได้บ้าง</h2>
+      <p class="intro">ความพังแต่ละแบบมีกลไกรองรับ กลไกที่ตรวจด้วยเครื่องรันใน <code>test.sh</code> ของ repository เอง</p>
+      <ul class="rows">
+        <li><b>บอกว่า “เสร็จ” โดยไม่ตรวจ</b><span>Stop hook เตือน; strict gate แบบ opt-in บล็อกเมื่อผลแดง</span></li>
+        <li><b>นับ <code>cat test.sh</code> ว่ารัน test</b><span>จับคู่ <code>LUCIAZERO_VERIFY_CMD</code> แบบ exact</span></li>
+        <li><b>ลดความเข้ม test เพื่อให้เขียว</b><span>Doctrine ข้อ 3 และ check-suppression guard</span></li>
+        <li><b>Test ใหม่ผ่านแม้ไม่มี fix</b><span><code>revert-probe.sh</code> รัน test กับโค้ดเก่า</span></li>
+        <li><b>ทำ scope หายเงียบ ๆ</b><span><code>/done</code> บังคับให้ส่งครบหรือระบุสิ่งที่เว้นไว้</span></li>
+        <li><b>เดินเข้าทางตันเดิมอีกรอบ</b><span><code>/retro</code> บันทึก และ <code>/debug</code> อ่านก่อนเริ่ม</span></li>
+        <li><b>Context หายตอนเปลี่ยน agent</b><span><code>/lucia-relay</code> ส่งหลักฐาน next action และ negative knowledge</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="skills">
+    <div class="wrap">
+      <h2>skill 13 ตัว ใช้ตามจังหวะงาน</h2>
+      <p class="intro">เรียกใช้ <code>ready</code> ก่อนหนึ่งครั้ง (<code>/ready</code> สำหรับ agent ที่ใช้ slash และ <code>$ready</code> ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน</p>
+      <ul class="rows skills">
+        <li><b>เข้า repository</b><code>/ready</code><span>หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้</span></li>
+        <li><b>โครงสร้างหรือหลักฐานไล่อ่านยาก</b><code>/show</code><span>แสดงความเชื่อมโยง สิ่งที่เปลี่ยน และหลักฐานด้วยภาพที่เล็กที่สุด</span></li>
+        <li><b>อยากได้เสียงพูดแบบลูเซียระหว่างเขียนโค้ด</b><code>/imouto-mode</code><span>น้ำเสียงน้องสาวซึนเดเระแบบอ่อน ๆ; ต้องเปิดเองและค่าเริ่มต้นปิด</span></li>
+        <li><b>ก่อนงานเสี่ยง กำกวม หรือแตะหลาย module</b><code>/plan</code><span>ล็อก scope และหลักฐานยอมรับที่สังเกตได้</span></li>
+        <li><b>บั๊กที่มองรอบแรกไม่ออก</b><code>/debug</code><span>Reproduction, hypothesis ledger, regression test</span></li>
+        <li><b>รู้ revision ดีและเสีย</b><code>/bisect</code><span>หา first bad commit ใน worktree ชั่วคราว</span></li>
+        <li><b>ก่อนบอกว่าเสร็จ</b><code>/done</code><span>Full verify, skeptic review และรายงาน scope</span></li>
+        <li><b>ต้องส่งงานไปที่อื่น</b><code>/lucia-relay</code><span>State แบบ JSON + Markdown พร้อมตรวจ drift</span></li>
+        <li><b>มีงานจาก agent อื่นรออยู่ในคิว (beta)</b><code>/lucia-bus</code><span>ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง</span></li>
+        <li><b>อยากให้ agent สอง session คุยกัน (beta)</b><code>/lucia-chat</code><span>บอกว่าใครรออะไร และเปิดหนึ่งหน้าต่างต่อ agent</span></li>
+        <li><b>ปรับ performance</b><code>/experiment</code><span>Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม</span></li>
+        <li><b>ดูนิสัยการ verify ในเครื่อง</b><code>/discipline-report</code><span>รายงาน outcome กรองตามเวลาและโปรเจกต์</span></li>
+        <li><b>หลังงานยาก</b><code>/retro</code><span>เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="limits" class="limits">
+    <div class="wrap">
+      <h2>สิ่งที่ไม่ได้อ้าง</h2>
+      <p>Luciazero คือชั้นวินัย ไม่ใช่ agent runtime กลไกที่ตรวจด้วยเครื่องถูกตรวจโดย test suite ส่วนผลด้านพฤติกรรมวัดแยกตาม model และ task ด้วย eval harness พร้อมข้อจำกัดที่เผยแพร่คู่กับตัวเลข Agent Bus เป็น beta แบบ opt-in และใช้ได้จาก checkout เท่านั้น</p>
+      <p><a href="https://github.com/ohm41321/luciazero/blob/main/README.th.md#หลักฐานและข้อจำกัด">อ่านหลักฐานและข้อจำกัด</a></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Luciazero · MIT license</span>
+    <nav aria-label="โปรเจกต์">
+      <a href="https://github.com/ohm41321/luciazero">GitHub</a>
+      <a href="https://www.npmjs.com/package/luciazero">npm</a>
+      <a href="https://github.com/ohm41321/luciazero/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="../" hreflang="en" lang="en">English</a>
+    </nav>
+  </div>
+</footer>
+<script>
+for (const button of document.querySelectorAll(".copy")) {
+  const label = button.textContent;
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(button.previousElementSibling.innerText.trim());
+      button.textContent = "คัดลอกแล้ว";
+    } catch {
+      button.textContent = "เลือกแล้วคัดลอกเอง";
+    }
+    setTimeout(() => { button.textContent = label; }, 1600);
+  });
+}
+</script>
+</body>
+</html>

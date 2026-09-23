@@ -5,7 +5,7 @@
   "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 13 skills, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "athit", "email": "athitfkm@gmail.com" },
   "license": "MIT",
-  "homepage": "https://github.com/ohm41321/luciazero",
+  "homepage": "https://ohm41321.github.io/luciazero/",
   "repository": "https://github.com/ohm41321/luciazero",
   "keywords": ["verification", "discipline", "doctrine", "skills", "hooks", "agentic-engineering", "testing"],
   "skills": "./skills",

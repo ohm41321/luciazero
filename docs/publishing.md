@@ -389,6 +389,38 @@ with no container run anywhere.
 The bus stays checkout-only regardless: that is ADR 0008's decision and not a
 consequence of this item, and a release note that implies otherwise is wrong.
 
+## 6. Website and search
+
+The site at `https://ohm41321.github.io/luciazero/` (Thai at `/th/`) exists so
+that a search for "luciazero" has one canonical page to rank, instead of
+splitting between the repository, the npm page and release notes. Its source
+is `site/`, outside the npm `files` allowlist, and `.github/workflows/pages.yml`
+deploys it from `main` after `scripts/check-site.py` passes; `./test.sh` runs
+the same checker in the packaging gate.
+
+- [x] Pages source set to GitHub Actions (`build_type: workflow`) — 2026-09-23
+- [x] `homepage` in `package.json` and `.claude-plugin/plugin.json` points at
+      the site; the npm page shows it only after the next release publishes
+- [x] Repository description, website field and `luciazero` topic set with
+      `gh repo edit` — 2026-09-23
+- [ ] Social preview: upload `site/og.png` (1280×640) under Settings → Social
+      preview. There is no API for it; `usesCustomOpenGraphImage` in
+      `gh repo view --json` turns true once it is done.
+- [ ] Google Search Console: add a URL-prefix property for the site URL,
+      verify it with the HTML-tag method (the `<meta name="google-site-verification">`
+      goes into the `<head>` of `site/index.html`), submit `sitemap.xml`, then
+      request indexing for both URLs.
+
+Two limits of a project page, so nobody spends time on them again:
+`robots.txt` is only read at a host's root, so one under `/luciazero/` would be
+ignored — the sitemap goes to Search Console instead; and the GitHub
+repository page itself cannot be verified in Search Console, because the
+property must be a URL the owner controls.
+
+When the page text changes, keep the skill count and skill list in step with
+`skills/catalog.txt` (the checker fails otherwise) and add any new page to
+`PAGES` in the checker and to `sitemap.xml`.
+
 ## Channel honesty
 
 The classic `./install.sh` remains the reference channel — it is the only one

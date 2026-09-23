@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luciazero — make coding agents prove their work</title>
+<meta name="description" content="Luciazero makes Claude Code and Codex CLI prove their work: a plan → change → verify → fix loop, 13 skills, a risk-routed reviewer, and fail-open hooks.">
+<link rel="canonical" href="https://ohm41321.github.io/luciazero/">
+<link rel="alternate" hreflang="en" href="https://ohm41321.github.io/luciazero/">
+<link rel="alternate" hreflang="th" href="https://ohm41321.github.io/luciazero/th/">
+<link rel="alternate" hreflang="x-default" href="https://ohm41321.github.io/luciazero/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Luciazero">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="th_TH">
+<meta property="og:url" content="https://ohm41321.github.io/luciazero/">
+<meta property="og:title" content="Luciazero — make coding agents prove their work">
+<meta property="og:description" content="A plan → change → verify → fix loop for Claude Code and Codex CLI. Done is proven by a command, not by the agent's judgment.">
+<meta property="og:image" content="https://ohm41321.github.io/luciazero/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Luciazero: make coding agents prove their work">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://ohm41321.github.io/luciazero/#website",
+      "url": "https://ohm41321.github.io/luciazero/",
+      "name": "Luciazero",
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://ohm41321.github.io/luciazero/#software",
+      "name": "Luciazero",
+      "url": "https://ohm41321.github.io/luciazero/",
+      "description": "Verification and handoff layer for Claude Code, Codex CLI, and compatible skill runtimes: a plan → change → verify → fix loop, 13 skills, a risk-routed reviewer, and fail-open hooks.",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows (WSL)",
+      "license": "https://opensource.org/licenses/MIT",
+      "downloadUrl": "https://www.npmjs.com/package/luciazero",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": [
+        "https://github.com/ohm41321/luciazero",
+        "https://www.npmjs.com/package/luciazero"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<header class="wrap top">
+  <a class="brand" href="./">Luciazero</a>
+  <nav aria-label="Site">
+    <a href="#install">Install</a>
+    <a href="#skills">Skills</a>
+    <a href="https://github.com/ohm41321/luciazero">GitHub</a>
+    <a href="th/" hreflang="th" lang="th">ภาษาไทย</a>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div>
+      <p class="eyebrow">For Claude Code, Codex CLI, and compatible skill runtimes</p>
+      <h1>Make coding agents <em>prove</em> their work.</h1>
+      <p class="lede">Luciazero adds a <code>plan → change → verify → fix</code> loop to your coding agent. It catches “done” without a passing check, keeps scope from quietly shrinking, and hands unfinished work to the next session with evidence.</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">Install Luciazero</a>
+        <a class="btn" href="https://github.com/ohm41321/luciazero">View on GitHub</a>
+      </div>
+    </div>
+    <figure class="term" aria-label="The Luciazero statusline and what each state means">
+      <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>statusline</span></div>
+      <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="384" height="485" alt="Lucia, the Luciazero mascot, hugging a cat plush">
+      <ol class="states">
+        <li class="s-edit"><code>✎ unverified</code><span>edits happened after the last check</span></li>
+        <li class="s-red"><code>❌ verify RED</code><span>the latest check failed</span></li>
+        <li class="s-green"><code>✅ verify 3m</code><span>the latest check passed three minutes ago</span></li>
+      </ol>
+    </figure>
+  </div>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install in 30 seconds</h2>
+      <p class="intro">Pick the path that matches your agent, then start a new session.</p>
+      <div class="install">
+        <div class="card">
+          <h3><small>Claude Code</small>Full pack</h3>
+          <div class="cmd"><pre><code>/plugin marketplace add ohm41321/luciazero
+/plugin install luciazero@luciazero</code></pre><button class="copy" type="button">Copy</button></div>
+          <p>Then run <code>/luciazero:ready</code> in the new session.</p>
+        </div>
+        <div class="card">
+          <h3><small>Codex CLI</small>Doctrine + skills</h3>
+          <div class="cmd"><pre><code>npx luciazero codex</code></pre><button class="copy" type="button">Copy</button></div>
+          <p>Then run <code>$ready</code> in the new session.</p>
+        </div>
+        <div class="card">
+          <h3><small>Any compatible agent</small>Skills only</h3>
+          <div class="cmd"><pre><code>npx skills add ohm41321/luciazero</code></pre><button class="copy" type="button">Copy</button></div>
+          <p>Installs the skills without the doctrine, reviewer, or hooks.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="protects">
+    <div class="wrap">
+      <h2>What it catches</h2>
+      <p class="intro">Each failure mode has a mechanism behind it. Mechanical guarantees run in the repository's own <code>test.sh</code>.</p>
+      <ul class="rows">
+        <li><b>“Done” without running a check</b><span>Stop-hook nudge; an optional strict gate blocks a red stop</span></li>
+        <li><b><code>cat test.sh</code> counted as testing</b><span>Exact <code>LUCIAZERO_VERIFY_CMD</code> matching</span></li>
+        <li><b>Tests weakened to reach green</b><span>Doctrine rule 3 and a check-suppression guard</span></li>
+        <li><b>New tests that pass without the fix</b><span><code>revert-probe.sh</code> runs them against the old code</span></li>
+        <li><b>Scope silently dropped</b><span><code>/done</code> requires every item delivered or named as left out</span></li>
+        <li><b>The same dead end repeated later</b><span><code>/retro</code> records it; <code>/debug</code> reads it first</span></li>
+        <li><b>Context lost between agents</b><span><code>/lucia-relay</code> transfers evidence, next action, and negative knowledge</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="skills">
+    <div class="wrap">
+      <h2>13 skills, each for one moment</h2>
+      <p class="intro">Invoke <code>ready</code> first (<code>/ready</code> for slash-based agents, <code>$ready</code> in Codex). The rest activate when their moment arrives.</p>
+      <ul class="rows skills">
+        <li><b>Entering a repository</b><code>/ready</code><span>Finds or creates a verify command and proves it can fail</span></li>
+        <li><b>Structure or evidence is hard to scan</b><code>/show</code><span>Maps connections, changes, and proof into the smallest useful visual</span></li>
+        <li><b>Want Lucia's optional coding voice</b><code>/imouto-mode</code><span>A warm, lightly tsundere sibling voice; explicit-only and off by default</span></li>
+        <li><b>Before risky, ambiguous, or multi-module work</b><code>/plan</code><span>Fixes scope and observable acceptance evidence</span></li>
+        <li><b>A bug survives the first look</b><code>/debug</code><span>Reproduction, hypothesis ledger, regression test</span></li>
+        <li><b>Good and bad revisions are known</b><code>/bisect</code><span>Finds the first bad commit in a temporary worktree</span></li>
+        <li><b>Before claiming completion</b><code>/done</code><span>Full verify, skeptic review, scope report</span></li>
+        <li><b>Work must move elsewhere</b><code>/lucia-relay</code><span>Portable JSON + Markdown state with drift inspection</span></li>
+        <li><b>Another agent's work is queued for you (beta)</b><code>/lucia-bus</code><span>Register, read the inbox, claim, work, and publish through the local Agent Bus</span></li>
+        <li><b>Want two agent sessions talking (beta)</b><code>/lucia-chat</code><span>Shows what is waiting and opens one window per agent</span></li>
+        <li><b>Optimizing performance</b><code>/experiment</code><span>Baseline, threshold, controlled measurement</span></li>
+        <li><b>Reviewing local verify habits</b><code>/discipline-report</code><span>Time- and project-filtered local outcome report</span></li>
+        <li><b>After difficult work</b><code>/retro</code><span>Stores reusable lessons and disproved approaches</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="limits" class="limits">
+    <div class="wrap">
+      <h2>What it does not claim</h2>
+      <p>Luciazero is a discipline layer, not an agent runtime. Mechanical guarantees are checked by the test suite; behavioral effects are measured per model and task by the eval harness, with the caveats published alongside the numbers. Agent Bus is beta, opt-in, and checkout only.</p>
+      <p><a href="https://github.com/ohm41321/luciazero#evidence--limitations">Read the evidence and limitations</a></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Luciazero · MIT license</span>
+    <nav aria-label="Project">
+      <a href="https://github.com/ohm41321/luciazero">GitHub</a>
+      <a href="https://www.npmjs.com/package/luciazero">npm</a>
+      <a href="https://github.com/ohm41321/luciazero/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="th/" hreflang="th" lang="th">ภาษาไทย</a>
+    </nav>
+  </div>
+</footer>
+<script>
+for (const button of document.querySelectorAll(".copy")) {
+  const label = button.textContent;
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(button.previousElementSibling.innerText.trim());
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Select and copy";
+    }
+    setTimeout(() => { button.textContent = label; }, 1600);
+  });
+}
+</script>
+</body>
+</html>

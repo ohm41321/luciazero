@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  Source of site/og.png, the 1280×640 social card (og:image and GitHub Social preview).
+  Render from docs/assets/:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+      --force-device-scale-factor=1 --window-size=1280,640 --virtual-time-budget=8000 \
+      --screenshot=../../site/og.png "file://$PWD/og-card.html"
+  Then check `file site/og.png` reports 1280 x 640 and look at the image before committing.
+-->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+Thai:wght@400&display=block">
+<style>
+html,body{margin:0;width:1280px;height:640px;overflow:hidden;background:#000;color:#d7e2ea}
+.card{position:relative;width:1280px;height:640px;display:grid;grid-template-columns:1fr 512px;align-items:center}
+.left{padding:0 0 0 88px}
+.name{font:700 104px/1 "Chakra Petch",sans-serif;letter-spacing:.01em;color:#fff;margin:0 0 22px}
+.tag{font:400 38px/1.25 "IBM Plex Sans Thai",sans-serif;color:#d7e2ea;margin:0 0 44px;max-width:640px}
+.tag b{color:#7ce8e1;font-weight:400}
+.states{font:500 27px/1.75 "IBM Plex Mono",monospace;margin:0;padding:0;list-style:none}
+.a{color:#f2c14e}.r{color:#ff6b78}.g{color:#54d38f}
+/* the image is cut below the hips, so it runs to the card's bottom edge; the cyan
+   rim keeps the navy gloves and black shorts visible on black, as on the site */
+img{width:512px;height:640px;display:block;align-self:end;filter:drop-shadow(0 0 12px rgba(124,232,225,.4))}
+</style></head>
+<body><div class="card">
+<div class="left">
+<p class="name">Luciazero</p>
+<p class="tag">Make coding agents <b>prove</b> their work.</p>
+<ul class="states">
+<li><span class="a">✎ unverified</span></li>
+<li><span class="r">❌ verify RED</span></li>
+<li><span class="g">✅ verify 3m</span></li>
+</ul>
+</div>
+<img src="lucia-3d.png" alt="">
+</div></body></html>

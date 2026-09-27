@@ -421,6 +421,12 @@ When the page text changes, keep the skill count and skill list in step with
 `skills/catalog.txt` (the checker fails otherwise) and add any new page to
 `PAGES` in the checker and to `sitemap.xml`.
 
+The mascot on the site is `site/lucia-3d.png`, a copy of
+`docs/assets/lucia-3d.png` (the site publishes only `site/`, so it cannot
+reference `docs/`). `site/og.png` is rendered from `docs/assets/og-card.html`;
+the render command is in that file. When the mascot changes, update both copies,
+re-render the card, and upload it again as the social preview.
+
 ## Channel honesty
 
 The classic `./install.sh` remains the reference channel — it is the only one

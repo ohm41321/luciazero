@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/lucia.png" width="220" alt="Lucia — Luciazero's mascot">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@e2662428b07b9f3f85865ff38cb51f49d06f3e60/docs/assets/lucia-3d.png" width="220" alt="Lucia — Luciazero's mascot">
   <h1>Luciazero</h1>
   <p>
     <strong>Make coding agents prove their work.</strong><br>

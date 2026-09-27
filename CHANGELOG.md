@@ -24,6 +24,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `homepage` in `package.json` and `.claude-plugin/plugin.json` now points at
   the website, and both READMEs link to it next to the language switch.
+- The website and its social card use the 3D (VRM) render of Lucia,
+  `docs/assets/lucia-3d.png`, in place of the 2D mascot. The site serves its
+  own copy, `site/lucia-3d.png`, so the page no longer depends on jsDelivr, and
+  a soft cyan rim keeps the mascot's navy gloves and black shorts visible on
+  the black statusline panel. `site/og.png` is now rendered from
+  `docs/assets/og-card.html`, which records the render command. The READMEs
+  still show the 2D mascot until the new image has a `main` commit to pin.
 
 ## [2.6.0] - 2026-09-22
 

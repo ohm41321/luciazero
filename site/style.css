@@ -1,6 +1,7 @@
 /* Luciazero site. Palette from the mascot: silver hair (paper), teal hair
-   (accent), halo cyan (terminal accent); the three statusline colors are the
-   only other hues. Dark mode follows the system setting. */
+   streaks and jacket lining (accent), cyan sparkles (terminal accent, still
+   named --halo after the 2D mascot); the three statusline colors are the only
+   other hues. Dark mode follows the system setting. */
 :root {
   --paper: #f2f5f7;
   --paper-2: #e5ebef;
@@ -89,7 +90,12 @@ h1 em { font-style: normal; color: var(--teal); }
 .term-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; font: 500 0.8rem/1 var(--mono); color: var(--term-dim); }
 .term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #26323b; }
 .term-bar span { margin-left: 8px; }
-.term img { display: block; width: 72%; margin: 0 auto; }
+/* a soft cyan rim so the navy gloves and black shorts keep their outline on
+   the black terminal; the image's cut edge sits on the rule below */
+.term img {
+  display: block; width: 72%; margin: 0 auto;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--halo) 40%, transparent));
+}
 .states { list-style: none; margin: 0; padding: 18px 20px 22px; border-top: 1px solid #1c262e; }
 .states li { display: grid; grid-template-columns: 9.5em 1fr; gap: 12px; padding: 6px 0; font-size: 0.9rem; animation: state 9s infinite; }
 .states code { font-weight: 500; }

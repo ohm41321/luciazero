@@ -19,6 +19,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   skill count or list drifts from `skills/catalog.txt`. `./test.sh` runs it in
   the packaging gate, along with a copy of the site that lost its canonical
   link, which it must reject.
+- The website's home page carries the Google Search Console verification tag,
+  and the site checker fails a home page without it, since a deploy that drops
+  the tag unverifies the site.
 
 ### Changed
 

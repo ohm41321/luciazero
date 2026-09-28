@@ -406,10 +406,13 @@ the same checker in the packaging gate.
 - [ ] Social preview: upload `site/og.png` (1280×640) under Settings → Social
       preview. There is no API for it; `usesCustomOpenGraphImage` in
       `gh repo view --json` turns true once it is done.
-- [ ] Google Search Console: add a URL-prefix property for the site URL,
-      verify it with the HTML-tag method (the `<meta name="google-site-verification">`
-      goes into the `<head>` of `site/index.html`), submit `sitemap.xml`, then
-      request indexing for both URLs.
+- [x] Google Search Console URL-prefix property for the site URL, with its
+      HTML-tag `<meta name="google-site-verification">` in the `<head>` of
+      `site/index.html` — 2026-09-28. The site checker fails if the tag goes
+      missing, because Search Console keeps re-reading it and a deploy
+      without it unverifies the property.
+- [ ] Search Console: press Verify once the tag is live, submit `sitemap.xml`,
+      then request indexing for both URLs.
 
 Two limits of a project page, so nobody spends time on them again:
 `robots.txt` is only read at a host's root, so one under `/luciazero/` would be

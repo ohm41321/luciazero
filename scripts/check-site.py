@@ -6,7 +6,8 @@ Usage: check-site.py [SITE_DIR]   (default: <repo>/site)
 Every page must carry the metadata a search engine reads (title, description,
 one canonical URL, reciprocal hreflang, Open Graph, parseable JSON-LD), every
 local link must resolve, the sitemap must list exactly the canonical URLs, and
-the skill count the pages state must match skills/catalog.txt. The Pages
+the skill count the pages state must match skills/catalog.txt, and the home
+page must keep its Google Search Console verification tag. The Pages
 workflow runs this before deploying; ./test.sh runs it in the packaging gate.
 """
 from __future__ import annotations
@@ -141,6 +142,10 @@ def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[
             bad(f"og:image {image!r} must be an absolute URL to a file in the site")
     if p.meta.get("twitter:card") != ["summary_large_image"]:
         bad("twitter:card must be summary_large_image")
+    # Search Console keeps re-reading this tag; a deploy without it unverifies the site.
+    verification = p.meta.get("google-site-verification", [])
+    if url == BASE and (len(verification) != 1 or not verification[0]):
+        bad(f"home page needs one google-site-verification meta tag, found {verification}")
     if p.h1 != 1:
         bad(f"needs exactly one <h1>, found {p.h1}")
     for img in p.images:

@@ -1,4 +1,5 @@
 <div align="center">
+  <a href="https://ohm41321.github.io/luciazero/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="Watch the 60-second Luciazero intro video"></a>
   <h1>Luciazero</h1>
   <p>
     <strong>Make coding agents prove their work.</strong><br>
@@ -20,10 +21,6 @@
   <strong>13 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
-
-<p align="center">
-  <a href="https://ohm41321.github.io/luciazero/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="Watch the 60-second Luciazero intro video"></a>
-</p>
 
 Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and

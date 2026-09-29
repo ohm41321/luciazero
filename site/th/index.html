@@ -38,6 +38,17 @@
       "inLanguage": "th"
     },
     {
+      "@type": "VideoObject",
+      "@id": "https://ohm41321.github.io/luciazero/#intro-video",
+      "name": "Luciazero in 60 seconds",
+      "description": "An agent reports green without running anything; the plan → change → verify → fix loop that catches it; and /lucia-relay handing unfinished work to another agent with its evidence.",
+      "thumbnailUrl": "https://ohm41321.github.io/luciazero/intro-poster.jpg",
+      "contentUrl": "https://ohm41321.github.io/luciazero/intro.mp4",
+      "uploadDate": "2026-09-29",
+      "duration": "PT1M",
+      "inLanguage": "en"
+    },
+    {
       "@type": "SoftwareApplication",
       "@id": "https://ohm41321.github.io/luciazero/#software",
       "name": "Luciazero",
@@ -61,6 +72,7 @@
 <header class="wrap top">
   <a class="brand" href="./">Luciazero</a>
   <nav aria-label="เว็บไซต์">
+    <a href="#intro">ดูวิดีโอ</a>
     <a href="#install">ติดตั้ง</a>
     <a href="#skills">Skill</a>
     <a href="https://github.com/ohm41321/luciazero/blob/main/README.th.md">GitHub</a>
@@ -89,6 +101,17 @@
       </ol>
     </figure>
   </div>
+
+  <section id="intro">
+    <div class="wrap">
+      <h2>ดูใน 60 วินาที</h2>
+      <p class="intro">agent บอกว่าเทสต์ผ่านทั้งที่ไม่ได้รันอะไรเลย ลูปของ Luciazero จับได้ และ <code>/lucia-relay</code> ส่งงานที่ยังไม่เสร็จต่อให้ agent อีกตัวพร้อมหลักฐาน (วิดีโอเป็นภาษาอังกฤษ)</p>
+      <video class="film" controls playsinline preload="none" poster="../intro-poster.jpg" width="1280" height="720" aria-label="วิดีโอแนะนำ Luciazero ความยาว 60 วินาที มีเสียงดนตรี">
+        <source src="../intro.mp4" type="video/mp4">
+        <a href="../intro.mp4">ดาวน์โหลดวิดีโอ (MP4, 9 MB)</a>
+      </video>
+    </div>
+  </section>
 
   <section id="install">
     <div class="wrap">

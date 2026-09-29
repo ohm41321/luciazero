@@ -5,9 +5,10 @@ Usage: check-site.py [SITE_DIR]   (default: <repo>/site)
 
 Every page must carry the metadata a search engine reads (title, description,
 one canonical URL, reciprocal hreflang, Open Graph, parseable JSON-LD), every
-local link must resolve, the sitemap must list exactly the canonical URLs, and
-the skill count the pages state must match skills/catalog.txt, and the home
-page must keep its Google Search Console verification tag. The Pages
+local link, video source, and poster must resolve, the sitemap must list
+exactly the canonical URLs, the skill count the pages state must match
+skills/catalog.txt, and the home page must keep its Google Search Console
+verification tag. The Pages
 workflow runs this before deploying; ./test.sh runs it in the packaging gate.
 """
 from __future__ import annotations
@@ -79,6 +80,8 @@ class Page(HTMLParser):
             self.images.append(a)
         if tag in ("a", "img", "script") and (a.get("href") or a.get("src")):
             self.refs.append(a.get("href") or a.get("src"))
+        if tag in ("video", "source"):
+            self.refs += [a[key] for key in ("src", "poster") if a.get(key)]
 
     def handle_endtag(self, tag):
         if tag in ("title", "script"):
@@ -163,6 +166,11 @@ def check_page(site: pathlib.Path, name: str, lang: str, url: str, skills: list[
         nodes = data.get("@graph", [data])
         if not any(n.get("name") == "Luciazero" and n.get("url") == BASE for n in nodes):
             bad(f"JSON-LD has no node named Luciazero with url {BASE}")
+        for node in nodes:
+            for key in ("contentUrl", "thumbnailUrl"):
+                target = local_target(site, name, node[key]) if node.get(key, "").startswith(BASE) else None
+                if key in node and (target is None or not in_site(site, target)):
+                    bad(f"JSON-LD {key} {node[key]!r} must be an absolute URL to a file in the site")
 
     for ref in p.refs:
         target = (site / name).resolve() if ref.startswith("#") else local_target(site, name, ref)

@@ -74,6 +74,11 @@ npx skills add ohm41321/luciazero
 
 ## ดูลูปการทำงาน
 
+วิดีโอแนะนำ 60 วินาที (แอนิเมชัน): agent บอกว่าผ่านทั้งที่ไม่ได้รันอะไร
+ลูปที่จับได้ และการส่งงานต่อระหว่าง agent
+
+https://github.com/user-attachments/assets/ff0f13b9-8779-498c-89c4-80278c23be65
+
 GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใช่ mockup:
 
 <p align="center">

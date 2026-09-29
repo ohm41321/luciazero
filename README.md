@@ -76,6 +76,11 @@ or hooks.
 
 ## See the loop
 
+The 60-second intro, an animation: a false green, the loop that catches it,
+and a handoff between agents.
+
+https://github.com/user-attachments/assets/ff0f13b9-8779-498c-89c4-80278c23be65
+
 This GIF is driven by the shipped hooks, not a mockup:
 
 <p align="center">

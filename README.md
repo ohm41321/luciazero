@@ -22,6 +22,10 @@
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
 
+<p align="center">
+  <a href="https://ohm41321.github.io/luciazero/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="Watch the 60-second Luciazero intro video"></a>
+</p>
+
 Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
@@ -144,6 +148,11 @@ as you. The project trust boundary is in
 [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md).
 
 ## What it protects
+
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-false-green.gif" width="720" alt="An agent prints Fixed. All tests pass. Done. with zero commands run, and the green check shatters">
+  <br><sub>The first failure mode below, from the <a href="https://ohm41321.github.io/luciazero/#intro">intro video</a>.</sub>
+</p>
 
 | Failure mode | Mechanism |
 |---|---|

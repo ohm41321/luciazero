@@ -22,6 +22,10 @@
 </p>
 <p align="center"><sub>Relay 6/6 เป็นการตรวจ protocol ด้วยเครื่อง ส่วนผลด้านพฤติกรรมรายงานแยกต่างหาก</sub></p>
 
+<p align="center">
+  <a href="https://ohm41321.github.io/luciazero/th/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="ดูวิดีโอแนะนำ Luciazero ความยาว 60 วินาที"></a>
+</p>
+
 Luciazero เป็นชั้น verification และ handoff สำหรับ Claude Code, Codex CLI
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
@@ -140,6 +144,11 @@ force-push, การเปลี่ยน public contract และการข
 [SECURITY.md](SECURITY.md)
 
 ## ปกป้องอะไร
+
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-false-green.gif" width="720" alt="agent พิมพ์ว่า Fixed. All tests pass. Done. ทั้งที่รันคำสั่งไป 0 ครั้ง แล้วเครื่องหมายถูกสีเขียวก็แตก">
+  <br><sub>ความพังข้อแรกในตาราง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
+</p>
 
 | ความพัง | กลไกที่จับ |
 |---|---|

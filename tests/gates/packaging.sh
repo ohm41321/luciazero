@@ -48,8 +48,9 @@ echo "ok  Thai README present + in sync"
 # hreflang, sitemap, local links and the stated skill count agree. The Pages
 # workflow runs the same checker before it deploys; the fixture copies prove
 # it fails, for the right reason, on a page that lost its canonical link, on
-# one whose meta description states a stale skill count, and on a home page
-# that lost its Search Console verification tag.
+# one whose meta description states a stale skill count, on a home page
+# that lost its Search Console verification tag, and on a video whose poster
+# or JSON-LD contentUrl names a file the site does not have.
 python3 "${ROOT}/scripts/check-site.py" || fail "site check (scripts/check-site.py)"
 mktmp SITE_FX
 cp -R "${ROOT}/site/." "${SITE_FX}/"
@@ -70,11 +71,22 @@ SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a home page without its Search Console verification tag"
 printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: home page needs one google-site-verification' \
   || fail "site check failed the verification fixture for another reason: ${SITE_OUT}"
+sed 's#poster="intro-poster.jpg"#poster="missing.jpg"#' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
+SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
+  && fail "site check accepted a video poster that is not in the site"
+printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: missing.jpg does not resolve' \
+  || fail "site check failed the video poster fixture for another reason: ${SITE_OUT}"
+sed 's#"contentUrl": "https://ohm41321.github.io/luciazero/intro.mp4"#"contentUrl": "https://ohm41321.github.io/luciazero/missing.mp4"#' \
+  "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
+SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
+  && fail "site check accepted a JSON-LD contentUrl that is not in the site"
+printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: JSON-LD contentUrl 'https://ohm41321.github.io/luciazero/missing.mp4'" \
+  || fail "site check failed the contentUrl fixture for another reason: ${SITE_OUT}"
 grep -qF '(https://ohm41321.github.io/luciazero/)' "${ROOT}/README.md" \
   || fail "README.md lost its link to the website"
 grep -qF '(https://ohm41321.github.io/luciazero/th/)' "${ROOT}/README.th.md" \
   || fail "README.th.md lost its link to the Thai website"
-echo "ok  site checker rejects a missing canonical link, a stale meta skill count and a missing verification tag"
+echo "ok  site checker rejects a missing canonical link, a stale meta skill count, a missing verification tag and missing video files"
 
 # 4e. luciazero-ci example stays inert and shaped right
 CI_EX="${ROOT}/examples/luciazero-ci.example.yml"

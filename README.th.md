@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://ohm41321.github.io/luciazero/th/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="ดูวิดีโอแนะนำ Luciazero ความยาว 60 วินาที"></a>
+  <a href="https://ohm41321.github.io/luciazero/th/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/intro-cover.jpg" width="720" alt="ดูวิดีโอแนะนำ Luciazero ความยาวสองนาที"></a>
   <h1>Luciazero</h1>
   <p>
     <strong>ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ</strong><br>
@@ -70,16 +70,19 @@ npx skills add ohm41321/luciazero
 
 ## ดูลูปการทำงาน
 
-วิดีโอแนะนำ 60 วินาที (แอนิเมชัน): agent บอกว่าผ่านทั้งที่ไม่ได้รันอะไร
-ลูปที่จับได้ และการส่งงานต่อระหว่าง agent
+วิดีโอแนะนำสองนาที (แอนิเมชัน ภาษาอังกฤษ): agent บอกว่าผ่านทั้งที่ไม่ได้รันอะไร
+ลูปที่จับได้ `/bisect` การส่งงานต่อระหว่าง agent และ `/done` ที่พิสูจน์ว่าเทสต์จับบั๊กได้จริง
+อัตราผ่านในวิดีโอเป็นผลของ Claude Sonnet กับ classic pack แบบไม่มี hook
+ดู[หลักฐานและข้อจำกัด](#หลักฐานและข้อจำกัด)
 
-https://github.com/user-attachments/assets/ff0f13b9-8779-498c-89c4-80278c23be65
-
-GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใช่ mockup:
+ATTACHMENT_URL
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/statusline-demo.gif" width="720" alt="แก้ไฟล์แล้วขึ้น unverified, verify แดงยังคงแดง และเปลี่ยนเป็นเขียวเมื่อผ่าน">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-loop.gif" width="720" alt="ลูป: plan, change, verify ไม่ผ่านด้วย exit 1, fix แล้ว verify ผ่านด้วย exit 0 จากนั้นขึ้นข้อความ Done is proven by a command, not by my judgment">
+  <br><sub>ลูปการทำงาน จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
 </p>
+
+ระหว่างทำงาน statusline บอกว่าลูปอยู่ตรงไหน:
 
 ```text
 ✎ unverified   → มีการแก้หลังการตรวจครั้งล่าสุด
@@ -87,7 +90,7 @@ GIF นี้ขับด้วย hook ที่ ship จริง ไม่ใ
 ✅ verify 3m   → การตรวจผ่านเมื่อสามนาทีก่อน
 ```
 
-รัน hook driver ตัวจริงในเครื่องได้โดยไม่ใช้ model หรือ API:
+รัน hook driver ตัวจริงในเครื่องเพื่อดูมันเปลี่ยนได้โดยไม่ใช้ model หรือ API:
 
 ```bash
 bash docs/assets/statusline-demo.sh
@@ -147,7 +150,7 @@ force-push, การเปลี่ยน public contract และการข
 ## ปกป้องอะไร
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-false-green.gif" width="720" alt="agent พิมพ์ว่า Fixed. All tests pass. Done. ทั้งที่รันคำสั่งไป 0 ครั้ง แล้วเครื่องหมายถูกสีเขียวก็แตก">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-false-green.gif" width="720" alt="agent ถูกสั่งให้แก้บั๊ก login แล้วตอบว่า Fixed. All tests pass. Done. เครื่องหมายถูกสีเขียวขึ้นว่ารันไป 0 ครั้ง วิดีโอถามว่า Actually tested? แล้วเครื่องหมายถูกก็แตก">
   <br><sub>ความพังข้อแรกในตาราง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
 </p>
 
@@ -190,11 +193,12 @@ envelope เชื่อถือได้ต่อเมื่อมาจา�
 อย่างชัดเจน ไฟล์ที่ส่งมาพร้อม artifact จะถูกปฏิเสธ
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="Session หนึ่งสร้าง Lucia Relay อีก session ตรวจสอบ พบ repository drift รันหลักฐานซ้ำ และ consume relay">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-relay.gif" width="720" alt="Lucia Relay มาถึง session ใหม่บนเครื่องใหม่ รันหลักฐานซ้ำแล้วได้ความล้มเหลวเดิมตามที่บันทึกไว้ หลังแก้ price() รันซ้ำผ่านด้วย exit 0">
+  <br><sub>relay มาถึงปลายทาง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
 </p>
 
-GIF นี้รัน [implementation ที่ ship จริง](docs/assets/relay-demo.sh) ใน Git
-repository ชั่วคราว Fixture `relay-transfer` ใน CI ให้ reference ที่สมบูรณ์
+วิดีโอเป็นแอนิเมชัน [relay demo](docs/assets/relay-demo.sh) รัน implementation ที่ ship จริง
+ใน Git repository ชั่วคราว Fixture `relay-transfer` ใน CI ให้ reference ที่สมบูรณ์
 6/6 และปฏิเสธ handoff Markdown ทั่วไป (1/6) กับ relay ที่เนื้อหาครบแต่
 fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป็นการตรวจ protocol ด้วยเครื่อง
 **ไม่ใช่ผล uplift ของโมเดล** อ่าน [วิธีวัดและข้อจำกัด](docs/benchmark.md#skill-protocol-evidence)

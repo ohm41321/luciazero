@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://ohm41321.github.io/luciazero/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-cover.jpg" width="720" alt="Watch the 60-second Luciazero intro video"></a>
+  <a href="https://ohm41321.github.io/luciazero/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/intro-cover.jpg" width="720" alt="Watch the two-minute Luciazero film"></a>
   <h1>Luciazero</h1>
   <p>
     <strong>Make coding agents prove their work.</strong><br>
@@ -72,16 +72,19 @@ or hooks.
 
 ## See the loop
 
-The 60-second intro, an animation: a false green, the loop that catches it,
-and a handoff between agents.
+The two-minute film, an animation: a false green, the loop that catches it,
+`/bisect`, a handoff between agents, and `/done` proving that a test catches
+the bug. The pass rates it shows are for Claude Sonnet, using the classic pack
+without hooks; see [Evidence & limitations](https://github.com/ohm41321/luciazero#evidence--limitations).
 
-https://github.com/user-attachments/assets/ff0f13b9-8779-498c-89c4-80278c23be65
-
-This GIF is driven by the shipped hooks, not a mockup:
+ATTACHMENT_URL
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/statusline-demo.gif" width="720" alt="Edit becomes unverified, a red check stays red, and a successful verify turns green">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-loop.gif" width="720" alt="The loop: plan, change, verify fails with exit 1, fix, and verify passes with exit 0; then Done is proven by a command, not by my judgment">
+  <br><sub>The loop, from the <a href="https://ohm41321.github.io/luciazero/#intro">film</a>.</sub>
 </p>
+
+In a session, the statusline shows where the loop is:
 
 ```text
 ✎ unverified   → edits happened after the last check
@@ -89,7 +92,7 @@ This GIF is driven by the shipped hooks, not a mockup:
 ✅ verify 3m   → the latest check passed three minutes ago
 ```
 
-Run the same shipped hook driver locally—no model or API is required:
+Run the shipped hook driver locally to see it change—no model or API is required:
 
 ```bash
 bash docs/assets/statusline-demo.sh
@@ -151,8 +154,8 @@ as you. The project trust boundary is in
 ## What it protects
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@ff9c628717c9f4e1c210fba9b5b9ac494b20c990/docs/assets/intro-false-green.gif" width="720" alt="An agent prints Fixed. All tests pass. Done. with zero commands run, and the green check shatters">
-  <br><sub>The first failure mode below, from the <a href="https://ohm41321.github.io/luciazero/#intro">intro video</a>.</sub>
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-false-green.gif" width="720" alt="Asked to fix the login bug, an agent answers Fixed. All tests pass. Done. The green check shows 0 runs, the film asks Actually tested?, and the check shatters">
+  <br><sub>The first failure mode below, from the <a href="https://ohm41321.github.io/luciazero/#intro">film</a>.</sub>
 </p>
 
 | Failure mode | Mechanism |
@@ -197,11 +200,12 @@ is named explicitly from outside the clone; one shipped beside the artifact is
 refused.
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@37cb470e2b7c704ff32f3a46dbb125e312875960/docs/assets/relay-demo.gif" width="720" alt="One session creates a Lucia Relay; another validates it, detects repository drift, re-runs evidence, and consumes it">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-relay.gif" width="720" alt="A Lucia Relay reaches a new session on a new machine. Re-running its evidence gives the same failure it recorded; after a fix to price(), the re-run passes with exit 0">
+  <br><sub>A relay arriving, from the <a href="https://ohm41321.github.io/luciazero/#intro">film</a>.</sub>
 </p>
 
-The GIF runs the [shipped implementation](https://github.com/ohm41321/luciazero/blob/main/docs/assets/relay-demo.sh) in a
-temporary Git repository. CI's `relay-transfer` fixture scores the complete
+The film is an animation. The [relay demo](https://github.com/ohm41321/luciazero/blob/main/docs/assets/relay-demo.sh)
+runs the shipped implementation in a temporary Git repository. CI's `relay-transfer` fixture scores the complete
 reference 6/6 and rejects a generic Markdown handoff (1/6) plus a
 content-complete but stale fingerprint (5/6). Those are mechanical protocol
 checks—not model-uplift results. See the [method and limits](https://github.com/ohm41321/luciazero/blob/main/docs/benchmark.md#skill-protocol-evidence).

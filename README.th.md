@@ -75,7 +75,7 @@ npx skills add ohm41321/luciazero
 อัตราผ่านในวิดีโอเป็นผลของ Claude Sonnet กับ classic pack แบบไม่มี hook
 ดู[หลักฐานและข้อจำกัด](#หลักฐานและข้อจำกัด)
 
-ATTACHMENT_URL
+https://github.com/user-attachments/assets/e18f6092-12ae-4113-bfec-47765956bb49
 
 <p align="center">
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-loop.gif" width="720" alt="ลูป: plan, change, verify ไม่ผ่านด้วย exit 1, fix แล้ว verify ผ่านด้วย exit 0 จากนั้นขึ้นข้อความ Done is proven by a command, not by my judgment">

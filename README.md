@@ -77,7 +77,7 @@ The two-minute film, an animation: a false green, the loop that catches it,
 the bug. The pass rates it shows are for Claude Sonnet, using the classic pack
 without hooks; see [Evidence & limitations](https://github.com/ohm41321/luciazero#evidence--limitations).
 
-ATTACHMENT_URL
+https://github.com/user-attachments/assets/e18f6092-12ae-4113-bfec-47765956bb49
 
 <p align="center">
   <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-loop.gif" width="720" alt="The loop: plan, change, verify fails with exit 1, fix, and verify passes with exit 0; then Done is proven by a command, not by my judgment">

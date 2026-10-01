@@ -1,4 +1,4 @@
-# vhs tape for the README GIF — renders docs/assets/statusline-demo.sh,
+# vhs tape that records docs/assets/statusline-demo.sh as a GIF,
 # which drives the shipped hooks and prints their real output.
 # Re-record from the repo root with: vhs docs/assets/demo.tape
 Output docs/assets/statusline-demo.gif

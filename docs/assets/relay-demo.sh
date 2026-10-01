@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Demonstrates the shipped Lucia Relay producer/receiver lifecycle in a
-# throwaway Git repository. The README GIF records this real script, so the
-# visual cannot drift into a product mockup.
+# throwaway Git repository. docs/assets/relay-demo.tape records this real
+# script with vhs, so a recording cannot drift into a product mockup.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

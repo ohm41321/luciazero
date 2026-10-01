@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Drives the shipped enforcement-pack hooks through the loop the README
 # describes — edit, blocked stop, red verify, fix, green verify — in a
-# sandbox, printing the hooks' REAL output. This is the script the README
-# GIF records (docs/assets/demo.tape + vhs), so the GIF can never drift
-# from what the scripts actually print. Touches nothing outside its own
-# mktemp dirs.
+# sandbox, printing the hooks' REAL output. docs/assets/demo.tape records
+# it with vhs, so a recording can never drift from what the scripts
+# actually print. Touches nothing outside its own mktemp dirs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

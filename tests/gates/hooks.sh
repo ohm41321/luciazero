@@ -529,24 +529,24 @@ printf '%s' "${ESL}" | grep -q 'no verify yet' \
 rm -rf "${EVILTMP}" "${EVILTARGET}"
 # a config directory may sit inside a project whose package.json declares ES
 # modules; copied there, both programs must still run as CommonJS
-mktmp ESM; mktmp ESMT
+mktmp ESM; mktmp ESM_TMP
 mkdir -p "${ESM}/proj/.claude/hooks"
 echo '{"type": "module"}' > "${ESM}/proj/package.json"
 cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${ROOT}/claude/hooks/luciazero-statusline.cjs" \
   "${ESM}/proj/.claude/hooks/"
 ESMJ="$(printf '{"cwd":"%s/proj"}' "${ESM}")"
-RC=0; echo "${ESMJ}" | TMPDIR="${ESMT}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
+RC=0; echo "${ESMJ}" | TMPDIR="${ESM_TMP}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
   node "${ESM}/proj/.claude/hooks/luciazero-verify.cjs" edit || RC=$?
-[ "${RC}" = 0 ] || { rm -rf "${ESM}" "${ESMT}"; fail "the hook did not run inside a type=module project (rc=${RC})"; }
+[ "${RC}" = 0 ] || { rm -rf "${ESM}" "${ESM_TMP}"; fail "the hook did not run inside a type=module project (rc=${RC})"; }
 ESL="$(printf '{"workspace":{"current_dir":"%s/proj"}}' "${ESM}" \
-  | TMPDIR="${ESMT}" node "${ESM}/proj/.claude/hooks/luciazero-statusline.cjs" 2>&1)" \
-  || { rm -rf "${ESM}" "${ESMT}"; fail "the statusline did not run inside a type=module project: ${ESL}"; }
+  | TMPDIR="${ESM_TMP}" node "${ESM}/proj/.claude/hooks/luciazero-statusline.cjs" 2>&1)" \
+  || { rm -rf "${ESM}" "${ESM_TMP}"; fail "the statusline did not run inside a type=module project: ${ESL}"; }
 printf '%s' "${ESL}" | grep -q 'unverified' \
-  || { rm -rf "${ESM}" "${ESMT}"; fail "inside a type=module project the statusline missed the tracked edit: ${ESL}"; }
-RC=0; echo "${ESMJ}" | TMPDIR="${ESMT}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
+  || { rm -rf "${ESM}" "${ESM_TMP}"; fail "inside a type=module project the statusline missed the tracked edit: ${ESL}"; }
+RC=0; echo "${ESMJ}" | TMPDIR="${ESM_TMP}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
   node "${ESM}/proj/.claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
-[ "${RC}" = 2 ] || { rm -rf "${ESM}" "${ESMT}"; fail "inside a type=module project the stop hook did not nudge (rc=${RC})"; }
-rm -rf "${ESM}" "${ESMT}"
+[ "${RC}" = 2 ] || { rm -rf "${ESM}" "${ESM_TMP}"; fail "inside a type=module project the stop hook did not nudge (rc=${RC})"; }
+rm -rf "${ESM}" "${ESM_TMP}"
 # rotation: >500 lines shrinks to <=301 on the next event
 python3 -c 'import sys; open(sys.argv[1], "w").write("2026-01-01T00:00 stop-clean x\n" * 600)' "${SC}/luciazero-stats.log"
 printf '{"cwd": "%s"}' "${SPJ3}" \

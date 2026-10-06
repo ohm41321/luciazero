@@ -629,9 +629,10 @@ process.argv = [process.execPath, router, "--status"];
 require(router);
 JS
 )" || UC_WIN_RC=$?
-  [ "${UC_WIN_RC}" = 1 ] && printf '%s\n' "${UC_WIN}" | grep -q 'not installed\|MISS' \
-    && ! printf '%s\n' "${UC_WIN}" | grep -qi 'wsl\|need bash' \
-    || { rm -rf "${UC}"; fail "the win32 install route did not run the Node installer (rc=${UC_WIN_RC}): ${UC_WIN}"; }
+  if [ "${UC_WIN_RC}" != 1 ] || ! printf '%s\n' "${UC_WIN}" | grep -q 'not installed\|MISS' \
+    || printf '%s\n' "${UC_WIN}" | grep -qi 'wsl\|need bash'; then
+    rm -rf "${UC}"; fail "the win32 install route did not run the Node installer (rc=${UC_WIN_RC}): ${UC_WIN}"
+  fi
   [ -z "$(ls -A "${UC}/win-cfg")" ] || { rm -rf "${UC}"; fail "the win32 --status route wrote files"; }
   rm -rf "${UC}"
 

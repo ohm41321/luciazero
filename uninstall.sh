@@ -96,15 +96,16 @@ bakcopy() {
   BC_SRC="$2"; BC_BASE="$3"; BC_Q=""; BC_RC=0
   BC_STAMP="$(date +%Y%m%d%H%M%S)"
   if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
-    BC_KIND=link
+    BC_KIND="link"
   elif [ -d "${BC_SRC}" ]; then
-    BC_KIND=tree
+    BC_KIND="tree"
   else
-    BC_KIND=file
+    BC_KIND="file"
   fi
   case "${BC_SRC}" in /*) ;; *) BC_SRC="${PWD}/${BC_SRC}" ;; esac
-  bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}" \
-    || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  if ! { bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}"; }; then
+    echo "FAIL: could not back up ${BC_SRC}" >&2; return 1
+  fi
   if [ "${BC_KIND}" = link ]; then
     # `readlink -n`, whole: macOS adds no newline after a target that already
     # ends in one, so taking one off would cut the target.
@@ -116,8 +117,10 @@ bakcopy() {
     for BC_T in ln perl node; do
       command -v "${BC_T}" >/dev/null 2>&1 || continue
       rm -rf "${BC_P}/t"
-      mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
-        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g" || break
+      if ! { mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
+        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g"; }; then
+        break
+      fi
       if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
         && [ "$(readlink "${BC_P}/t/n")" = x ] \
         && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \

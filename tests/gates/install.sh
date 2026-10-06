@@ -7,6 +7,16 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+# entries_named <dir> <prefix>: the names in <dir> that begin with <prefix>,
+# one per line, dot names included. A glob, not `ls | grep`, so a name may
+# hold any byte but a newline.
+entries_named() {
+  local E
+  for E in "$1/$2"*; do
+    if [ -e "${E}" ] || [ -L "${E}" ]; then printf '%s\n' "${E##*/}"; fi
+  done
+}
+
 # 5. sandbox install cycle — never touches the real ~/.claude
 SB="$(mktemp -d)"
 trap 'rm -rf "${SB}"' EXIT
@@ -617,19 +627,21 @@ PY
   || LGY_FAIL "the shipped Bash-era statusline was kept after the migration"
 [ ! -e "${LGY}/up dir/hooks/luciazero-verify.sh" ] \
   || LGY_FAIL "the edited Bash-era hook was kept after the migration"
-LGY_BAK="$(ls "${LGY}/up dir/hooks/" | grep '^luciazero-verify\.sh\.bak\.' || true)"
-[ -n "${LGY_BAK}" ] && grep -q 'edited by its owner' "${LGY}/up dir/hooks/${LGY_BAK}" \
-  || LGY_FAIL "the edited Bash-era hook was removed without a backup"
-ls "${LGY}/up dir/hooks/" | grep -q '^luciazero-statusline\.sh\.bak\.' \
-  && LGY_FAIL "the shipped Bash-era statusline was backed up as if edited"
+LGY_BAK="$(entries_named "${LGY}/up dir/hooks" luciazero-verify.sh.bak.)"
+if [ -z "${LGY_BAK}" ] || ! grep -q 'edited by its owner' "${LGY}/up dir/hooks/${LGY_BAK}"; then
+  LGY_FAIL "the edited Bash-era hook was removed without a backup"
+fi
+[ -z "$(entries_named "${LGY}/up dir/hooks" luciazero-statusline.sh.bak.)" ] \
+  || LGY_FAIL "the shipped Bash-era statusline was backed up as if edited"
 CLAUDE_CONFIG_DIR="${LGY}/up dir" "${ROOT}/install.sh" --status >/dev/null \
   || LGY_FAIL "--status red right after migrating a Bash-era install"
 # never upgraded: uninstall alone
 mkdir -p "${LGY}/old dir"
 legacy_fixture "${LGY}/old dir"
 RC=0; LGY_ST="$(CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
-[ "${RC}" != 0 ] && printf '%s' "${LGY_ST}" | grep -q 'older Bash version' \
-  || LGY_FAIL "--status did not flag a Bash-era hook install: ${LGY_ST}"
+if [ "${RC}" = 0 ] || ! printf '%s' "${LGY_ST}" | grep -q 'older Bash version'; then
+  LGY_FAIL "--status did not flag a Bash-era hook install: ${LGY_ST}"
+fi
 CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/uninstall.sh" > "${LGY}/un.out" 2>&1 || true
 python3 - "${LGY}/old dir/settings.json" <<'PY' || LGY_FAIL "uninstall left Bash-era entries behind"
 import json, sys
@@ -846,15 +858,16 @@ for BLD_K in f l d; do
   [ -z "$(ls -A "${BLD_DST}")" ] \
     || BLD_FAIL "backup of ${BLD_K} wrote into the directory at its name: $(ls -A "${BLD_DST}")"
 done
-[ -f "${BLD}/b/f.bak.20000101000000.1" ] && [ ! -L "${BLD}/b/f.bak.20000101000000.1" ] \
-  && cmp -s "${BLD}/b/f" "${BLD}/b/f.bak.20000101000000.1" \
-  || BLD_FAIL "file backup is not a copy of the file"
+if ! { [ -f "${BLD}/b/f.bak.20000101000000.1" ] && [ ! -L "${BLD}/b/f.bak.20000101000000.1" ] \
+  && cmp -s "${BLD}/b/f" "${BLD}/b/f.bak.20000101000000.1"; }; then
+  BLD_FAIL "file backup is not a copy of the file"
+fi
 [ -L "${BLD}/b/l.bak.20000101000000.1" ] \
   && [ "$(readlink "${BLD}/b/l.bak.20000101000000.1")" = "../some where" ] \
   || BLD_FAIL "symlink backup is not the symlink"
 cmp -s "${BLD}/b/d/x" "${BLD}/b/d.bak.20000101000000.1/x" \
   || BLD_FAIL "tree backup is not a copy of the tree"
-[ -z "$(ls -A "${BLD}/b" | grep '^\.luciazero-bak\.')" ] \
+[ -z "$(entries_named "${BLD}/b" .luciazero-bak.)" ] \
   || BLD_FAIL "temporary backup copies left behind: $(ls -A "${BLD}/b")"
 rm -rf "${BLD}"
 echo "ok  a directory at the backup name is skipped, not written into"
@@ -947,7 +960,7 @@ fi
 [ -f "${BLS}/planted-f" ] || BLS_FAIL "mktemp never made the private backup directory, so nothing was swapped"
 [ -z "$(ls -A "${BLS}/out")" ] \
   || BLS_FAIL "file backup wrote through a symlink swapped in for its private directory: $(ls -A "${BLS}/out")"
-[ -z "$(ls -A "${BLS}/b" | grep '^f\.bak\.')" ] || BLS_FAIL "file backup left a backup name after refusing"
+[ -z "$(entries_named "${BLS}/b" f.bak.)" ] || BLS_FAIL "file backup left a backup name after refusing"
 cmp -s <(printf 'user bytes\n') "${BLS}/b/f" || BLS_FAIL "file backup disturbed the file it backed up"
 rm -rf "${BLS}"
 echo "ok  a backup name swapped after it was taken is neither written into nor replaced"
@@ -1037,8 +1050,9 @@ for BNL_K in f d l; do
   for BNL_SRC in "${BNL_C}/${BNL_K}" "${BNL_K}"; do
     BNL_GOT="$(BNL_RUN "${BNL_C}" "${BNL_SRC}" "${BNL_C}/${BNL_K}")" \
       || BNL_FAIL "backup of ${BNL_K} in a directory whose name ends in a newline failed"
-    [ "${BNL_GOT%/*}" = "${BNL_C%/}" ] && { [ -e "${BNL_GOT}" ] || [ -L "${BNL_GOT}" ]; } \
-      || BNL_FAIL "backup of ${BNL_K} reported ${BNL_GOT#"${BNL}/"}, where there is no backup"
+    if [ "${BNL_GOT%/*}" != "${BNL_C%/}" ] || { [ ! -e "${BNL_GOT}" ] && [ ! -L "${BNL_GOT}" ]; }; then
+      BNL_FAIL "backup of ${BNL_K} reported ${BNL_GOT#"${BNL}/"}, where there is no backup"
+    fi
     case "${BNL_K}" in
       f) cmp -s "${BNL_C}/f" "${BNL_GOT}" || BNL_FAIL "file backup is not a copy of ${BNL_SRC#"${BNL}/"}" ;;
       d) cmp -s "${BNL_C}/d/x" "${BNL_GOT}/x" || BNL_FAIL "tree backup is not a copy of ${BNL_SRC#"${BNL}/"}" ;;
@@ -1047,9 +1061,10 @@ for BNL_K in f d l; do
     rm -rf "${BNL_GOT}"
   done
 done
-[ "$(ls -A "${BNL}/cfg" | tr '\n' ' ')" = "d f l " ] \
+[ "$(find "${BNL}/cfg" -mindepth 1 -maxdepth 1 | LC_ALL=C sort | tr '\n' ' ')" \
+  = "${BNL}/cfg/d ${BNL}/cfg/f ${BNL}/cfg/l " ] \
   || BNL_FAIL "backup wrote into the sibling directory without the newline: $(ls -A "${BNL}/cfg")"
-[ -z "$(ls -A "${BNL_C}" | grep -v '^[dfl]$')" ] \
+[ -z "$(find "${BNL_C}" -mindepth 1 -maxdepth 1 ! -name d ! -name f ! -name l)" ] \
   || BNL_FAIL "backups left temporary names behind: $(ls -A "${BNL_C}")"
 rm -rf "${BNL}"
 echo "ok  backup names and link targets keep their trailing newlines"
@@ -1071,7 +1086,7 @@ if bash -c 'set -euo pipefail; . "$1"
 fi
 [ -n "$(find "${BCG}/b" -name '.luciazero-bak.*' -type d)" ] \
   || BCG_FAIL "file backup removed a private directory that failed the owner check"
-[ -z "$(ls -A "${BCG}/b" | grep '^f\.bak\.')" ] || BCG_FAIL "file backup left a backup name after refusing"
+[ -z "$(entries_named "${BCG}/b" f.bak.)" ] || BCG_FAIL "file backup left a backup name after refusing"
 cmp -s <(printf 'user bytes\n') "${BCG}/b/f" || BCG_FAIL "file backup disturbed the file it backed up"
 # Empty means a listing that worked and printed nothing: `$( )` would read an
 # entry named only by newlines, or a listing that failed, as empty.
@@ -1227,9 +1242,10 @@ CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null \
   || SB4B_FAIL "--with-hooks failed on a settings.json symlink to a file not made yet"
 [ "$(readlink "${SB4B}/cfg/settings.json")" = "${SB4B}/dotfiles/settings.json" ] \
   || SB4B_FAIL "--with-hooks replaced a settings.json symlink to a file not made yet"
-[ -f "${SB4B}/dotfiles/settings.json" ] && [ ! -L "${SB4B}/dotfiles/settings.json" ] \
-  && grep -qF 'luciazero-verify.cjs' "${SB4B}/dotfiles/settings.json" \
-  || SB4B_FAIL "--with-hooks did not make the file a dangling settings.json symlink points at"
+if ! { [ -f "${SB4B}/dotfiles/settings.json" ] && [ ! -L "${SB4B}/dotfiles/settings.json" ] \
+  && grep -qF 'luciazero-verify.cjs' "${SB4B}/dotfiles/settings.json"; }; then
+  SB4B_FAIL "--with-hooks did not make the file a dangling settings.json symlink points at"
+fi
 rm -rf "${SB4B}"
 echo "ok  settings.json is checked before the pack is copied, and written whole beside its real file"
 

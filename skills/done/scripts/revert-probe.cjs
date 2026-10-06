@@ -13,7 +13,9 @@
 //   * its fingerprint must be a test verdict, not infrastructure — a shell that
 //     could not run or execute the command (exit 127/126, and cmd.exe's 9009
 //     on Windows) and a run that failed to load the tests at all
-//     (import/collection errors) are refused;
+//     (import/collection errors) are refused. cmd.exe /c itself exits 1 for a
+//     command it cannot find, so on Windows the control run below is what
+//     refuses that one;
 //   * it must be attributable to the changed tests — either the verify command
 //     targets one of them, or the failure output names one;
 //   * the same command must PASS against the current state (the base plus every

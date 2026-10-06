@@ -95,8 +95,9 @@ def test_windows_git_and_python_never_come_from_the_repository() -> None:
         assert written.returncode == 0, written.stderr
         wrapped = subprocess.run([node, str(ROOT / "bin" / "luciazero.js"), "relay", "validate", "--root", "."],
                                  cwd=root, capture_output=True, text=True, encoding="utf-8", check=False)
-        # relay.py itself judged the unfinished draft: Python ran it, not node.
-        assert wrapped.returncode == 1 and "ERROR goal is required" in wrapped.stdout, wrapped
+        # relay.py itself judged the unfinished draft, on stderr: Python ran it,
+        # not node. (The node copies are untracked, so the budget error joins.)
+        assert wrapped.returncode == 1 and "ERROR goal is required" in wrapped.stderr, wrapped
 
 
 def test_receiver_remote_matches_trusted_url() -> None:

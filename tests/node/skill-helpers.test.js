@@ -115,12 +115,16 @@ test("revert-probe: what cannot be attributed to the change is UNASSESSABLE", (t
   assert.strictEqual(nogit.status, 2, nogit.out);
   assert.match(nogit.out, /^UNASSESSABLE: not a git repo/m);
 
-  // the platform's shell cannot find the command: 127 from sh, 9009 from cmd.exe
+  // the platform's shell cannot find the command. sh exits 127, refused on
+  // sight; cmd.exe /c exits 1, so there the current-code control run is what
+  // refuses it.
   const nocmd = repo(b, "nocmd", plant);
   write(nocmd, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]) });
   const missing = run(b.env, nocmd, [PROBE, "luciazero-not-a-real-command tests/calc.test.js"]);
   assert.strictEqual(missing.status, 2, missing.out);
-  assert.match(missing.out, WINDOWS ? /could not be run on HEAD \(exit 9009\)/ : /could not be run on HEAD \(exit 127\)/);
+  assert.match(missing.out, WINDOWS
+    ? /also fails on the current code \(exit 1\): operable program or batch file/
+    : /could not be run on HEAD \(exit 127\)/);
 
   // the old tree cannot load a module the change adds
   const newmod = repo(b, "newmod", { "main.js": "" });

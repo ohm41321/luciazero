@@ -56,6 +56,7 @@ from .server import BusServer, is_loopback_host
 from .redact import Redactor
 from .statedir import (
     clear_endpoint,
+    create_private,
     db_path,
     ensure_state_dir,
     load_or_create_token,
@@ -1047,25 +1048,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
     env = dict(os.environ)
     url = endpoint["url"]
-    workspace = Path(tempfile.mkdtemp(prefix="luciazero-bind-"))
-    restrict(workspace)
-    if provider == "claude":
-        # The credential goes in a 0600 file, never on the child's command
-        # line: argv is world-readable through `ps` for the life of a session
-        # that may run for hours. The codex branch below uses the environment
-        # for the same reason.
-        config = workspace / "mcp.json"
-        config.write_text(json.dumps({"mcpServers": {SERVER_NAME: {"type": "http", "url": url, "headers": {"Authorization": f"Bearer {credential}"}}}}))
-        restrict(config)
-        argv = [command[0], "--mcp-config", str(config)] + (["--strict-mcp-config"] if args.strict else []) + command[1:]
-    else:
-        env[TOKEN_ENV] = credential
-        argv = [command[0], "-c", f'mcp_servers.{SERVER_NAME}.url="{url}"',
-                "-c", f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="{TOKEN_ENV}"'] + command[1:]
+    workspace: Optional[Path] = None
 
     def _cleanup(reason: str) -> None:
         """A credential must never outlive this command, however it ends."""
-        shutil.rmtree(workspace, ignore_errors=True)
+        if workspace is not None:
+            shutil.rmtree(workspace, ignore_errors=True)
         closer = _open_store("run", state_dir)
         if closer is None:
             return
@@ -1074,6 +1062,34 @@ def cmd_run(args: argparse.Namespace) -> int:
                 closer.revoke_binding(binding["id"], by=f"human:{getpass.getuser()}", reason=reason)
             except StoreError:
                 pass
+
+    try:
+        workspace = Path(tempfile.mkdtemp(prefix="luciazero-bind-"))
+        restrict(workspace)
+        if provider == "claude":
+            # The credential goes in a file only this user can read, made so
+            # before it holds a byte, never on the child's command line: argv
+            # is world-readable through `ps` for the life of a session that
+            # may run for hours. The codex branch below uses the environment
+            # for the same reason.
+            config = workspace / "mcp.json"
+            with os.fdopen(create_private(config), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"mcpServers": {SERVER_NAME: {
+                    "type": "http", "url": url, "headers": {"Authorization": f"Bearer {credential}"}}}}))
+            argv = [command[0], "--mcp-config", str(config)] + (["--strict-mcp-config"] if args.strict else []) + command[1:]
+        else:
+            env[TOKEN_ENV] = credential
+            argv = [command[0], "-c", f'mcp_servers.{SERVER_NAME}.url="{url}"',
+                    "-c", f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="{TOKEN_ENV}"'] + command[1:]
+    except OSError as exc:
+        # The binding was minted above; a session that never got its
+        # configuration must not leave the credential valid until its TTL.
+        _cleanup("setup failed")
+        print(f"run: cannot prepare the session's bus configuration: {clean(exc)}", file=sys.stderr)
+        return 2
+    except BaseException:
+        _cleanup("setup interrupted")
+        raise
 
     print(f"agent {clean(binding['agent_id'])} bound as {clean(binding['id'])}; starting {clean(command[0])}", file=sys.stderr)
     # With a terminal to proxy, the provider gets a pty of its own and this

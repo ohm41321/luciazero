@@ -239,6 +239,24 @@ class NodeHostedProviders(unittest.TestCase):
         self.assertNotIn(pid, seen["sessions"])
 
 
+class VanishedEntry(unittest.TestCase):
+    """What the Windows state walk may pass over: an entry lstat cannot
+    find, and nothing else. Plain os logic, so it runs everywhere."""
+
+    def test_only_a_missing_entry_counts_as_gone(self) -> None:
+        from luciazero_agentd.statedir import _vanished
+
+        with tempfile.TemporaryDirectory(prefix="agentd-vanished-") as tmp:
+            here = Path(tmp) / "token"
+            here.write_bytes(b"x")
+            self.assertFalse(_vanished(here))
+            self.assertTrue(_vanished(Path(tmp) / "bus.sqlite3-wal"))
+            denied = PermissionError(13, "Access is denied", str(here))
+            with mock.patch("luciazero_agentd.statedir.os.lstat", side_effect=denied):
+                with self.assertRaises(PermissionError):
+                    _vanished(here)
+
+
 @only_windows
 class PrivateState(unittest.TestCase):
     def setUp(self) -> None:
@@ -357,6 +375,48 @@ class PrivateState(unittest.TestCase):
         self.assertFalse(early.exists() or late.exists())
         for path in (state, token):
             self.assertPrivate(path)
+
+    def _denied_after(self, phase: str) -> None:
+        """The token's owner, then the token itself, cannot be read: once
+        `phase` ("owner" or "dacl") has started on it, lstat says access is
+        denied. Only a missing entry may be skipped, so the walk must refuse."""
+        state = self.parent / "agent-bus"
+        state.mkdir()
+        token = state / "token"
+        token.write_bytes(b"left-behind-token\n")
+        started = threading.Event()
+        real_owned, real_private, real_lstat = winproc.owned_path, winproc.make_private, os.lstat
+
+        def owned_path(path: str) -> bool:
+            if Path(path) == token and phase == "owner":
+                started.set()
+                return False  # as when GetNamedSecurityInfoW is refused
+            return real_owned(path)
+
+        def make_private(path: str, directory: bool) -> None:
+            if Path(path) == token and phase == "dacl":
+                started.set()
+                raise PermissionError(13, "Access is denied", path)
+            real_private(path, directory)
+
+        def lstat(path, *args, **kwargs):
+            if started.is_set() and Path(path) == token:
+                raise PermissionError(13, "Access is denied", str(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(winproc, "owned_path", owned_path), \
+                mock.patch.object(winproc, "make_private", make_private), \
+                mock.patch("luciazero_agentd.statedir.os.lstat", lstat):
+            with self.assertRaises(PermissionError):
+                ensure_state_dir(state)
+        self.assertTrue(started.is_set(), f"the {phase} phase never reached the token")
+        self.assertIsNotNone(private_problem(token), "a token that could not be inspected was passed over")
+
+    def test_an_entry_whose_owner_cannot_be_read_and_is_still_there_is_refused(self) -> None:
+        self._denied_after("owner")
+
+    def test_an_entry_whose_dacl_cannot_be_set_and_is_still_there_is_refused(self) -> None:
+        self._denied_after("dacl")
 
     def test_a_link_or_a_file_another_account_owns_inside_is_refused(self) -> None:
         state = self.parent / "agent-bus"

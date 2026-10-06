@@ -732,6 +732,60 @@ class HumanCommands(unittest.TestCase):
             self.assertEqual(store.get_agent("claude-newcomer")["provider"], "claude")
         self.assertIn("claude-newcomer", done.stderr + done.stdout)
 
+    def _run_watching_restrict(self, *, refuse: bool) -> tuple[subprocess.CompletedProcess, Path]:
+        """`run` in a child whose `restrict` says, for mcp.json, how many bytes
+        the file already held -- or refuses it, as a DACL that cannot be set
+        would. Returns the result and the directory its temp files went to."""
+        temp = self.state / "tmp"
+        temp.mkdir()
+        spy = (
+            "import os, sys\n"
+            "from luciazero_agentd import __main__ as cli, statedir\n"
+            "real = statedir.restrict\n"
+            "def restrict(path):\n"
+            "    if os.path.basename(path) == 'mcp.json':\n"
+            "        print(f'restrict: mcp.json held {os.path.getsize(path)} bytes', file=sys.stderr)\n"
+            f"        if {refuse!r}:\n"
+            "            raise PermissionError(13, 'injected: cannot restrict', str(path))\n"
+            "    return real(path)\n"
+            "statedir.restrict = cli.restrict = restrict\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._echo(), "hello"],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state),
+                 "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)},
+        )
+        return done, temp
+
+    def test_the_credential_file_is_private_before_it_holds_the_credential(self) -> None:
+        """On Windows a new file takes whatever its directory hands down, so
+        restricting mcp.json after writing it leaves the credential readable
+        for a moment; it is made private while still empty."""
+        self.addCleanup(self._stop_daemon)
+        done, _ = self._run_watching_restrict(refuse=False)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("hello", done.stdout)
+        held = [line for line in done.stderr.splitlines() if line.startswith("restrict: mcp.json")]
+        self.assertEqual(["restrict: mcp.json held 0 bytes"], held, done.stderr)
+
+    def test_a_session_whose_credential_file_cannot_be_made_private_leaves_nothing(self) -> None:
+        """The binding is minted before its configuration is written. If the
+        file cannot be made private, the credential must not stay valid for
+        the rest of its TTL, nor sit in a temp directory, nor reach a
+        provider."""
+        self.addCleanup(self._stop_daemon)
+        done, temp = self._run_watching_restrict(refuse=True)
+        self.assertEqual(done.returncode, 2, done.stderr + done.stdout)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertIn("cannot prepare the session's bus configuration", done.stderr)
+        self.assertNotIn("hello", done.stdout, "the provider must not be started")
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+        self.assertEqual([], [p.name for p in temp.iterdir() if p.name.startswith("luciazero-bind-")])
+
     def _front(self, *args: str, home: Optional[Path] = None) -> subprocess.CompletedProcess:
         """`lucia claude` with a stand-in on PATH for the provider itself.
 

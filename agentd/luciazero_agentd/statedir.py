@@ -70,13 +70,10 @@ def _secure_windows_tree(path: Path) -> None:
     cannot be read is otherwise taken for another account's."""
     from . import winproc
 
-    def gone(entry: Path) -> bool:
-        return not os.path.lexists(entry)
-
     def owned(entry: Path) -> bool:
         if winproc.owned_path(str(entry)):
             return True
-        if gone(entry):
+        if _vanished(entry):
             return False
         raise PermissionError(
             f"{entry} is owned by another account; the agent bus keeps its token there and will not use it "
@@ -110,8 +107,19 @@ def _secure_windows_tree(path: Path) -> None:
         try:
             winproc.make_private(str(entry), is_dir)
         except OSError:
-            if not gone(entry):
+            if not _vanished(entry):
                 raise
+
+
+def _vanished(path: Path) -> bool:
+    """True only when `path` is proven gone: lstat finds no such entry. Any
+    other failure to look -- access denied above all -- raises, because an
+    entry this process cannot inspect is not one it may skip securing."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return True
+    return False
 
 
 def create_private(path: Path) -> int:

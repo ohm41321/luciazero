@@ -618,8 +618,8 @@ assert any("redundant" in item or "no edit since the previous green" in item for
     || { rm -rf "${DR}"; fail "discipline text report missing telemetry"; }
   echo "${DOUT}" | grep -q '1 redundant green' \
     || { rm -rf "${DR}"; fail "discipline text report missing the verify line"; }
-  # The report is pure Node and must stay usable on native Windows even though
-  # the installer routes still require Bash/WSL.
+  # The report is pure Node and must route on native Windows too, where the
+  # router runs every route under Node rather than Bash.
   DWIN="$(node - "${ROOT}/bin/luciazero.js" "${DR}/stats.log" <<'JS'
 const [router, log] = process.argv.slice(2);
 Object.defineProperty(process, "platform", {value: "win32"});

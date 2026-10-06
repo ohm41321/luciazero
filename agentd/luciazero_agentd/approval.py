@@ -175,6 +175,19 @@ def dialog_available() -> bool:
     return pick() is not None
 
 
+def _run(argv: list[str], timeout: int) -> Any:
+    if sys.platform == "win32":
+        # By its full path: CreateProcess would look for `powershell` in the
+        # daemon's working directory first, and a stand-in there that exits
+        # 0 and prints nothing would read as "allow".
+        from . import proctree
+        program = proctree.find(argv[0])
+        if program is None:
+            raise FileNotFoundError(f"{argv[0]} is not on PATH")
+        argv = [program, *argv[1:]]
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+
+
 def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
         seconds: int = 120, runner: Optional[Callable[[list[str], int], Any]] = None,
         backend: Optional[Backend] = None) -> Optional[bool]:
@@ -184,8 +197,7 @@ def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
     if backend is None and runner is None:
         return None
     backend = backend or BACKENDS[0]
-    run = runner or (lambda argv, timeout: subprocess.run(
-        argv, capture_output=True, text=True, timeout=timeout, check=False))
+    run = runner or _run
     try:
         result = run(backend.argv(title, body, allow, deny, seconds), seconds + DIALOG_TIMEOUT_MARGIN)
     except (subprocess.TimeoutExpired, OSError):

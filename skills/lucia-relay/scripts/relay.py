@@ -58,13 +58,36 @@ HOME_PATH = re.compile(r"(?<![A-Za-z0-9])(?:~|\$HOME|%USERPROFILE%)[\\/][^\s\"'`
 FILE_URI_PATH = re.compile(r"\bfile:[^\s\"'`<>]+", re.IGNORECASE)
 
 
+def git_program() -> Optional[str]:
+    """git by its full path on Windows, where a bare name is looked for in
+    the working directory -- the repository being relayed -- before PATH.
+    Only PATH's absolute entries are searched, and only for a program: a
+    batch file would need cmd.exe, which searches the working directory too."""
+    if sys.platform != "win32":
+        return "git"
+    exts = [ext for ext in (os.environ.get("PATHEXT") or ".COM;.EXE").split(";")
+            if ext.lower() in (".com", ".exe")]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not os.path.splitdrive(entry)[0] or not os.path.isabs(entry):
+            continue
+        for ext in exts:
+            candidate = os.path.join(entry, "git" + ext)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def git(root: Path, *args: str) -> tuple[int, str]:
+    program = git_program()
+    if program is None:
+        return 127, ""
     git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     git_env["GIT_TERMINAL_PROMPT"] = "0"
     with tempfile.TemporaryFile() as output:
         try:
             proc = subprocess.run(
-                ["git", "-C", str(root), *args],
+                [program, "-C", str(root), *args],
                 stdin=subprocess.DEVNULL,
                 stdout=output,
                 stderr=subprocess.DEVNULL,

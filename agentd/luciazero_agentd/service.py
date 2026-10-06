@@ -101,6 +101,14 @@ Runner = Callable[[list[str]], Any]
 
 
 def run_command(argv: list[str]) -> Any:
+    if sys.platform == "win32":
+        # schtasks and powershell by their full paths: CreateProcess would
+        # look for them in the working directory first.
+        from . import proctree
+        program = proctree.find(argv[0])
+        if program is None:
+            raise FileNotFoundError(f"{argv[0]} is not on PATH")
+        argv = [program, *argv[1:]]
     # schtasks answers in the console's code page, which the locale's
     # encoding does not always decode; only ASCII in it is ever parsed.
     return subprocess.run(argv, capture_output=True, text=True, errors="replace", check=False, timeout=30)

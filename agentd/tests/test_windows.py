@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -237,6 +238,40 @@ class NodeHostedProviders(unittest.TestCase):
         pid, seen = self.ask(self.node, self.script("start.js"))
         self.assertTrue(seen["above"] is None or seen["above"]["pid"] != pid, seen)
         self.assertNotIn(pid, seen["sessions"])
+
+
+class WindowsLookup(unittest.TestCase):
+    """`proctree.find` on a mocked Windows filesystem, so the rule runs
+    everywhere; Commands below runs it against the real one. CreateProcess and
+    `shutil.which` both look in the working directory first, where a
+    repository can hold a `claude.exe` or `node.exe` of its own."""
+
+    FILES = {r"C:\repo\claude.EXE", r"C:\repo\node.exe", r"C:\trusted\claude.EXE", r"C:\node\node.exe",
+             r"C:\repo\only.exe", r"C:\npm\claude.cmd"}
+    ENV = {"Path": r'.;relative\bin;"C:\trusted";C:\node', "PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+
+    def find(self, name: str, env: dict) -> object:
+        """The lookup's answer, lower-cased: like Windows' own, this mocked
+        filesystem ignores case, so `claude.EXE` and `claude.exe` are one file,
+        and a relative path is relative to the working directory, C:\\repo."""
+        files = {f.lower() for f in self.FILES}
+
+        def isfile(path: str) -> bool:
+            return ntpath.normpath(ntpath.join("C:\\repo", path)).lower() in files
+
+        with mock.patch.object(proctree, "WINDOWS", True), mock.patch.object(proctree.os.path, "isfile", isfile):
+            found = proctree.find(name, env)
+        return None if found is None else found.lower()
+
+    def test_a_bare_name_comes_only_from_an_absolute_path_entry(self) -> None:
+        self.assertEqual(self.find("claude", self.ENV), r"c:\trusted\claude.exe")
+        self.assertEqual(self.find("node", self.ENV), r"c:\node\node.exe")
+        self.assertIsNone(self.find("only", self.ENV))
+
+    def test_a_path_is_the_callers_own_choice(self) -> None:
+        self.assertEqual(self.find(r"C:\repo\only", self.ENV), r"c:\repo\only.exe")
+        self.assertEqual(self.find(r"C:\npm\claude.cmd", self.ENV), r"c:\npm\claude.cmd")
+        self.assertIsNone(self.find(r"C:\nowhere\claude", self.ENV))
 
 
 class VanishedEntry(unittest.TestCase):
@@ -493,6 +528,95 @@ class Commands(unittest.TestCase):
     def test_an_executable_is_found_with_its_extension(self) -> None:
         argv = proctree.argv_for(["python", "-V"], dict(os.environ))
         self.assertTrue(argv[0].lower().endswith(".exe"), argv)
+
+    def in_a_poisoned_directory(self) -> Path:
+        """The working directory, as a repository a peer writes to: copies of
+        node there named `lzprovider.exe`, `node.exe`, `lzonlyhere.exe`,
+        `git.exe` and `powershell.exe`, none of which can do what the real
+        program would. The trusted `lzprovider.exe` is a copy of node in the
+        PATH directory."""
+        node = shutil.which("node")
+        poison = Path(tempfile.mkdtemp(prefix="agentd-poison-"))
+        self.addCleanup(shutil.rmtree, poison, True)
+        for name in ("lzprovider.exe", "node.exe", "lzonlyhere.exe", "git.exe", "powershell.exe"):
+            shutil.copyfile(node, poison / name)
+        shutil.copyfile(node, self.bin / "lzprovider.exe")
+        here = os.getcwd()
+        os.chdir(poison)
+        self.addCleanup(os.chdir, here)
+        return poison
+
+    PRINT_SELF = ["-e", "process.stdout.write(process.execPath)"]
+
+    def ran(self, argv: list[str]) -> str:
+        """The program that ran argv, by the path it reports for itself."""
+        done = subprocess.run(argv, env=self.env, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_a_bare_name_is_never_taken_from_the_working_directory(self) -> None:
+        poison = self.in_a_poisoned_directory()
+        # The fixture bites: CreateProcess, given the bare name, runs the copy here.
+        self.assertTrue(os.path.samefile(self.ran(["lzprovider", *self.PRINT_SELF]), poison / "lzprovider.exe"))
+        argv = proctree.argv_for(["lzprovider", *self.PRINT_SELF], self.env)
+        self.assertTrue(os.path.samefile(argv[0], self.bin / "lzprovider.exe"), argv)
+        self.assertTrue(os.path.samefile(self.ran(argv), self.bin / "lzprovider.exe"))
+
+    def test_an_npm_shim_never_takes_node_from_the_working_directory(self) -> None:
+        poison = self.in_a_poisoned_directory()
+        argv = proctree.argv_for(["claude", *self.ARGS], self.env)
+        self.assertTrue(os.path.isabs(argv[0]), argv)
+        self.assertFalse(os.path.samefile(argv[0], poison / "node.exe"), argv)
+        self.assertEqual(json.loads(self.ran(argv)), self.ARGS)
+        # Without node on PATH the shim is refused, not handed to cmd.exe, which
+        # would look for node in the working directory.
+        system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+        bare = {**self.env, next(k for k in self.env if k.upper() == "PATH"): f"{self.bin};{system}"}
+        with self.assertRaises(proctree.CommandError):
+            proctree.argv_for(["claude", "x"], bare)
+
+    def test_a_name_only_the_working_directory_has_is_refused_but_a_path_to_it_is_honoured(self) -> None:
+        poison = self.in_a_poisoned_directory()
+        with self.assertRaises(proctree.CommandError):
+            proctree.argv_for(["lzonlyhere", *self.PRINT_SELF], self.env)
+        for named in (".\\lzonlyhere", ".\\lzonlyhere.exe", str(poison / "lzonlyhere")):
+            with self.subTest(named=named):
+                argv = proctree.argv_for([named, *self.PRINT_SELF], self.env)
+                self.assertTrue(os.path.samefile(self.ran(argv), poison / "lzonlyhere.exe"))
+
+    def test_git_powershell_and_schtasks_come_from_path_too(self) -> None:
+        from luciazero_agentd import approval, service
+        repo = make_repo(Path(tempfile.mkdtemp(prefix="agentd-git-")))
+        self.addCleanup(shutil.rmtree, repo, True)
+        self.in_a_poisoned_directory()
+        self.assertRegex(gitinfo.git(str(repo), "rev-parse", "HEAD"), r"^[0-9a-f]{40}$")
+        said = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "Write-Output real"]
+        self.assertEqual(approval._run(said, 60).stdout.strip(), "real")
+        self.assertEqual(service.run_command(said).stdout.strip(), "real")
+
+    def test_a_plain_batch_file_starts_directly_and_on_a_pseudo_console(self) -> None:
+        (self.bin / "lzplain.bat").write_text("@echo got %1\r\n@exit /b 7\r\n", encoding="utf-8", newline="")
+        argv = proctree.argv_for(["lzplain", "word"], self.env)
+        self.assertEqual(Path(argv[0]).name.lower(), "lzplain.bat")
+        child = proctree.start(argv, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, encoding="utf-8", errors="replace")
+        out, _ = child.communicate(timeout=60)
+        proctree.release(child.pid)
+        self.assertEqual((child.returncode, out.strip()), (7, "got word"))
+
+        from luciazero_agentd import conpty
+        if not conpty.HAVE_CONPTY:
+            self.skipTest("this Windows has no pseudo console")
+        session = conpty.Session(argv, self.env)
+        chunks: list[bytes] = []
+        reader = threading.Thread(target=lambda: chunks.extend(iter(session.read, b"")), daemon=True)
+        reader.start()
+        code = session.wait(60)
+        session.close_console()
+        reader.join(timeout=10)
+        session.close()
+        self.assertEqual(code, 7)
+        self.assertIn("got word", ANSI.sub("", b"".join(chunks).decode("utf-8", "replace")))
 
 
 @only_windows

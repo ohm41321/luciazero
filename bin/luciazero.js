@@ -16,6 +16,7 @@
 //   npx luciazero bus status [--json]         -> Agent Bus queue summary (beta)
 //   npx luciazero relay <subcommand> [...]    -> Lucia Relay (draft, finalize, inspect, consume, ...)
 const { spawnSync } = require("node:child_process");
+const { onPathOnly } = require("./lib/winexec.js");
 const path = require("node:path");
 
 const installer = (script, command) => process.platform === "win32"
@@ -54,7 +55,17 @@ if (args[0] && !args[0].startsWith("-")) {
 const selected = ROUTES[route];
 const script = path.join(__dirname, "..", selected.script);
 
-const result = spawnSync(selected.runtime, [script, ...(selected.args || []), ...args], { stdio: "inherit" });
+// On Windows a bare runtime name comes from PATH's absolute entries alone:
+// spawnSync would look in the working directory first, which for `relay` is
+// the repository being relayed. Only a program is taken, never a batch file.
+const runtime = process.platform === "win32" && !path.isAbsolute(selected.runtime)
+  ? onPathOnly(selected.runtime, { exts: [".exe"] })
+  : selected.runtime;
+if (runtime === null) {
+  console.error(`luciazero: could not run ${selected.runtime}: it is not on PATH`);
+  process.exit(1);
+}
+const result = spawnSync(runtime, [script, ...(selected.args || []), ...args], { stdio: "inherit" });
 if (result.error) {
   console.error(`luciazero: could not run ${path.basename(selected.runtime)}: ${result.error.message}`);
   process.exit(1);

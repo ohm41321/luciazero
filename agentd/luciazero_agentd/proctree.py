@@ -21,10 +21,17 @@ re-reads the whole command line, so a prompt holding a newline, a quote, `&`,
 `|`, `%` or `^` is cut short or run as commands. ``argv_for`` therefore reads
 an npm shim for the script it starts and runs that script with node directly,
 and refuses any other batch file whose arguments cmd.exe would act on.
+
+And Windows looks for a bare command name in the working directory before
+PATH -- CreateProcess does, and so does `shutil.which`, on every Python this
+supports. A provider runs inside a repository that peers write to, so a
+`claude.exe` or `node.exe` planted there would start with the binding's
+credential. ``find`` takes a bare name only from PATH's absolute entries.
 """
 
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 import shutil
@@ -87,6 +94,41 @@ def release(pid: int) -> None:
         job.close()
 
 
+def _get(env: Mapping[str, str], name: str) -> Optional[str]:
+    """`env[name]`, with Windows' case-insensitive names."""
+    return next((value for key, value in env.items() if key.upper() == name), None)
+
+
+def find(name: str, env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The program `name` means, or None. On Windows a name with a directory
+    in it is the caller's own choice and is taken as given, with the PATHEXT
+    extensions tried after it; a bare name is looked for only in PATH's
+    absolute entries -- never in the working directory, and never in an
+    entry such as `.` that means it. Elsewhere this is `shutil.which`, which
+    looks only where PATH says."""
+    env = os.environ if env is None else env
+    search = _get(env, "PATH")
+    if not WINDOWS:
+        return shutil.which(name, path=search)
+    exts = [ext for ext in (_get(env, "PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if ext]
+
+    def program(base: str) -> Optional[str]:
+        if ntpath.splitext(base)[1].lower() in {ext.lower() for ext in exts} and os.path.isfile(base):
+            return base
+        return next((base + ext for ext in exts if os.path.isfile(base + ext)), None)
+
+    if ntpath.dirname(name) or ntpath.splitdrive(name)[0]:
+        return program(name)
+    for entry in (search or "").split(ntpath.pathsep):
+        entry = entry.strip().strip('"')
+        if not ntpath.splitdrive(entry)[0] or not ntpath.isabs(entry):
+            continue
+        found = program(ntpath.join(entry, name))
+        if found is not None:
+            return found
+    return None
+
+
 def _npm_shim(path: str, env: Mapping[str, str]) -> Optional[list[str]]:
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -101,21 +143,30 @@ def _npm_shim(path: str, env: Mapping[str, str]) -> Optional[list[str]]:
     if not os.path.isfile(script):
         return None
     bundled = os.path.join(here, "node.exe")
-    node = bundled if os.path.isfile(bundled) else shutil.which("node", path=env.get("PATH"))
-    return [node, script] if node else None
+    node = bundled if os.path.isfile(bundled) else find("node", env)
+    if node is None:
+        # The shim itself would ask cmd.exe for `node`, which looks in the
+        # working directory first: the very lookup this is here to avoid.
+        raise CommandError(f"{path} is an npm shim, and node is not on PATH; install Node.js or put it on PATH")
+    return [node, script]
 
 
 def argv_for(argv: Sequence[str], env: Optional[Mapping[str, str]] = None) -> list[str]:
-    """argv as this platform can start it without a shell re-reading it.
-    Unchanged off Windows, and for a command that cannot be found (Popen
-    then fails as it would have)."""
+    """argv as this platform can start it without a shell re-reading it,
+    and on Windows with the program named by its full path. Unchanged off
+    Windows, and for a path of the caller's own that is not there (Popen
+    then fails as it would have). A bare name that is not on PATH is
+    refused: CreateProcess would look for it in the working directory."""
     argv = list(argv)
     if not WINDOWS or not argv:
         return argv
     env = os.environ if env is None else env
-    found = shutil.which(argv[0], path=env.get("PATH"))
+    found = find(argv[0], env)
     if found is None:
-        return argv
+        if ntpath.dirname(argv[0]) or ntpath.splitdrive(argv[0])[0]:
+            return argv
+        raise CommandError(f"{argv[0]} is not on PATH; only PATH's own directories are searched, "
+                           "never the working directory")
     if not found.lower().endswith((".cmd", ".bat")):
         return [found] + argv[1:]
     script = _npm_shim(found, env)

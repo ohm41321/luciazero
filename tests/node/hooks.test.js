@@ -8,7 +8,8 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const { ROOT, sandbox, node, nodeLate } = require("./sandbox.js");
+const { spawnSync } = require("node:child_process");
+const { ROOT, WINDOWS, sandbox, node, nodeLate } = require("./sandbox.js");
 
 const VERIFY = path.join(ROOT, "claude", "hooks", "luciazero-verify.cjs");
 const STATUS = path.join(ROOT, "claude", "hooks", "luciazero-statusline.cjs");
@@ -62,4 +63,25 @@ test("the status line shows the model and the verify state", (t) => {
   const after = node(box.env, [STATUS], JSON.stringify({ cwd, model: { display_name: "Model" } }));
   assert.match(after.stdout, /verify/);
   assert.doesNotMatch(after.stdout, /no verify yet/);
+});
+
+// Windows looks for a bare command name in the working directory before PATH,
+// and the status line runs in the project: a git.exe there -- here a copy of
+// node, which cannot name a branch -- must not be the git that runs.
+test("the status line names the branch with the git on PATH, never one in the project", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "branchy");
+  fs.mkdirSync(cwd);
+  const made = spawnSync("git", ["init", "-q", "-b", "lz-branch", cwd], { env: box.env, encoding: "utf8", windowsHide: true });
+  assert.strictEqual(made.status, 0, made.stderr);
+  if (WINDOWS) {
+    fs.copyFileSync(process.execPath, path.join(cwd, "git.exe"));
+    const bare = spawnSync("git", ["-C", cwd, "branch", "--show-current"], { cwd, env: box.env, encoding: "utf8", windowsHide: true });
+    assert.notStrictEqual(bare.status, 0, "the copy in the project did not run for a bare name; this case proves nothing");
+  }
+  const shown = spawnSync(process.execPath, [STATUS], {
+    cwd, env: box.env, input: JSON.stringify({ cwd, model: { display_name: "Model" } }), encoding: "utf8", windowsHide: true,
+  });
+  assert.strictEqual(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /^Model \| lz-branch \| /);
 });

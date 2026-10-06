@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from typing import Any, Optional
+
+from . import proctree
 
 GIT_TIMEOUT_SECONDS = 15
 OID_LENGTHS = (40, 64)
@@ -28,9 +31,14 @@ def _env() -> dict[str, str]:
 
 
 def git(path: str, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> str:
+    # By its full path on Windows, where a bare name is looked for in the
+    # daemon's working directory first.
+    program = proctree.find("git") if sys.platform == "win32" else "git"
+    if program is None:
+        raise GitError("git is not installed or not on PATH")
     try:
         result = subprocess.run(
-            ["git", "-C", path, *args],
+            [program, "-C", path, *args],
             capture_output=True, text=True, encoding="utf-8", timeout=timeout, env=_env(), check=False,
             stdin=subprocess.DEVNULL,
         )

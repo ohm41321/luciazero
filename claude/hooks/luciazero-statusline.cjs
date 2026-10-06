@@ -18,6 +18,28 @@ const fs = require("fs");
 const path = require("path");
 const { stateBase, stateKey, trustedBase, readStdin } = require("./luciazero-verify.cjs");
 
+// git by its full path on Windows, where a bare name is looked for in the
+// working directory -- the project this line describes -- before PATH. Only
+// PATH's absolute entries are searched, and only for a program: a batch file
+// would need cmd.exe, which searches the working directory too.
+function gitProgram() {
+  if (process.platform !== "win32") return "git";
+  const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+  const exts = (process.env.PATHEXT || ".COM;.EXE").split(";").map((ext) => ext.toLowerCase())
+    .filter((ext) => ext === ".com" || ext === ".exe");
+  for (const entry of (key ? process.env[key] : "").split(path.delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
+    if (!dir || !path.isAbsolute(dir)) continue;
+    for (const ext of exts) {
+      const file = path.join(dir, `git${ext}`);
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {}
+    }
+  }
+  return null;
+}
+
 function age(ts) {
   const s = Math.trunc((Date.now() - ts) / 1000);
   if (s < 60) return `${s}s`;
@@ -69,11 +91,12 @@ function line(input) {
   }
 
   let branch = "";
+  const git = gitProgram();
   try {
-    const result = childProcess.spawnSync("git", ["-C", cwd, "branch", "--show-current"], {
+    const result = git === null ? null : childProcess.spawnSync(git, ["-C", cwd, "branch", "--show-current"], {
       encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 5000,
     });
-    if (result.status === 0) branch = (result.stdout || "").trim();
+    if (result !== null && result.status === 0) branch = (result.stdout || "").trim();
   } catch {}
   return branch ? `${model} | ${branch} | ${verify}` : `${model} | ${verify}`;
 }

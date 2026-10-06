@@ -669,6 +669,24 @@ RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" 
 [ "${RC}" = 0 ] || fail "the --report carve-out leaked into a regex the user set (stop rc=${RC})"
 echo "ok  default verify detection covers unittest and the timing collector, not its --report"
 
+# 4c6b. Input that arrives late is still read. Opening process.stdin made the
+# pipe non-blocking, so a hook started before its writer had written read
+# EAGAIN, took the event for empty and exited -- the writer then died of a
+# broken pipe, and a verify run or a statusline was silently lost.
+# The verify run is read back from the state it writes, not from a stop: a
+# stop whose own input was dropped also exits 0.
+mktmp SW
+SW_STATE="$(TMPDIR="${SW}" node -e 'const v = require(process.argv[1]); console.log(require("path").join(v.stateBase(), v.stateKey("/hook/test/slow")))' \
+  "${ROOT}/claude/hooks/luciazero-verify.cjs")"
+{ sleep 1; printf '%s\n' '{"cwd":"/hook/test/slow","tool_input":{"command":"python -m unittest discover -s tests -t ."}}'; } \
+  | TMPDIR="${SW}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+[ "$(cat "${SW_STATE}/last_verify" 2>/dev/null)" = ok ] \
+  || fail "the verify hook dropped a bash event whose input arrived late"
+SWS="$({ sleep 1; printf '%s' '{"cwd":"/hook/test/slow","model":{"display_name":"LateModel"}}'; } \
+  | TMPDIR="${SW}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
+case "${SWS}" in LateModel*) ;; *) fail "the statusline dropped input that arrived late: ${SWS}" ;; esac
+echo "ok  hooks read input that arrives after they start"
+
 # 4c7. LUCIAZERO_EDIT_DIAG=1 writes one line per edit event next to
 # last_edit -- tool name, opaque key, whether file_path was missing, empty or
 # present, its suffix, whether it lay under cwd, whether the edit counted --

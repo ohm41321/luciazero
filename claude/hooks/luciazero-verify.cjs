@@ -56,6 +56,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const tty = require("tty");
 
 const WINDOWS = process.platform === "win32";
 const LIMIT = 1000000; // a settings file is kilobytes; this runs on every tool call
@@ -322,13 +323,32 @@ function field(input, ...keys) {
 
 function readStdin() {
   // Hook stdin is always a pipe; when run by hand from a terminal for
-  // debugging, do not hang waiting for EOF that never comes.
-  if (process.stdin.isTTY) return "";
-  try {
-    return fs.readFileSync(0, "utf8");
-  } catch {
-    return "";
+  // debugging, do not hang waiting for EOF that never comes. `tty.isatty`,
+  // never `process.stdin`: opening that stream makes the pipe non-blocking,
+  // and a read before the writer has written then fails with EAGAIN, which
+  // dropped the event as if it were empty. The pipe can also arrive
+  // non-blocking from whoever made it, so EAGAIN is waited out here; Windows
+  // reports the end of a pipe as EOF.
+  if (tty.isatty(0)) return "";
+  const chunks = [];
+  const buffer = Buffer.alloc(65536);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    let n;
+    try {
+      n = fs.readSync(0, buffer, 0, buffer.length, null);
+    } catch (error) {
+      if (error.code === "EAGAIN") {
+        Atomics.wait(pause, 0, 0, 10);
+        continue;
+      }
+      if (error.code === "EOF") break;
+      return "";
+    }
+    if (n === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, n)));
   }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 // The classic install's hook path as a canonical path; empty when its
@@ -842,7 +862,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, trustedBase, ere, anyLine };
+module.exports = { stateBase, stateKey, trustedBase, ere, anyLine, readStdin };
 
 if (require.main === module) {
   try {

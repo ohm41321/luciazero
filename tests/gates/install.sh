@@ -831,7 +831,7 @@ BLD_FAIL() { rm -rf "${BLD}"; fail "$1"; }
 mkdir -p "${BLD}/bin" "${BLD}/b/d"
 printf '#!/bin/sh\necho 20000101000000\n' > "${BLD}/bin/date"
 chmod +x "${BLD}/bin/date"
-awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLD}/bakcopy.sh"
+awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLD}/bakcopy.sh"
 printf 'user bytes\n' > "${BLD}/b/f"
 printf 'tree bytes\n' > "${BLD}/b/d/x"
 ln -s "../some where" "${BLD}/b/l"
@@ -872,7 +872,7 @@ BLS="$(mktemp -d)"
 BLS_FAIL() { rm -rf "${BLS}"; fail "$1"; }
 mkdir -p "${BLS}/bin" "${BLS}/b/d" "${BLS}/out"
 printf '#!/bin/sh\necho 20000101000000\n' > "${BLS}/bin/date"
-awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLS}/bakcopy.sh"
+awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLS}/bakcopy.sh"
 printf 'user bytes\n' > "${BLS}/b/f"
 printf 'tree bytes\n' > "${BLS}/b/d/x"
 ln -s "../some where" "${BLS}/b/l"
@@ -997,12 +997,129 @@ BLN_BAK="$(find "${BLN}/cfg" -name 'plan.bak.*')"
 rm -rf "${BLN}"
 echo "ok  a symlink that cannot be backed up exactly stops the install before it is removed"
 
+# 5c10. Names kept byte for byte (roadmap R24). `$( )` deletes every trailing
+# newline, so a link target or a directory name ending in one used to come
+# back as a different name: a symlink's backup pointed somewhere else, and a
+# backup beside `cfg<newline>/f` was made in a sibling `cfg` and reported at
+# a name where nothing was. The same held for a relative source read from a
+# directory whose name ends in a newline.
+BNL="$(mktemp -d)"
+BNL_FAIL() { rm -rf "${BNL}"; fail "$1"; }
+BNL_C="${BNL}/cfg"$'\n'
+mkdir -p "${BNL}/bin" "${BNL_C}/d" "${BNL}/cfg/d" "${BNL}/b/tgt"$'\n' "${BNL}/b/tgt"$'\n\n' "${BNL}/b/tgt"
+printf '#!/bin/sh\necho 20000101000000\n' > "${BNL}/bin/date"
+chmod +x "${BNL}/bin/date"
+awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BNL}/bakcopy.sh"
+BNL_RUN() {
+  PATH="${BNL}/bin:${PATH}" bash -c 'set -euo pipefail; . "$1"; cd "$2"; bakcopy -P "$3" "$4"' _ \
+    "${BNL}/bakcopy.sh" "$@"
+}
+printf 'one\n' > "${BNL}/b/tgt"$'\n'"/which"
+printf 'two\n' > "${BNL}/b/tgt"$'\n\n'"/which"
+printf 'none\n' > "${BNL}/b/tgt/which"
+ln -s "tgt"$'\n' "${BNL}/b/l1"
+ln -s "tgt"$'\n\n' "${BNL}/b/l2"
+for BNL_K in 1 2; do
+  BNL_GOT="$(BNL_RUN "${BNL}/b" "l${BNL_K}" "${BNL}/b/l${BNL_K}")" \
+    || BNL_FAIL "backup of a symlink whose target ends in a newline failed"
+  [ "$(readlink "${BNL_GOT}"; printf x)" = "$(readlink "${BNL}/b/l${BNL_K}"; printf x)" ] \
+    || BNL_FAIL "symlink backup lost the trailing newlines of its target"
+  [ "$(cat "${BNL_GOT}/which")" = "$(cat "${BNL}/b/l${BNL_K}/which")" ] \
+    || BNL_FAIL "symlink backup resolves to $(cat "${BNL_GOT}/which" 2>&1), not where its source does"
+done
+printf 'user bytes\n' > "${BNL_C}/f"
+printf 'tree bytes\n' > "${BNL_C}/d/x"
+ln -s "../some where" "${BNL_C}/l"
+printf 'sibling bytes\n' > "${BNL}/cfg/f"
+printf 'sibling tree\n' > "${BNL}/cfg/d/x"
+ln -s "../elsewhere" "${BNL}/cfg/l"
+for BNL_K in f d l; do
+  for BNL_SRC in "${BNL_C}/${BNL_K}" "${BNL_K}"; do
+    BNL_GOT="$(BNL_RUN "${BNL_C}" "${BNL_SRC}" "${BNL_C}/${BNL_K}")" \
+      || BNL_FAIL "backup of ${BNL_K} in a directory whose name ends in a newline failed"
+    [ "${BNL_GOT%/*}" = "${BNL_C%/}" ] && { [ -e "${BNL_GOT}" ] || [ -L "${BNL_GOT}" ]; } \
+      || BNL_FAIL "backup of ${BNL_K} reported ${BNL_GOT#"${BNL}/"}, where there is no backup"
+    case "${BNL_K}" in
+      f) cmp -s "${BNL_C}/f" "${BNL_GOT}" || BNL_FAIL "file backup is not a copy of ${BNL_SRC#"${BNL}/"}" ;;
+      d) cmp -s "${BNL_C}/d/x" "${BNL_GOT}/x" || BNL_FAIL "tree backup is not a copy of ${BNL_SRC#"${BNL}/"}" ;;
+      l) [ "$(readlink "${BNL_GOT}")" = "../some where" ] || BNL_FAIL "symlink backup is not ${BNL_SRC#"${BNL}/"}" ;;
+    esac
+    rm -rf "${BNL_GOT}"
+  done
+done
+[ "$(ls -A "${BNL}/cfg" | tr '\n' ' ')" = "d f l " ] \
+  || BNL_FAIL "backup wrote into the sibling directory without the newline: $(ls -A "${BNL}/cfg")"
+[ -z "$(ls -A "${BNL_C}" | grep -v '^[dfl]$')" ] \
+  || BNL_FAIL "backups left temporary names behind: $(ls -A "${BNL_C}")"
+rm -rf "${BNL}"
+echo "ok  backup names and link targets keep their trailing newlines"
+
+# 5c11. The private directory is removed only when it still passes the owner
+# check. With `[ -O` failing, as for a directory of another user swapped in at
+# its name, the backup must fail and the directory must stay where it is.
+# And a symlink tool that replaces a regular file at its name is not trusted
+# with the backup name, as one that replaces a directory or symlink is not.
+BCG="$(mktemp -d)"
+BCG_FAIL() { rm -rf "${BCG}"; fail "$1"; }
+mkdir -p "${BCG}/bin" "${BCG}/b/mine"
+awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BCG}/bakcopy.sh"
+printf 'user bytes\n' > "${BCG}/b/f"
+if bash -c 'set -euo pipefail; . "$1"
+  [() { case "$1" in -O) return 1 ;; esac; builtin [ "$@"; }
+  bakcopy -P "$2" "$2"' _ "${BCG}/bakcopy.sh" "${BCG}/b/f" >/dev/null 2>&1; then
+  BCG_FAIL "file backup succeeded although its private directory failed the owner check"
+fi
+[ -n "$(find "${BCG}/b" -name '.luciazero-bak.*' -type d)" ] \
+  || BCG_FAIL "file backup removed a private directory that failed the owner check"
+[ -z "$(ls -A "${BCG}/b" | grep '^f\.bak\.')" ] || BCG_FAIL "file backup left a backup name after refusing"
+cmp -s <(printf 'user bytes\n') "${BCG}/b/f" || BCG_FAIL "file backup disturbed the file it backed up"
+# Empty means a listing that worked and printed nothing: `$( )` would read an
+# entry named only by newlines, or a listing that failed, as empty.
+mkdir -p "${BCG}/nl" "${BCG}/shut"
+printf 'sentinel\n' > "${BCG}/nl/"$'\n'
+chmod 300 "${BCG}/shut"
+for BCG_D in nl shut; do
+  [ "${BCG_D}" = shut ] && [ "$(id -u)" = 0 ] && continue # root reads it anyway
+  if bash -c '. "$1"; bc_enter "$(cd "$2" && pwd -P)"' _ "${BCG}/bakcopy.sh" "${BCG}/${BCG_D}"; then
+    chmod 700 "${BCG}/shut"
+    BCG_FAIL "the empty-directory check accepted a directory that is not shown empty: ${BCG_D}"
+  fi
+done
+chmod 700 "${BCG}/shut"
+[ "$(cat "${BCG}/nl/"$'\n')" = sentinel ] || BCG_FAIL "the empty-directory check changed the entry it found"
+BCG_LN="$(command -v ln)"
+BCG_PERL="$(command -v perl || true)"
+cat > "${BCG}/bin/ln" <<BCGSH
+#!/bin/sh
+case "\$1" in -*T*) echo "ln: illegal option -- T" >&2; exit 1 ;; esac
+exec "${BCG_LN}" "\$@"
+BCGSH
+printf '#!/bin/sh\nexit 127\n' > "${BCG}/bin/node"
+cat > "${BCG}/bin/perl" <<BCGSH
+#!/bin/sh
+for a in "\$@"; do last="\$a"; done
+if [ -f "\${last}" ] && [ ! -L "\${last}" ]; then rm -f "\${last}"; fi
+[ -n "${BCG_PERL}" ] || exit 127
+exec "${BCG_PERL}" "\$@"
+BCGSH
+chmod +x "${BCG}/bin/"*
+ln -s mine "${BCG}/b/l"
+if PATH="${BCG}/bin:${PATH}" bash -c 'set -euo pipefail; . "$1"; bakcopy -P "$2" "$2"' _ \
+  "${BCG}/bakcopy.sh" "${BCG}/b/l" >/dev/null 2>"${BCG}/err"; then
+  BCG_FAIL "symlink backup trusted a tool that replaces a regular file at its name"
+fi
+grep -q 'no tool here makes a symlink at exactly a given name' "${BCG}/err" \
+  || BCG_FAIL "symlink backup did not say why it stopped: $(cat "${BCG}/err")"
+[ "$(readlink "${BCG}/b/l")" = mine ] || BCG_FAIL "symlink backup disturbed the symlink it backed up"
+rm -rf "${BCG}"
+echo "ok  backup cleanup and tool choice hold to the owner check and exact names"
+
 # The four installers each carry the same backup helper; one that drifts
 # from the others would silently lose the reservation above.
 BC_REF=""
 for BC_F in install.sh uninstall.sh install-codex.sh uninstall-codex.sh; do
-  BC_BODY="$(awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
-  for BC_FN in bc_symlink bc_enter bakcopy; do
+  BC_BODY="$(awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
+  for BC_FN in bc_raw bc_physical bc_symlink bc_enter bakcopy; do
     printf '%s\n' "${BC_BODY}" | grep -q "^${BC_FN}() {" || fail "${BC_F} has no ${BC_FN} helper"
   done
   [ -n "${BC_REF}" ] || BC_REF="${BC_BODY}"
@@ -1080,6 +1197,39 @@ chmod 755 "${SB4B}/dotfiles"
   || SB4B_FAIL "--with-hooks copied hook files before finding the settings directory read-only"
 cmp -s "${SB4B}/dotfiles/settings.json" "${SB4B}/before" \
   || SB4B_FAIL "--with-hooks changed settings.json in a read-only directory"
+# a settings.json that is a symlink loop can be neither read nor written:
+# both the check and the write refuse it, with each link as it was, where
+# the write once replaced one of them with a fresh file
+rm -rf "${SB4B}/cfg" "${SB4B}/dotfiles"; mkdir -p "${SB4B}/cfg" "${SB4B}/dotfiles"
+ln -s "${SB4B}/dotfiles/loop" "${SB4B}/cfg/settings.json"
+ln -s "${SB4B}/cfg/settings.json" "${SB4B}/dotfiles/loop"
+SB4B_LOOP() {
+  [ "$(readlink "${SB4B}/cfg/settings.json")" = "${SB4B}/dotfiles/loop" ] \
+    && [ "$(readlink "${SB4B}/dotfiles/loop")" = "${SB4B}/cfg/settings.json" ] \
+    || SB4B_FAIL "$1 replaced a link of a settings.json symlink loop"
+}
+for SB4B_MODE in check write; do
+  RC=0; node "${ROOT}/bin/lib/settings-wiring.js" wire "${SB4B_MODE}" "${SB4B}/cfg/settings.json" \
+    "${SB4B}/cfg/hooks" >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -ne 0 ] || SB4B_FAIL "wire ${SB4B_MODE} accepted a settings.json that is a symlink loop"
+  SB4B_LOOP "wire ${SB4B_MODE}"
+done
+RC=0; CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 || RC=$?
+[ "${RC}" -ne 0 ] || SB4B_FAIL "--with-hooks accepted a settings.json that is a symlink loop"
+SB4B_LOOP "--with-hooks"
+[ ! -e "${SB4B}/cfg/hooks/luciazero-verify.cjs" ] \
+  || SB4B_FAIL "--with-hooks copied hook files before refusing a settings.json symlink loop"
+# a symlink to nothing is written at the name it points to, which makes it
+# whole and keeps the link
+rm -rf "${SB4B}/cfg" "${SB4B}/dotfiles"; mkdir -p "${SB4B}/cfg" "${SB4B}/dotfiles"
+ln -s "${SB4B}/dotfiles/settings.json" "${SB4B}/cfg/settings.json"
+CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null \
+  || SB4B_FAIL "--with-hooks failed on a settings.json symlink to a file not made yet"
+[ "$(readlink "${SB4B}/cfg/settings.json")" = "${SB4B}/dotfiles/settings.json" ] \
+  || SB4B_FAIL "--with-hooks replaced a settings.json symlink to a file not made yet"
+[ -f "${SB4B}/dotfiles/settings.json" ] && [ ! -L "${SB4B}/dotfiles/settings.json" ] \
+  && grep -qF 'luciazero-verify.cjs' "${SB4B}/dotfiles/settings.json" \
+  || SB4B_FAIL "--with-hooks did not make the file a dangling settings.json symlink points at"
 rm -rf "${SB4B}"
 echo "ok  settings.json is checked before the pack is copied, and written whole beside its real file"
 

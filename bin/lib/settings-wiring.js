@@ -151,9 +151,18 @@ function shapeError(message) {
   return error;
 }
 
+// Only a settings.json that is not there, or a symlink to nothing, reads as
+// empty. Any other failure to read it -- a symlink loop, a directory, no
+// permission -- is an error, never a file to write fresh over it.
 function readSettings(file) {
-  if (!fs.existsSync(file)) return {};
-  const settings = JSON.parse(fs.readFileSync(file, "utf8"));
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+  const settings = JSON.parse(text);
   if (settings === null || typeof settings !== "object" || Array.isArray(settings)) {
     throw shapeError("settings.json is valid JSON but not the shape hooks live in");
   }
@@ -355,23 +364,33 @@ function defaultMode() {
 // A symlinked settings.json (a dotfiles repository) is read and written at
 // the file it points at, so the link survives. Not writable is refused, since
 // replacing the file whole would otherwise go around its permission bits, and
-// so is a directory that cannot take the new file beside it.
+// so is a directory that cannot take the new file beside it. A symlink loop,
+// or any failure to resolve other than a name that is not there, is refused
+// too: the write would replace one of the links with a file.
 function writableTarget(file) {
   let target = path.resolve(file);
   // a dangling link is written at the name it points to, which makes it whole
+  let resolved = false;
   for (let hops = 0; hops < 40; hops++) {
     try {
       target = fs.realpathSync(target);
+      resolved = true;
       break;
-    } catch {}
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
     let link;
     try {
       link = fs.readlinkSync(target);
-    } catch {
+    } catch (error) {
+      // not there, or not a link: this is the name the file is made at
+      if (error.code !== "ENOENT" && error.code !== "EINVAL") throw error;
+      resolved = true;
       break;
     }
     target = path.resolve(path.dirname(target), link);
   }
+  if (!resolved) throw new Error("settings.json is a chain of more than 40 symlinks: " + file);
   if (fs.existsSync(file)) fs.accessSync(target, fs.constants.W_OK);
   fs.accessSync(path.dirname(target), fs.constants.W_OK | (WINDOWS ? 0 : fs.constants.X_OK));
   return target;
@@ -425,7 +444,8 @@ function modeOf(target) {
   if (WINDOWS) return null;
   try {
     return fs.statSync(target).mode & 0o7777;
-  } catch {
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
     return defaultMode();
   }
 }

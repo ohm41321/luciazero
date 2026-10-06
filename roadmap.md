@@ -676,11 +676,13 @@ fails when anything is at the name and neither follows nor enters what it
 finds: `mkdir` for a tree, `link` (link(2)) for a file, and for a symlink a
 tool that makes the link at exactly the name it is given, chosen by trying
 GNU `ln -sT`, `perl` and `node` on a scratch directory first. Everything
-else is written relative to a directory the helper made and entered after
-checking it is still that directory (owned by the user, empty, reached
-without a symlink): a file is staged in a private `mktemp -d` beside the
-backup and hard-linked out of it, and a tree is copied into the directory
-`mkdir` made. A first version reserved a symlink's name as an empty file
+else is written relative to a directory the helper made and entered, once
+what it entered is owned by the user, empty and at the expected physical
+path, reached without a symlink -- not an inode identity check, so it holds
+only while other users cannot rename entries in the directory above: a file
+is staged in a private `mktemp -d` beside the backup and hard-linked out of
+it, and a tree is copied into the directory `mkdir` made. The private
+directory is removed only when it passes the same check again. A first version reserved a symlink's name as an empty file
 that `ln -sfn` then replaced; a review reproduced the hole: a directory
 swapped in at that name had a child of the link's name deleted, which no
 check after the fact can undo. Rejected: `set -C`, because Bash still opens
@@ -695,12 +697,25 @@ the tool that took it, and checks the planted bytes and the source are
 untouched (red against the first version for all three kinds); 5c9 removes
 every exact symlink tool and checks the install stops with the symlinked
 skill and the directory behind it intact, then backs it up once the tools
-are back; and a check keeps the four helpers identical. Residual: backing up
+are back; 5c10 and 5c11 cover what a review found next: `$( )` deletes every
+trailing newline, so a link target or a directory name ending in one came
+back as another name (the backup of a symlink to `tgt<newline>` pointed at
+`tgt`, and a backup beside `cfg<newline>/f` was made in a sibling `cfg` and
+reported where nothing was), `[ -z "$(ls -A .)" ]` read a directory holding
+an entry named only by newlines, or a listing that failed, as empty, and the
+private directory was removed even after it failed the owner check. Paths,
+listings and link targets are now captured whole (`readlink -n`, since macOS
+adds no newline after a target that already ends in one), cleanup runs only
+under the check, and the symlink-tool probe also requires a tool to refuse an
+existing regular file. Each of those fixes, reverted alone, turns its check
+red; the raw `pwd -P` comparison in the guard is defensive only, since every
+name it is handed ends in a timestamp or a `mktemp` suffix. A check keeps the
+four helpers identical. Residual: backing up
 a symlink needs GNU `ln`, `perl` or `node` — without one the installer stops
 before it removes anything — and a same-user process can still swap names,
 which no file-system call can stop. Requires the `link` utility (macOS, GNU
 coreutils) and hard links on the backup's filesystem; BusyBox `link` was not
-confirmed. Executed on macOS (BSD tools, Bash 5 and 3.2) only; Linux and WSL
+confirmed. Executed on macOS (BSD tools, Bash 3.2) only; Linux, WSL and Bash 5
 not yet run.
 
 ## Delivery sequence

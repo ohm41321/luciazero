@@ -46,10 +46,26 @@ version_of() {
 # exactly the name it is given. Plain `ln` puts the link inside a directory it
 # finds, and `ln -f` replaces what is inside, so it is never trusted with an
 # unchecked name. Everything else is written relative to a directory this
-# helper made and then entered, after checking it is still that directory:
-# once entered, a swap of the name cannot redirect the writes.
+# helper made and then entered, and only once what it entered passes
+# `bc_enter`; from then on a swap of the name cannot redirect the writes.
+# Paths and link targets are kept byte for byte, a trailing newline included.
 # $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
 # back up the symlink itself, as `cp -P` does.
+#
+# bc_raw <var> <command...>: the command's output, whole, into <var>. `$( )`
+# deletes every trailing newline, and a file name or link target may end in
+# one, so only the one newline the command itself ends with is taken off.
+bc_raw() {
+  BC_OUT="$(shift; "$@" && printf x)" || return 1
+  BC_OUT="${BC_OUT%x}"
+  printf -v "$1" '%s' "${BC_OUT%$'\n'}"
+}
+
+# The physical path of directory $1, for bc_raw.
+bc_physical() {
+  CDPATH='' cd -P -- "$1" && pwd -P
+}
+
 bc_symlink() {
   case "$1" in
     ln) ln -sT -- "$2" "$3" ;;
@@ -60,10 +76,15 @@ bc_symlink() {
 }
 
 # Enter $1, an absolute physical path to a directory bakcopy made, and succeed
-# only when what was entered is still that directory: owned by this user,
-# empty, and reached without following a symlink.
+# only when what was entered is a directory owned by this user, empty, and at
+# that physical path, reached without a symlink. Empty is a listing that
+# succeeded and printed nothing at all, so an entry named only by newlines
+# counts. Not an inode identity check: it shuts out other users' directories
+# and planted symlinks, not this user's own processes, and it holds only
+# while other users cannot rename entries in the directory above.
 bc_enter() {
-  cd "$1" 2>/dev/null && [ -O . ] && [ -z "$(ls -A .)" ] && [ "$(pwd -P)" = "$1" ]
+  cd "$1" 2>/dev/null && [ -O . ] && bc_raw BC_LS ls -A . && [ -z "${BC_LS}" ] \
+    && [ "$(pwd -P; printf x)" = "$1"$'\n'x ]
 }
 
 bakcopy() {
@@ -76,26 +97,31 @@ bakcopy() {
   else
     BC_KIND=file
   fi
-  case "${BC_SRC}" in /*) ;; *) BC_SRC="$(pwd)/${BC_SRC}" ;; esac
-  BC_DIR="$(CDPATH='' cd -P "$(dirname "${BC_BASE}")" && pwd -P)" \
+  case "${BC_SRC}" in /*) ;; *) BC_SRC="${PWD}/${BC_SRC}" ;; esac
+  bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}" \
     || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
   if [ "${BC_KIND}" = link ]; then
-    BC_TO="$(readlink "${BC_SRC}")" \
+    # `readlink -n`, whole: macOS adds no newline after a target that already
+    # ends in one, so taking one off would cut the target.
+    BC_TO="$(readlink -n "${BC_SRC}" && printf x)" \
       || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    BC_TO="${BC_TO%x}"
     BC_SL=""
     BC_P="$(mktemp -d)" || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
     for BC_T in ln perl node; do
       command -v "${BC_T}" >/dev/null 2>&1 || continue
       rm -rf "${BC_P}/t"
-      mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" \
+      mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
         && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g" || break
       if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
         && [ "$(readlink "${BC_P}/t/n")" = x ] \
         && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \
         && ! bc_symlink "${BC_T}" x "${BC_P}/t/s" 2>/dev/null \
         && ! bc_symlink "${BC_T}" x "${BC_P}/t/g" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/r" 2>/dev/null \
         && [ "$(ls -A "${BC_P}/t/d")" = c ] && [ ! -e "${BC_P}/t/nowhere" ] \
-        && [ ! -L "${BC_P}/t/nowhere" ]; then
+        && [ ! -L "${BC_P}/t/nowhere" ] && [ ! -L "${BC_P}/t/r" ] \
+        && [ "$(cat "${BC_P}/t/r")" = k ]; then
         BC_SL="${BC_T}"; break
       fi
     done
@@ -134,9 +160,11 @@ bakcopy() {
     esac
     printf '%s' "${BC_DST}"
   ) || BC_RC=1
+  # The private directory goes only when it passes the same owner and path
+  # check as before it was written; anything else at its name stays.
   if [ -n "${BC_Q}" ]; then
-    ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P)" = "${BC_Q}" ] && rm -f f ) || :
-    rmdir "${BC_Q}" 2>/dev/null || :
+    ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
+      && rm -f f ) && rmdir "${BC_Q}" 2>/dev/null || :
   fi
   [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }

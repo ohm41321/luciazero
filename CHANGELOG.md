@@ -45,13 +45,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `link` utility for a file, and for a symlink GNU `ln -sT`, `perl` or `node`,
   whichever is shown on a scratch directory to make the link at exactly its
   name. A file is staged in a private directory and a tree is copied into the
-  directory `mkdir` made, each written only after checking it is still that
-  directory. A symlink planted after the name was chosen can no longer receive
+  directory `mkdir` made, each written only once the directory entered is
+  owned by the user, empty and at the expected path; the private directory is
+  removed only when it passes that check again. Paths, link targets and
+  listings keep a trailing newline, which `$( )` used to delete. A symlink planted after the name was chosen can no longer receive
   the user's file, a directory at the name is skipped rather than written
   into, and one swapped in after the name was taken is left with its contents.
   Backups now need hard links in the directory that holds them, and backing up
   a symlinked skill or doctrine needs one of those three tools; without one
   the install stops before it removes the symlink.
+- A `settings.json` that is a symlink loop, or that cannot be read for any
+  reason other than not being there, is refused by the Node settings wiring
+  instead of read as empty and written fresh over one of its links. A symlink
+  to a file not made yet is still written at the name it points to.
+- The Node hooks read input that arrives after they start. Opening
+  `process.stdin` made the pipe non-blocking, so a hook started before its
+  writer had written read nothing, dropped the event and broke the writer's
+  pipe.
 - `install.sh --with-hooks` checks `settings.json` before it copies any hook
   file (roadmap R14). Invalid JSON, a shape the hooks cannot live in, or a file
   that is not writable fails the install with no hook file in place and

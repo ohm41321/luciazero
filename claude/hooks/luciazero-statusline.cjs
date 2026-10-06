@@ -16,16 +16,7 @@
 const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { stateBase, stateKey, trustedBase } = require("./luciazero-verify.cjs");
-
-function readStdin() {
-  if (process.stdin.isTTY) return "";
-  try {
-    return fs.readFileSync(0, "utf8");
-  } catch {
-    return "";
-  }
-}
+const { stateBase, stateKey, trustedBase, readStdin } = require("./luciazero-verify.cjs");
 
 function age(ts) {
   const s = Math.trunc((Date.now() - ts) / 1000);

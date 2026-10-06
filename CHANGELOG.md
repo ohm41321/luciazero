@@ -36,6 +36,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pin the image at the `main` commit that added it, as the npm page requires;
   `docs/assets/lucia.png` stays for the READMEs of earlier releases.
 
+### Fixed
+
+- Installer backups reserve their name instead of testing it (roadmap R24).
+  All four installers share one `bakcopy` helper that takes
+  `<file>.bak.<timestamp>[.n]` with a call that fails when anything is at the
+  name and never follows it: `mkdir` for a directory, and the POSIX `link`
+  utility from a private file for anything else (a symlink takes its name that
+  way and then becomes the link). A symlink planted after the name was chosen
+  can no longer receive the user's file, and a directory at the name is
+  skipped rather than written into. Backups now need hard links in the
+  directory that holds them.
+- `install.sh --with-hooks` checks `settings.json` before it copies any hook
+  file (roadmap R14). Invalid JSON, a shape the hooks cannot live in, or a file
+  that is not writable fails the install with no hook file in place and
+  `settings.json` byte-identical. The installer and uninstaller write the new
+  file beside the real one and replace it whole, keeping its mode; a symlinked
+  `settings.json` stays a symlink.
+- The discipline stats log rotates through a fresh `mkstemp` name rather than
+  `luciazero-stats.log.tmp`, so a symlink planted at that name is not followed
+  (roadmap R21).
+- Agent Bus binding renewal only moves an expiry forward and records a
+  `binding.renewed` event only when the row changed, so out-of-order renewals
+  cannot shorten a binding and a revoked one is never reported renewed
+  (roadmap R16). A managed bind settles process liveness before its write
+  transaction instead of probing the process table while holding the lock
+  (roadmap R17).
+
 ## [2.6.0] - 2026-09-22
 
 ### Added

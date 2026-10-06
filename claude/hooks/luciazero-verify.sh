@@ -337,7 +337,7 @@ stat_log() { # stat_log <event> — discipline stats; fail-open, capped
   [ -n "${VERIFY_CMD:-}" ] && VMODE=exact
   [ -n "${LUCIAZERO_STRICT_VERIFY_CMD:-}" ] && VMODE=strict
   python3 - "${SFILE}" "${CWD}" "$1" "${VMODE}" "${TELEMETRY}" <<'PY' 2>/dev/null || true
-import datetime, hashlib, json, os, sys
+import datetime, hashlib, json, os, sys, tempfile
 path, cwd, event, mode, telemetry_dir = sys.argv[1:]
 os.makedirs(os.path.dirname(path), exist_ok=True)
 real = os.path.realpath(cwd)
@@ -403,10 +403,20 @@ with open(path, "a", encoding="utf-8") as handle:
 with open(path, encoding="utf-8", errors="replace") as handle:
     lines = handle.readlines()
 if len(lines) > 500:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        handle.writelines(lines[-250:])
-    os.replace(tmp, path)
+    # A fresh name beside the log, never a predictable one: a symlink
+    # planted at path + ".tmp" would otherwise receive the rotated lines
+    # and then replace the log (roadmap R21).
+    fd, tmp = tempfile.mkstemp(prefix=".luciazero-stats.", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.writelines(lines[-250:])
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 PY
 }
 

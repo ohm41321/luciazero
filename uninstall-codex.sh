@@ -22,19 +22,60 @@ skill_inventory() {
   catalog "${SRC}/skills/aliases.txt"
 }
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed. So a name is never tested and then written: it is taken by a call
+# that fails when anything at all is there, a dangling symlink included, and
+# never follows what it finds (roadmap R24). A directory is taken with
+# `mkdir`, anything else with `link` from a private file made beside it first;
+# `ln` will not do, since it puts the link inside a directory it finds there.
+# A symlink takes its name as an empty file that `ln -sfn` then replaces.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_TMP=""
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"; BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=1
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND=link
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND=tree
+  else
+    BC_KIND=file
+  fi
+  if [ "${BC_KIND}" != tree ]; then
+    BC_TMP="$(mktemp "$(dirname "${BC_BASE}")/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    if [ "${BC_KIND}" = file ]; then
+      cp -p "${BC_SRC}" "${BC_TMP}" \
+        || { rm -f "${BC_TMP}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    fi
+  fi
+  while :; do
+    if [ "${BC_KIND}" = tree ]; then
+      mkdir "${BC_DST}" 2>/dev/null && break
+    else
+      link "${BC_TMP}" "${BC_DST}" 2>/dev/null && break
+    fi
+    # Taken is the only reason to try the next name; anything else would
+    # loop over a failure that every name shares.
+    if { [ ! -e "${BC_DST}" ] && [ ! -L "${BC_DST}" ]; } || [ "${BC_N}" -gt 100 ]; then
+      [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+      echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+      return 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"; BC_N=$((BC_N+1))
+  done
+  [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+  case "${BC_KIND}" in
+    tree)
+      cp -RP "${BC_SRC}/." "${BC_DST}/" \
+        || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+    link)
+      ln -sfn "$(readlink "${BC_SRC}")" "${BC_DST}" \
+        || { rm -f "${BC_DST}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+  esac
+  printf '%s' "${BC_DST}"
 }
 
 same_tree() {
@@ -181,8 +222,7 @@ if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_bloc
   echo "  !!  AGENTS.md carries ambiguous Luciazero markers; left untouched" >&2
   echo "      expected exactly one '${START}' ... '${END}' pair, on their own lines" >&2
 elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
-  BACKUP="$(bakpath "${AGENTS_MD}")"
-  cp -p "${AGENTS_MD}" "${BACKUP}"
+  BACKUP="$(bakcopy -L "${AGENTS_MD}" "${AGENTS_MD}")"
   # The block goes and nothing else does, which is now the whole round trip
   # rather than a compromise. `install-codex.sh` used to write a blank
   # separator above the start marker, and removing only the block left it

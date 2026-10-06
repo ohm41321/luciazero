@@ -40,19 +40,60 @@ skill_inventory() {
   catalog "${SRC}/skills/aliases.txt"
 }
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed. So a name is never tested and then written: it is taken by a call
+# that fails when anything at all is there, a dangling symlink included, and
+# never follows what it finds (roadmap R24). A directory is taken with
+# `mkdir`, anything else with `link` from a private file made beside it first;
+# `ln` will not do, since it puts the link inside a directory it finds there.
+# A symlink takes its name as an empty file that `ln -sfn` then replaces.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_TMP=""
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"; BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=1
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND=link
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND=tree
+  else
+    BC_KIND=file
+  fi
+  if [ "${BC_KIND}" != tree ]; then
+    BC_TMP="$(mktemp "$(dirname "${BC_BASE}")/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    if [ "${BC_KIND}" = file ]; then
+      cp -p "${BC_SRC}" "${BC_TMP}" \
+        || { rm -f "${BC_TMP}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    fi
+  fi
+  while :; do
+    if [ "${BC_KIND}" = tree ]; then
+      mkdir "${BC_DST}" 2>/dev/null && break
+    else
+      link "${BC_TMP}" "${BC_DST}" 2>/dev/null && break
+    fi
+    # Taken is the only reason to try the next name; anything else would
+    # loop over a failure that every name shares.
+    if { [ ! -e "${BC_DST}" ] && [ ! -L "${BC_DST}" ]; } || [ "${BC_N}" -gt 100 ]; then
+      [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+      echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+      return 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"; BC_N=$((BC_N+1))
+  done
+  [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+  case "${BC_KIND}" in
+    tree)
+      cp -RP "${BC_SRC}/." "${BC_DST}/" \
+        || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+    link)
+      ln -sfn "$(readlink "${BC_SRC}")" "${BC_DST}" \
+        || { rm -f "${BC_DST}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+  esac
+  printf '%s' "${BC_DST}"
 }
 
 same_tree() {
@@ -233,7 +274,7 @@ if [ -f "${SETTINGS}" ]; then
     # exact-path matching only: never touch a user's own hook that merely
     # shares a basename with ours
     python3 - "${SETTINGS}" "${CLAUDE_DIR}" <<'PY' || HOOKS_RC=$?
-import json, os, shlex, shutil, sys, time
+import json, os, shlex, shutil, sys, tempfile, time
 
 path, claude_dir = sys.argv[1], sys.argv[2]
 try:
@@ -349,11 +390,31 @@ except OSError as exc:
     print("      " + str(exc), file=sys.stderr)
     raise SystemExit(1)
 
+# The cleaned content goes to a fresh name beside the real file -- the one a
+# symlinked settings.json points at, so the link survives -- and replaces it
+# whole, keeping its mode: a failed write leaves every old byte, which is the
+# promise at the top of this block (roadmap R14). A file that is not writable
+# is refused, as the in-place write refused it, rather than replaced around
+# its permission bits.
+target = os.path.realpath(path)
+tmp = None
 try:
-    with open(path, "w") as f:
+    if not os.access(target, os.W_OK):
+        raise OSError("settings.json is not writable: " + target)
+    keep = os.stat(target).st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(target) + ".",
+                               dir=os.path.dirname(target))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
+    os.chmod(tmp, keep)
+    os.replace(tmp, target)
 except OSError as exc:
+    if tmp is not None:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
     print("      " + str(exc), file=sys.stderr)
     raise SystemExit(1)
 print("  ok  backup: " + os.path.basename(backup))
@@ -393,8 +454,7 @@ if [ "${HOOKS_CLEAN}" = 1 ]; then
 fi
 
 if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
-  BACKUP="$(bakpath "${GLOBAL_MD}")"
-  cp -p "${GLOBAL_MD}" "${BACKUP}"
+  BACKUP="$(bakcopy -L "${GLOBAL_MD}" "${GLOBAL_MD}")"
   # `install.sh` appends the import line to an existing CLAUDE.md as
   # `printf '\n%s\n'` — a blank separator and then the line — so removing only
   # the line leaves the separator behind and every install-and-uninstall cycle

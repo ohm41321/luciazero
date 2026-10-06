@@ -1756,7 +1756,7 @@ class Store:
             cwd = _check_path_arg(cwd)
             if self._redactor.scan(cwd):
                 raise UnsafeReference("cwd carries a secret shape")
-        if ownership == "human" and not replace_live_human:
+        if ownership == "managed" or not replace_live_human:
             # Outside the transaction on purpose. Deciding whether a binding
             # is still live means asking the process table, `procinfo` gives
             # `ps` ten seconds, and `BEGIN IMMEDIATE` is not a place to spend
@@ -1765,7 +1765,8 @@ class Store:
             # each in its own transaction, so the check inside reads rows and
             # not guesses. Two launchers may both reap and both find the id
             # free; the transaction is what makes the second one see the
-            # first's binding and refuse.
+            # first's binding and refuse. A managed launcher needs the same
+            # answer for the human-ownership check, so it reaps here too.
             self.list_bindings()
         with self._tx("bind_terminal"):
             return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=tty, pid=pid,
@@ -1806,7 +1807,9 @@ class Store:
         # dispatcher could take an agent away from the terminal the user is
         # sitting in front of, which is the one thing ownership promises.
         if ownership == "managed":
-            current = self.binding_of(agent_id)
+            # Rows only, like the human check below: the caller reaped
+            # before this transaction opened (roadmap R17).
+            current = self.binding_of(agent_id, alive=None)
             if current is not None and current["ownership"] == "human":
                 raise ConflictError(
                     f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
@@ -1964,10 +1967,17 @@ class Store:
         expires = target.isoformat(timespec="microseconds")
         try:
             with self._tx("renew_binding"):
-                self._conn.execute(
-                    "UPDATE bindings SET expires_at = ?, updated_at = ? WHERE id = ? AND state = 'active'",
-                    (expires, now, row["id"]),
-                )
+                # `row` was read before this transaction, so the stored row may
+                # since have ended or been renewed further by a request that
+                # read it later. Only move the expiry forward, and only report
+                # a renewal that the row actually received.
+                written = self._conn.execute(
+                    "UPDATE bindings SET expires_at = ?, updated_at = ? "
+                    "WHERE id = ? AND state = 'active' AND expires_at < ?",
+                    (expires, now, row["id"], expires),
+                ).rowcount
+                if written != 1:
+                    return None
                 self._event("daemon", "binding.renewed", "binding", str(row["id"]),
                             {"agent_id": row["agent_id"], "expires_at": expires, "ttl_seconds": window})
         except sqlite3.Error:

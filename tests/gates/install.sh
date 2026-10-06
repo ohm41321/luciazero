@@ -587,10 +587,9 @@ echo "ok  the settings backup refuses a symlinked name and keeps the bytes"
 # 5c5. The same planted name, on the install side. `install.sh` copies an
 # existing settings.json aside before it wires the hooks, and `bakpath` picked
 # that name with `[ -e ]`, which follows it: a dangling symlink read as free
-# and `cp` wrote the user's settings through it. The shell cannot reserve a
-# name the way the uninstaller's Python now does -- the window between the
-# test and the `cp` stays open, tracked as roadmap R24 -- but it can refuse a
-# name any symlink already holds, which is the whole of the planted case.
+# and `cp` wrote the user's settings through it. `bakcopy` now takes the name
+# by creating it, which refuses any name a symlink already holds; 5c6 below
+# covers a symlink that arrives after the name was chosen (roadmap R24).
 BLI="$(mktemp -d)"
 BLI_CFG="${BLI}/cfg"; BLI_OUT="${BLI}/outside"
 mkdir -p "${BLI_CFG}" "${BLI_OUT}"
@@ -638,6 +637,109 @@ BLIPY
 rm -rf "${BLI}"
 echo "ok  the install backup refuses a symlinked name too"
 
+# 5c6. A name planted after it was chosen (roadmap R24). The case above plants
+# before the installer looks; this one plants in the window between choosing
+# a backup name and writing it. A `cp` shim plants a symlink at every nearby
+# second's backup name the moment settings.json is handed to `cp`: a name that
+# was only tested free is then followed, and a name that is reserved by
+# creating it cannot be.
+BLR="$(mktemp -d)"
+BLR_CFG="${BLR}/cfg"; BLR_OUT="${BLR}/outside"; BLR_BIN="${BLR}/bin"
+mkdir -p "${BLR_CFG}" "${BLR_OUT}" "${BLR_BIN}"
+BLR_FAIL() { rm -rf "${BLR}"; fail "$1"; }
+CLAUDE_CONFIG_DIR="${BLR_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null
+cp -p "${BLR_CFG}/settings.json" "${BLR}/settings.before"
+BLR_CP="$(command -v cp)"
+cat > "${BLR_BIN}/cp" <<BLRSH
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "${BLR_CFG}/settings.json" ] && [ ! -e "${BLR}/planted" ]; then
+    : > "${BLR}/planted"
+    python3 - "${BLR_CFG}/settings.json" "${BLR_OUT}/escaped" <<'BLRPY'
+import os, sys, time
+base = time.time()
+for i in range(-2, 60):
+    decoy = sys.argv[1] + ".bak." + time.strftime("%Y%m%d%H%M%S", time.localtime(base + i))
+    if not os.path.lexists(decoy):
+        os.symlink(sys.argv[2] + "-" + str(i), decoy)
+BLRPY
+  fi
+done
+exec "${BLR_CP}" "\$@"
+BLRSH
+chmod +x "${BLR_BIN}/cp"
+PATH="${BLR_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${BLR_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 \
+  || BLR_FAIL "reinstall failed when symlinks arrived after the backup name was chosen"
+[ -f "${BLR}/planted" ] || BLR_FAIL "the cp shim never saw settings.json copied, so nothing was planted"
+[ -z "$(ls -A "${BLR_OUT}")" ] \
+  || BLR_FAIL "install wrote through a symlink planted after its backup name was chosen: $(ls -A "${BLR_OUT}")"
+python3 - "${BLR_CFG}/settings.json" "${BLR}/settings.before" <<'BLRPY' || BLR_FAIL "install backup did not survive a late-planted symlink (see above)"
+import os, sys
+settings, before = sys.argv[1], sys.argv[2]
+d, base = os.path.dirname(settings), os.path.basename(settings) + ".bak."
+real = [n for n in os.listdir(d)
+        if n.startswith(base) and not os.path.islink(os.path.join(d, n))]
+if len(real) != 1:
+    raise SystemExit("expected exactly one real backup, found: " + repr(real))
+if open(os.path.join(d, real[0]), "rb").read() != open(before, "rb").read():
+    raise SystemExit("backup is not the file that was replaced: " + real[0])
+stray = [n for n in os.listdir(d) if n.startswith(".luciazero-bak.")]
+if stray:
+    raise SystemExit("temporary backup copies left behind: " + repr(stray))
+BLRPY
+rm -rf "${BLR}"
+echo "ok  the install backup reserves its name, so a symlink planted after the choice is not followed"
+
+# 5c7. A real directory at the chosen name (roadmap R24). `ln -n` and `ln -sn`
+# refuse a symlink there but take a directory as the place to put the link, so
+# the backup landed inside it and the helper reported a name that held no
+# backup. With the clock pinned, the first name is the planted directory; each
+# kind of backup must move on to `.1` and leave the directory as it was.
+BLD="$(mktemp -d)"
+BLD_FAIL() { rm -rf "${BLD}"; fail "$1"; }
+mkdir -p "${BLD}/bin" "${BLD}/b/d"
+printf '#!/bin/sh\necho 20000101000000\n' > "${BLD}/bin/date"
+chmod +x "${BLD}/bin/date"
+awk '/^bakcopy\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLD}/bakcopy.sh"
+printf 'user bytes\n' > "${BLD}/b/f"
+printf 'tree bytes\n' > "${BLD}/b/d/x"
+ln -s "../some where" "${BLD}/b/l"
+for BLD_K in f l d; do
+  BLD_DST="${BLD}/b/${BLD_K}.bak.20000101000000"
+  mkdir "${BLD_DST}"
+  BLD_GOT="$(PATH="${BLD}/bin:${PATH}" bash -c '. "$1"; bakcopy -P "$2" "$2"' _ \
+    "${BLD}/bakcopy.sh" "${BLD}/b/${BLD_K}")" \
+    || BLD_FAIL "backup of ${BLD_K} failed when a directory held its first name"
+  [ "${BLD_GOT}" = "${BLD_DST}.1" ] \
+    || BLD_FAIL "backup of ${BLD_K} reported ${BLD_GOT#"${BLD}/"}, not the next free name"
+  [ -z "$(ls -A "${BLD_DST}")" ] \
+    || BLD_FAIL "backup of ${BLD_K} wrote into the directory at its name: $(ls -A "${BLD_DST}")"
+done
+[ -f "${BLD}/b/f.bak.20000101000000.1" ] && [ ! -L "${BLD}/b/f.bak.20000101000000.1" ] \
+  && cmp -s "${BLD}/b/f" "${BLD}/b/f.bak.20000101000000.1" \
+  || BLD_FAIL "file backup is not a copy of the file"
+[ -L "${BLD}/b/l.bak.20000101000000.1" ] \
+  && [ "$(readlink "${BLD}/b/l.bak.20000101000000.1")" = "../some where" ] \
+  || BLD_FAIL "symlink backup is not the symlink"
+cmp -s "${BLD}/b/d/x" "${BLD}/b/d.bak.20000101000000.1/x" \
+  || BLD_FAIL "tree backup is not a copy of the tree"
+[ -z "$(ls -A "${BLD}/b" | grep '^\.luciazero-bak\.')" ] \
+  || BLD_FAIL "temporary backup copies left behind: $(ls -A "${BLD}/b")"
+rm -rf "${BLD}"
+echo "ok  a directory at the backup name is skipped, not written into"
+
+# The four installers each carry the same backup helper; one that drifts
+# from the others would silently lose the reservation above.
+BC_REF=""
+for BC_F in install.sh uninstall.sh install-codex.sh uninstall-codex.sh; do
+  BC_BODY="$(awk '/^bakcopy\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
+  [ -n "${BC_BODY}" ] || fail "${BC_F} has no bakcopy helper"
+  [ -n "${BC_REF}" ] || BC_REF="${BC_BODY}"
+  [ "${BC_BODY}" = "${BC_REF}" ] || fail "${BC_F} bakcopy differs from install.sh"
+  ! grep -q 'bakpath' "${ROOT}/${BC_F}" || fail "${BC_F} still picks backup names with bakpath"
+done
+echo "ok  the four installers share one reserving backup helper"
+
 # 5d. failed settings cleanup must NOT delete the hook files (no dangling refs)
 SB4="$(mktemp -d)"
 CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/install.sh" --with-hooks >/dev/null
@@ -649,6 +751,66 @@ CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
   || { rm -rf "${SB4}"; fail "hook files deleted although settings cleanup failed (dangling references)"; }
 rm -rf "${SB4}"
 echo "ok  uninstall keeps hook files when settings cleanup fails"
+
+# 5d2. settings.json is checked before anything of the pack is copied
+# (roadmap R14): a file the installer cannot wire -- not JSON, the wrong
+# shape, or not writable -- fails the install with no hook file in place and
+# every byte of settings.json as it was. A symlinked settings.json stays a
+# symlink, and the file it points at keeps its mode.
+SB4B="$(mktemp -d)"
+SB4B_FAIL() { rm -rf "${SB4B}"; fail "$1"; }
+for SB4B_CASE in '{broken json' '[]' '{"hooks": []}' '{"hooks": {"Stop": {"x": 1}}}' readonly; do
+  rm -rf "${SB4B}/cfg"; mkdir -p "${SB4B}/cfg"
+  if [ "${SB4B_CASE}" = readonly ]; then
+    printf '{"model": "opusplan"}\n' > "${SB4B}/cfg/settings.json"
+    chmod 444 "${SB4B}/cfg/settings.json"
+  else
+    printf '%s\n' "${SB4B_CASE}" > "${SB4B}/cfg/settings.json"
+  fi
+  rm -f "${SB4B}/before"; cp -p "${SB4B}/cfg/settings.json" "${SB4B}/before"
+  RC=0; CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 || RC=$?
+  [ "${RC}" -ne 0 ] || SB4B_FAIL "--with-hooks accepted a settings.json it cannot wire: ${SB4B_CASE}"
+  [ ! -e "${SB4B}/cfg/hooks/luciazero-verify.sh" ] \
+    || SB4B_FAIL "--with-hooks copied hook files before refusing settings.json: ${SB4B_CASE}"
+  cmp -s "${SB4B}/cfg/settings.json" "${SB4B}/before" \
+    || SB4B_FAIL "--with-hooks changed a settings.json it refused: ${SB4B_CASE}"
+  chmod 644 "${SB4B}/cfg/settings.json"
+done
+rm -rf "${SB4B}/cfg"; mkdir -p "${SB4B}/cfg" "${SB4B}/dotfiles"
+printf '{"model": "opusplan"}\n' > "${SB4B}/dotfiles/settings.json"
+chmod 640 "${SB4B}/dotfiles/settings.json"
+ln -s "${SB4B}/dotfiles/settings.json" "${SB4B}/cfg/settings.json"
+CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null \
+  || SB4B_FAIL "--with-hooks failed on a symlinked settings.json"
+[ -L "${SB4B}/cfg/settings.json" ] || SB4B_FAIL "--with-hooks replaced a symlinked settings.json with a file"
+grep -qF 'luciazero-verify.sh' "${SB4B}/dotfiles/settings.json" \
+  || SB4B_FAIL "--with-hooks did not wire the file a symlinked settings.json points at"
+python3 -c 'import os, sys; m = os.stat(sys.argv[1]).st_mode & 0o777; sys.exit(0 if m == 0o640 else "mode " + oct(m))' \
+  "${SB4B}/dotfiles/settings.json" || SB4B_FAIL "--with-hooks changed the mode of settings.json"
+[ -z "$(find "${SB4B}/dotfiles" "${SB4B}/cfg" -maxdepth 1 -name '.settings.json.*' -print -quit)" ] \
+  || SB4B_FAIL "--with-hooks left a temporary settings file behind"
+CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/uninstall.sh" >/dev/null 2>&1
+[ -L "${SB4B}/cfg/settings.json" ] || SB4B_FAIL "uninstall replaced a symlinked settings.json with a file"
+! grep -qF 'luciazero-' "${SB4B}/dotfiles/settings.json" \
+  || SB4B_FAIL "uninstall did not clean the file a symlinked settings.json points at"
+python3 -c 'import os, sys; m = os.stat(sys.argv[1]).st_mode & 0o777; sys.exit(0 if m == 0o640 else "mode " + oct(m))' \
+  "${SB4B}/dotfiles/settings.json" || SB4B_FAIL "uninstall changed the mode of settings.json"
+# the file is writable but the directory it lives in is not: the new file
+# cannot be made beside it, which must be found before the hooks are copied
+rm -rf "${SB4B}/cfg" "${SB4B}/dotfiles" "${SB4B}/before"; mkdir -p "${SB4B}/cfg" "${SB4B}/dotfiles"
+printf '{"model": "sonnet"}\n' > "${SB4B}/dotfiles/settings.json"
+ln -s "${SB4B}/dotfiles/settings.json" "${SB4B}/cfg/settings.json"
+cp -p "${SB4B}/dotfiles/settings.json" "${SB4B}/before" || SB4B_FAIL "could not record settings.json"
+chmod 555 "${SB4B}/dotfiles"
+RC=0; CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 || RC=$?
+chmod 755 "${SB4B}/dotfiles"
+[ "${RC}" -ne 0 ] || SB4B_FAIL "--with-hooks accepted a settings.json whose directory cannot take the new file"
+[ ! -e "${SB4B}/cfg/hooks/luciazero-verify.sh" ] \
+  || SB4B_FAIL "--with-hooks copied hook files before finding the settings directory read-only"
+cmp -s "${SB4B}/dotfiles/settings.json" "${SB4B}/before" \
+  || SB4B_FAIL "--with-hooks changed settings.json in a read-only directory"
+rm -rf "${SB4B}"
+echo "ok  settings.json is checked before the pack is copied, and written whole beside its real file"
 
 # 5e. --status flags dangling hook references (files deleted by hand while
 # settings.json still wires them — worse than not installed, never "ok")

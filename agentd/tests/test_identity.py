@@ -15,12 +15,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from luciazero_agentd import Store
-from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS
+from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS, utcnow
 from luciazero_agentd import procinfo
 from luciazero_agentd.redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX, DEFAULT as DEFAULT_REDACTOR
 from luciazero_agentd.server import ACTOR_FIELDS, TOOL_INDEX, BusServer, tool_contract
@@ -216,6 +217,63 @@ class Bindings(StoreCase):
         self.assertEqual(str(resolved["expires_at"]), soon)
         self.store._conn.execute("UPDATE bindings SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (binding["id"],))
         self.assertIsNone(self.store.resolve_credential(credential, alive=ALIVE))
+
+    def test_renewals_landing_out_of_order_never_shorten_a_binding(self) -> None:
+        """Two requests can each read the row before either renews it. The
+        one that read it later computes the later expiry; if it commits first,
+        the earlier one must not pull the expiry back behind it (roadmap R16)."""
+        binding, _credential = self.bind(tty="ttys124", pid=os.getpid(), ttl_seconds=3600)
+        moment = datetime.now(timezone.utc)
+        soon = (moment + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        snapshot = dict(self.store._conn.execute("SELECT * FROM bindings WHERE id = ?", (binding["id"],)).fetchone())
+        earlier = moment.isoformat(timespec="microseconds")
+        later = (moment + timedelta(seconds=30)).isoformat(timespec="microseconds")
+        landed = self.store._renew_binding(dict(snapshot), now=later)
+        self.assertIsNotNone(landed)
+        self.assertIsNone(self.store._renew_binding(dict(snapshot), now=earlier))
+        self.assertEqual(self.store.get_binding(binding["id"])["expires_at"], landed)
+        renewals = [e for e in self.store.events(limit=200) if e["kind"] == "binding.renewed"]
+        self.assertEqual(len(renewals), 1)
+
+    def test_a_binding_ended_after_it_was_read_is_never_reported_renewed(self) -> None:
+        """The UPDATE already refuses a row that is no longer active; the event
+        and the return value have to say the same, or the log records a
+        renewal of a credential that was revoked (roadmap R16)."""
+        binding, _credential = self.bind(tty="ttys125", pid=os.getpid(), ttl_seconds=3600)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        snapshot = dict(self.store._conn.execute("SELECT * FROM bindings WHERE id = ?", (binding["id"],)).fetchone())
+        self.store.revoke_binding(binding["id"], by="human:test")
+        self.assertIsNone(self.store._renew_binding(snapshot, now=utcnow()))
+        revoked = self.store.get_binding(binding["id"])
+        self.assertEqual((revoked["state"], revoked["expires_at"]), ("revoked", soon))
+        self.assertNotIn("binding.renewed", [e["kind"] for e in self.store.events(limit=200)])
+
+    def test_a_managed_bind_never_asks_the_process_table_inside_its_transaction(self) -> None:
+        """`ps` can take seconds; `BEGIN IMMEDIATE` holds the write lock for
+        every other session while it does. Liveness is settled before the
+        transaction opens, and inside it only rows are read (roadmap R17)."""
+        self.bind(tty="ttys126", pid=os.getpid(), process_started_at="then")
+        probes: list[bool] = []
+
+        def owned(_pid: int) -> bool:
+            probes.append(self.store._conn.in_transaction)
+            return True
+
+        with mock.patch.object(procinfo, "owned", owned), \
+                mock.patch.object(procinfo, "started_at", lambda *_a, **_k: "then"):
+            with self.assertRaises(ConflictError):
+                self.bind(by="dispatch:1", ownership="managed")
+        self.assertTrue(probes, "the managed bind never checked whether the human session is alive")
+        self.assertNotIn(True, probes)
+
+    def test_a_managed_bind_still_replaces_a_human_binding_whose_process_is_gone(self) -> None:
+        human, _ = self.bind(tty="ttys127", pid=os.getpid(), process_started_at="then")
+        with mock.patch.object(procinfo, "owned", lambda _pid: False):
+            managed, _ = self.bind(by="dispatch:1", ownership="managed")
+        self.assertNotEqual(self.store.get_binding(human["id"])["state"], "active")
+        self.assertEqual(self.store.get_binding(managed["id"])["state"], "active")
 
     def test_an_expired_credential_is_refused_even_while_the_process_lives(self) -> None:
         binding, credential = self.bind(tty="ttys106", pid=os.getpid(), ttl_seconds=60)

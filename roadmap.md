@@ -439,6 +439,14 @@ validation. Use preflight parsing, validated temporary output, atomic replace,
 and conflict handling. Acceptance: serialization/write failures and invalid
 settings preserve the original configuration and report partial work honestly.
 
+Fixed 2026-10-06. `install.sh --with-hooks` runs the same wiring in a `check`
+mode before any hook file is copied; invalid JSON, a wrong shape and a file
+that is not writable fail with no hook file in place and `settings.json`
+byte-identical. Install and uninstall write through `mkstemp` beside the
+symlink-resolved file, keep its mode, and `os.replace` it, so a symlinked
+`settings.json` stays a symlink. Covered by `tests/gates/install.sh` 5d2. A
+failure inside the replace itself is covered by construction, not by a test.
+
 ### R15 — Credential renewal write failure breaks valid authentication [Confirmed, P1]
 
 Source: `agentd/luciazero_agentd/store.py:1945-1972`.
@@ -471,6 +479,10 @@ privilege escalation. Fix: conditional update against current stored expiry and 
 accurate event/return behavior when no row changes. Acceptance: reversed-order
 renewals never reduce expiry; revoked/stale/expired bindings never revive.
 
+Fixed 2026-10-06. The UPDATE adds `expires_at < ?` and the event is emitted
+only when it changed exactly one row; both reversed-order and revoked cases
+are in `agentd/tests/test_identity.py`.
+
 ### R17 — Managed binding still probes liveness under write transaction [Confirmed, P2]
 
 Sources: `agentd/luciazero_agentd/store.py:1808-1810,2028`.
@@ -481,6 +493,11 @@ process liveness. An injected liveness callback in the review observed
 Fix: external liveness/reaping before the write transaction, followed by
 transactional row-only conflict checks. Acceptance: no process probe runs
 under a write transaction; simultaneous launchers still produce one winner.
+
+Fixed 2026-10-06. A managed bind reaps through `list_bindings()` before
+`BEGIN IMMEDIATE`, as the human path does, and reads rows only inside
+(`binding_of(..., alive=None)`). The test records `in_transaction` at every
+process probe.
 
 ### R18 — PTY fallback validation is weaker than its stated boundary [Confirmed gap, P2]
 
@@ -535,6 +552,9 @@ the user's own and the content is telemetry, not their config file — so this i
 P2, but the fix is the same `mkstemp` in the same directory.
 Acceptance: a symlink pre-created at the rotation name is not followed, and the
 sentinel it points at is unchanged.
+
+Fixed 2026-10-06 with `tempfile.mkstemp` in the log's directory, covered in
+`tests/gates/hooks.sh`.
 
 ### R22 — A test pins CPython's old JSON recursion behavior [Confirmed, P1]
 
@@ -649,6 +669,24 @@ so a symlink planted between choosing the name and writing it cannot be
 followed — in practice by moving each `bakpath` caller onto `mktemp` in the
 same directory, or onto the same Python reservation, and a test that plants
 the symlink after the name is chosen rather than before.
+
+Fixed 2026-10-06. `bakpath` is replaced in all four installers by one
+`bakcopy` helper that reserves `<file>.bak.<timestamp>[.n]` by creating it:
+`mkdir` for a tree, and `link` (link(2)) from a private `mktemp` file beside
+it for a file or a symlink. A symlink's empty placeholder is then replaced by
+`ln -sfn`. None of them follows a name it finds taken. Rejected: `set -C`,
+because Bash still opens an existing non-regular target such as a FIFO; and
+`ln -n` / `ln -sn`, which refuse a symlink at the name but link *inside* a
+real directory found there (GNU `-T` would fix that, but BSD `ln` lacks it).
+`link` itself follows a symlink source on macOS, which is why a symlink is not
+hard-linked directly. Residual: between the placeholder and `ln -sfn`, and
+between `mkdir` and the tree copy, a writer that can already replace entries
+in the backup directory could swap the reserved name. `tests/gates/install.sh`
+5c6 plants the symlinks from a `cp` shim after the name was chosen; 5c7 puts a
+real directory at the first name for a file, a symlink and a tree; and a check
+keeps the four helpers identical. Requires the `link` utility (macOS, GNU
+coreutils) and hard links on the backup's filesystem; BusyBox `link` was not
+confirmed. Executed on macOS (BSD tools) only; Linux and WSL not yet run.
 
 ## Delivery sequence
 

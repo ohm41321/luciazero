@@ -252,19 +252,60 @@ WIREPY
   exit "${STATUS_RC}"
 fi
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed. So a name is never tested and then written: it is taken by a call
+# that fails when anything at all is there, a dangling symlink included, and
+# never follows what it finds (roadmap R24). A directory is taken with
+# `mkdir`, anything else with `link` from a private file made beside it first;
+# `ln` will not do, since it puts the link inside a directory it finds there.
+# A symlink takes its name as an empty file that `ln -sfn` then replaces.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_TMP=""
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"; BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=1
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND=link
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND=tree
+  else
+    BC_KIND=file
+  fi
+  if [ "${BC_KIND}" != tree ]; then
+    BC_TMP="$(mktemp "$(dirname "${BC_BASE}")/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    if [ "${BC_KIND}" = file ]; then
+      cp -p "${BC_SRC}" "${BC_TMP}" \
+        || { rm -f "${BC_TMP}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    fi
+  fi
+  while :; do
+    if [ "${BC_KIND}" = tree ]; then
+      mkdir "${BC_DST}" 2>/dev/null && break
+    else
+      link "${BC_TMP}" "${BC_DST}" 2>/dev/null && break
+    fi
+    # Taken is the only reason to try the next name; anything else would
+    # loop over a failure that every name shares.
+    if { [ ! -e "${BC_DST}" ] && [ ! -L "${BC_DST}" ]; } || [ "${BC_N}" -gt 100 ]; then
+      [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+      echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+      return 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"; BC_N=$((BC_N+1))
+  done
+  [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
+  case "${BC_KIND}" in
+    tree)
+      cp -RP "${BC_SRC}/." "${BC_DST}/" \
+        || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+    link)
+      ln -sfn "$(readlink "${BC_SRC}")" "${BC_DST}" \
+        || { rm -f "${BC_DST}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
+  esac
+  printf '%s' "${BC_DST}"
 }
 
 # A catalog entry such as "plan" can already belong to the user or another
@@ -281,8 +322,7 @@ backup_tree() {
   BT_SRC="$1"; BT_LABEL="$2"
   BT_BASE="${BACKUP_DIR}/${BT_LABEL}"
   mkdir -p "$(dirname "${BT_BASE}")"
-  BT_DST="$(bakpath "${BT_BASE}")"
-  cp -RP "${BT_SRC}" "${BT_DST}"
+  BT_DST="$(bakcopy -P "${BT_SRC}" "${BT_BASE}")"
   echo "  ok  backed up existing ${BT_LABEL} -> ${BT_DST#"${CLAUDE_DIR}/"}"
 }
 
@@ -335,8 +375,7 @@ install_file() {
     if [ "${IF_OURS}" = 0 ]; then
       IF_BASE="${BACKUP_DIR}/${IF_LABEL}"
       mkdir -p "$(dirname "${IF_BASE}")"
-      IF_BACKUP="$(bakpath "${IF_BASE}")"
-      cp -P "${IF_DST}" "${IF_BACKUP}"
+      IF_BACKUP="$(bakcopy -P "${IF_DST}" "${IF_BASE}")"
       echo "  ok  backed up existing ${IF_LABEL} -> ${IF_BACKUP#"${CLAUDE_DIR}/"}"
     fi
     rm -f "${IF_DST}"
@@ -485,8 +524,7 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   echo "  ok  CLAUDE.md already imports ${DOCTRINE}"
 else
   if [ -f "${GLOBAL_MD}" ]; then
-    BACKUP="$(bakpath "${GLOBAL_MD}")"
-    cp "${GLOBAL_MD}" "${BACKUP}"
+    BACKUP="$(bakcopy -L "${GLOBAL_MD}" "${GLOBAL_MD}")"
     echo "  ok  backed up CLAUDE.md -> $(basename "${BACKUP}")"
     printf '\n%s\n' "${IMPORT_LINE}" >> "${GLOBAL_MD}"
     # Provenance for the uninstaller, and the only reason it may remove the
@@ -505,31 +543,17 @@ else
   echo "  ok  CLAUDE.md imports ${DOCTRINE}"
 fi
 
-# 6. enforcement pack (opt-in): hooks + statusline wired into settings.json
-if [ "${WITH_HOOKS}" = 1 ]; then
-  command -v python3 >/dev/null 2>&1 || { echo "FAIL: --with-hooks requires python3" >&2; exit 1; }
-  # 3.9 is where hashlib gained usedforsecurity=, which the hooks pass so their
-  # md5 state key does not raise under FIPS and silently disable tracking
-  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null \
-    || { echo "FAIL: --with-hooks requires a working python3 >= 3.9" >&2; exit 1; }
-  mkdir -p "${CLAUDE_DIR}/hooks"
-  for H in luciazero-verify.sh luciazero-statusline.sh; do
-    DST="${CLAUDE_DIR}/hooks/${H}"
-    if [ -f "${DST}" ] && ! cmp -s "${SRC}/claude/hooks/${H}" "${DST}"; then
-      cp "${DST}" "$(bakpath "${DST}")"
-      echo "  ok  backed up existing hooks/${H}"
-    fi
-    cp "${SRC}/claude/hooks/${H}" "${DST}"
-    chmod +x "${DST}"
-  done
-  SETTINGS="${CLAUDE_DIR}/settings.json"
-  if [ -f "${SETTINGS}" ]; then
-    cp "${SETTINGS}" "$(bakpath "${SETTINGS}")"
-  fi
-  python3 - "${SETTINGS}" "${CLAUDE_DIR}/hooks" <<'PY' || { echo "FAIL: could not update settings.json (invalid JSON?) — hook files copied but not wired" >&2; exit 1; }
-import json, os, shlex, sys
+# wire_settings <check|write>: wire the pack's hooks and status line into
+# ${SETTINGS}, additively and idempotently. `check` decides everything and
+# writes nothing; `write` replaces the file whole.
+wire_settings() {
+  python3 - "$1" "${SETTINGS}" "${CLAUDE_DIR}/hooks" <<'PY'
+import json, os, shlex, sys, tempfile
 
-path, hooks_dir = sys.argv[1], sys.argv[2]
+mode, path, hooks_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+# `check` decides everything `write` would and changes nothing, so a file
+# that cannot be wired stops the install before any hook file is copied.
+say = print if mode == "write" else (lambda *_a, **_k: None)
 verify_cmd = os.path.join(hooks_dir, "luciazero-verify.sh")
 status_cmd = os.path.join(hooks_dir, "luciazero-statusline.sh")
 MARKERS = (verify_cmd, status_cmd)
@@ -560,10 +584,29 @@ def parse(cmd):
         return (parts[0], " ".join(parts[1:]))
     return None
 
+# A symlinked settings.json (a dotfiles repository) is read and written at the
+# file it points at, so the link survives. Not writable is refused here, as
+# the in-place write used to refuse it, because replacing the file whole
+# below would otherwise go around its permission bits.
+target = os.path.realpath(path)
 settings = {}
-if os.path.exists(path):
-    with open(path) as f:
-        settings = json.load(f)
+try:
+    if os.path.exists(path):
+        with open(path) as f:
+            settings = json.load(f)
+        if not os.access(target, os.W_OK):
+            raise OSError("settings.json is not writable: " + target)
+    # The new file is made beside the real one, so that directory has to take
+    # it; finding out after the hook files are copied is the failure R14 is.
+    if not os.access(os.path.dirname(target), os.W_OK | os.X_OK):
+        raise OSError("cannot write beside settings.json in " + os.path.dirname(target))
+except (OSError, ValueError) as exc:
+    print("      " + str(exc), file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(settings, dict) or not isinstance(settings.get("hooks", {}), dict):
+    print("      settings.json is valid JSON but not the shape hooks live in",
+          file=sys.stderr)
+    raise SystemExit(1)
 
 changed = False
 hooks = settings.setdefault("hooks", {})
@@ -585,43 +628,103 @@ def ensure(event, matcher, sub):
     entries.append(entry)
     changed = True
 
-ensure("PostToolUse", "Edit|Write|NotebookEdit", "edit")
-ensure("PostToolUse", "Bash", "bash")
-ensure("PostToolUse", "Skill", "skill")
-ensure("PostToolUseFailure", "Bash", "bash-failure")
-ensure("PreToolUse", "Bash", "bash-start")
-ensure("UserPromptSubmit", None, "prompt")
-ensure("UserPromptExpansion", None, "skill-prompt")
-ensure("Stop", None, "stop")
-ensure("SessionStart", None, "session")
+# A hook list of the wrong shape is a file this cannot wire, not a crash to
+# discover after the hook files are already in place.
+try:
+    ensure("PostToolUse", "Edit|Write|NotebookEdit", "edit")
+    ensure("PostToolUse", "Bash", "bash")
+    ensure("PostToolUse", "Skill", "skill")
+    ensure("PostToolUseFailure", "Bash", "bash-failure")
+    ensure("PreToolUse", "Bash", "bash-start")
+    ensure("UserPromptSubmit", None, "prompt")
+    ensure("UserPromptExpansion", None, "skill-prompt")
+    ensure("Stop", None, "stop")
+    ensure("SessionStart", None, "session")
+except (AttributeError, TypeError) as exc:
+    print("      settings.json hooks are not the shape hooks live in: " + repr(exc),
+          file=sys.stderr)
+    raise SystemExit(1)
 
 sl = settings.get("statusLine")
 want_sl = command(status_cmd)
 if sl is None:
     settings["statusLine"] = {"type": "command", "command": want_sl}
     changed = True
-    print("  ok  statusline wired")
+    say("  ok  statusline wired")
 elif isinstance(sl, dict) and parse(sl.get("command", "")) == (status_cmd, ""):
     if sl.get("command") != want_sl:
         sl["command"] = want_sl
         changed = True
-        print("  ok  statusline rewritten so its path survives the shell")
+        say("  ok  statusline rewritten so its path survives the shell")
     else:
-        print("  ok  statusline already wired")
+        say("  ok  statusline already wired")
 else:
-    print("  !!  statusline SKIPPED — a custom statusLine exists; to use ours, set")
-    print("      settings.json statusLine.command to: " + want_sl)
+    say("  !!  statusline SKIPPED — a custom statusLine exists; to use ours, set")
+    say("      settings.json statusLine.command to: " + want_sl)
 
+if mode != "write":
+    raise SystemExit(0)
 if changed:
-    with open(path, "w") as f:
-        # ensure_ascii=False: an escaped non-ASCII config path (é) would
-        # never match --status's byte-level greps for the hook commands
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    # The new content goes to a fresh name beside the real file and replaces
+    # it whole: a failed write leaves the old bytes, and nothing ever reads
+    # half of the new ones (roadmap R14). The file keeps its mode.
+    try:
+        keep = os.stat(target).st_mode & 0o7777
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        keep = 0o666 & ~umask
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(target) + ".",
+                               dir=os.path.dirname(target))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            # ensure_ascii=False: an escaped non-ASCII config path (é) would
+            # never match --status's byte-level greps for the hook commands
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.chmod(tmp, keep)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     print("  ok  hooks wired into settings.json")
 else:
     print("  ok  hooks already wired")
 PY
+}
+
+# 6. enforcement pack (opt-in): hooks + statusline wired into settings.json
+if [ "${WITH_HOOKS}" = 1 ]; then
+  command -v python3 >/dev/null 2>&1 || { echo "FAIL: --with-hooks requires python3" >&2; exit 1; }
+  # 3.9 is where hashlib gained usedforsecurity=, which the hooks pass so their
+  # md5 state key does not raise under FIPS and silently disable tracking
+  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null \
+    || { echo "FAIL: --with-hooks requires a working python3 >= 3.9" >&2; exit 1; }
+  SETTINGS="${CLAUDE_DIR}/settings.json"
+  # Whether settings.json can be wired is decided before anything of the pack
+  # is copied: a file that is not JSON, not the shape hooks live in, or not
+  # writable stops the install here, with no hook file in place and
+  # settings.json untouched (roadmap R14).
+  wire_settings check \
+    || { echo "FAIL: settings.json cannot be wired (see above) — hook files not copied, settings.json untouched" >&2; exit 1; }
+  mkdir -p "${CLAUDE_DIR}/hooks"
+  for H in luciazero-verify.sh luciazero-statusline.sh; do
+    DST="${CLAUDE_DIR}/hooks/${H}"
+    if [ -f "${DST}" ] && ! cmp -s "${SRC}/claude/hooks/${H}" "${DST}"; then
+      bakcopy -L "${DST}" "${DST}" >/dev/null
+      echo "  ok  backed up existing hooks/${H}"
+    fi
+    cp "${SRC}/claude/hooks/${H}" "${DST}"
+    chmod +x "${DST}"
+  done
+  if [ -f "${SETTINGS}" ]; then
+    bakcopy -L "${SETTINGS}" "${SETTINGS}" >/dev/null
+  fi
+  wire_settings write \
+    || { echo "FAIL: could not update settings.json (see above) — hook files copied but not wired" >&2; exit 1; }
 fi
 
 echo

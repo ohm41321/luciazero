@@ -508,6 +508,17 @@ printf '{"cwd": "%s"}' "${SPJ3}" \
   | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" stop >/dev/null 2>&1 || true
 SL="$(wc -l < "${SC}/luciazero-stats.log" | tr -d ' ')"
 [ "${SL}" -le 301 ] || fail "stats log not rotated (${SL} lines)"
+# rotation never writes through a name planted beside the log (roadmap R21)
+python3 -c 'import sys; open(sys.argv[1], "w").write("2026-01-01T00:00 stop-clean x\n" * 600)' "${SC}/luciazero-stats.log"
+echo sentinel > "${STMP}/rotation-target"
+ln -s "${STMP}/rotation-target" "${SC}/luciazero-stats.log.tmp"
+printf '{"cwd": "%s"}' "${SPJ3}" \
+  | env TMPDIR="${STMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" stop >/dev/null 2>&1 || true
+grep -qx sentinel "${STMP}/rotation-target" || fail "stats rotation wrote through a planted .tmp symlink"
+[ ! -L "${SC}/luciazero-stats.log" ] || fail "stats rotation replaced the log with the planted symlink"
+SL="$(wc -l < "${SC}/luciazero-stats.log" | tr -d ' ')"
+[ "${SL}" -le 301 ] || fail "stats log not rotated beside a planted .tmp (${SL} lines)"
+rm -f "${SC}/luciazero-stats.log.tmp" "${STMP}/rotation-target"
 # uninstall keeps learned data and says so
 touch "${SC}/luciazero-heuristics.md" "${SC}/CLAUDE.md"
 service_guard  # the first uninstall.sh of the run: prove the guard is alive

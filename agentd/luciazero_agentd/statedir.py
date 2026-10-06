@@ -93,11 +93,24 @@ def _secure_windows_tree(path: Path) -> None:
         winproc.make_private(str(entry), is_dir)
 
 
-def _write_private(path: Path, data: str) -> None:
+def create_private(path: Path) -> int:
+    """Open `path` for writing, truncated, and this user's alone before a
+    byte goes in: 0600, or on Windows a DACL of this user and SYSTEM. A mode
+    given to os.open is ignored on Windows, where the file would otherwise
+    take whatever its directory hands down, and on POSIX it is ignored for a
+    file that already exists."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    try:
+        restrict(Path(path))
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _write_private(path: Path, data: str) -> None:
+    with os.fdopen(create_private(path), "w", encoding="utf-8") as handle:
         handle.write(data)
-    restrict(path)
 
 
 def load_or_create_token(state_dir: Path) -> str:

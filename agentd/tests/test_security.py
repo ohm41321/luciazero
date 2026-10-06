@@ -14,7 +14,6 @@ import json
 import os
 import re
 import select
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -37,7 +36,7 @@ from luciazero_agentd import store as store_module
 from luciazero_agentd.redact import Redactor, find_credential_url
 import luciazero_agentd.server as server_module
 from luciazero_agentd.server import TOOLS, BusServer
-from tests.fixtures import WINDOWS, OnConsole, commit_file, git, make_repo
+from tests.fixtures import WINDOWS, OnConsole, commit_file, git, make_repo, remove_tree
 from tests.test_mcp import Http
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -125,7 +124,7 @@ class WorktreeIsolation(SecurityCase):
         self.store.bind_worktree("claude-reviewer", self.repo_a)
         task = self.store.create_task(title="write", created_by="codex-architect", requires_worktree=True)
         self.store.claim_task(task["id"], "claude-reviewer")
-        shutil.rmtree(self.repo_a)
+        remove_tree(self.repo_a)
         with self.assertRaises(WorktreeMismatch) as ctx:
             self.store.publish_artifact(kind="report", ref="reports/x.md", produced_by="claude-reviewer", task_id=task["id"])
         self.assertIn("unusable", str(ctx.exception))
@@ -135,7 +134,7 @@ class WorktreeIsolation(SecurityCase):
     def test_repository_identity_change_at_the_same_path_is_refused(self) -> None:
         self.store.bind_worktree("claude-reviewer", self.repo_a)
         task = self.store.create_task(title="write", created_by="codex-architect", requires_worktree=True)
-        shutil.rmtree(self.repo_a)
+        remove_tree(self.repo_a)
         make_repo(self.repo_a)  # same path, same branch name, different root commit
         with self.assertRaises(WorktreeMismatch) as ctx:
             self.store.claim_task(task["id"], "claude-reviewer")

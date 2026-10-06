@@ -27,7 +27,8 @@ from luciazero_agentd import Store, gitinfo, procinfo, proctree
 from luciazero_agentd import store as store_module
 from luciazero_agentd.server import BusServer
 from luciazero_agentd.statedir import ensure_state_dir, load_or_create_token
-from tests.fixtures import ANSI, OnConsole, dacl_sddl, fake_cli, make_repo, private_problem
+from tests.fixtures import (ANSI, OnConsole, dacl_entries, dacl_sddl, fake_cli, make_repo, private_problem,
+                            set_dacl)
 from tests.test_mcp import TOKEN
 
 WINDOWS = sys.platform == "win32"
@@ -263,6 +264,33 @@ class PrivateState(unittest.TestCase):
         """The entries that admit Everyone (SID WD), from the SDDL."""
         return [ace for ace in re.findall(r"\(([^)]*)\)", dacl_sddl(path))
                 if ace.split(";")[5] == "WD" and (inherited or "ID" not in ace.split(";")[1])]
+
+    def test_the_check_admits_this_user_and_system_by_sid_and_no_one_else(self) -> None:
+        """The check reads SIDs, not SDDL spellings: SDDL may write this user
+        as LA, the machine's built-in Administrator, when that is who runs --
+        and LA in a DACL is a grant to another account when it is not."""
+        path = self.parent / "file"
+        path.write_bytes(b"x")
+        mine = str(winproc._my_sid())
+        self.addCleanup(set_dacl, path, f"D:P(A;;FA;;;{mine})(A;;FA;;;SY)")  # so the directory can go
+        set_dacl(path, f"D:P(A;;FA;;;{mine})(A;;FA;;;SY)")
+        self.assertIsNone(private_problem(path))
+        for other in ("BA", "WD", "BU"):
+            set_dacl(path, f"D:P(A;;FA;;;{mine})(A;;FA;;;SY)(A;;FR;;;{other})")
+            self.assertIsNotNone(private_problem(path), other)
+            set_dacl(path, f"D:P(A;;FA;;;{other})(A;;FA;;;SY)")
+            self.assertIsNotNone(private_problem(path), f"{other} in this user's place")
+        set_dacl(path, f"D:P(A;;FA;;;{mine})")
+        self.assertIsNotNone(private_problem(path), "without SYSTEM")
+        set_dacl(path, f"D:P(D;;FA;;;WD)(A;;FA;;;{mine})(A;;FA;;;SY)")
+        self.assertIsNotNone(private_problem(path), "a deny entry")
+        set_dacl(path, "D:P(A;;FA;;;LA)(A;;FA;;;SY)")
+        administrator = dacl_entries(path)[0][2]
+        self.assertRegex(administrator or "", r"^S-1-5-21-.*-500$")
+        if administrator == mine:
+            self.assertIsNone(private_problem(path), "LA is this user here")
+        else:
+            self.assertIsNotNone(private_problem(path), "LA is another account here")
 
     def test_the_state_directory_and_token_admit_this_user_and_system_only(self) -> None:
         state = self.parent / "agent-bus"

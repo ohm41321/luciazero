@@ -489,12 +489,19 @@ class Store:
         own bearer token) that must never be stored or echoed."""
         _check_int(busy_timeout_ms, 1, 60_000, "busy_timeout_ms")
         conn = sqlite3.connect(str(path), isolation_level=None, timeout=busy_timeout_ms / 1000)
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA synchronous = FULL")
-        cls._ensure_wal(conn)
-        return cls(conn, str(path), crash_hook, Redactor(redact_literals))
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA synchronous = FULL")
+            cls._ensure_wal(conn)
+            return cls(conn, str(path), crash_hook, Redactor(redact_literals))
+        except BaseException:
+            # A file that is not a database fails here, and a watcher retries
+            # it every poll: each refusal would otherwise leak a handle, and
+            # on Windows an open handle pins the file in place.
+            conn.close()
+            raise
 
     def redact(self, text: str) -> str:
         """Scrub a string with this store's redactor (patterns plus literals)."""

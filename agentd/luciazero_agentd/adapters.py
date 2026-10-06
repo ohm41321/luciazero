@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ from typing import Any, Callable, Optional, Protocol, Sequence
 from . import proctree
 from .appserver import RPC_TIMEOUT, AppServer, AppServerError, _terminate_group
 from .runlog import RunLog
+from .statedir import create_private
 
 SERVER_NAME = "luciazero-bus"
 URL_ENV = "LUCIAZERO_AGENT_BUS_URL"
@@ -33,6 +36,28 @@ PROMPT_ENV = "LUCIAZERO_AGENT_BUS_PROMPT"
 AGENT_ENV = "LUCIAZERO_AGENT_BUS_AGENT"
 SESSION_ENV = "LUCIAZERO_AGENT_BUS_SESSION"
 TERMINATE_GRACE_SECONDS = 5.0
+WINDOWS = sys.platform == "win32"
+#: How often a wait for the provider comes back to the interpreter on Windows.
+WAIT_SLICE_SECONDS = 0.25
+
+
+def wait_for(child: subprocess.Popen, timeout: Optional[float]) -> int:
+    """`child.wait(timeout)`, in slices on Windows.
+
+    A wait there is one WaitForSingleObject that no signal interrupts, so a
+    Ctrl+Break asking `dispatch` to stop would sit until the turn ended --
+    with the turn's credential live all that time -- before its handler ran.
+    Coming back to the interpreter between slices lets the handler run."""
+    if not WINDOWS:
+        return child.wait(timeout=timeout)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        left = WAIT_SLICE_SECONDS if deadline is None else min(WAIT_SLICE_SECONDS, max(0.0, deadline - time.monotonic()))
+        try:
+            return child.wait(timeout=left)
+        except subprocess.TimeoutExpired:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(child.args, timeout) from None
 
 #: Flags a managed turn owns, per provider. They carry the bus, bound what the
 #: turn may touch, or decide what it may do without asking -- so a worker
@@ -264,7 +289,7 @@ class ProcessAdapter:
         reader.start()
         timed_out = False
         try:
-            code = child.wait(timeout=request.timeout_seconds)
+            code = wait_for(child, request.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
             self.cancel()
@@ -306,7 +331,7 @@ class ClaudeAdapter(ProcessAdapter):
     def prepare(self, request: TurnRequest, *, resuming: bool) -> None:
         path = self.config_path(request)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        handle = create_private(path)
         try:
             os.write(handle, json.dumps({"mcpServers": {SERVER_NAME: {
                 "type": "http", "url": request.url,

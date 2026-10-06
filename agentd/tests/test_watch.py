@@ -171,6 +171,7 @@ class FollowTests(WatchCase):
         self.say(ARCHITECT, IMPLEMENTER, "before the restart")
         self.store.close()
         self.store = Store.open(str(self.db))
+        self.addCleanup(self.store.close)  # the one in setUp closes the first writer
         self.store.migrate()
         self.store.trust = "bound"
         self.say(IMPLEMENTER, ARCHITECT, "after the restart")

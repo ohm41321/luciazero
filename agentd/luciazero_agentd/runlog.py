@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from .redact import CREDENTIAL_PREFIX, Redactor
+from .statedir import create_private
 
 DEFAULT_MAX_BYTES = 256 * 1024
 MARKER = "\n... {dropped} bytes dropped by the run-log cap ...\n"
@@ -114,7 +115,7 @@ class RunLog:
             if dropped:
                 body += MARKER.format(dropped=dropped).encode("utf-8")
             body += self._scrub(tail.decode("utf-8", "replace")).encode("utf-8")
-            handle = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            handle = create_private(self.path)
             try:
                 os.write(handle, body)
             finally:

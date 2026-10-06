@@ -55,6 +55,87 @@ test("claude: install with hooks, status, the wired hook runs, uninstall restore
   assert.ok(!JSON.stringify(left).includes("luciazero-"), "settings.json still names a hook of ours");
 });
 
+// Take read access to a file away from this user, for real: mode 0200 on
+// POSIX, a deny-read-data ACE on Windows. Returns the undo, or a reason the
+// platform cannot do it here (root reads anything).
+function denyRead(file) {
+  if (WINDOWS) {
+    const who = spawnSync("whoami", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });
+    const sid = who.status === 0 ? (who.stdout.match(/"(S-1-[0-9-]+)"/) || [])[1] : undefined;
+    if (!sid) return "whoami did not name this user's SID";
+    const icacls = (args) => spawnSync("icacls", [file, ...args], { encoding: "utf8", windowsHide: true });
+    const denied = icacls(["/deny", `*${sid}:(RD)`]);
+    if (denied.status !== 0) return `icacls could not deny reading: ${denied.stdout}${denied.stderr}`;
+    return () => icacls(["/remove:d", `*${sid}`]);
+  }
+  if (process.getuid && process.getuid() === 0) return "root reads a mode 0200 file anyway";
+  fs.chmodSync(file, 0o200);
+  return () => fs.chmodSync(file, 0o600);
+}
+
+// A CLAUDE.md that is there but cannot be read belongs to the user. The
+// installer must stop with nothing changed: no rewrite, no backup, and no
+// provenance record that would let the uninstaller delete the file.
+function assertRefusedClaudeMd(box, run, file, mine) {
+  assert.strictEqual(run.status, 1, `install exited ${run.status}\n${run.stdout}\n${run.stderr}`);
+  assert.match(run.stderr, /FAIL: cannot read .*CLAUDE\.md/);
+  assert.deepStrictEqual(fs.readFileSync(file), mine, "the user's file was changed");
+  const names = fs.readdirSync(box.claude);
+  assert.ok(!names.some((n) => n.startsWith("CLAUDE.md.bak.")), `a backup was made: ${names}`);
+  assert.ok(!names.includes(".luciazero-import"), "the user's file was recorded as the installer's");
+}
+
+test("claude: a CLAUDE.md that cannot be read is refused, never replaced", (t) => {
+  const mine = Buffer.from("# Mine\r\nnot readable by the installer\r\n");
+
+  // On every platform, as any user: the installer's own read fails.
+  const box = sandbox(t);
+  fs.mkdirSync(box.claude, { recursive: true });
+  const md = path.join(box.claude, "CLAUDE.md");
+  fs.writeFileSync(md, mine);
+  const preload = path.join(box.box, "deny-claude-md.js");
+  fs.writeFileSync(preload, `"use strict";
+const fs = require("fs");
+const path = require("path");
+const read = fs.readFileSync;
+fs.readFileSync = function (file, ...rest) {
+  if (typeof file === "string" && path.resolve(file) === ${JSON.stringify(md)}) {
+    const error = new Error("EACCES: permission denied, open '" + file + "'");
+    error.code = "EACCES";
+    throw error;
+  }
+  return read.call(this, file, ...rest);
+};
+`);
+  assertRefusedClaudeMd(box, node(box.env, ["--require", preload, INSTALLER, "claude"]), md, mine);
+
+  // The file itself unreadable, then a symlink to an unreadable file.
+  for (const linked of [false, true]) {
+    const real = sandbox(t);
+    fs.mkdirSync(real.claude, { recursive: true });
+    const target = linked ? path.join(real.box, "notes", "CLAUDE.md") : path.join(real.claude, "CLAUDE.md");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, mine);
+    if (linked) {
+      try {
+        fs.symlinkSync(target, path.join(real.claude, "CLAUDE.md"), "file");
+      } catch (error) {
+        if (WINDOWS && error.code === "EPERM") { t.diagnostic("symlinked case skipped: this account may not create symlinks"); continue; }
+        throw error;
+      }
+    }
+    const undo = denyRead(target);
+    if (typeof undo === "string") { t.diagnostic(`unreadable-file case skipped: ${undo}`); continue; }
+    let run;
+    try {
+      run = node(real.env, [INSTALLER, "claude"]);
+    } finally {
+      undo();
+    }
+    assertRefusedClaudeMd(real, run, target, mine);
+  }
+});
+
 test("codex: install and uninstall keep a CRLF AGENTS.md byte for byte", (t) => {
   const box = sandbox(t);
   fs.mkdirSync(box.codex, { recursive: true });

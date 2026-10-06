@@ -84,6 +84,18 @@ const isDir = (p) => {
   const s = stat(p);
   return s !== null && s.isDirectory();
 };
+// What is at a path a user owns, when the answer decides whether writing
+// there may create it: "file", "missing" (nothing there, or a symlink to
+// nothing), "other" (a directory or anything else), or the error code that
+// kept the question from being answered. isFile() says false to all but the
+// first, and only "missing" may be created.
+function presence(p) {
+  try {
+    return fs.statSync(p).isFile() ? "file" : "other";
+  } catch (error) {
+    return error.code === "ENOENT" ? "missing" : error.code || "error";
+  }
+}
 const nonEmpty = (p) => {
   const s = stat(p);
   return s !== null && s.size > 0;
@@ -767,7 +779,24 @@ function claudeInstall(args) {
 
   const globalMd = j(dir, "CLAUDE.md");
   const provenance = j(dir, ".luciazero-import");
-  const current = isFile(globalMd) ? readRaw(globalMd) : null;
+  // Only a CLAUDE.md that is not there may be created. One that is there but
+  // cannot be read -- write-only, denied by an ACL, a symlink loop -- is the
+  // user's, and creating over it would replace their file with one line and
+  // record it as ours for the uninstaller to delete.
+  let found = presence(globalMd);
+  let current = null;
+  if (found === "file") {
+    try {
+      current = fs.readFileSync(globalMd).toString("latin1");
+    } catch (error) {
+      found = error.code || "unreadable";
+    }
+  }
+  if (found !== "missing" && current === null) {
+    warn(`FAIL: cannot read ${globalMd} (${found === "other" ? "not a regular file" : found}); it is left exactly as it is`);
+    warn("      make it a readable file, then run this again");
+    return 1;
+  }
   if (current !== null && current.includes(IMPORT_LINE)) {
     say(`  ok  CLAUDE.md already imports ${DOCTRINE}`);
   } else {

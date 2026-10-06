@@ -30,6 +30,7 @@ import re
 import shlex
 import shutil
 import sqlite3
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -373,6 +374,27 @@ class Renderer:
 PROVIDER_COMMAND = {"codex": "codex", "claude": "claude"}
 
 
+#: Every command printed for a human is for the shell they type into:
+#: PowerShell on Windows, a POSIX shell everywhere else.
+WINDOWS = sys.platform == "win32"
+
+
+def shell_quote(value: Any) -> str:
+    """One argument, quoted for that shell. PowerShell's single quotes take
+    everything literally except a single quote, which is doubled."""
+    if WINDOWS:
+        return "'" + str(value).replace("'", "''") + "'"
+    return shlex.quote(str(value))
+
+
+def in_directory(path: Any, command: str) -> str:
+    """`command`, run from `path`, and not run at all when the directory
+    cannot be entered."""
+    if WINDOWS:
+        return f"Set-Location -LiteralPath {shell_quote(path)} -ErrorAction Stop; {command}"
+    return f"cd {shlex.quote(str(path))} && {command}"
+
+
 #: The name install.sh puts on PATH. Everything printed for a human to run
 #: prefers it, and falls back to the module form when it is not installed --
 #: a printed command that does not run is worse than a long one.
@@ -413,14 +435,14 @@ def launcher_in(checkout: Any, which: Optional[Callable[[str], Optional[str]]] =
     """
     found = installed_launcher(which)
     if found is not None:
-        return f"cd {shlex.quote(str(checkout))} && {found}"
+        return in_directory(checkout, found)
     return module_launcher(checkout)
 
 
 def module_launcher(checkout: Any) -> str:
     """The fallback form: no installed executable, so the package is imported
     from the checkout by being the working directory."""
-    return f"cd {shlex.quote(str(Path(checkout) / 'agentd'))} && python3 -m luciazero_agentd"
+    return in_directory(Path(checkout) / "agentd", ("python" if WINDOWS else "python3") + " -m luciazero_agentd")
 
 
 def roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:

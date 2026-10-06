@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, Sequence
 
+from . import proctree
 from .appserver import RPC_TIMEOUT, AppServer, AppServerError, _terminate_group
 from .runlog import RunLog
 
@@ -234,13 +235,15 @@ class ProcessAdapter:
 
     def _spawn(self, request: TurnRequest, *, resuming: bool) -> TurnResult:
         argv = self.argv(request, resuming=resuming)
+        env = self.environment(request, resuming=resuming)
         try:
-            child = subprocess.Popen(
-                argv, cwd=request.cwd, env=self.environment(request, resuming=resuming),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                # Its own process group, so `cancel` reaches the children the
-                # provider starts and not just the provider.
-                start_new_session=True,
+            # Its own process group (and on Windows its own job), so `cancel`
+            # reaches the children the provider starts and not just the
+            # provider.
+            child = proctree.start(
+                proctree.argv_for(argv, env), cwd=request.cwd, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
             )
         except (OSError, ValueError) as exc:
             # A command that cannot start will not start on the next attempt
@@ -272,6 +275,7 @@ class ProcessAdapter:
                 child.stdout.close()
             with self._lock:
                 self._child = None
+            proctree.release(child.pid)
         if timed_out:
             return TurnResult(ok=False, exit_state="timeout", error=f"the turn ran past {request.timeout_seconds}s and was stopped")
         if code != 0:

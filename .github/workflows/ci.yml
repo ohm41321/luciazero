@@ -44,3 +44,23 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Native Windows suites
         run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js tests/node/global.test.js
+
+  windows-agentd:
+    # The Agent Bus daemon on native Windows: process facts through the
+    # Win32 API, process trees, private state and the MCP server, on the
+    # oldest Python it supports and a current one.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Agent Bus suite
+        working-directory: agentd
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -t . -v

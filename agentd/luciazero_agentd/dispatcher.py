@@ -30,10 +30,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from . import procinfo
+from . import procinfo, proctree
 from .adapters import Adapter, TurnRequest, TurnResult, adapter_for
 from .runlog import RunLog
-from .statedir import read_endpoint, read_token
+from .statedir import read_endpoint, read_token, restrict
 from .store import (
     LEASE_TTL_SECONDS,
     ConflictError,
@@ -173,7 +173,11 @@ class Dispatcher:
         children, still running, still spending. The group is signalled only
         when the process leads its own group, which every provider this
         dispatcher starts does; anything else is signalled alone, because a
-        process that joined somebody else's group is not ours to sweep."""
+        process that joined somebody else's group is not ours to sweep.
+        Windows has no group to signal; there the tree below the process is
+        ended instead."""
+        if proctree.WINDOWS:
+            return proctree.end_tree(pid, proctree.wait_gone(lambda: self._alive(pid, started_at)))
         try:
             group = os.getpgid(pid)
         except OSError:
@@ -344,7 +348,7 @@ class Dispatcher:
             return TurnResult(ok=False, exit_state="no_adapter", error=f"no adapter ships for provider {provider!r}", permanent=True)
         workspace = self.turn_dir / str(run["id"])
         workspace.mkdir(parents=True, exist_ok=True)
-        os.chmod(workspace, 0o700)
+        restrict(workspace)
         if self._in_flight is not None:
             self._in_flight["adapter"] = adapter
         log = RunLog(self.log_dir / f"{run['id']}.log", literals=(credential, self.token))

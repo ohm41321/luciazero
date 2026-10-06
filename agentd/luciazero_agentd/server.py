@@ -18,6 +18,7 @@ import hashlib
 import json
 import math
 import secrets
+import socket
 import sqlite3
 import sys
 import threading
@@ -32,6 +33,8 @@ from . import approval, procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
 from .watch import launcher
 from .store import CLAIM_DIALOG_SECONDS, ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
+
+WINDOWS = sys.platform == "win32"
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "luciazero-agentd", "version": __version__}
@@ -847,6 +850,17 @@ class BusServer:
                 self._ok(rpc_id, tool_result(value))
 
         class QuietServer(ThreadingHTTPServer):
+            # On Windows SO_REUSEADDR lets a second socket bind the same port
+            # and take its connections, so another user's process could sit
+            # on the daemon's endpoint and read every bearer token sent to
+            # it. There the port is held exclusively instead.
+            allow_reuse_address = not WINDOWS
+
+            def server_bind(self) -> None:
+                if WINDOWS:
+                    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                super().server_bind()
+
             def handle_error(self, request: Any, client_address: Any) -> None:
                 # A client that resets or drops a keep-alive connection is
                 # routine (the Codex MCP client does it); socketserver would

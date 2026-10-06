@@ -50,7 +50,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
-from . import nudge, procinfo, service as service_mod, watch
+from . import nudge, procinfo, proctree, service as service_mod, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .redact import Redactor
@@ -63,6 +63,7 @@ from .statedir import (
     read_endpoint,
     read_token,
     resolve_state_dir,
+    restrict,
     write_endpoint,
 )
 
@@ -126,7 +127,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if not is_loopback_host(args.host) and not args.allow_remote:
         print(f"refusing to bind {args.host!r}: pass --allow-remote to expose the bus beyond loopback (token still required)", file=sys.stderr)
         return 2
-    state_dir = ensure_state_dir(resolve_state_dir(args.state_dir))
+    try:
+        state_dir = ensure_state_dir(resolve_state_dir(args.state_dir))
+    except OSError as exc:
+        print(f"serve: cannot make the state directory private: {clean(exc)}", file=sys.stderr)
+        return 2
     existing = read_endpoint(state_dir)
     if existing is not None and isinstance(existing.get("pid"), int) and pid_alive(existing["pid"]) and existing["pid"] != os.getpid():
         print(f"a daemon already serves this state directory at {existing['url']} (pid {existing['pid']}); stop it first", file=sys.stderr)
@@ -144,6 +149,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _stop)
+    if hasattr(signal, "SIGBREAK"):
+        # Windows delivers no SIGTERM from outside the process; Ctrl+Break
+        # is the console's way to ask a program to stop.
+        signal.signal(signal.SIGBREAK, _stop)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -211,6 +220,16 @@ def cmd_client_config(args: argparse.Namespace) -> int:
     state_dir = resolve_state_dir(args.state_dir)
     endpoint = read_endpoint(state_dir)
     url = endpoint["url"] if endpoint else "http://127.0.0.1:<port>/mcp"
+    if watch.WINDOWS:
+        token = f"Get-Content -LiteralPath {watch.shell_quote(state_dir / 'token')} -TotalCount 1"
+        quoted_url = watch.shell_quote(url)
+        print("# Claude Code (user scope), in PowerShell:")
+        print(f'claude mcp add --scope user --transport http {SERVER_NAME} {quoted_url} --header "Authorization: Bearer $({token})"')
+        print("# Codex CLI (reads the token from an environment variable at start):")
+        print(f"$env:{TOKEN_ENV} = {token}")
+        print(f"codex mcp add {SERVER_NAME} --url {quoted_url} --bearer-token-env-var {TOKEN_ENV}")
+        print("# Then start each agent session and run /lucia-bus (Codex: $lucia-bus).")
+        return 0
     token_path = shlex.quote(str(state_dir / "token"))
     quoted_url = shlex.quote(url)
     print("# Claude Code (user scope):")
@@ -714,10 +733,18 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
     except OSError as exc:
         print(f"run: cannot write the daemon log in {state_dir}: {clean(exc)}", file=sys.stderr)
         return None
+    # Its own session, so it outlives this terminal. On Windows that is a
+    # process with no console at all: one sharing this console is ended with
+    # it when the window closes. Started in the state directory, because
+    # `python -m` puts the working directory first on sys.path, and the
+    # caller's project could hold a directory named luciazero_agentd.
+    detach: dict[str, Any] = (
+        {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if watch.WINDOWS else {"start_new_session": True})
     try:
-        daemon = subprocess.Popen(serve, env=child,
+        daemon = subprocess.Popen(serve, env=child, cwd=str(state_dir),
                                   stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                  start_new_session=True)
+                                  **detach)
     except OSError as exc:
         print(f"run: cannot start a daemon: {clean(exc)}", file=sys.stderr)
         return None
@@ -765,6 +792,13 @@ def _open_store(command: str, state_dir: Path) -> Optional[Store]:
     if not path.exists():
         print(f"{command}: no bus database in {state_dir}", file=sys.stderr)
         return None
+    if proctree.WINDOWS:
+        # A database nobody has served yet may still carry its own grants.
+        try:
+            ensure_state_dir(state_dir)
+        except OSError as exc:
+            print(f"{command}: {clean(exc)}", file=sys.stderr)
+            return None
     store = Store.open(path)
     store.migrate()
     store.trust = "human"  # ADR 0004: the user's own terminal, not a peer's claim
@@ -772,6 +806,10 @@ def _open_store(command: str, state_dir: Path) -> Optional[Store]:
 
 
 def _own_tty() -> Optional[str]:
+    # A Windows console has no name (and Python no os.ttyname there), so a
+    # binding made on Windows rests on the pid and its start time alone.
+    if not hasattr(os, "ttyname"):
+        return None
     try:
         return os.path.basename(os.ttyname(sys.stdin.fileno()))
     except OSError:
@@ -853,16 +891,18 @@ def _pick_process(args: argparse.Namespace) -> tuple[Optional[dict[str, Any]], O
 def _mcp_commands(binding: dict[str, Any], credential: str, url: str) -> list[str]:
     """What the user pastes into that terminal's session. The credential goes
     in the same Authorization header the daemon token used to occupy."""
+    quote = watch.shell_quote
     if binding["provider"] == "claude":
         return [
             "claude mcp remove --scope user " + SERVER_NAME,
-            f"claude mcp add --scope user --transport http {shlex.quote(SERVER_NAME)} {shlex.quote(url)} "
-            f"--header {shlex.quote('Authorization: Bearer ' + credential)}",
+            f"claude mcp add --scope user --transport http {quote(SERVER_NAME)} {quote(url)} "
+            f"--header {quote('Authorization: Bearer ' + credential)}",
         ]
+    export = f"$env:{TOKEN_ENV} = {quote(credential)}" if watch.WINDOWS else f"export {TOKEN_ENV}={quote(credential)}"
     return [
-        f"codex mcp remove {shlex.quote(SERVER_NAME)}",
-        f"export {TOKEN_ENV}={shlex.quote(credential)}",
-        f"codex mcp add {shlex.quote(SERVER_NAME)} --url {shlex.quote(url)} --bearer-token-env-var {TOKEN_ENV}",
+        f"codex mcp remove {quote(SERVER_NAME)}",
+        export,
+        f"codex mcp add {quote(SERVER_NAME)} --url {quote(url)} --bearer-token-env-var {TOKEN_ENV}",
     ]
 
 
@@ -931,7 +971,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not command:
         print("run: name the provider command after --, for example: run --agent claude-reviewer -- claude", file=sys.stderr)
         return 2
-    provider = args.provider or procinfo.PROVIDER_COMMANDS.get(os.path.basename(command[0]))
+    provider = args.provider or procinfo.provider_named(command[0])
     if provider is None:
         print(f"run: cannot tell which provider {command[0]!r} is; pass --provider", file=sys.stderr)
         return 2
@@ -1003,7 +1043,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     env = dict(os.environ)
     url = endpoint["url"]
     workspace = Path(tempfile.mkdtemp(prefix="luciazero-bind-"))
-    os.chmod(workspace, 0o700)
+    restrict(workspace)
     if provider == "claude":
         # The credential goes in a 0600 file, never on the child's command
         # line: argv is world-readable through `ps` for the life of a session
@@ -1011,7 +1051,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # for the same reason.
         config = workspace / "mcp.json"
         config.write_text(json.dumps({"mcpServers": {SERVER_NAME: {"type": "http", "url": url, "headers": {"Authorization": f"Bearer {credential}"}}}}))
-        os.chmod(config, 0o600)
+        restrict(config)
         argv = [command[0], "--mcp-config", str(config)] + (["--strict-mcp-config"] if args.strict else []) + command[1:]
     else:
         env[TOKEN_ENV] = credential
@@ -1039,8 +1079,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     # proxy, so the child simply inherits this process's streams as before.
     if getattr(args, "nudge", True) and nudge.usable():
         return _run_on_a_pty(args, argv, env, binding, state_dir, _cleanup)
+    if getattr(args, "nudge", True) and not nudge.AVAILABLE and sys.stdin.isatty():
+        print("run: this platform has no pty to hold, so nothing will be typed at the session's prompt; "
+              "deliveries wait until it checks its bus inbox", file=sys.stderr)
     try:
-        child = subprocess.Popen(argv, env=env)
+        # The user's own console and group: Ctrl+C belongs to the provider.
+        child = proctree.start(proctree.argv_for(argv, env), group=False, env=env)
+    except proctree.CommandError as exc:
+        _cleanup("spawn refused")
+        print(f"run: {clean(exc)}", file=sys.stderr)
+        return 2
     except OSError as exc:
         # A credential was minted a moment ago: a provider that never started
         # must not leave it valid for the rest of its TTL.
@@ -1065,9 +1113,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Without this a SIGTERM to `run` skips the cleanup below and leaves an
     # orphaned provider holding a live credential until its TTL expires.
     previous = signal.signal(signal.SIGTERM, _stop_run)
+    # Windows: the provider shares this console, so a Ctrl+C reaches it
+    # directly and is its to handle -- Claude Code and Codex use it to stop a
+    # turn, not to exit. This process ignores it rather than ending the
+    # session; Ctrl+Break still ends both.
+    previous_windows = ((signal.signal(signal.SIGINT, signal.SIG_IGN), signal.signal(signal.SIGBREAK, _stop_run))
+                        if proctree.WINDOWS else None)
     try:
         return child.wait()
     except KeyboardInterrupt:
+        if proctree.WINDOWS:
+            # terminate() would end only the process started -- for an npm
+            # CLI, node -- and leave its children holding the credential.
+            proctree.end_tree(child.pid, proctree.wait_gone(lambda: child.poll() is None))
+            return 130
         child.terminate()
         try:
             child.wait(timeout=10)
@@ -1077,6 +1136,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
+        if previous_windows is not None:
+            signal.signal(signal.SIGINT, previous_windows[0])
+            signal.signal(signal.SIGBREAK, previous_windows[1])
+        proctree.release(child.pid)
         _cleanup("run exited")
 
 
@@ -1084,6 +1147,8 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
                   binding: dict[str, Any], state_dir: Path,
                   cleanup: Callable[[str], None]) -> int:
     """`run`, holding the provider's terminal so the bus can knock on it."""
+    if proctree.WINDOWS:
+        return _run_on_a_console(args, argv, env, binding, state_dir, cleanup)
     try:
         pid, master = nudge.spawn(argv, env)
     except OSError as exc:
@@ -1120,6 +1185,49 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
+        cleanup("run exited")
+
+
+def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, str],
+                      binding: dict[str, Any], state_dir: Path,
+                      cleanup: Callable[[str], None]) -> int:
+    """`run` on Windows: the provider on a pseudo console this process holds,
+    as `_run_on_a_pty` holds a pty."""
+    from . import conpty
+    try:
+        session = conpty.spawn(proctree.argv_for(argv, env), env)
+    except proctree.CommandError as exc:
+        cleanup("spawn refused")
+        print(f"run: {clean(exc)}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        cleanup("spawn failed")
+        print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
+        return 2
+    store = _open_store("run", state_dir)
+    if store is not None:
+        with store:
+            try:
+                store.bind_process(binding["id"], pid=session.pid,
+                                   process_started_at=procinfo.started_at(session.pid))
+            except (StoreError, procinfo.ProcessError):
+                pass
+    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
+                            limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
+
+    def _stop_run(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    # Ctrl+C is a keystroke for the provider while the console is raw; a
+    # Ctrl+Break, or one that lands before the console is raw, ends the
+    # session, and the proxy ends the provider's job on its way out.
+    previous = signal.signal(signal.SIGBREAK, _stop_run)
+    try:
+        return conpty.proxy(session, watcher=watcher, show=nudge.log_sink(state_dir / nudge.LOG_NAME))
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        signal.signal(signal.SIGBREAK, previous)
         cleanup("run exited")
 
 

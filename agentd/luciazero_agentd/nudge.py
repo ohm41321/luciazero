@@ -68,22 +68,32 @@ something was typed and when, and nothing more.
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
-import pty
 import json
 import select
 import signal
 import sqlite3
 import struct
-import termios
+import sys
 import time
-import tty
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from .store import MESSAGE_KINDS, PROVIDERS, Store, StoreError
+
+try:
+    import fcntl
+    import pty
+    import termios
+    import tty
+except ImportError:
+    # Windows: no pty. `run` holds a pseudo console there instead (`conpty`),
+    # on Windows 10 1809 and later, and on anything older starts the provider
+    # on the console it was given.
+    AVAILABLE = False
+else:
+    AVAILABLE = True
 
 #: Typed into the provider's terminal, verbatim, and never anything else.
 TEXT = "check your bus inbox"
@@ -536,9 +546,33 @@ def _drain(master: int, stdout: int, *, seconds: float = 0.2) -> None:
             return
 
 
+def knock(watcher: Watcher, typist: Typist, show: Optional[Callable[[Arrival], None]]) -> None:
+    """One poll of the watcher: type the line if a delivery is due and no
+    line is already going in. Shared by the pty proxy and the Windows
+    console one."""
+    if typist.busy:
+        return
+    arrival = watcher.due()
+    if arrival:
+        # Nothing of a peer's is written to this terminal. The provider owns
+        # every cell of it, and the one thing that goes in is the literal,
+        # through the keyboard path the provider already understands.
+        if show is not None and isinstance(arrival, Arrival):
+            show(arrival)
+        typist.start(getattr(arrival, "note", None))
+
+
 def usable(stdin: int = 0, stdout: int = 1) -> bool:
-    """A pty is only worth taking when there is a real terminal to proxy."""
-    return os.isatty(stdin) and os.isatty(stdout)
+    """A pty is only worth taking when there is a real terminal to proxy,
+    and there is one to take. On Windows the terminal is a console and what
+    is taken is a pseudo console (`conpty`)."""
+    if sys.platform == "win32":
+        try:
+            from . import conpty
+        except (ImportError, OSError):
+            return False
+        return conpty.usable()
+    return AVAILABLE and os.isatty(stdin) and os.isatty(stdout)
 
 
 def spawn(argv: Sequence[str], env: dict[str, str]) -> tuple[int, int]:
@@ -638,16 +672,7 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
             now = clock()
             if watcher is not None and now >= next_poll:
                 next_poll = now + poll
-                if not typist.busy:
-                    arrival = watcher.due()
-                    if arrival:
-                        # Nothing of a peer's is written to this terminal.
-                        # The provider owns every cell of it, and the one
-                        # thing that goes in is the literal, through the
-                        # keyboard path the provider already understands.
-                        if show is not None and isinstance(arrival, Arrival):
-                            show(arrival)
-                        typist.start(getattr(arrival, "note", None))
+                knock(watcher, typist, show)
     finally:
         if previous_winch is not None:
             try:

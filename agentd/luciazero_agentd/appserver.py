@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from . import proctree
 from .runlog import RunLog
 
 RPC_TIMEOUT = 60
@@ -110,10 +111,9 @@ class AppServer:
         self.answered: list[dict[str, Any]] = []
         self._log = log
         try:
-            self._process = subprocess.Popen(
-                argv, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, bufsize=1,
-                start_new_session=True,  # its own process group: see `close`
+            self._process = proctree.start(  # its own process group: see `close`
+                proctree.argv_for(argv, env), env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
         except (OSError, ValueError) as exc:
             raise AppServerError(f"cannot start {argv[0]!r}: {exc}", permanent=True) from exc
@@ -269,6 +269,7 @@ class AppServer:
         parent would leave those behind."""
         if self._process.poll() is None:
             _terminate_group(self._process)
+        proctree.release(self._process.pid)
         for stream in (self._process.stdin, self._process.stdout):
             if stream is not None:
                 try:
@@ -284,7 +285,12 @@ class AppServer:
 
 
 def _terminate_group(process: "subprocess.Popen[str]") -> None:
-    """SIGTERM the child's process group, then SIGKILL what is left."""
+    """SIGTERM the child's process group, then SIGKILL what is left; on
+    Windows, end the child's process tree."""
+    if proctree.WINDOWS:
+        if process.poll() is None:
+            proctree.end_tree(process.pid, proctree.wait_gone(lambda: process.poll() is None))
+        return
     try:
         group = os.getpgid(process.pid)
     except (OSError, ProcessLookupError):

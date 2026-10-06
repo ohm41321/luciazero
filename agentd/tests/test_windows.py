@@ -326,6 +326,38 @@ class PrivateState(unittest.TestCase):
         self.assertEqual(load_or_create_token(state), "left-behind-token")
         self.assertEqual(token.read_bytes(), b"left-behind-token\n")
 
+    def test_an_entry_that_goes_away_mid_walk_is_skipped_not_refused(self) -> None:
+        """The last connection to a WAL database deletes its -wal and -shm
+        when it closes, so any bus client can remove one while the state
+        directory is being secured. An owner that can no longer be read must
+        not pass for another account's: that refused `run` its own store, and
+        the provider it had started never got its pid on the binding."""
+        state = self.parent / "agent-bus"
+        state.mkdir()
+        token = state / "token"
+        token.write_bytes(b"left-behind-token\n")
+        early, late = state / "bus.sqlite3-wal", state / "bus.sqlite3-shm"
+        for path in (early, late):
+            path.write_bytes(b"x")
+        real_owned, real_private = winproc.owned_path, winproc.make_private
+
+        def owned_path(path: str) -> bool:
+            if Path(path) == early:
+                early.unlink()  # gone between the listing and the owner check
+            return real_owned(path)
+
+        def make_private(path: str, directory: bool) -> None:
+            if Path(path) == late:
+                late.unlink()  # gone between the owner check and its DACL
+            real_private(path, directory)
+
+        with mock.patch.object(winproc, "owned_path", owned_path), \
+                mock.patch.object(winproc, "make_private", make_private):
+            ensure_state_dir(state)
+        self.assertFalse(early.exists() or late.exists())
+        for path in (state, token):
+            self.assertPrivate(path)
+
     def test_a_link_or_a_file_another_account_owns_inside_is_refused(self) -> None:
         state = self.parent / "agent-bus"
         (state / "runs").mkdir(parents=True)

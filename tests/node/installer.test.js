@@ -270,3 +270,55 @@ test("on Windows, uninstall removes the Agent Bus task through the installed lau
   assert.ok(!fs.existsSync(task), "the task definition was left behind");
   assert.ok(!fs.existsSync(path.join(bin, "lucia.cmd")), "the launcher was left behind");
 });
+
+const WINEXEC = path.join(ROOT, "bin", "lib", "winexec.js");
+
+function withPath(env, value) {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") || "PATH";
+  return { ...env, [key]: value };
+}
+
+test("a command is found through absolute PATH entries alone, never the working directory", (t) => {
+  const { onPathOnly } = require(WINEXEC);
+  const box = sandbox(t);
+  // CreateProcess, libuv and cmd.exe all look here first on Windows.
+  const here = path.join(box.box, "here");
+  const real = path.join(box.box, "real bin");
+  for (const dir of [here, real]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "python3.exe"), "");
+  }
+  fs.writeFileSync(path.join(real, "claude.cmd"), "");
+  const d = path.delimiter;
+  const cwd = process.cwd();
+  process.chdir(here);
+  try {
+    // An empty or relative entry is the working directory again.
+    assert.strictEqual(onPathOnly("python3.exe", { env: withPath({}, `${d}.${d}..${path.sep}here${d}${real}`) }),
+      path.join(real, "python3.exe"));
+    assert.strictEqual(onPathOnly("python3.exe", { env: withPath({}, `.${d}${d}..${path.sep}here`) }), null);
+    assert.strictEqual(onPathOnly("python3.exe", { env: {} }), null);
+    // Each directory's extensions before the next directory, as cmd.exe.
+    assert.strictEqual(onPathOnly("claude", { env: withPath({}, `${here}${d}${real}`), exts: [".exe", ".cmd"] }),
+      path.join(real, "claude.cmd"));
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("on Windows, a command by name runs from PATH, not from the working directory", { skip: !WINDOWS && "Windows only" }, (t) => {
+  const { runCommand } = require(WINEXEC);
+  const box = sandbox(t);
+  const here = path.join(box.box, "here");
+  const bin = path.join(box.box, "path bin (x86)");
+  for (const dir of [here, bin]) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(here, "lz-probe.cmd"), "@echo HIJACKED\r\n");
+  fs.writeFileSync(path.join(bin, "lz-probe.cmd"), "@echo from PATH %1\r\n");
+  const r = runCommand("lz-probe", ["--version"], { cwd: here, env: withPath(box.env, bin), encoding: "utf8", windowsHide: true });
+  assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}\n${r.error}`);
+  assert.match(r.stdout, /^from PATH --version/m);
+  assert.doesNotMatch(r.stdout, /HIJACKED/);
+  const missing = runCommand("lz-nowhere", ["--version"], { cwd: here, env: withPath(box.env, bin) });
+  assert.strictEqual(missing.status, null);
+  assert.strictEqual(missing.error.code, "ENOENT");
+});

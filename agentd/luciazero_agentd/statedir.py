@@ -62,35 +62,56 @@ def _secure_windows_tree(path: Path) -> None:
     """Make the state directory and everything in it this user's alone.
     Refused, before anything is changed below it: an entry another account
     owns, which its owner could open up again whatever its DACL says, and a
-    link, which would carry the token's reads and writes somewhere else."""
+    link, which would carry the token's reads and writes somewhere else.
+
+    An entry that goes away while this looks is skipped, not refused: the
+    last connection to a WAL database deletes its -wal and -shm files when
+    it closes, so any bus client can remove one mid-walk. An owner that
+    cannot be read is otherwise taken for another account's."""
     from . import winproc
 
-    def check(entry: Path) -> None:
-        if not winproc.owned_path(str(entry)):
-            raise PermissionError(
-                f"{entry} is owned by another account; the agent bus keeps its token there and will not use it "
-                "(if it is yours from an elevated prompt, `takeown /f` it from this one)")
+    def gone(entry: Path) -> bool:
+        return not os.path.lexists(entry)
+
+    def owned(entry: Path) -> bool:
+        if winproc.owned_path(str(entry)):
+            return True
+        if gone(entry):
+            return False
+        raise PermissionError(
+            f"{entry} is owned by another account; the agent bus keeps its token there and will not use it "
+            "(if it is yours from an elevated prompt, `takeown /f` it from this one)")
 
     def below(directory: Path) -> list[tuple[Path, bool]]:
         found = []
-        with os.scandir(directory) as entries:
-            for entry in entries:
+        try:
+            with os.scandir(directory) as entries:
+                listed = list(entries)
+        except FileNotFoundError:
+            return found
+        for entry in listed:
+            try:
                 info = entry.stat(follow_symlinks=False)
-                if info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-                    raise PermissionError(f"{entry.path} is a link; the agent bus will not follow one out of its state directory")
-                is_dir = stat.S_ISDIR(info.st_mode)
-                found.append((Path(entry.path), is_dir))
-                if is_dir:
-                    found.extend(below(Path(entry.path)))
+            except FileNotFoundError:
+                continue
+            if info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise PermissionError(f"{entry.path} is a link; the agent bus will not follow one out of its state directory")
+            is_dir = stat.S_ISDIR(info.st_mode)
+            found.append((Path(entry.path), is_dir))
+            if is_dir:
+                found.extend(below(Path(entry.path)))
         return found
 
-    check(path)
-    entries = below(path)
-    for entry, _ in entries:
-        check(entry)
+    if not owned(path):
+        raise FileNotFoundError(f"{path} went away while the agent bus was securing it")
+    entries = [(entry, is_dir) for entry, is_dir in below(path) if owned(entry)]
     winproc.make_private(str(path), True)
     for entry, is_dir in entries:
-        winproc.make_private(str(entry), is_dir)
+        try:
+            winproc.make_private(str(entry), is_dir)
+        except OSError:
+            if not gone(entry):
+                raise
 
 
 def create_private(path: Path) -> int:

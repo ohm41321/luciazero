@@ -25,6 +25,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { onPathOnly, runResolved, runCommand } = require("./winexec.js");
 const wiring = require("./settings-wiring.js");
 
 const WINDOWS = process.platform === "win32";
@@ -525,25 +526,24 @@ function readServiceFile(p) {
 }
 
 // Windows: the first Python of 3.10 or newer, tried in the launcher's order
-// (python3, python, py -3), as [command, ...arguments], or null. Only on
-// Windows, where python3 is often absent and python.exe may be the Microsoft
-// Store stand-in.
+// (python3, python, py -3) and found through PATH alone, as [file,
+// ...arguments], or null. Only on Windows, where python3 is often absent and
+// python.exe may be the Microsoft Store stand-in.
 function windowsPython() {
-  for (const candidate of [["python3"], ["python"], ["py", "-3"]]) {
-    const r = spawnSync(candidate[0], [...candidate.slice(1), "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+  for (const [name, ...pre] of [["python3.exe"], ["python.exe"], ["py.exe", "-3"]]) {
+    const file = onPathOnly(name);
+    if (file === null) continue;
+    const r = spawnSync(file, [...pre, "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
       { stdio: "ignore", windowsHide: true });
-    if (r.status === 0) return candidate;
+    if (r.status === 0) return [file, ...pre];
   }
   return null;
 }
 
-// Run `luciazero-agentd service uninstall` through the installed launcher.
-// Windows: Node refuses to start a .cmd without a shell, so cmd.exe runs it;
-// /s takes the outer quotes off what follows /c, keeping the path quoted.
+// Run `luciazero-agentd service uninstall` through the installed launcher;
+// on Windows that is a .cmd, which only cmd.exe can start.
 function launcherServiceUninstall(launcher) {
-  if (!WINDOWS) return spawnSync(launcher, ["service", "uninstall"], { stdio: "ignore" }).status === 0;
-  return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${launcher}" service uninstall"`],
-    { stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true }).status === 0;
+  return runResolved(launcher, ["service", "uninstall"], { stdio: "ignore", windowsHide: true }).status === 0;
 }
 
 function launcherKind(p) {
@@ -576,7 +576,7 @@ function nodeOk() {
 }
 
 function claudeVersionNote(indent) {
-  const r = spawnSync("claude", ["--version"], { encoding: "utf8", shell: WINDOWS, windowsHide: true });
+  const r = runCommand("claude", ["--version"], { encoding: "utf8", windowsHide: true });
   const first = r.status === 0 && typeof r.stdout === "string" ? r.stdout.split("\n")[0] : "";
   const m = /^([0-9]+\.[0-9]+\.[0-9]+)/.exec(first);
   if (!m) {

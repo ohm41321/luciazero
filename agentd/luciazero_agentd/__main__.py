@@ -50,7 +50,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
-from . import nudge, procinfo, proctree, service as service_mod, watch
+from . import adapters, nudge, procinfo, proctree, service as service_mod, watch
 from .dispatcher import DispatchError, Dispatcher
 from .server import BusServer, is_loopback_host
 from .redact import Redactor
@@ -1125,7 +1125,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     previous_windows = ((signal.signal(signal.SIGINT, signal.SIG_IGN), signal.signal(signal.SIGBREAK, _stop_run))
                         if proctree.WINDOWS else None)
     try:
-        return child.wait()
+        # In slices on Windows, where one wait is deaf to Ctrl+Break until
+        # the provider exits -- and a provider may handle Ctrl+Break itself.
+        return adapters.wait_for(child, None)
     except KeyboardInterrupt:
         if proctree.WINDOWS:
             # terminate() would end only the process started -- for an npm

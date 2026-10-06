@@ -69,7 +69,10 @@ done < <(skill_inventory)
 [ ! -e "${CX}/skills/luciazero-bootstrap" ] \
   || fail "codex uninstall left the retired compatibility alias"
 [ ! -d "${CX}/skills/reviewer" ] || fail "codex reviewer skill left behind"
-echo "${COUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
+# Output is matched from a here-string, never `echo | grep -q`: grep -q
+# leaves at the first match, and under pipefail an echo still writing a
+# long uninstall report into the closed pipe fails the check that passed.
+grep -q 'not the exact Luciazero-managed copy; left untouched' <<<"${COUT}" \
   || fail "codex uninstall did not explain preserved customizations"
 [ ! -f "${CX}/.luciazero-version" ] || fail "codex version sidecar left behind"
 grep -qxF '# pre-existing codex rules' "${CX}/AGENTS.md" || fail "pre-existing AGENTS.md content damaged"
@@ -168,7 +171,7 @@ ln -s "${SM}/outside" "${SM}/.luciazero-managed/skills"
 OUT="$(CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" 2>&1)" || true
 [ -f "${SM}/outside/done/keepme" ] \
   || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked snapshot parent"; }
-echo "${OUT}" | grep -q 'symlinked parent' \
+grep -q 'symlinked parent' <<<"${OUT}" \
   || { rm -rf "${SM}"; fail "uninstall did not report the symlinked snapshot parent: ${OUT}"; }
 rm -rf "${SM}"
 
@@ -220,7 +223,7 @@ for CASE in incomplete duplicate nested; do
   OUT="$(CODEX_HOME="${SM}" "${ROOT}/uninstall-codex.sh" 2>&1)" || true
   cmp -s "${SM}/AGENTS.md" "${SM}/AGENTS.md.expected" \
     || { rm -rf "${SM}"; fail "codex uninstall rewrote AGENTS.md with ${CASE} markers"; }
-  echo "${OUT}" | grep -q 'markers' \
+  grep -q 'markers' <<<"${OUT}" \
     || { rm -rf "${SM}"; fail "codex uninstall did not report the ${CASE} markers: ${OUT}"; }
   [ "$(stat -c '%a' "${SM}/AGENTS.md" 2>/dev/null || stat -f '%Lp' "${SM}/AGENTS.md")" = 640 ] \
     || { rm -rf "${SM}"; fail "a refused ${CASE} rewrite changed the AGENTS.md mode"; }
@@ -314,7 +317,7 @@ chmod 555 "${SM}"
 ERR="$(CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" 2>&1 >/dev/null)" \
   && { chmod 755 "${SM}"; rm -rf "${SM}" "${EXP}"; fail "uninstall reported success with a config dir it cannot write"; }
 chmod 755 "${SM}"
-echo "${ERR}" | grep -q 'CLAUDE.md' \
+grep -q 'CLAUDE.md' <<<"${ERR}" \
   || { rm -rf "${SM}" "${EXP}"; fail "the failure did not come from the CLAUDE.md rewrite: ${ERR}"; }
 cmp -s "${SM}/CLAUDE.md" "${EXP}/CLAUDE.md" \
   || { rm -rf "${SM}" "${EXP}"; fail "a failed rewrite changed CLAUDE.md"; }

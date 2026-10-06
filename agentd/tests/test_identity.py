@@ -895,8 +895,10 @@ class HumanCommands(unittest.TestCase):
                 child_pid = int(live[0]["pid"])
                 break
             time.sleep(0.05)
-        exited = "" if cli.poll() is None else f" (run exited {cli.returncode}: {cli.stderr.read()})"
-        self.assertIsNotNone(child_pid, "run never recorded its child" + exited)
+        if child_pid is None:
+            cli.kill()
+            _, err = cli.communicate(timeout=30)
+            self.fail(f"run never recorded its child (exit {cli.returncode}): {err}")
         cli.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
         cli.wait(timeout=30)
         bindings = self._bindings()

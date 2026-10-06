@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
-const { spawnSync } = require("node:child_process");
+const { runCommand } = require("./lib/winexec.js");
 
 const WINDOWS = process.platform === "win32";
 const START = "# luciazero:start global-npm-path";
@@ -16,7 +16,7 @@ const BODY = `${START}\nexport PATH="$HOME/.local/npm/bin:$PATH"\n${END}\n`;
 // the user moved it), and the Node.js installer already puts it on the user's
 // Path, so nothing here edits PATH there; a shell config file is a POSIX idea.
 function windowsLocations(env = process.env) {
-  const result = spawnSync("npm", ["prefix", "--global"], { encoding: "utf8", env, shell: true, windowsHide: true });
+  const result = runCommand("npm", ["prefix", "--global"], { encoding: "utf8", env, windowsHide: true });
   const prefix = result.status === 0 ? String(result.stdout).trim() : "";
   if (!prefix || !path.isAbsolute(prefix)) throw new Error("could not ask npm for its global prefix (npm prefix --global)");
   return { prefix, command: path.join(prefix, "luciazero.cmd"), rc: null };
@@ -86,10 +86,10 @@ function writeRc(file, text, mode) {
   }
 }
 
-// npm is npm.cmd on Windows, which only a shell can start; every argument
+// npm is npm.cmd on Windows, which only cmd.exe can start; every argument
 // here is one of this file's own literals, never anything a caller typed.
 function npm(args, env = process.env) {
-  const result = spawnSync("npm", args, { stdio: "inherit", env, shell: WINDOWS, windowsHide: true });
+  const result = runCommand("npm", args, { stdio: "inherit", env, windowsHide: true });
   if (result.error) throw new Error(`could not run npm: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`npm exited ${result.status === null ? "without a status" : result.status}`);
 }

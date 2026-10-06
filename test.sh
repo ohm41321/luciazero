@@ -226,7 +226,6 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          skills/ready/scripts/detect.sh
          skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
-         claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh
          eval/run.sh eval/report.sh eval/check-result.sh)
 # every task grader, auto-discovered — a new task cannot skip the lint net
 for G in "${ROOT}"/eval/tasks/*/grade.sh; do SCRIPTS+=("${G#"${ROOT}"/}"); done

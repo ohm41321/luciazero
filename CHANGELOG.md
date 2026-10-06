@@ -41,12 +41,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Installer backups reserve their name instead of testing it (roadmap R24).
   All four installers share one `bakcopy` helper that takes
   `<file>.bak.<timestamp>[.n]` with a call that fails when anything is at the
-  name and never follows it: `mkdir` for a directory, and the POSIX `link`
-  utility from a private file for anything else (a symlink takes its name that
-  way and then becomes the link). A symlink planted after the name was chosen
-  can no longer receive the user's file, and a directory at the name is
-  skipped rather than written into. Backups now need hard links in the
-  directory that holds them.
+  name and neither follows nor enters it: `mkdir` for a directory, the POSIX
+  `link` utility for a file, and for a symlink GNU `ln -sT`, `perl` or `node`,
+  whichever is shown on a scratch directory to make the link at exactly its
+  name. A file is staged in a private directory and a tree is copied into the
+  directory `mkdir` made, each written only after checking it is still that
+  directory. A symlink planted after the name was chosen can no longer receive
+  the user's file, a directory at the name is skipped rather than written
+  into, and one swapped in after the name was taken is left with its contents.
+  Backups now need hard links in the directory that holds them, and backing up
+  a symlinked skill or doctrine needs one of those three tools; without one
+  the install stops before it removes the symlink.
 - `install.sh --with-hooks` checks `settings.json` before it copies any hook
   file (roadmap R14). Invalid JSON, a shape the hooks cannot live in, or a file
   that is not writable fails the install with no hook file in place and

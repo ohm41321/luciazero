@@ -104,11 +104,11 @@ no_leftovers "a green discipline run"
 # hook: a prompt inside an open turn must not reset the turn (4c5). The
 # literal is the hook's own line, expansions and all.
 # shellcheck disable=SC2016
-mutate claude/hooks/luciazero-verify.sh \
-  '    [ -f "${TELEMETRY}/turn_open" ] && exit 0
+mutate claude/hooks/luciazero-verify.cjs \
+  '      if (isFile(path.join(telemetry, "turn_open"))) return 0;
 ' ''
 expect_red "hook mutation" "FAIL: a prompt inside an open turn reset turn_start_ms"
-restore claude/hooks/luciazero-verify.sh
+restore claude/hooks/luciazero-verify.cjs
 # report: the schema-3 aggregate must be summed, not dropped (4c5b)
 mutate bin/discipline-report.js \
   'telemetry.redundant_green_count += row.telemetry.redundant_green_count;' \

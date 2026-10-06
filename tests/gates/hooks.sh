@@ -10,45 +10,45 @@ set -euo pipefail
 # 4c. enforcement-pack hook state machine (isolated TMPDIR; fails open by design)
 mktmp HT
 HJ='{"cwd":"/hook/test/proj"}'
-echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}"; fail "stop hook did not nudge on unverified edits (rc=${RC})"; }
-RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop nudge is not one-shot (rc=${RC})"; }
 echo '{"cwd":"/hook/test/proj","tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}}' \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-echo '{"cwd":"/hook/test/proj"}' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+echo '{"cwd":"/hook/test/proj"}' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 echo '{"cwd":"/hook/test/proj","tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}}' \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop hook nudged despite verify after edit (rc=${RC})"; }
 # edit immediately after a verify (same wall-clock second): must still nudge —
 # regression for bash 3.2's whole-second [ -nt ] missing sub-second ordering
-echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}"; fail "stop hook missed an edit made right after verify (rc=${RC})"; }
 # a documentation write after a green verify must NOT re-arm the nudge —
 # Closeout docs and relay artifacts written after final verify must not re-arm
 echo '{"cwd":"/hook/test/proj","tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}}' \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
 echo '{"cwd":"/hook/test/proj","tool_input":{"file_path":"/hook/test/proj/LUCIA_RELAY.json"}}' \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop hook nudged on a docs-only write after green verify (rc=${RC})"; }
 SL="$(echo '{"model":{"display_name":"M"},"workspace":{"current_dir":"/hook/test/proj"}}' \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-statusline.sh")"
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
 printf '%s' "${SL}" | grep -q '✅ verify' || { rm -rf "${HT}"; fail "statusline missed green verify state: ${SL}"; }
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'
-echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 echo '{"cwd":"/hook/test/exact","tool_input":{"command":"cat test.sh"},"tool_response":{"exit_code":0}}' \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='./test.sh' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='./test.sh' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}"; fail "exact-match mode counted 'cat test.sh' as a verify run (rc=${RC})"; }
 echo '{"cwd":"/hook/test/exact","tool_input":{"command":"./test.sh -q"},"tool_response":{"exit_code":0}}' \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='./test.sh' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='./test.sh' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "exact-match mode missed the real verify command (rc=${RC})"; }
 echo "ok  enforcement-pack hook state machine"
 
@@ -62,12 +62,12 @@ cat > "${PEJ_DIR}/.claude/settings.json" <<'JSON'
 {"env": {"LUCIAZERO_VERIFY_REGEX": ".", "LUCIAZERO_STRICT_VERIFY_CMD": "touch strict-ran"}}
 JSON
 PEJ="$(printf '{"cwd":"%s"}' "${PEJ_DIR}")"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
 RC=0; PERR="$(echo "${PEJ}" | TMPDIR="${HT}" \
   LUCIAZERO_VERIFY_REGEX='.' LUCIAZERO_STRICT_VERIFY_CMD="touch ${PEJ_DIR}/strict-ran" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1)" || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1)" || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped verify regex still counted 'echo hello' as a verify run (rc=${RC})"; }
 if printf '%s' "${PERR}" | grep -q 'Strict verify gate'; then
@@ -76,7 +76,7 @@ fi
 if [ -e "${PEJ_DIR}/strict-ran" ]; then
   rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command was executed at stop"
 fi
-SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_VERIFY_REGEX' \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart did not warn about the committed LUCIAZERO_* env block"; }
 # the lookup runs on every Bash call, so a repository must not be able to hang
@@ -86,7 +86,7 @@ rm -f "${PEJ_DIR}/.claude/settings.json"
 # suite forever instead of failing it, so skip rather than risk that
 if command -v timeout >/dev/null 2>&1; then
   mkfifo "${PEJ_DIR}/.claude/settings.json"
-  RC=0; timeout 10 env TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session \
+  RC=0; timeout 10 env TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session \
     <<< "${PEJ}" >/dev/null 2>&1 || RC=$?
   [ "${RC}" != 124 ] || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a fifo .claude/settings.json hung the hook"; }
   rm -f "${PEJ_DIR}/.claude/settings.json"
@@ -99,24 +99,24 @@ python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_1
 # to $HOME/.claude — point HOME somewhere empty instead of the developer's own
 # install, whose wired classic hook would make this copy stand down
 SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" HOME="${PEJ_DIR}/no-home" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
 # LUCIAZERO_VERIFY_CMD normally tightens matching, but from committed scope it
 # is a false-green lever: point it at `echo` and `echo hello` counts as a verify
 echo '{"env": {"LUCIAZERO_VERIFY_CMD": "echo"}}' > "${PEJ_DIR}/.claude/settings.json"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='echo' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='echo' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_VERIFY_CMD made 'echo hello' a verify run (rc=${RC})"; }
 # LUCIAZERO_DOC_REGEX='.*' would mark every edit as documentation, so nothing is
 # ever unverified and the stop hook never nudges again
 echo '{"env": {"LUCIAZERO_DOC_REGEX": ".*"}}' > "${PEJ_DIR}/.claude/settings.json"
 printf '{"cwd":"%s","tool_input":{"file_path":"%s/app.py"}}\n' "${PEJ_DIR}" "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_DOC_REGEX='.*' "${ROOT}/claude/hooks/luciazero-verify.sh" edit
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_DOC_REGEX='.*' "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped LUCIAZERO_DOC_REGEX hid a code edit from the stop hook (rc=${RC})"; }
 # Claude Code merges project settings from the repository ROOT, and a session's
@@ -125,20 +125,20 @@ SUB="${PEJ_DIR}/packages/api"
 mkdir -p "${SUB}"
 echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.json"
 SUBJ="$(printf '{"cwd":"%s"}' "${SUB}")"
-echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${SUB}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${SUBJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "a root .claude/settings.json was bypassed from a subdirectory (rc=${RC})"; }
 rm -rf "${PEJ_DIR}/packages"
 # personal scope is untouched: same repo, keys only in settings.local.json
 rm -f "${PEJ_DIR}/.claude/settings.json"
 echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${PEJ_DIR}/.claude/settings.local.json"
-echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "${PEJ_DIR}" \
-  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='.' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "personal settings.local.json regex override was refused too (rc=${RC})"; }
 # channel dedupe is decided by the running copy's own path, never by
@@ -146,53 +146,78 @@ RC=0; echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" 
 # hook "plugin" so it stood itself down, disabling enforcement entirely
 mktmp CHD
 mkdir -p "${CHD}/cfg/hooks" "${CHD}/proj"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/cfg/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/cfg/hooks/luciazero-verify.sh"
-printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${CHD}/cfg/hooks/luciazero-verify.cjs"
+chmod +x "${CHD}/cfg/hooks/luciazero-verify.cjs"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/cfg/hooks/luciazero-verify.cjs stop"}]}]}}\n' \
   "${CHD}" > "${CHD}/cfg/settings.json"
 CHJ="$(printf '{"cwd":"%s/proj"}' "${CHD}")"
 # the classic copy must enforce even when a repo hands it the plugin label
 echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
-  "${CHD}/cfg/hooks/luciazero-verify.sh" edit
+  "${CHD}/cfg/hooks/luciazero-verify.cjs" edit
 RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CHANNEL=plugin \
-  "${CHD}/cfg/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  "${CHD}/cfg/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "LUCIAZERO_CHANNEL=plugin made the classic hook stand itself down (rc=${RC})"; }
-# a copy running from anywhere else still stands down when classic is wired
+# a copy running from anywhere else still stands down when classic is wired;
+# the classic stop above fired the one-shot nudge, which alone would make this
+# stop exit 0, so re-arm it first
+rm -f "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
 RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a non-classic copy did not stand down beside a wired classic install (rc=${RC})"; }
 # a repository that points CLAUDE_CONFIG_DIR at its own "wired classic install"
 # must not make every copy stand down — the refusal drops that key first
 mkdir -p "${CHD}/evil-cfg/hooks" "${CHD}/repo/.claude" "${CHD}/home"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/evil-cfg/hooks/luciazero-verify.sh"
-printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/evil-cfg/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${CHD}/evil-cfg/hooks/luciazero-verify.cjs"
+chmod +x "${CHD}/evil-cfg/hooks/luciazero-verify.cjs"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/evil-cfg/hooks/luciazero-verify.cjs stop"}]}]}}\n' \
   "${CHD}" > "${CHD}/evil-cfg/settings.json"
 printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/evil-cfg"}}\n' "${CHD}" > "${CHD}/repo/.claude/settings.json"
 EVJ="$(printf '{"cwd":"%s/repo"}' "${CHD}")"
 echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; echo "${EVJ}" | TMPDIR="${HT}" HOME="${CHD}/home" CLAUDE_CONFIG_DIR="${CHD}/evil-cfg" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a committed CLAUDE_CONFIG_DIR made the hook stand down (rc=${RC})"; }
 # the nastier shape of the same trick: CLAUDE_CONFIG_DIR points at the
 # repository's OWN .claude, so a scanner that skips "the config directory"
 # skips the very file declaring the key, and the classic install is in-repo
 mkdir -p "${CHD}/self/.claude/hooks" "${CHD}/self-home"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${CHD}/self/.claude/hooks/luciazero-verify.sh"
-chmod +x "${CHD}/self/.claude/hooks/luciazero-verify.sh"
-printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/self/.claude"}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/self/.claude/hooks/luciazero-verify.sh stop"}]}]}}\n' \
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${CHD}/self/.claude/hooks/luciazero-verify.cjs"
+chmod +x "${CHD}/self/.claude/hooks/luciazero-verify.cjs"
+printf '{"env": {"CLAUDE_CONFIG_DIR": "%s/self/.claude"}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/self/.claude/hooks/luciazero-verify.cjs stop"}]}]}}\n' \
   "${CHD}" "${CHD}" > "${CHD}/self/.claude/settings.json"
 SELFJ="$(printf '{"cwd":"%s/self"}' "${CHD}")"
 echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; echo "${SELFJ}" | TMPDIR="${HT}" HOME="${CHD}/self-home" CLAUDE_CONFIG_DIR="${CHD}/self/.claude" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "CLAUDE_CONFIG_DIR pointed at the repo's own .claude disabled the hook (rc=${RC})"; }
+# a classic install from before the Node port is wired to luciazero-verify.sh;
+# it still enforces, so this copy must stand down beside it -- but only when it
+# can run (executable) and is actually wired
+mkdir -p "${CHD}/legacy/hooks" "${CHD}/legacy-proj" "${CHD}/none"
+printf '#!/bin/sh\nexit 0\n' > "${CHD}/legacy/hooks/luciazero-verify.sh"
+LGJ="$(printf '{"cwd":"%s/legacy-proj"}' "${CHD}")"
+echo "${LGJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/none" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+legacy_rc() { # legacy_rc <settings.json body>: stop exit code beside a legacy install
+  printf '%s\n' "$1" > "${CHD}/legacy/settings.json"
+  LG_RC=0; echo "${LGJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/legacy" \
+    "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || LG_RC=$?
+  rm -f "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
+}
+LGW="$(printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/legacy/hooks/luciazero-verify.sh stop"}]}]}}' "${CHD}")"
+chmod -x "${CHD}/legacy/hooks/luciazero-verify.sh"
+legacy_rc "${LGW}"
+[ "${LG_RC}" = 2 ] || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "a legacy hook that cannot run made this copy stand down (rc=${LG_RC})"; }
+chmod +x "${CHD}/legacy/hooks/luciazero-verify.sh"
+legacy_rc '{"hooks":{}}'
+[ "${LG_RC}" = 2 ] || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "an unwired legacy hook made this copy stand down (rc=${LG_RC})"; }
+legacy_rc "${LGW}"
+[ "${LG_RC}" = 0 ] || { rm -rf "${HT}" "${PEJ_DIR}" "${CHD}"; fail "this copy did not stand down beside a wired legacy luciazero-verify.sh (rc=${LG_RC})"; }
 rm -rf "${CHD}"
 rm -rf "${PEJ_DIR}"
 echo "ok  committed settings cannot reconfigure the hook"
@@ -207,12 +232,12 @@ echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/home/.claude/settings.j
 echo '{"env": {"LUCIAZERO_VERIFY_REGEX": "."}}' > "${GS}/outer/.claude/settings.json"
 scope_keeps_regex() { # scope_keeps_regex <failure message> <home> <cwd>
   SK_J="$(printf '{"cwd":"%s"}' "$3")"
-  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
   printf '{"cwd":"%s","tool_input":{"command":"echo hello"},"tool_response":{"exit_code":0}}\n' "$3" \
     | TMPDIR="${HT}" HOME="$2" LUCIAZERO_VERIFY_REGEX='.' \
-      "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+      "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
   SK_RC=0
-  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.sh" stop \
+  echo "${SK_J}" | TMPDIR="${HT}" HOME="$2" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop \
     >/dev/null 2>&1 || SK_RC=$?
   [ "${SK_RC}" = 0 ] || { rm -rf "${HT}" "${GS}"; fail "$1 (rc=${SK_RC})"; }
 }
@@ -225,7 +250,7 @@ echo "ok  refusal stays inside project scope"
 
 # 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
 # raises on a bare md5() call and the tracker would fail open, doing nothing.
-for HFILE in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
+for HFILE in claude/hooks/luciazero-verify.cjs claude/hooks/luciazero-statusline.cjs test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
   if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
     fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
   fi
@@ -236,51 +261,51 @@ echo "ok  md5 state keys are FIPS-safe"
 # the failure, fast-paths on green state, and degrades to the nudge on timeout
 mktmp SPJ
 SJ="$(printf '{"cwd":"%s"}' "${SPJ}")"
-echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom; exit 1' \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1 >/dev/null)" || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not block a red verify (rc=${RC})"; }
 echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate blocked without its message: ${ERR}"; }
 echo "${ERR}" | grep -q 'boom' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not quote the failing output: ${ERR}"; }
 RC=0; printf '{"cwd":"%s","stop_hook_active":true}' "${SPJ}" \
-  | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='exit 1' "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='exit 1' "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate re-blocked its own continuation (rc=${RC})"; }
 STRICT_GREEN="echo run >> ${SPJ}/runs"
 RC=0; echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD="${STRICT_GREEN}" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate blocked a green verify (rc=${RC})"; }
 # state is green from THAT command: the same command must fast-path (not re-run)
 RC=0; echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD="${STRICT_GREEN}" \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate blocked despite green state (rc=${RC})"; }
 [ "$(wc -l < "${SPJ}/runs" | tr -d ' ')" = 1 ] \
   || { rm -rf "${HT}" "${SPJ}"; fail "strict gate re-ran the command despite its own green state"; }
 # fail-open: a hanging verify degrades to the ordinary one-shot nudge, not a block
-echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='sleep 3' LUCIAZERO_STRICT_TIMEOUT=1 \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1 >/dev/null)" || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout did not degrade to the nudge (rc=${RC})"; }
 echo "${ERR}" | grep -q 'Doctrine rule 1' || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout produced the wrong message: ${ERR}"; }
 # fail-open: command not found (shell 127) is an internal error, not a red
 # verify — must degrade to the nudge, never fabricate "RED" evidence
-echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='./no-such-cmd-xyz.sh' \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1 >/dev/null)" || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command did not degrade to the nudge (rc=${RC})"; }
 echo "${ERR}" | grep -q 'Doctrine rule 1' || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command message wrong: ${ERR}"; }
 ! echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command fabricated a RED verdict: ${ERR}"; }
 # a broad-regex false green (`cat test.sh` exits 0) must NOT disarm the gate:
 # the fast path only trusts a green the strict command itself produced
-echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"cat test.sh"},"tool_response":{"exit_code":0}}' "${SPJ}" \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo poisoned; exit 1' \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>&1 >/dev/null)" || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "broad-regex green disarmed the strict gate (rc=${RC})"; }
 echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not run past the poisoned green: ${ERR}"; }
 # unparseable stdin: the strict gate must not run a command on guessed state
 RC=0; printf 'not json' | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom; exit 1' \
-  "${ROOT}/claude/hooks/luciazero-verify.sh" stop >/dev/null 2>&1 || RC=$?
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate ran on unparseable stdin (rc=${RC})"; }
 rm -rf "${SPJ}"
 echo "ok  strict verify gate"
@@ -288,19 +313,19 @@ echo "ok  strict verify gate"
 # 4c3. session subcommand: silent without a relay, points at one when
 # present, stale wording past the threshold, fails open on garbage stdin
 mktmp SD
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 [ -z "${OUT}" ] || { rm -rf "${HT}" "${SD}"; fail "session hook spoke without a relay: ${OUT}"; }
 echo '{}' > "${SD}/LUCIA_RELAY.json"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 echo "${OUT}" | grep -q 'LUCIA_RELAY.json exists' || { rm -rf "${HT}" "${SD}"; fail "session hook missed the relay: ${OUT}"; }
 touch -t 202001010000 "${SD}/LUCIA_RELAY.json"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 echo "${OUT}" | grep -q 'stale' || { rm -rf "${HT}" "${SD}"; fail "session hook missed staleness: ${OUT}"; }
 rm -f "${SD}/LUCIA_RELAY.json"
 echo legacy > "${SD}/HANDOFF.md"
-OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session)"
+OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
 echo "${OUT}" | grep -q 'Legacy HANDOFF.md' || { rm -rf "${HT}" "${SD}"; fail "session hook missed legacy migration: ${OUT}"; }
-RC=0; printf 'not json' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.sh" session >/dev/null 2>&1 || RC=$?
+RC=0; printf 'not json' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SD}"; fail "session hook not fail-open on garbage stdin (rc=${RC})"; }
 rm -rf "${HT}" "${SD}"
 echo "ok  session relay pointer"
@@ -309,7 +334,7 @@ echo "ok  session relay pointer"
 # the learning-layer files survive uninstall
 mktmp SC
 mktmp STMP
-SHK="${ROOT}/claude/hooks/luciazero-verify.sh"
+SHK="${ROOT}/claude/hooks/luciazero-verify.cjs"
 SPJ1="${STMP}/proj"; SPJ2="${STMP}/boom"; SPJ3="${STMP}/third"; SPJ4="${STMP}/timed"
 mkdir -p "${SPJ1}" "${SPJ2}" "${SPJ3}" "${SPJ4}"
 # clean stop (no edits) -> stop-clean
@@ -498,10 +523,30 @@ printf '{"cwd":"%s","session_id":"evil"}' "${SPJ4}" \
   | env TMPDIR="${EVILTMP}" CLAUDE_CONFIG_DIR="${SC}" "${SHK}" prompt
 grep -qx sentinel "${EVILTARGET}/keep" || fail "hook followed hostile state symlink"
 ESL="$(printf '{"workspace":{"current_dir":"%s"}}' "${SPJ4}" \
-  | env TMPDIR="${EVILTMP}" "${ROOT}/claude/hooks/luciazero-statusline.sh")"
+  | env TMPDIR="${EVILTMP}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
 printf '%s' "${ESL}" | grep -q 'no verify yet' \
   || fail "statusline trusted forged state through hostile symlink: ${ESL}"
 rm -rf "${EVILTMP}" "${EVILTARGET}"
+# a config directory may sit inside a project whose package.json declares ES
+# modules; copied there, both programs must still run as CommonJS
+mktmp ESM; mktmp ESMT
+mkdir -p "${ESM}/proj/.claude/hooks"
+echo '{"type": "module"}' > "${ESM}/proj/package.json"
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${ROOT}/claude/hooks/luciazero-statusline.cjs" \
+  "${ESM}/proj/.claude/hooks/"
+ESMJ="$(printf '{"cwd":"%s/proj"}' "${ESM}")"
+RC=0; echo "${ESMJ}" | TMPDIR="${ESMT}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
+  node "${ESM}/proj/.claude/hooks/luciazero-verify.cjs" edit || RC=$?
+[ "${RC}" = 0 ] || { rm -rf "${ESM}" "${ESMT}"; fail "the hook did not run inside a type=module project (rc=${RC})"; }
+ESL="$(printf '{"workspace":{"current_dir":"%s/proj"}}' "${ESM}" \
+  | TMPDIR="${ESMT}" node "${ESM}/proj/.claude/hooks/luciazero-statusline.cjs" 2>&1)" \
+  || { rm -rf "${ESM}" "${ESMT}"; fail "the statusline did not run inside a type=module project: ${ESL}"; }
+printf '%s' "${ESL}" | grep -q 'unverified' \
+  || { rm -rf "${ESM}" "${ESMT}"; fail "inside a type=module project the statusline missed the tracked edit: ${ESL}"; }
+RC=0; echo "${ESMJ}" | TMPDIR="${ESMT}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
+  node "${ESM}/proj/.claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
+[ "${RC}" = 2 ] || { rm -rf "${ESM}" "${ESMT}"; fail "inside a type=module project the stop hook did not nudge (rc=${RC})"; }
+rm -rf "${ESM}" "${ESMT}"
 # rotation: >500 lines shrinks to <=301 on the next event
 python3 -c 'import sys; open(sys.argv[1], "w").write("2026-01-01T00:00 stop-clean x\n" * 600)' "${SC}/luciazero-stats.log"
 printf '{"cwd": "%s"}' "${SPJ3}" \
@@ -601,11 +646,11 @@ fi
 mktmp VD
 verify_counts() { # verify_counts <command> <want rc: 0 counted, 2 not> <label>
   local CJ='{"cwd":"/hook/test/detect"}'
-  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
   printf '{"cwd":"/hook/test/detect","tool_input":{"command":%s}}\n' "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
-    | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" bash
+    | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
   local RC=0
-  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
   [ "${RC}" = "$2" ] || fail "$3 (stop rc=${RC}, want $2): $1"
 }
 verify_counts 'cd agentd && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_nudge' 0 "python3 -m unittest was not read as a verify run"
@@ -617,10 +662,10 @@ verify_counts 'scripts/test-timings.sh --report' 2 "the collector's --report, wh
 verify_counts 'scripts/test-timings.sh --report | head -20' 2 "the collector's --report in a pipeline was read as a verify run"
 # a regex of one's own keeps its own meaning, carve-out included
 CJ='{"cwd":"/hook/test/detect"}'
-echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 echo '{"cwd":"/hook/test/detect","tool_input":{"command":"scripts/test-timings.sh --report"}}' \
-  | TMPDIR="${VD}" LUCIAZERO_VERIFY_REGEX='test-timings' "${ROOT}/claude/hooks/luciazero-verify.sh" bash
-RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.sh" stop 2>/dev/null || RC=$?
+  | TMPDIR="${VD}" LUCIAZERO_VERIFY_REGEX='test-timings' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || fail "the --report carve-out leaked into a regex the user set (stop rc=${RC})"
 echo "ok  default verify detection covers unittest and the timing collector, not its --report"
 
@@ -632,9 +677,9 @@ mktmp ED
 EDJ='{"cwd":"/hook/test/diag"'
 ED_STATE="${ED}/luciazero-verify-state-$(id -u)/$(python3 -c 'import hashlib,sys; print(hashlib.md5(sys.argv[1].encode(), usedforsecurity=False).hexdigest()[:12])' /hook/test/diag)"
 echo "${EDJ},\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/hook/test/diag/a.py\"}}" \
-  | TMPDIR="${ED}" "${ROOT}/claude/hooks/luciazero-verify.sh" edit
+  | TMPDIR="${ED}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 [ ! -e "${ED_STATE}/edit-diag.log" ] || fail "the edit diagnostic wrote a log without being asked"
-diag_edit() { printf '%s\n' "$1" | TMPDIR="${ED}" LUCIAZERO_EDIT_DIAG=1 "${ROOT}/claude/hooks/luciazero-verify.sh" edit; }
+diag_edit() { printf '%s\n' "$1" | TMPDIR="${ED}" LUCIAZERO_EDIT_DIAG=1 "${ROOT}/claude/hooks/luciazero-verify.cjs" edit; }
 diag_edit "${EDJ},\"tool_name\":\"Write\"}"
 diag_edit "${EDJ},\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"\"}}"
 diag_edit "${EDJ},\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/hook/test/diag/src/a.py\"}}"

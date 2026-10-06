@@ -671,22 +671,37 @@ same directory, or onto the same Python reservation, and a test that plants
 the symlink after the name is chosen rather than before.
 
 Fixed 2026-10-06. `bakpath` is replaced in all four installers by one
-`bakcopy` helper that reserves `<file>.bak.<timestamp>[.n]` by creating it:
-`mkdir` for a tree, and `link` (link(2)) from a private `mktemp` file beside
-it for a file or a symlink. A symlink's empty placeholder is then replaced by
-`ln -sfn`. None of them follows a name it finds taken. Rejected: `set -C`,
-because Bash still opens an existing non-regular target such as a FIFO; and
-`ln -n` / `ln -sn`, which refuse a symlink at the name but link *inside* a
-real directory found there (GNU `-T` would fix that, but BSD `ln` lacks it).
-`link` itself follows a symlink source on macOS, which is why a symlink is not
-hard-linked directly. Residual: between the placeholder and `ln -sfn`, and
-between `mkdir` and the tree copy, a writer that can already replace entries
-in the backup directory could swap the reserved name. `tests/gates/install.sh`
-5c6 plants the symlinks from a `cp` shim after the name was chosen; 5c7 puts a
-real directory at the first name for a file, a symlink and a tree; and a check
-keeps the four helpers identical. Requires the `link` utility (macOS, GNU
+`bakcopy` helper that takes `<file>.bak.<timestamp>[.n]` with a call that
+fails when anything is at the name and neither follows nor enters what it
+finds: `mkdir` for a tree, `link` (link(2)) for a file, and for a symlink a
+tool that makes the link at exactly the name it is given, chosen by trying
+GNU `ln -sT`, `perl` and `node` on a scratch directory first. Everything
+else is written relative to a directory the helper made and entered after
+checking it is still that directory (owned by the user, empty, reached
+without a symlink): a file is staged in a private `mktemp -d` beside the
+backup and hard-linked out of it, and a tree is copied into the directory
+`mkdir` made. A first version reserved a symlink's name as an empty file
+that `ln -sfn` then replaced; a review reproduced the hole: a directory
+swapped in at that name had a child of the link's name deleted, which no
+check after the fact can undo. Rejected: `set -C`, because Bash still opens
+an existing non-regular target such as a FIFO; `ln -n` / `ln -sn`, which
+refuse a symlink at the name but link *inside* a real directory found there
+(BSD `ln` has no `-T`); hard-linking a symlink, which follows it on macOS;
+and any new check before `ln`, which leaves the same window.
+`tests/gates/install.sh` 5c6 plants symlinks from a `cp` shim after the name
+was chosen; 5c7 puts a real directory at the first name for a file, a
+symlink and a tree; 5c8 swaps each name after it is taken, through shims of
+the tool that took it, and checks the planted bytes and the source are
+untouched (red against the first version for all three kinds); 5c9 removes
+every exact symlink tool and checks the install stops with the symlinked
+skill and the directory behind it intact, then backs it up once the tools
+are back; and a check keeps the four helpers identical. Residual: backing up
+a symlink needs GNU `ln`, `perl` or `node` — without one the installer stops
+before it removes anything — and a same-user process can still swap names,
+which no file-system call can stop. Requires the `link` utility (macOS, GNU
 coreutils) and hard links on the backup's filesystem; BusyBox `link` was not
-confirmed. Executed on macOS (BSD tools) only; Linux and WSL not yet run.
+confirmed. Executed on macOS (BSD tools, Bash 5 and 3.2) only; Linux and WSL
+not yet run.
 
 ## Delivery sequence
 

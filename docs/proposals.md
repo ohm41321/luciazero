@@ -210,7 +210,7 @@ Actionable Recommendation:
 ##### Concept
 In large monorepos, running the full project test suite on every intermediate edit is too slow. `LUCIAZERO_SMART_VERIFY` inspects git diffs to run targeted test suites during intermediate iterations while reserving full verification for `/done`.
 
-##### Implementation Mechanism (`claude/hooks/luciazero-verify.sh`)
+##### Implementation Mechanism (`claude/hooks/luciazero-verify.cjs`)
 ```bash
 # Optional environment flag: LUCIAZERO_SMART_VERIFY=1
 # When set, map modified paths to sub-package test suites:
@@ -231,4 +231,4 @@ In large monorepos, running the full project test suite on every intermediate ed
 | `security-reviewer` | Subagent | `claude/agents/security-reviewer.md` | `/done` skeptic pass |
 | `contract-reviewer` | Subagent | `claude/agents/contract-reviewer.md` | `/done` skeptic pass |
 | `/discipline-report` | Feature | `claude/hooks/luciazero-discipline-report.py` | Analytics & `/retro` |
-| `LUCIAZERO_SMART_VERIFY` | Feature | `claude/hooks/luciazero-verify.sh` | Monorepo fast-path hook |
+| `LUCIAZERO_SMART_VERIFY` | Feature | `claude/hooks/luciazero-verify.cjs` | Monorepo fast-path hook |

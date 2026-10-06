@@ -361,11 +361,12 @@ cat > "${SB3}/settings.json" <<'JSON'
 }
 JSON
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null
-[ -x "${SB3}/hooks/luciazero-verify.sh" ] || { rm -rf "${SB3}"; fail "verify hook not installed by --with-hooks"; }
-[ -x "${SB3}/hooks/luciazero-statusline.sh" ] || { rm -rf "${SB3}"; fail "statusline script not installed by --with-hooks"; }
-python3 - "${SB3}/settings.json" <<'PY' || { rm -rf "${SB3}"; fail "settings.json wiring wrong after --with-hooks"; }
+[ -f "${SB3}/hooks/luciazero-verify.cjs" ] || { rm -rf "${SB3}"; fail "verify hook not installed by --with-hooks"; }
+[ -f "${SB3}/hooks/luciazero-statusline.cjs" ] || { rm -rf "${SB3}"; fail "statusline script not installed by --with-hooks"; }
+python3 - "${SB3}/settings.json" "${SB3}/hooks/luciazero-verify.cjs" <<'PY' || { rm -rf "${SB3}"; fail "settings.json wiring wrong after --with-hooks"; }
 import json, sys
 s = json.load(open(sys.argv[1]))
+verify = sys.argv[2]
 assert s["permissions"]["allow"] == ["Bash(ls:*)"], "user permissions lost"
 assert s["statusLine"]["command"] == "/my/custom.sh", "custom statusLine clobbered"
 assert s["env"] == {"SENTINEL": "1"} and s["model"] == "opusplan", "sentinel keys lost"
@@ -376,37 +377,49 @@ assert len(s["hooks"]["SessionStart"]) == 1, "session hook not wired"
 assert len(s["hooks"]["UserPromptSubmit"]) == 1, "prompt timing hook not wired"
 assert len(s["hooks"]["UserPromptExpansion"]) == 1, "slash-skill hook not wired"
 assert len(s["hooks"]["PreToolUse"]) == 2, "bash timing hook or user's hook missing"
+# exec form: no shell between Claude Code and the hook, on any platform; the
+# shell-command hooks also match PowerShell, the shell tool on Windows
+ours = {}
+for event, entries in s["hooks"].items():
+    for e in entries:
+        for h in e["hooks"]:
+            if h.get("args", [None])[0] == verify:
+                assert h["command"] == "node" and len(h["args"]) == 2, "not exec form: " + repr(h)
+                ours[h["args"][1]] = (event, e.get("matcher"))
+assert sorted(ours) == sorted("prompt skill-prompt bash-start edit bash bash-failure skill stop session".split()), ours
+for sub in ("bash-start", "bash", "bash-failure"):
+    assert ours[sub][1] == "Bash|PowerShell", sub + " matcher " + repr(ours[sub][1])
 PY
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status >/dev/null \
   || { rm -rf "${SB3}"; fail "--status red on a complete --with-hooks install"; }
-# the hooks pass hashlib's usedforsecurity= (python 3.9+); installing them
-# against an older or broken python3 must fail loudly, not leave hooks that
-# fail open silently
-OLDPY="$(mktemp -d)"; mkdir -p "${OLDPY}/bin" "${OLDPY}/cfg"
-printf '#!/bin/sh\nexit 1\n' > "${OLDPY}/bin/python3"; chmod +x "${OLDPY}/bin/python3"
-RC=0; OUT_OLDPY="$(PATH="${OLDPY}/bin:${PATH}" CLAUDE_CONFIG_DIR="${OLDPY}/cfg" \
+# the hooks, the status line and the wiring all run on Node 18+; installing
+# against an older or broken node must fail loudly, before anything is copied
+OLDNODE="$(mktemp -d)"; mkdir -p "${OLDNODE}/bin" "${OLDNODE}/cfg"
+printf '#!/bin/sh\nexit 1\n' > "${OLDNODE}/bin/node"; chmod +x "${OLDNODE}/bin/node"
+RC=0; OUT_OLDNODE="$(PATH="${OLDNODE}/bin:${PATH}" CLAUDE_CONFIG_DIR="${OLDNODE}/cfg" \
   "${ROOT}/install.sh" --with-hooks 2>&1)" || RC=$?
 [ "${RC}" != 0 ] \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks installed against a python3 that cannot run the hooks"; }
-printf '%s' "${OUT_OLDPY}" | grep -q 'python3 >= 3.9' \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks did not name the python3 requirement: ${OUT_OLDPY}"; }
-[ ! -e "${OLDPY}/cfg/hooks/luciazero-verify.sh" ] \
-  || { rm -rf "${SB3}" "${OLDPY}"; fail "--with-hooks left hook files behind after refusing to install"; }
-rm -rf "${OLDPY}"
+  || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks installed against a node that cannot run the hooks"; }
+printf '%s' "${OUT_OLDNODE}" | grep -q 'Node 18+' \
+  || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks did not name the Node requirement: ${OUT_OLDNODE}"; }
+[ ! -e "${OLDNODE}/cfg/hooks/luciazero-verify.cjs" ] \
+  || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks left hook files behind after refusing to install"; }
+rm -rf "${OLDNODE}"
 cp "${SB3}/settings.json" "${SB3}/settings.snap"
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null
 cmp -s "${SB3}/settings.json" "${SB3}/settings.snap" \
   || { rm -rf "${SB3}"; fail "--with-hooks reinstall changed settings.json (not idempotent)"; }
 # --status must catch a stale hook file (the `git pull && ./install.sh`
 # without --with-hooks failure mode: sidecar fresh, hook file old)
-echo '# stale marker' >> "${SB3}/hooks/luciazero-verify.sh"
+echo '// stale marker' >> "${SB3}/hooks/luciazero-verify.cjs"
 RC=0; SOUT="$(CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${SB3}"; fail "--status green with a stale hook file"; }
 echo "${SOUT}" | grep -q 'differs from this checkout' \
   || { rm -rf "${SB3}"; fail "--status did not name the stale hook: ${SOUT}"; }
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null   # restore
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
-[ ! -f "${SB3}/hooks/luciazero-verify.sh" ] || { rm -rf "${SB3}"; fail "hook file left behind"; }
+[ ! -f "${SB3}/hooks/luciazero-verify.cjs" ] || { rm -rf "${SB3}"; fail "hook file left behind"; }
+[ ! -f "${SB3}/hooks/luciazero-statusline.cjs" ] || { rm -rf "${SB3}"; fail "statusline file left behind"; }
 python3 - "${SB3}/settings.json" "${SB3}" <<'PY' || { rm -rf "${SB3}"; fail "settings.json not cleaned correctly by uninstall"; }
 import json, sys
 s = json.load(open(sys.argv[1]))
@@ -422,44 +435,60 @@ PY
 rm -rf "${SB3}"
 echo "ok  enforcement pack install + idempotent + clean uninstall"
 
-# 5c2. Three config directories whose names no shell survives unquoted: one
-# with a space, one with an apostrophe, one carrying a literal `$(...)`. Every
-# hook command the installer writes is a shell string, so an unquoted path
-# ends at the space -- the stored command runs a prefix of the path, the shell
-# answers 127, and the hook silently does nothing on a machine where the
-# install reported success. Running the stored command is the assertion; a
-# grep for a quote character would pass on a string no shell can run.
+# 5c2. Config directories whose names no shell survives unquoted: a space, an
+# apostrophe, a literal `$(...)`, and a backtick pair with Thai text. The
+# hooks are exec form -- Claude Code passes the path as one argument, no shell
+# -- so the assertion runs each stored hook that way. The status line has no
+# exec form: its command goes to sh (or Git Bash, or PowerShell on Windows)
+# and names the script only as base64 inside a fixed program, so the command
+# holds no character any of them treats specially. Running the stored command
+# through sh and bash is the assertion; the sentinel proves no part of the
+# path was executed.
 #
-# The apostrophe is the case that also judges the uninstaller: quoting a path
-# that contains one splices the quote in from outside, so the directory name
-# stops being a substring of the stored command at all -- and an uninstall
-# that decided by grepping for that path answered "nothing of ours here",
-# skipped the cleanup, and deleted the hook files anyway, leaving every entry
-# in settings.json pointing at a file that no longer exists.
+# The apostrophe also judges the uninstaller: a path is not always a
+# substring of what is stored (base64 never is), so only the parser can say
+# what is ours -- an uninstall that grepped answered "nothing of ours here"
+# and deleted the hook files under entries still pointing at them.
 FXR="$(mktemp -d)"
 SENTINEL="${FXR}/pwned"
+# the hooks keep state under TMPDIR: a private one, never the ambient one
+mkdir -p "${FXR}/tmp"; chmod 700 "${FXR}/tmp"
 FX_FAIL() { rm -rf "${FXR}"; fail "$1"; }
-for FXNAME in "config with space" "config with ' quote" "meta \$(touch ${SENTINEL}) dir"; do
+for FXNAME in "config with space" "config with ' quote" "meta \$(touch ${SENTINEL}) dir" \
+  "tick \`touch ${SENTINEL}\` ไทย dir"; do
   FX="${FXR}/${FXNAME}"
   mkdir -p "${FX}"
   CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --with-hooks >/dev/null \
     || FX_FAIL "--with-hooks failed in a config directory named: ${FXNAME}"
-  FXCMD="$(python3 - "${FX}/settings.json" <<'FXPY'
-import json, sys
+  FXRUN="$(TMPDIR="${FXR}/tmp" CLAUDE_CONFIG_DIR="${FX}" python3 - "${FX}/settings.json" "${FX}/proj" <<'FXPY'
+import json, subprocess, sys
 settings = json.load(open(sys.argv[1]))
+payload = json.dumps({"cwd": sys.argv[2]})
+ran = 0
 for entries in settings["hooks"].values():
     for entry in entries:
         for hook in entry["hooks"]:
-            if hook["command"].endswith(" edit"):
-                print(hook["command"])
-                raise SystemExit(0)
-raise SystemExit("no edit hook wired")
+            if hook.get("args", [""])[-1] == "edit":
+                # what Claude Code does with an exec-form hook: no shell
+                p = subprocess.run([hook["command"]] + hook["args"], input=payload.encode())
+                if p.returncode != 0:
+                    raise SystemExit("the stored edit hook failed (rc=%d): %r" % (p.returncode, hook))
+                ran += 1
+if ran != 1:
+    raise SystemExit("expected one edit hook, ran %d" % ran)
+print(settings["statusLine"]["command"])
 FXPY
-)" || FX_FAIL "no edit hook wired in: ${FXNAME}"
-  RC=0; printf '{}' | sh -c "${FXCMD}" >/dev/null 2>&1 || RC=$?
-  [ "${RC}" != 127 ] || FX_FAIL "the stored hook command does not survive the shell: ${FXCMD}"
-  [ "${RC}" = 0 ] || FX_FAIL "the stored hook command failed (rc=${RC}): ${FXCMD}"
-  [ ! -e "${SENTINEL}" ] || FX_FAIL "the stored hook command executed text from its own path: ${FXCMD}"
+)" || FX_FAIL "the stored hook did not run in: ${FXNAME}: ${FXRUN}"
+  mkdir -p "${FX}/proj"
+  for FXSH in sh bash; do
+    SLOUT="$(printf '{"workspace":{"current_dir":"%s/proj"}}' "${FX}" \
+      | TMPDIR="${FXR}/tmp" "${FXSH}" -c "${FXRUN}" 2>&1)" \
+      || FX_FAIL "the stored statusLine failed under ${FXSH} in ${FXNAME}: ${SLOUT}"
+    # the edit hook above ran for this directory: our status line reports it
+    printf '%s' "${SLOUT}" | grep -q 'unverified' \
+      || FX_FAIL "the stored statusLine ran something else under ${FXSH} in ${FXNAME}: ${SLOUT}"
+  done
+  [ ! -e "${SENTINEL}" ] || FX_FAIL "a stored command executed text from its own path: ${FXNAME}"
   CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/install.sh" --status >/dev/null \
     || FX_FAIL "--status could not see the hooks it had just wired: ${FXNAME}"
   cp "${FX}/settings.json" "${FXR}/settings.snap"
@@ -469,21 +498,23 @@ FXPY
   rm -f "${FXR}/settings.snap"
   CLAUDE_CONFIG_DIR="${FX}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
   python3 - "${FX}/settings.json" <<'FXPY' || FX_FAIL "uninstall left hook entries behind in: ${FXNAME}"
-import os, sys
+import json, os, sys
 path = sys.argv[1]
 if not os.path.exists(path):
     raise SystemExit(0)
-raise SystemExit(1 if "luciazero-" in open(path).read() else 0)
+text = open(path).read()
+s = json.loads(text)
+raise SystemExit(1 if "luciazero-" in text or "statusLine" in s or s.get("hooks") else 0)
 FXPY
-  [ ! -f "${FX}/hooks/luciazero-verify.sh" ] \
+  [ ! -f "${FX}/hooks/luciazero-verify.cjs" ] \
     || FX_FAIL "uninstall cleaned settings.json but kept the hook file: ${FXNAME}"
 done
 rm -rf "${FXR}"
 
-# 5c3. The same directory, upgraded from an install that wrote the path bare.
-# Those entries are ours and are broken; the installer has to rewrite them in
-# place rather than add a second, quoted copy beside them, and the uninstaller
-# has to recognise the bare spelling it no longer writes.
+# 5c3. The same directory, upgraded from a Bash-era install that wrote the
+# path bare. Those entries are ours and are broken; the installer has to
+# rewrite them in place, in exec form, rather than add a second copy beside
+# them, and the uninstaller has to recognise the bare spelling too.
 SPL="$(mktemp -d)/legacy with space"
 mkdir -p "${SPL}"
 SPL_FAIL() { rm -rf "$(dirname "${SPL}")"; fail "$1"; }
@@ -500,21 +531,121 @@ settings = {
 json.dump(settings, open(os.path.join(home, "settings.json"), "w"), indent=2)
 PY
 CLAUDE_CONFIG_DIR="${SPL}" "${ROOT}/install.sh" --with-hooks >/dev/null   || SPL_FAIL "--with-hooks failed over an older unquoted install"
-python3 - "${SPL}/settings.json" <<'PY' || { rm -rf "$(dirname "${SPL}")"; fail "unquoted entries were not migrated"; }
-import json, shlex, sys
+python3 - "${SPL}/settings.json" "${SPL}/hooks/luciazero-verify.cjs" <<'PY' || { rm -rf "$(dirname "${SPL}")"; fail "unquoted entries were not migrated"; }
+import json, sys
 settings = json.load(open(sys.argv[1]))
-commands = [h["command"] for entries in settings["hooks"].values()
-            for entry in entries for h in entry["hooks"]]
-edits = [c for c in commands if c.endswith(" edit")]
-assert len(edits) == 1, "the unquoted entry was left beside a new one: " + repr(edits)
-assert shlex.split(edits[0])[0].endswith("/hooks/luciazero-verify.sh"),     "migrated command does not parse back to the hook: " + repr(edits[0])
+hooks = [h for entries in settings["hooks"].values() for entry in entries for h in entry["hooks"]]
+edits = [h for h in hooks if h.get("args", [""])[-1] == "edit" or h.get("command", "").endswith(" edit")]
+assert edits == [{"type": "command", "command": "node", "args": [sys.argv[2], "edit"]}], \
+    "the unquoted entry was not migrated in place: " + repr(edits)
+assert ".sh" not in json.dumps(settings), "a Bash-era entry survived: " + json.dumps(settings)
+assert settings["statusLine"]["command"].startswith("node -e "), "the old status line was not migrated"
 PY
 CLAUDE_CONFIG_DIR="${SPL}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
 if [ -f "${SPL}/settings.json" ]; then
   grep -qF 'luciazero-' "${SPL}/settings.json"     && SPL_FAIL "uninstall left entries behind after the migration"
+  grep -qF 'statusLine' "${SPL}/settings.json"     && SPL_FAIL "uninstall left the status line behind after the migration"
 fi
 rm -rf "$(dirname "${SPL}")"
-echo "ok  hook commands survive a config path with a space, old spelling included"
+echo "ok  hook commands survive a config path no shell parses unquoted, old spelling included"
+
+# 5c3b. Upgrading a Bash-era install that wrote quoted commands and still has
+# its hook files. Every entry becomes exec form in place -- the Bash matcher
+# widened to Bash|PowerShell where the entry is ours alone, and split off where
+# a user hook shares it -- and the old files go: as shipped (a released digest
+# in claude/hooks/legacy-hooks.sha256) without a backup, edited only after one.
+# Uninstalling a Bash-era install that was never upgraded removes its entries
+# and the shipped file, and leaves the edited one where it is.
+LGY="$(mktemp -d)"
+LGY_FAIL() { rm -rf "${LGY}"; fail "$1"; }
+legacy_fixture() { # legacy_fixture <config dir>: a Bash-era --with-hooks install
+  mkdir -p "$1/hooks"
+  cp "${ROOT}/tests/fixtures/legacy-luciazero-statusline.sh" "$1/hooks/luciazero-statusline.sh"
+  printf '#!/usr/bin/env bash\n# edited by its owner\nexit 0\n' > "$1/hooks/luciazero-verify.sh"
+  chmod +x "$1/hooks/luciazero-statusline.sh" "$1/hooks/luciazero-verify.sh"
+  python3 - "$1" <<'PY'
+import json, os, shlex, sys
+home = sys.argv[1]
+verify = shlex.quote(os.path.join(home, "hooks", "luciazero-verify.sh"))
+status = shlex.quote(os.path.join(home, "hooks", "luciazero-statusline.sh"))
+hook = lambda sub: {"type": "command", "command": verify + " " + sub}
+settings = {"hooks": {
+    "PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [hook("edit")]},
+                    {"matcher": "Bash", "hooks": [hook("bash")]},
+                    {"matcher": "Skill", "hooks": [hook("skill")]}],
+    "PostToolUseFailure": [{"matcher": "Bash", "hooks": [hook("bash-failure")]}],
+    # the user's own hook shares the entry: it keeps the Bash matcher
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/bin/true mine"},
+                                                 hook("bash-start")]}],
+    "UserPromptSubmit": [{"hooks": [hook("prompt")]}],
+    "UserPromptExpansion": [{"hooks": [hook("skill-prompt")]}],
+    "Stop": [{"hooks": [dict(hook("stop"), timeout=30)]}],
+    "SessionStart": [{"hooks": [hook("session")]}]},
+    "statusLine": {"type": "command", "command": status}}
+json.dump(settings, open(os.path.join(home, "settings.json"), "w"), indent=2)
+PY
+}
+mkdir -p "${LGY}/up dir"
+legacy_fixture "${LGY}/up dir"
+CLAUDE_CONFIG_DIR="${LGY}/up dir" "${ROOT}/install.sh" --with-hooks > "${LGY}/up.out" 2>&1 \
+  || LGY_FAIL "--with-hooks failed over a Bash-era install: $(cat "${LGY}/up.out")"
+python3 - "${LGY}/up dir" <<'PY' || LGY_FAIL "a Bash-era install was not migrated (see above)"
+import json, os, sys
+home = sys.argv[1]
+s = json.load(open(os.path.join(home, "settings.json")))
+verify = os.path.join(home, "hooks", "luciazero-verify.cjs")
+text = json.dumps(s)
+assert ".sh" not in text.replace("/usr/bin/true", ""), "a Bash-era entry survived: " + text
+seen = {}
+for event, entries in s["hooks"].items():
+    for e in entries:
+        for h in e["hooks"]:
+            if h.get("command") == "node":
+                assert h["args"][0] == verify and len(h["args"]) == 2, h
+                assert h["args"][1] not in seen, "wired twice: " + h["args"][1]
+                seen[h["args"][1]] = (event, e.get("matcher"), h)
+assert len(seen) == 9, sorted(seen)
+for sub in ("bash", "bash-failure", "bash-start"):
+    assert seen[sub][1] == "Bash|PowerShell", sub + ": " + repr(seen[sub][1])
+assert seen["stop"][2].get("timeout") == 30, "the user's timeout on our entry was dropped"
+mine = [e for e in s["hooks"]["PreToolUse"] if any(h["command"] == "/usr/bin/true mine" for h in e["hooks"])]
+assert len(mine) == 1 and mine[0]["matcher"] == "Bash" and len(mine[0]["hooks"]) == 1, \
+    "the user's hook lost its entry or matcher: " + repr(s["hooks"]["PreToolUse"])
+assert s["statusLine"]["command"].startswith("node -e "), "status line not migrated"
+PY
+[ ! -e "${LGY}/up dir/hooks/luciazero-statusline.sh" ] \
+  || LGY_FAIL "the shipped Bash-era statusline was kept after the migration"
+[ ! -e "${LGY}/up dir/hooks/luciazero-verify.sh" ] \
+  || LGY_FAIL "the edited Bash-era hook was kept after the migration"
+LGY_BAK="$(ls "${LGY}/up dir/hooks/" | grep '^luciazero-verify\.sh\.bak\.' || true)"
+[ -n "${LGY_BAK}" ] && grep -q 'edited by its owner' "${LGY}/up dir/hooks/${LGY_BAK}" \
+  || LGY_FAIL "the edited Bash-era hook was removed without a backup"
+ls "${LGY}/up dir/hooks/" | grep -q '^luciazero-statusline\.sh\.bak\.' \
+  && LGY_FAIL "the shipped Bash-era statusline was backed up as if edited"
+CLAUDE_CONFIG_DIR="${LGY}/up dir" "${ROOT}/install.sh" --status >/dev/null \
+  || LGY_FAIL "--status red right after migrating a Bash-era install"
+# never upgraded: uninstall alone
+mkdir -p "${LGY}/old dir"
+legacy_fixture "${LGY}/old dir"
+RC=0; LGY_ST="$(CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
+[ "${RC}" != 0 ] && printf '%s' "${LGY_ST}" | grep -q 'older Bash version' \
+  || LGY_FAIL "--status did not flag a Bash-era hook install: ${LGY_ST}"
+CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/uninstall.sh" > "${LGY}/un.out" 2>&1 || true
+python3 - "${LGY}/old dir/settings.json" <<'PY' || LGY_FAIL "uninstall left Bash-era entries behind"
+import json, sys
+s = json.load(open(sys.argv[1]))
+assert "statusLine" not in s, s
+left = [h["command"] for entries in s.get("hooks", {}).values() for e in entries for h in e["hooks"]]
+assert left == ["/usr/bin/true mine"], left
+PY
+[ ! -e "${LGY}/old dir/hooks/luciazero-statusline.sh" ] \
+  || LGY_FAIL "uninstall kept the shipped Bash-era statusline"
+grep -q 'edited by its owner' "${LGY}/old dir/hooks/luciazero-verify.sh" \
+  || LGY_FAIL "uninstall removed an edited Bash-era hook"
+grep -q 'luciazero-verify.sh differs from every shipped version' "${LGY}/un.out" \
+  || LGY_FAIL "uninstall did not say why it kept the edited hook: $(cat "${LGY}/un.out")"
+rm -rf "${LGY}"
+echo "ok  a Bash-era install migrates to the Node hooks, and uninstalls clean without migrating"
 
 # 5c4. A dangling symlink planted at the name the backup is about to take.
 # `os.path.exists` follows the name and answers False when the target is
@@ -579,7 +710,7 @@ if mode != 0o640:
 BLKPY
 grep -qF 'luciazero-' "${BLK_CFG}/settings.json" \
   && BLK_FAIL "settings.json was not cleaned once the backup took the next name"
-[ ! -f "${BLK_CFG}/hooks/luciazero-verify.sh" ] \
+[ ! -f "${BLK_CFG}/hooks/luciazero-verify.cjs" ] \
   || BLK_FAIL "hook file kept although settings.json was cleaned"
 rm -rf "${BLK}"
 echo "ok  the settings backup refuses a symlinked name and keeps the bytes"
@@ -700,7 +831,7 @@ BLD_FAIL() { rm -rf "${BLD}"; fail "$1"; }
 mkdir -p "${BLD}/bin" "${BLD}/b/d"
 printf '#!/bin/sh\necho 20000101000000\n' > "${BLD}/bin/date"
 chmod +x "${BLD}/bin/date"
-awk '/^bakcopy\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLD}/bakcopy.sh"
+awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLD}/bakcopy.sh"
 printf 'user bytes\n' > "${BLD}/b/f"
 printf 'tree bytes\n' > "${BLD}/b/d/x"
 ln -s "../some where" "${BLD}/b/l"
@@ -728,12 +859,152 @@ cmp -s "${BLD}/b/d/x" "${BLD}/b/d.bak.20000101000000.1/x" \
 rm -rf "${BLD}"
 echo "ok  a directory at the backup name is skipped, not written into"
 
+# 5c8. A name swapped after it was taken (roadmap R24). 5c6 and 5c7 plant
+# before the helper writes; these plant in the window after a name is taken
+# and before the backup is complete, each through a shim of the tool that
+# takes it. A symlink used to take its name as an empty file that `ln -sfn`
+# then replaced: a directory swapped in there had a child of the link's name
+# deleted. A tree was copied into whatever directory held its name, and a
+# file into whatever its temporary name held, so a swapped directory had its
+# children overwritten and a swapped symlink sent the user's bytes elsewhere.
+# Each swap must leave the planted bytes as they were and the source in place.
+BLS="$(mktemp -d)"
+BLS_FAIL() { rm -rf "${BLS}"; fail "$1"; }
+mkdir -p "${BLS}/bin" "${BLS}/b/d" "${BLS}/out"
+printf '#!/bin/sh\necho 20000101000000\n' > "${BLS}/bin/date"
+awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/install.sh" > "${BLS}/bakcopy.sh"
+printf 'user bytes\n' > "${BLS}/b/f"
+printf 'tree bytes\n' > "${BLS}/b/d/x"
+ln -s "../some where" "${BLS}/b/l"
+# Every tool that can make the link, wrapped so that the first call naming
+# the first backup name finds a directory there whose child has the link's
+# name, as the swap left it.
+for BLS_T in ln perl node; do
+  BLS_REAL="$(command -v "${BLS_T}" || true)"
+  cat > "${BLS}/bin/${BLS_T}" <<BLSSH
+#!/usr/bin/env bash
+for a in "\$@"; do last="\$a"; done
+if [ "\${last##*/}" = l.bak.20000101000000 ] && [ ! -e "${BLS}/planted-l" ]; then
+  : > "${BLS}/planted-l"
+  rm -f "\${last}"; mkdir "\${last}"
+  printf 'planted child\n' > "\${last}/some where"
+fi
+[ -n "${BLS_REAL}" ] || exit 127
+exec "${BLS_REAL}" "\$@"
+BLSSH
+done
+BLS_MKDIR="$(command -v mkdir)"
+cat > "${BLS}/bin/mkdir" <<BLSSH
+#!/usr/bin/env bash
+for a in "\$@"; do last="\$a"; done
+"${BLS_MKDIR}" "\$@" || exit
+if [ "\${last##*/}" = d.bak.20000101000000 ] && [ ! -e "${BLS}/planted-d" ]; then
+  : > "${BLS}/planted-d"
+  mv "\${last}" "${BLS}/moved-d"; "${BLS_MKDIR}" "\${last}"
+  printf 'planted child\n' > "\${last}/x"
+fi
+BLSSH
+BLS_MKTEMP="$(command -v mktemp)"
+cat > "${BLS}/bin/mktemp" <<BLSSH
+#!/usr/bin/env bash
+p="\$("${BLS_MKTEMP}" "\$@")" || exit
+case "\${p##*/}" in
+  .luciazero-bak.*)
+    if [ "\${BLS_CASE}" = f ] && [ ! -e "${BLS}/planted-f" ]; then
+      : > "${BLS}/planted-f"
+      rm -rf "\${p}"; ln -s "${BLS}/out" "\${p}"
+    fi ;;
+esac
+printf '%s\n' "\${p}"
+BLSSH
+chmod +x "${BLS}/bin/"*
+BLS_RUN() {
+  BLS_CASE="$1" PATH="${BLS}/bin:${PATH}" bash -c 'set -euo pipefail; . "$1"; bakcopy -P "$2" "$2"' _ \
+    "${BLS}/bakcopy.sh" "${BLS}/b/$1"
+}
+BLS_GOT="$(BLS_RUN l)" || BLS_FAIL "symlink backup failed when a directory was swapped in at its first name"
+[ -f "${BLS}/planted-l" ] || BLS_FAIL "no symlink tool was ever handed the first backup name, so nothing was swapped"
+[ "$(cat "${BLS}/b/l.bak.20000101000000/some where" 2>/dev/null)" = "planted child" ] \
+  || BLS_FAIL "symlink backup replaced the child of a directory swapped in at its name"
+[ "$(ls -A "${BLS}/b/l.bak.20000101000000")" = "some where" ] \
+  || BLS_FAIL "symlink backup wrote into a directory swapped in at its name: $(ls -A "${BLS}/b/l.bak.20000101000000")"
+[ "${BLS_GOT}" = "${BLS}/b/l.bak.20000101000000.1" ] \
+  && [ "$(readlink "${BLS_GOT}")" = "../some where" ] \
+  || BLS_FAIL "symlink backup is not the symlink at the next free name: ${BLS_GOT#"${BLS}/"}"
+[ "$(readlink "${BLS}/b/l")" = "../some where" ] || BLS_FAIL "symlink backup disturbed the symlink it backed up"
+if BLS_GOT="$(BLS_RUN d 2>/dev/null)"; then
+  BLS_FAIL "tree backup reported ${BLS_GOT#"${BLS}/"} after its directory was swapped for another"
+fi
+[ -f "${BLS}/planted-d" ] || BLS_FAIL "mkdir never took the first tree backup name, so nothing was swapped"
+[ "$(cat "${BLS}/b/d.bak.20000101000000/x")" = "planted child" ] \
+  && [ "$(ls -A "${BLS}/b/d.bak.20000101000000")" = x ] \
+  || BLS_FAIL "tree backup wrote into a directory swapped in after mkdir took the name"
+[ -z "$(ls -A "${BLS}/moved-d")" ] || BLS_FAIL "tree backup followed its directory after the swap"
+cmp -s <(printf 'tree bytes\n') "${BLS}/b/d/x" || BLS_FAIL "tree backup disturbed the tree it backed up"
+if BLS_GOT="$(BLS_RUN f 2>/dev/null)"; then
+  BLS_FAIL "file backup reported ${BLS_GOT#"${BLS}/"} after its private directory was swapped for a symlink"
+fi
+[ -f "${BLS}/planted-f" ] || BLS_FAIL "mktemp never made the private backup directory, so nothing was swapped"
+[ -z "$(ls -A "${BLS}/out")" ] \
+  || BLS_FAIL "file backup wrote through a symlink swapped in for its private directory: $(ls -A "${BLS}/out")"
+[ -z "$(ls -A "${BLS}/b" | grep '^f\.bak\.')" ] || BLS_FAIL "file backup left a backup name after refusing"
+cmp -s <(printf 'user bytes\n') "${BLS}/b/f" || BLS_FAIL "file backup disturbed the file it backed up"
+rm -rf "${BLS}"
+echo "ok  a backup name swapped after it was taken is neither written into nor replaced"
+
+# 5c9. No tool that makes a symlink at exactly its name. BSD `ln` has no -T,
+# and perl and node are optional, so a symlink's backup can be impossible;
+# then the install must stop before it removes the symlink, and leave
+# nothing behind. With the tools back, the same install backs it up and
+# replaces it.
+BLN="$(mktemp -d)"
+BLN_FAIL() { rm -rf "${BLN}"; fail "$1"; }
+mkdir -p "${BLN}/bin" "${BLN}/cfg" "${BLN}/mine/plan"
+printf 'my plan skill\n' > "${BLN}/mine/plan/SKILL.md"
+BLN_LN="$(command -v ln)"
+printf '#!/bin/sh\nexit 127\n' > "${BLN}/bin/perl"
+printf '#!/bin/sh\nexit 127\n' > "${BLN}/bin/node"
+cat > "${BLN}/bin/ln" <<BLNSH
+#!/bin/sh
+case "\$1" in -*T*) echo "ln: illegal option -- T" >&2; exit 1 ;; esac
+exec "${BLN_LN}" "\$@"
+BLNSH
+chmod +x "${BLN}/bin/"*
+CLAUDE_CONFIG_DIR="${BLN}/cfg" "${ROOT}/install.sh" >/dev/null
+rm -rf "${BLN}/cfg/skills/plan"
+ln -s "${BLN}/mine/plan" "${BLN}/cfg/skills/plan"
+if PATH="${BLN}/bin:${PATH}" CLAUDE_CONFIG_DIR="${BLN}/cfg" "${ROOT}/install.sh" \
+  >/dev/null 2>"${BLN}/err"; then
+  BLN_FAIL "install succeeded with no way to back up a symlinked skill exactly"
+fi
+grep -q 'no tool here makes a symlink at exactly a given name' "${BLN}/err" \
+  || BLN_FAIL "install did not say why it stopped: $(cat "${BLN}/err")"
+[ "$(readlink "${BLN}/cfg/skills/plan")" = "${BLN}/mine/plan" ] \
+  || BLN_FAIL "install removed a symlinked skill it could not back up"
+[ "$(cat "${BLN}/mine/plan/SKILL.md")" = "my plan skill" ] && [ "$(ls -A "${BLN}/mine/plan")" = SKILL.md ] \
+  || BLN_FAIL "install changed the directory behind a symlinked skill"
+[ -z "$(find "${BLN}/cfg" -name '*.bak.*' -o -name '.luciazero-bak.*')" ] \
+  || BLN_FAIL "install left backup names behind after refusing: $(find "${BLN}/cfg" -name '*.bak.*' -o -name '.luciazero-bak.*')"
+CLAUDE_CONFIG_DIR="${BLN}/cfg" "${ROOT}/install.sh" >/dev/null \
+  || BLN_FAIL "install failed to back up a symlinked skill with the system's own tools"
+BLN_BAK="$(find "${BLN}/cfg" -name 'plan.bak.*')"
+[ -n "${BLN_BAK}" ] && [ "$(readlink "${BLN_BAK}")" = "${BLN}/mine/plan" ] \
+  || BLN_FAIL "the backup of a symlinked skill is not that symlink: ${BLN_BAK:-none}"
+[ -d "${BLN}/cfg/skills/plan" ] && [ ! -L "${BLN}/cfg/skills/plan" ] \
+  || BLN_FAIL "install did not replace the symlinked skill after backing it up"
+[ "$(cat "${BLN}/mine/plan/SKILL.md")" = "my plan skill" ] \
+  || BLN_FAIL "install wrote through a symlinked skill"
+rm -rf "${BLN}"
+echo "ok  a symlink that cannot be backed up exactly stops the install before it is removed"
+
 # The four installers each carry the same backup helper; one that drifts
 # from the others would silently lose the reservation above.
 BC_REF=""
 for BC_F in install.sh uninstall.sh install-codex.sh uninstall-codex.sh; do
-  BC_BODY="$(awk '/^bakcopy\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
-  [ -n "${BC_BODY}" ] || fail "${BC_F} has no bakcopy helper"
+  BC_BODY="$(awk '/^(bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
+  for BC_FN in bc_symlink bc_enter bakcopy; do
+    printf '%s\n' "${BC_BODY}" | grep -q "^${BC_FN}() {" || fail "${BC_F} has no ${BC_FN} helper"
+  done
   [ -n "${BC_REF}" ] || BC_REF="${BC_BODY}"
   [ "${BC_BODY}" = "${BC_REF}" ] || fail "${BC_F} bakcopy differs from install.sh"
   ! grep -q 'bakpath' "${ROOT}/${BC_F}" || fail "${BC_F} still picks backup names with bakpath"
@@ -745,9 +1016,9 @@ SB4="$(mktemp -d)"
 CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/install.sh" --with-hooks >/dev/null
 # corrupt the JSON while KEEPING a reference to our hook — the dangerous case:
 # cleanup cannot run, so deleting the files would leave dangling references
-printf '{broken json "%s/hooks/luciazero-verify.sh stop"\n' "${SB4}" > "${SB4}/settings.json"
+printf '{broken json "%s/hooks/luciazero-verify.cjs stop"\n' "${SB4}" > "${SB4}/settings.json"
 CLAUDE_CONFIG_DIR="${SB4}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
-[ -f "${SB4}/hooks/luciazero-verify.sh" ] \
+[ -f "${SB4}/hooks/luciazero-verify.cjs" ] \
   || { rm -rf "${SB4}"; fail "hook files deleted although settings cleanup failed (dangling references)"; }
 rm -rf "${SB4}"
 echo "ok  uninstall keeps hook files when settings cleanup fails"
@@ -770,7 +1041,7 @@ for SB4B_CASE in '{broken json' '[]' '{"hooks": []}' '{"hooks": {"Stop": {"x": 1
   rm -f "${SB4B}/before"; cp -p "${SB4B}/cfg/settings.json" "${SB4B}/before"
   RC=0; CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 || RC=$?
   [ "${RC}" -ne 0 ] || SB4B_FAIL "--with-hooks accepted a settings.json it cannot wire: ${SB4B_CASE}"
-  [ ! -e "${SB4B}/cfg/hooks/luciazero-verify.sh" ] \
+  [ ! -e "${SB4B}/cfg/hooks/luciazero-verify.cjs" ] \
     || SB4B_FAIL "--with-hooks copied hook files before refusing settings.json: ${SB4B_CASE}"
   cmp -s "${SB4B}/cfg/settings.json" "${SB4B}/before" \
     || SB4B_FAIL "--with-hooks changed a settings.json it refused: ${SB4B_CASE}"
@@ -783,7 +1054,7 @@ ln -s "${SB4B}/dotfiles/settings.json" "${SB4B}/cfg/settings.json"
 CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null \
   || SB4B_FAIL "--with-hooks failed on a symlinked settings.json"
 [ -L "${SB4B}/cfg/settings.json" ] || SB4B_FAIL "--with-hooks replaced a symlinked settings.json with a file"
-grep -qF 'luciazero-verify.sh' "${SB4B}/dotfiles/settings.json" \
+grep -qF 'luciazero-verify.cjs' "${SB4B}/dotfiles/settings.json" \
   || SB4B_FAIL "--with-hooks did not wire the file a symlinked settings.json points at"
 python3 -c 'import os, sys; m = os.stat(sys.argv[1]).st_mode & 0o777; sys.exit(0 if m == 0o640 else "mode " + oct(m))' \
   "${SB4B}/dotfiles/settings.json" || SB4B_FAIL "--with-hooks changed the mode of settings.json"
@@ -805,7 +1076,7 @@ chmod 555 "${SB4B}/dotfiles"
 RC=0; CLAUDE_CONFIG_DIR="${SB4B}/cfg" "${ROOT}/install.sh" --with-hooks >/dev/null 2>&1 || RC=$?
 chmod 755 "${SB4B}/dotfiles"
 [ "${RC}" -ne 0 ] || SB4B_FAIL "--with-hooks accepted a settings.json whose directory cannot take the new file"
-[ ! -e "${SB4B}/cfg/hooks/luciazero-verify.sh" ] \
+[ ! -e "${SB4B}/cfg/hooks/luciazero-verify.cjs" ] \
   || SB4B_FAIL "--with-hooks copied hook files before finding the settings directory read-only"
 cmp -s "${SB4B}/dotfiles/settings.json" "${SB4B}/before" \
   || SB4B_FAIL "--with-hooks changed settings.json in a read-only directory"
@@ -823,8 +1094,8 @@ echo "${SOUT}" | grep -q 'dangling' || { rm -rf "${SB5}"; fail "--status did not
 rm -rf "${SB5}"
 echo "ok  --status flags dangling hook references"
 
-# 5f. non-ASCII config path: settings.json must store the hook paths raw
-# (ensure_ascii=False) or --status's byte-level greps can never match them
+# 5f. non-ASCII config path: settings.json stores the hook paths raw, and
+# --status, the dedupe and the uninstaller all still find them
 SB6R="$(mktemp -d)"
 SB6="${SB6R}/claudé"
 mkdir -p "${SB6}"
@@ -832,7 +1103,7 @@ CLAUDE_CONFIG_DIR="${SB6}" "${ROOT}/install.sh" --with-hooks >/dev/null
 CLAUDE_CONFIG_DIR="${SB6}" "${ROOT}/install.sh" --status >/dev/null \
   || { rm -rf "${SB6R}"; fail "--status red on a healthy non-ASCII config dir"; }
 CLAUDE_CONFIG_DIR="${SB6}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
-[ ! -f "${SB6}/hooks/luciazero-verify.sh" ] || { rm -rf "${SB6R}"; fail "non-ASCII-path uninstall left hook files"; }
+[ ! -f "${SB6}/hooks/luciazero-verify.cjs" ] || { rm -rf "${SB6R}"; fail "non-ASCII-path uninstall left hook files"; }
 rm -rf "${SB6R}"
 echo "ok  non-ASCII config dir install + status + uninstall"
 

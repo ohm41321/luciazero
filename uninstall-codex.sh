@@ -25,17 +25,37 @@ skill_inventory() {
 # Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
 # print that name. Two runs in the same second must not overwrite each other,
 # and nothing planted at a name -- before it is chosen or after -- may be
-# followed. So a name is never tested and then written: it is taken by a call
-# that fails when anything at all is there, a dangling symlink included, and
-# never follows what it finds (roadmap R24). A directory is taken with
-# `mkdir`, anything else with `link` from a private file made beside it first;
-# `ln` will not do, since it puts the link inside a directory it finds there.
-# A symlink takes its name as an empty file that `ln -sfn` then replaces.
+# followed, written into or replaced (roadmap R24). So a name is never tested
+# and then written. It is taken by one call that fails when anything at all is
+# there, a dangling symlink included, and that neither follows nor enters what
+# it finds: `mkdir` for a directory, `link` (link(2)) for a file, and for a
+# symlink a tool shown, on a scratch directory first, to make the link at
+# exactly the name it is given. Plain `ln` puts the link inside a directory it
+# finds, and `ln -f` replaces what is inside, so it is never trusted with an
+# unchecked name. Everything else is written relative to a directory this
+# helper made and then entered, after checking it is still that directory:
+# once entered, a swap of the name cannot redirect the writes.
 # $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
 # back up the symlink itself, as `cp -P` does.
+bc_symlink() {
+  case "$1" in
+    ln) ln -sT -- "$2" "$3" ;;
+    perl) perl -e 'symlink($ARGV[0], $ARGV[1]) or exit 1' -- "$2" "$3" ;;
+    node) node -e 'try { require("fs").symlinkSync(process.argv[1], process.argv[2]) } catch (e) { process.exit(1) }' -- "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Enter $1, an absolute physical path to a directory bakcopy made, and succeed
+# only when what was entered is still that directory: owned by this user,
+# empty, and reached without following a symlink.
+bc_enter() {
+  cd "$1" 2>/dev/null && [ -O . ] && [ -z "$(ls -A .)" ] && [ "$(pwd -P)" = "$1" ]
+}
+
 bakcopy() {
-  BC_SRC="$2"; BC_BASE="$3"; BC_TMP=""
-  BC_STAMP="$(date +%Y%m%d%H%M%S)"; BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=1
+  BC_SRC="$2"; BC_BASE="$3"; BC_Q=""; BC_RC=0
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"
   if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
     BC_KIND=link
   elif [ -d "${BC_SRC}" ]; then
@@ -43,39 +63,69 @@ bakcopy() {
   else
     BC_KIND=file
   fi
-  if [ "${BC_KIND}" != tree ]; then
-    BC_TMP="$(mktemp "$(dirname "${BC_BASE}")/.luciazero-bak.XXXXXX")" \
+  case "${BC_SRC}" in /*) ;; *) BC_SRC="$(pwd)/${BC_SRC}" ;; esac
+  BC_DIR="$(CDPATH='' cd -P "$(dirname "${BC_BASE}")" && pwd -P)" \
+    || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  if [ "${BC_KIND}" = link ]; then
+    BC_TO="$(readlink "${BC_SRC}")" \
       || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
-    if [ "${BC_KIND}" = file ]; then
-      cp -p "${BC_SRC}" "${BC_TMP}" \
-        || { rm -f "${BC_TMP}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
-    fi
-  fi
-  while :; do
-    if [ "${BC_KIND}" = tree ]; then
-      mkdir "${BC_DST}" 2>/dev/null && break
-    else
-      link "${BC_TMP}" "${BC_DST}" 2>/dev/null && break
-    fi
-    # Taken is the only reason to try the next name; anything else would
-    # loop over a failure that every name shares.
-    if { [ ! -e "${BC_DST}" ] && [ ! -L "${BC_DST}" ]; } || [ "${BC_N}" -gt 100 ]; then
-      [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
-      echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+    BC_SL=""
+    BC_P="$(mktemp -d)" || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    for BC_T in ln perl node; do
+      command -v "${BC_T}" >/dev/null 2>&1 || continue
+      rm -rf "${BC_P}/t"
+      mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" \
+        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g" || break
+      if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
+        && [ "$(readlink "${BC_P}/t/n")" = x ] \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/s" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/g" 2>/dev/null \
+        && [ "$(ls -A "${BC_P}/t/d")" = c ] && [ ! -e "${BC_P}/t/nowhere" ] \
+        && [ ! -L "${BC_P}/t/nowhere" ]; then
+        BC_SL="${BC_T}"; break
+      fi
+    done
+    rm -rf "${BC_P}"
+    if [ -z "${BC_SL}" ]; then
+      echo "FAIL: could not back up the symlink ${BC_SRC}, so it was left as it is: no tool here makes a symlink at exactly a given name (needs GNU ln -T, perl or node)" >&2
       return 1
     fi
-    BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"; BC_N=$((BC_N+1))
-  done
-  [ -z "${BC_TMP}" ] || rm -f "${BC_TMP}"
-  case "${BC_KIND}" in
-    tree)
-      cp -RP "${BC_SRC}/." "${BC_DST}/" \
-        || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
-    link)
-      ln -sfn "$(readlink "${BC_SRC}")" "${BC_DST}" \
-        || { rm -f "${BC_DST}"; echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; } ;;
-  esac
-  printf '%s' "${BC_DST}"
+  elif [ "${BC_KIND}" = file ]; then
+    BC_Q="$(mktemp -d "${BC_DIR}/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  fi
+  (
+    if [ "${BC_KIND}" = file ]; then
+      bc_enter "${BC_Q}" && cp -p "${BC_SRC}" f || exit 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=0
+    while :; do
+      BC_AT="${BC_DIR}/${BC_DST##*/}"
+      case "${BC_KIND}" in
+        tree) mkdir "${BC_AT}" 2>/dev/null && break ;;
+        link) bc_symlink "${BC_SL}" "${BC_TO}" "${BC_AT}" 2>/dev/null && break ;;
+        file) link f "${BC_AT}" 2>/dev/null && break ;;
+      esac
+      # Taken is the only reason to try the next name; anything else would
+      # loop over a failure that every name shares.
+      if { [ ! -e "${BC_AT}" ] && [ ! -L "${BC_AT}" ]; } || [ "${BC_N}" -ge 100 ]; then
+        echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+        exit 1
+      fi
+      BC_N=$((BC_N+1)); BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"
+    done
+    case "${BC_KIND}" in
+      tree) bc_enter "${BC_AT}" && cp -RP "${BC_SRC}/." . || exit 1 ;;
+      file) rm -f f ;;
+    esac
+    printf '%s' "${BC_DST}"
+  ) || BC_RC=1
+  if [ -n "${BC_Q}" ]; then
+    ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P)" = "${BC_Q}" ] && rm -f f ) || :
+    rmdir "${BC_Q}" 2>/dev/null || :
+  fi
+  [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }
 
 same_tree() {

@@ -7,8 +7,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOOK="${ROOT}/claude/hooks/luciazero-verify.sh"
-SL="${ROOT}/claude/hooks/luciazero-statusline.sh"
+HOOK="${ROOT}/claude/hooks/luciazero-verify.cjs"
+SL="${ROOT}/claude/hooks/luciazero-statusline.cjs"
 PAUSE="${DEMO_PAUSE:-1.2}"
 
 TMPDIR="$(mktemp -d)"; export TMPDIR

@@ -10,3 +10,8 @@ set -euo pipefail
 # 1. shell syntax
 for S in "${SCRIPTS[@]}"; do bash -n "${ROOT}/${S}"; done
 echo "ok  shell syntax"
+# the hooks, the status line and the installers' shared modules are Node
+for S in "${ROOT}"/claude/hooks/*.cjs "${ROOT}"/bin/*.js "${ROOT}"/bin/lib/*.js; do
+  node --check "${S}" || fail "${S#"${ROOT}"/} does not parse"
+done
+echo "ok  Node syntax"

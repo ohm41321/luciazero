@@ -117,28 +117,37 @@ assert mkt["name"] == "luciazero" and mkt["owner"]["name"], "marketplace name/ow
 assert mkt["plugins"][0]["name"] == "luciazero", "marketplace plugin entry"
 assert mkt["plugins"][0]["source"] == "./", "marketplace plugin source"
 hooks = json.load(open(os.path.join(root, "claude", "hooks", "hooks.json")))
-cmds = [h["command"]
-        for entries in hooks["hooks"].values()
-        for e in entries for h in e["hooks"]]
+# exec form everywhere: `node` plus the script and subcommand as arguments, so
+# no shell ever parses the plugin path (Windows runs shell-form hooks through
+# Git Bash or PowerShell, whichever is there)
+script = "${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs"
+wired = [(event, e.get("matcher"), h)
+         for event, entries in hooks["hooks"].items()
+         for e in entries for h in e["hooks"]]
 for sub in ("prompt", "skill-prompt", "bash-start", "edit", "bash",
             "bash-failure", "skill", "stop", "session", "doctrine"):
-    assert any(c.endswith("luciazero-verify.sh " + sub) for c in cmds), f"hooks.json missing {sub} wiring"
-for c in cmds:
-    assert c.startswith("LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/"), \
-        f"hook command must carry the plugin channel marker (double-install dedupe depends on it): {c}"
-    rel = c.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rsplit(" ", 1)[0]
-    assert os.access(os.path.join(root, rel), os.X_OK), f"hook script not executable: {rel}"
+    assert sum(h.get("args") == [script, sub] for _, _, h in wired) == 1, \
+        f"hooks.json must wire {sub} exactly once"
+for event, matcher, h in wired:
+    assert h.get("type") == "command" and h.get("command") == "node" \
+        and isinstance(h.get("args"), list) and len(h["args"]) == 2, \
+        f"hook must be exec form (command node, args [script, sub]): {h}"
+    rel = h["args"][0].split("${CLAUDE_PLUGIN_ROOT}/", 1)[1]
+    assert os.path.isfile(os.path.join(root, rel)), f"hook script missing: {rel}"
+    # PowerShell is the shell tool on Windows; a Bash-only matcher never fires there
+    if h["args"][1] in ("bash-start", "bash", "bash-failure"):
+        assert matcher == "Bash|PowerShell", f"{h['args'][1]} must match Bash|PowerShell, not {matcher!r}"
 PY
 echo "ok  plugin manifests valid + wired"
 
 # 4g. plugin doctrine mode: emits the doctrine once, never twice
 DCT="$(mktemp -d)"
-OUT="$(CLAUDE_CONFIG_DIR="${DCT}" "${ROOT}/claude/hooks/luciazero-verify.sh" doctrine </dev/null)" \
+OUT="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
   || fail "doctrine mode exited non-zero"
 [ "${OUT}" = "$(cat "${ROOT}/claude/luciazero.md")" ] \
   || fail "doctrine mode output does not match claude/luciazero.md"
 touch "${DCT}/luciazero.md"
-OUT2="$(CLAUDE_CONFIG_DIR="${DCT}" "${ROOT}/claude/hooks/luciazero-verify.sh" doctrine </dev/null)" \
+OUT2="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
   || fail "doctrine mode (classic install present) exited non-zero"
 [ -z "${OUT2}" ] || fail "doctrine mode must stay silent when a classic install exists (double-load)"
 rm -rf "${DCT}"
@@ -149,18 +158,18 @@ echo "ok  plugin doctrine session context"
 DD="$(mktemp -d)"
 DTMP="$(mktemp -d)"
 mkdir -p "${DD}/hooks"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${DD}/hooks/luciazero-verify.sh"
-printf '{"hooks": {"x": "%s/hooks/luciazero-verify.sh"}}\n' "${DD}" > "${DD}/settings.json"
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${DD}/hooks/luciazero-verify.cjs"
+printf '{"hooks": {"x": "%s/hooks/luciazero-verify.cjs"}}\n' "${DD}" > "${DD}/settings.json"
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${DD}" "${DD}" \
   | env TMPDIR="${DTMP}" CLAUDE_CONFIG_DIR="${DD}" LUCIAZERO_CHANNEL=plugin \
-    "${ROOT}/claude/hooks/luciazero-verify.sh" edit \
+    node "${ROOT}/claude/hooks/luciazero-verify.cjs" edit \
   || fail "deduped plugin edit exited non-zero"
 [ -z "$(ls -A "${DTMP}" 2>/dev/null)" ] \
   || fail "plugin copy must stand down when classic wiring exists (state was written)"
 rm -f "${DD}/settings.json"
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${DD}" "${DD}" \
   | env TMPDIR="${DTMP}" CLAUDE_CONFIG_DIR="${DD}" LUCIAZERO_CHANNEL=plugin \
-    "${ROOT}/claude/hooks/luciazero-verify.sh" edit \
+    node "${ROOT}/claude/hooks/luciazero-verify.cjs" edit \
   || fail "plugin edit (no classic wiring) exited non-zero"
 [ -n "$(ls -A "${DTMP}" 2>/dev/null)" ] \
   || fail "plugin copy must run normally when classic wiring is absent"
@@ -610,11 +619,11 @@ JS
   CODEX_HOME="${UU}/codex" "${ROOT}/install-codex.sh" >/dev/null
   printf '1.0.0\n' > "${UU}/hooks/.luciazero-version"
   printf '1.0.0\n' > "${UU}/codex/.luciazero-version"
-  printf '# stale hook\n' >> "${UU}/hooks/hooks/luciazero-verify.sh"
+  printf '# stale hook\n' >> "${UU}/hooks/hooks/luciazero-verify.cjs"
   UOUT="$(CLAUDE_CONFIG_DIR="${UU}/hooks" CODEX_HOME="${UU}/codex" \
     node "${ROOT}/bin/luciazero.js" update)" \
     || { rm -rf "${UU}"; fail "multi-channel update failed"; }
-  cmp -s "${UU}/hooks/hooks/luciazero-verify.sh" "${ROOT}/claude/hooks/luciazero-verify.sh" \
+  cmp -s "${UU}/hooks/hooks/luciazero-verify.cjs" "${ROOT}/claude/hooks/luciazero-verify.cjs" \
     || { rm -rf "${UU}"; fail "update did not refresh a stale hook"; }
   PV="$(node -p "require('${ROOT}/package.json').version")"
   [ "$(cat "${UU}/hooks/.luciazero-version")" = "${PV}" ] \

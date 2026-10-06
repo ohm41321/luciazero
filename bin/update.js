@@ -45,9 +45,14 @@ function detectInstallations(options = {}) {
       channel: "claude-classic",
       configDir: claudeDir,
       ...versionMetadata(claudeDir),
-      hooks:
-        fs.existsSync(path.join(claudeDir, "hooks", "luciazero-verify.sh")) ||
-        claudeSettings.includes("hooks/luciazero-verify.sh"),
+      // the Node hooks, or the Bash ones an install before them left
+      hooks: ["luciazero-verify.cjs", "luciazero-verify.sh"].some(
+        (name) =>
+          fs.existsSync(path.join(claudeDir, "hooks", name)) ||
+          claudeSettings.includes(`hooks/${name}`) ||
+          // a Windows path, as JSON escapes its separator
+          claudeSettings.includes(`hooks\\\\${name}`),
+      ),
     });
   }
 

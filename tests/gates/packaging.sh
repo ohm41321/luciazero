@@ -232,6 +232,21 @@ assert not any(line.lstrip().startswith("cd ") for line in head.splitlines()), \
     "the launcher must not change the caller's directory (attach records it)"
 assert not any(re.match(r"\s*(export\s+)?PYTHONPATH=", line) for line in head.splitlines()), \
     "PYTHONPATH is colon-separated: a checkout path containing ':' would split into two entries"
+# The Windows launcher: same contract, plus what cmd.exe needs. It is checked
+# out LF like every file here, and cmd.exe can misread labels in an LF batch
+# file; it reads the file in the console's code page, so it stays ASCII.
+with open(os.path.join(root, "bin", "luciazero-agentd.cmd"), "rb") as f:
+    raw = f.read()
+assert raw.isascii(), "the Windows launcher must be ASCII: cmd.exe reads it in the console code page"
+cmd = raw.decode("ascii")
+assert "luciazero-managed: agentd-launcher" in cmd, "the Windows launcher must carry its ownership marker"
+cmd_lines = [line.strip().lower() for line in cmd.splitlines() if not line.lstrip().lower().startswith("rem")]
+assert not any(line.startswith(":") or re.search(r"\bgoto\b|\bcall\s+:", line) for line in cmd_lines), \
+    "the Windows launcher is LF, where cmd.exe can misread labels: no label, goto or call :label"
+assert not any(re.match(r"(cd|chdir|pushd)\b", line) for line in cmd_lines), \
+    "the Windows launcher must not change the caller's directory (attach records it)"
+assert not any(re.search(r"\bset\s+\"?pythonpath=", line) for line in cmd_lines), \
+    "the Windows launcher passes the package in its own variable, not PYTHONPATH"
 def catalog(rel):
     return [x.strip() for x in open(os.path.join(root, rel)) if x.strip() and not x.lstrip().startswith("#")]
 skills = catalog("skills/catalog.txt")
@@ -314,7 +329,7 @@ readmes = [path for path in paths if os.path.basename(path).upper().startswith("
 assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
-for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "bin/lib/installer.js",
+for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "bin/luciazero-agentd.cmd", "bin/lib/installer.js",
                  "bin/lib/settings-wiring.js", "install.sh", "install-codex.sh", "claude/luciazero.md"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }

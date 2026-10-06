@@ -188,3 +188,85 @@ test("on Windows, npx luciazero runs the Node installer", { skip: !WINDOWS && "W
   ok(node(box.env, [ROUTER, "uninstall-codex"]), "npx luciazero uninstall-codex");
   ok(node(box.env, [ROUTER, "uninstall"]), "npx luciazero uninstall");
 });
+
+// Run a .cmd the way a user's shell does. Node will not start a batch file
+// without a shell; /s takes the outer quotes off what follows /c, so the
+// file's path stays quoted.
+function runCmd(file, args, options) {
+  const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${file}" ${args}"`],
+    { encoding: "utf8", windowsHide: true, windowsVerbatimArguments: true, ...options });
+  if (r.error) throw r.error;
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+test("on Windows, luciazero-agentd.cmd and lucia.cmd run the Agent Bus from anywhere", { skip: !WINDOWS && "Windows only; tests/gates/install.sh covers the POSIX launcher" }, (t) => {
+  const box = sandbox(t);
+  // Where a batch file breaks: a space, parentheses that end a block, an
+  // ampersand that ends a command, and a name outside the console code page.
+  const bin = path.join(box.box, "bin (x86) & ลูเซีย");
+  const env = { ...box.env, LUCIAZERO_BIN_DIR: bin };
+  ok(node(env, [INSTALLER, "claude"]), "install");
+  for (const name of ["luciazero-agentd.cmd", "lucia.cmd"]) {
+    assert.match(fs.readFileSync(path.join(bin, name), "latin1"), /luciazero-managed: agentd-launcher/, `${name} not installed`);
+  }
+  assert.strictEqual(fs.readFileSync(path.join(box.claude, ".luciazero-agentd-home"), "utf8"), path.join(ROOT, "agentd") + "\n");
+
+  const state = path.join(box.box, "bus state ü");
+  fs.mkdirSync(state);
+  fs.writeFileSync(path.join(state, "bus.sqlite3"), ""); // an empty file is an empty database
+  // Started from a directory holding a package of the same name, below one
+  // laid out like a checkout: the launcher must import neither. A quoted name
+  // found on PATH is where cmd.exe reports the working directory as the
+  // batch file's own, which would make ..\agentd look like the checkout.
+  const elsewhere = path.join(box.box, "decoy", "work");
+  for (const decoy of [path.join(elsewhere, "luciazero_agentd"), path.join(box.box, "decoy", "agentd", "luciazero_agentd")]) {
+    fs.mkdirSync(decoy, { recursive: true });
+    fs.writeFileSync(path.join(decoy, "__init__.py"), "");
+    fs.writeFileSync(path.join(decoy, "__main__.py"), 'print("HIJACKED")\n');
+  }
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") || "PATH";
+  const onPath = { ...env, [pathKey]: `${bin};${env[pathKey] || ""}` };
+  const run = (name, args) => runCmd(name.endsWith(".cmd") ? path.join(bin, name) : name, args, { cwd: elsewhere, env: onPath });
+
+  const added = run("luciazero-agentd.cmd", `roster add lb-architect codex architect --state-dir "${state}"`);
+  ok(added, "roster add");
+  // The short name says its own name back, as the POSIX launcher does.
+  const usage = run("lucia.cmd", "claude --help");
+  ok(usage, "lucia claude --help");
+  assert.match(usage.stdout, /^usage: lucia claude/m, "lucia printed another name back at the user");
+  const next = run("lucia.cmd", `next --state-dir "${state}"`);
+  ok(next, "next");
+  assert.match(next.stdout, /^ {4}luciazero-agentd /m, "next did not render the launcher found on PATH");
+  const byName = run("lucia", "claude --help");
+  ok(byName, '"lucia" claude --help');
+  assert.match(byName.stdout, /^usage: lucia claude/m);
+  for (const r of [added, usage, next, byName]) assert.doesNotMatch(r.stdout + r.stderr, /HIJACKED/);
+
+  ok(node(env, [INSTALLER, "claude-uninstall"]), "uninstall");
+  for (const name of ["luciazero-agentd.cmd", "lucia.cmd"]) {
+    assert.ok(!fs.existsSync(path.join(bin, name)), `${name} was left behind`);
+  }
+  assert.ok(!fs.existsSync(path.join(box.claude, ".luciazero-agentd-home")), "the package pointer was left behind");
+});
+
+test("on Windows, uninstall removes the Agent Bus task through the installed launcher", {
+  skip: (!WINDOWS && "Windows only") ||
+    (process.env.LUCIAZERO_TEST_TASK_SCHEDULER !== "1" &&
+      "ends and deletes \\Luciazero\\agentd in the real Task Scheduler; set LUCIAZERO_TEST_TASK_SCHEDULER=1 on a throwaway machine"),
+}, (t) => {
+  const box = sandbox(t);
+  const bin = path.join(box.box, "bin");
+  const env = { ...box.env, LUCIAZERO_BIN_DIR: bin };
+  ok(node(env, [INSTALLER, "claude"]), "install");
+  // The definition `service install` leaves, as far as uninstall reads it:
+  // UTF-16 with a byte order mark, as Task Scheduler takes it, and the marker.
+  const task = path.join(box.services, "AppData", "Local", "Luciazero", "agentd-task.xml");
+  fs.mkdirSync(path.dirname(task), { recursive: true });
+  fs.writeFileSync(task, Buffer.concat([Buffer.from([0xff, 0xfe]),
+    Buffer.from('<?xml version="1.0" encoding="UTF-16"?>\r\n<!-- luciazero-managed: agentd-service -->\r\n<Task/>\r\n', "utf16le")]));
+  const removed = node(env, [INSTALLER, "claude-uninstall"]);
+  ok(removed, "uninstall");
+  assert.match(removed.stdout, /agent bus service stopped and removed/, removed.stdout + removed.stderr);
+  assert.ok(!fs.existsSync(task), "the task definition was left behind");
+  assert.ok(!fs.existsSync(path.join(bin, "lucia.cmd")), "the launcher was left behind");
+});

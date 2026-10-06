@@ -885,13 +885,18 @@ class HumanCommands(unittest.TestCase):
         for stream in (cli.stdout, cli.stderr):
             self.addCleanup(stream.close)
         child_pid = None
-        for _ in range(100):  # wait for the binding to name its process
+        # Wait for the binding to name its process. Two interpreters start
+        # before it does, which takes seconds on a busy Windows runner; a run
+        # that exits first says why instead of leaving the wait to time out.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and cli.poll() is None:
             live = [b for b in self._bindings(states=("active",)) if b["pid"]]
             if live:
                 child_pid = int(live[0]["pid"])
                 break
             time.sleep(0.05)
-        self.assertIsNotNone(child_pid, "run never recorded its child")
+        exited = "" if cli.poll() is None else f" (run exited {cli.returncode}: {cli.stderr.read()})"
+        self.assertIsNotNone(child_pid, "run never recorded its child" + exited)
         cli.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
         cli.wait(timeout=30)
         bindings = self._bindings()

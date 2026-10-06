@@ -515,6 +515,37 @@ function agentdLayout(dir) {
   };
 }
 
+// The Agent Bus service definition `luciazero-agentd service install` wrote,
+// as text. Task Scheduler's XML is UTF-16, so its marker is not in the bytes.
+function readServiceFile(p) {
+  const b = readBytes(p);
+  if (b === null) return null;
+  if (b.length >= 2 && b[0] === 0xff && b[1] === 0xfe) return b.subarray(2).toString("utf16le");
+  return b.toString("latin1");
+}
+
+// Windows: the first Python of 3.10 or newer, tried in the launcher's order
+// (python3, python, py -3), as [command, ...arguments], or null. Only on
+// Windows, where python3 is often absent and python.exe may be the Microsoft
+// Store stand-in.
+function windowsPython() {
+  for (const candidate of [["python3"], ["python"], ["py", "-3"]]) {
+    const r = spawnSync(candidate[0], [...candidate.slice(1), "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+      { stdio: "ignore", windowsHide: true });
+    if (r.status === 0) return candidate;
+  }
+  return null;
+}
+
+// Run `luciazero-agentd service uninstall` through the installed launcher.
+// Windows: Node refuses to start a .cmd without a shell, so cmd.exe runs it;
+// /s takes the outer quotes off what follows /c, keeping the path quoted.
+function launcherServiceUninstall(launcher) {
+  if (!WINDOWS) return spawnSync(launcher, ["service", "uninstall"], { stdio: "ignore" }).status === 0;
+  return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${launcher}" service uninstall"`],
+    { stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true }).status === 0;
+}
+
 function launcherKind(p) {
   if (isLink(p)) {
     const t = readRaw(p);
@@ -936,15 +967,20 @@ function claudeUninstall(args) {
   for (const svc of [
     j(serviceRoot, "Library", "LaunchAgents", "com.luciazero.agentd.plist"),
     j(serviceRoot, ".config", "systemd", "user", "luciazero-agentd.service"),
+    j(serviceRoot, "AppData", "Local", "Luciazero", "agentd-task.xml"),
   ]) {
-    if (!isFile(svc) || !readRaw(svc).includes(AGENTD_SERVICE_MARKER)) continue;
+    if (!isFile(svc) || !(readServiceFile(svc) || "").includes(AGENTD_SERVICE_MARKER)) continue;
     const launcherOurs = isFile(ad.launcher) && readRaw(ad.launcher).includes(AGENTD_MARKER);
-    const viaLauncher = launcherOurs && spawnSync(ad.launcher, ["service", "uninstall"], { stdio: "ignore" }).status === 0;
+    const viaLauncher = launcherOurs && launcherServiceUninstall(ad.launcher);
+    const python = viaLauncher || !isDir(j(SRC, "agentd", "luciazero_agentd")) ? null : WINDOWS ? windowsPython() : ["python3"];
+    // Run from the package, so `-m` cannot find a luciazero_agentd in
+    // whatever directory the uninstaller was started from.
     const viaPackage =
-      !viaLauncher &&
-      isDir(j(SRC, "agentd", "luciazero_agentd")) &&
-      spawnSync("python3", ["-m", "luciazero_agentd", "service", "uninstall"], {
+      python !== null &&
+      spawnSync(python[0], [...python.slice(1), "-m", "luciazero_agentd", "service", "uninstall"], {
         stdio: "ignore",
+        windowsHide: true,
+        cwd: j(SRC, "agentd"),
         env: { ...process.env, PYTHONPATH: j(SRC, "agentd") },
       }).status === 0;
     if (viaLauncher || viaPackage) say("  ok  agent bus service stopped and removed");

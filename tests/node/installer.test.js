@@ -136,6 +136,32 @@ fs.readFileSync = function (file, ...rest) {
   }
 });
 
+test("rmTree removes a link to a directory, never what it points at", (t) => {
+  const { rmTree } = require(INSTALLER);
+  // a junction on Windows (no privilege needed), then a directory symlink
+  // where this account may make one; a symlink everywhere else
+  const kinds = WINDOWS ? ["junction", "dir"] : ["dir"];
+  for (const kind of kinds) {
+    const box = sandbox(t);
+    const outside = path.join(box.box, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "sentinel"), "keep me");
+    const tree = path.join(box.box, "tree");
+    fs.mkdirSync(path.join(tree, "inner"), { recursive: true });
+    fs.writeFileSync(path.join(tree, "inner", "file"), "ours");
+    try {
+      fs.symlinkSync(outside, path.join(tree, "inner", "link"), kind);
+    } catch (error) {
+      if (WINDOWS && error.code === "EPERM") { t.diagnostic(`${kind} case skipped: this account may not create one`); continue; }
+      throw error;
+    }
+    rmTree(tree);
+    assert.ok(!fs.existsSync(tree), `the tree holding a ${kind} was not removed`);
+    assert.deepStrictEqual(fs.readdirSync(outside), ["sentinel"], `removing a ${kind} reached into its target`);
+    assert.strictEqual(fs.readFileSync(path.join(outside, "sentinel"), "utf8"), "keep me");
+  }
+});
+
 test("codex: install and uninstall keep a CRLF AGENTS.md byte for byte", (t) => {
   const box = sandbox(t);
   fs.mkdirSync(box.codex, { recursive: true });

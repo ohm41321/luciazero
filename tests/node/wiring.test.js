@@ -57,6 +57,49 @@ test("wire writes exec-form hooks and a status line that runs", (t) => {
   assert.match(again.stdout, /hooks already wired/);
 });
 
+test("the status line runs from an awkward path through the shells Claude Code uses", (t) => {
+  // Claude Code hands a status line to Git Bash when it is installed and to
+  // PowerShell otherwise on Windows, and to sh elsewhere. The config path
+  // holds what those shells treat specially, and Thai; the model name on
+  // stdin is not ASCII either. (The cmd.exe run in the test above is Node's
+  // own shell, not one Claude Code picks.)
+  const box = sandbox(t);
+  const config = path.join(box.box, "Claude cfg & ไทย 'q' (x) %PATH% !x! $HOME");
+  const hooks = path.join(config, "hooks");
+  fs.mkdirSync(hooks, { recursive: true });
+  for (const name of ["luciazero-verify.cjs", "luciazero-statusline.cjs"]) {
+    fs.copyFileSync(path.join(ROOT, "claude", "hooks", name), path.join(hooks, name));
+  }
+  const file = path.join(config, "settings.json");
+  const r = node(box.env, [WIRING, "wire", "write", file, hooks]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const command = JSON.parse(fs.readFileSync(file, "utf8")).statusLine.command;
+  assert.strictEqual(wiring.statusScript(command), path.join(hooks, "luciazero-statusline.cjs"));
+
+  const model = "โมเดล Ünïcode";
+  const input = JSON.stringify({ cwd: box.box, model: { display_name: model } });
+  const runs = [];
+  if (WINDOWS) {
+    const gitBash = [process.env.CLAUDE_CODE_GIT_BASH_PATH,
+      path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe")].find((p) => p && fs.existsSync(p));
+    if (gitBash) runs.push(["Git Bash", command, [], { shell: gitBash }]);
+    else t.diagnostic("Git Bash is not installed here; its case did not run");
+    runs.push(["Windows PowerShell", "powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {}]);
+    if (spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { windowsHide: true }).status === 0) {
+      runs.push(["PowerShell 7", "pwsh", ["-NoProfile", "-NonInteractive", "-Command", command], {}]);
+    } else {
+      t.diagnostic("pwsh is not installed here; its case did not run");
+    }
+  } else {
+    runs.push(["sh", "/bin/sh", ["-c", command], {}]);
+  }
+  for (const [label, program, args, options] of runs) {
+    const shown = spawnSync(program, args, { env: box.env, input, encoding: "utf8", windowsHide: true, ...options });
+    assert.strictEqual(shown.status, 0, `${label}: ${shown.stderr || shown.error}`);
+    assert.ok(shown.stdout.startsWith(`${model} | `), `${label} printed ${JSON.stringify(shown.stdout)}`);
+  }
+});
+
 test("clean removes only ours and keeps a backup", (t) => {
   const box = sandbox(t);
   const hooks = hooksDir(box);

@@ -334,7 +334,8 @@ function bakcopy(follow, src, base) {
         continue;
       }
       if (kind === "link" && WINDOWS && error.code === "EPERM") {
-        warn(`FAIL: could not back up the symlink ${src}, so it was left as it is: creating a symlink needs Developer Mode or an elevated prompt on Windows`);
+        warn(`FAIL: could not back up the symlink ${src}, so it was left as it is: Windows refused to create a symlink (EPERM).`);
+        warn("      Without Developer Mode or an elevated prompt it always does; permissions on the directory can refuse it too.");
       } else {
         warn(`FAIL: could not reserve a backup name for ${src} (${error.code || error.message})`);
       }
@@ -1360,4 +1361,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { main, bakcopy, sameTree, stripMarkerBlock, dropImportAndSeparator, dropLine, agentAsSkill, markerBlockOk, splitKeep };
+module.exports = { main, bakcopy, rmTree, sameTree, stripMarkerBlock, dropImportAndSeparator, dropLine, agentAsSkill, markerBlockOk, splitKeep };

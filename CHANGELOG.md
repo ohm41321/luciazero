@@ -22,9 +22,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The website's home page carries the Google Search Console verification tag,
   and the site checker fails a home page without it, since a deploy that drops
   the tag unverifies the site.
+- Native Windows, with no WSL. `npx luciazero` runs a Node port of the four
+  installers there (`bin/lib/installer.js`), held to the Bash ones by a parity
+  gate, and `global-install`, `-status` and `-uninstall` use npm's own global
+  prefix. From a checkout the Agent Bus daemon runs natively: Win32 process
+  facts, providers in Job Objects, `run` on a pseudo console, a protected DACL
+  on the state directory, an exclusive port, `luciazero-agentd.cmd` and
+  `lucia.cmd` launchers, and a Task Scheduler service. On Windows the programs
+  Luciazero starts by name come from PATH's absolute entries only, never from
+  the working directory. CI runs the installers, hooks and skill helpers on
+  Windows with Node 18 and 22, and the daemon suite and Lucia Relay checks on
+  Python 3.10 and 3.13.
 
 ### Changed
 
+- The enforcement hooks and status line are Node programs
+  (`luciazero-verify.cjs`, `luciazero-statusline.cjs`) wired in exec form,
+  which needs Claude Code 2.1.139 or newer. `install.sh --with-hooks` needs
+  Node 18+ instead of Python 3.9+ and moves older `.sh` entries in place.
+- The helpers `/ready`, `/done` and `/bisect` run are Node:
+  `node <skill-dir>/scripts/detect.cjs`, `revert-probe.cjs` and
+  `safe-bisect.cjs`. On Windows `revert-probe` runs the verify command through
+  cmd.exe, and `safe-bisect` starts a `.cmd` or `.bat` criterion with each
+  argument quoted for it. The `.sh` names stay as wrappers and need Node 18+.
 - `homepage` in `package.json` and `.claude-plugin/plugin.json` now points at
   the website, and both READMEs link to it next to the language switch.
 - The website, its social card and both READMEs use the 3D (VRM) render of
@@ -38,6 +58,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `revert-probe` no longer writes through a link the old tree has above a
+  changed file. Where the base revision had a directory link (to anywhere,
+  outside the repository included) and the working tree has a real
+  directory, the copy into the throwaway worktree used to follow the link and
+  overwrite the file at its target. The link is now replaced inside the
+  worktree, and nothing a link reaches is removed either.
+- `safe-bisect --retries 00` (or any other spelling of zero) is a usage error.
+  It used to sample neither endpoint, so a criterion that always passes went
+  unchecked and bisect named the last commit.
 - Installer backups reserve their name instead of testing it (roadmap R24).
   All four installers share one `bakcopy` helper that takes
   `<file>.bak.<timestamp>[.n]` with a call that fails when anything is at the

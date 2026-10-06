@@ -10,7 +10,8 @@ and explicitly enrolled managed workers can use dispatch. Design and evidence:
 
 The bus is beta and separate from the core install: `npx luciazero` never
 starts a daemon. Everything below runs from a checkout of this repository.
-The daemon needs Python 3.10+ and `git`; nothing is installed with pip.
+The daemon needs Python 3.10+ and `git`; nothing is installed with pip. It
+runs on macOS, Linux, WSL2 and natively on Windows.
 
 `./install.sh` puts a `luciazero-agentd` launcher — and `lucia`, the same
 program under a shorter name — in `~/.claude/bin`
@@ -38,6 +39,20 @@ cd luciazero
 LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh
 export PATH="$HOME/.local/bin:$PATH"      # and in your shell profile
 ```
+
+On Windows, with no Bash, the Node installer does the same from the
+checkout, in PowerShell or cmd.exe:
+
+```powershell
+git clone https://github.com/ohm41321/luciazero.git
+cd luciazero
+node bin\luciazero.js     # luciazero-agentd.cmd and lucia.cmd in %USERPROFILE%\.claude\bin
+```
+
+It names the directory to add to your user Path (System Properties >
+Environment Variables) when it is not there yet. The launchers take the
+first of `python3`, `python` and `py -3` that is 3.10 or newer, found through
+PATH alone.
 
 Without `git`, the release ZIP is the same checkout — it is built from the
 tag with `git archive`, so unpacking it and running `./install.sh` from
@@ -124,9 +139,13 @@ luciazero-agentd service uninstall
 ```
 
 macOS gets a LaunchAgent in `~/Library/LaunchAgents`; Linux and WSL2 get a
-systemd `--user` unit in `~/.config/systemd/user`. Both run as you, not as
-root, and Windows is refused by name (ADR 0002 scopes v1 to macOS, Linux and
-WSL2). The unit always serves with strict binding — a service is never
+systemd `--user` unit in `~/.config/systemd/user`; Windows gets a Task
+Scheduler task, `\Luciazero\agentd`, defined in
+`%LOCALAPPDATA%\Luciazero\agentd-task.xml`, that starts at your logon in
+your own session (so the claim dialog can appear), at least privilege,
+through `pythonw.exe` so no console window opens. All three run as you, not
+as root or an administrator; Cygwin is refused by name. The unit always
+serves with strict binding — a service is never
 installed with `--allow-unattributed` — and its output goes to
 `daemon.log` in the state directory.
 

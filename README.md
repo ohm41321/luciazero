@@ -163,7 +163,7 @@ as you. The project trust boundary is in
 | “Done” without running a check | Stop-hook nudge; optional strict gate blocks a red stop |
 | `cat test.sh` counted as testing | Exact `LUCIAZERO_VERIFY_CMD` matching |
 | Tests weakened to reach green | Doctrine rule 3 + check-suppression guard |
-| New tests that pass without the fix | `revert-probe.sh` runs them against the old code |
+| New tests that pass without the fix | `revert-probe.cjs` runs them against the old code |
 | Scope silently dropped | `/done` requires every item delivered or named as left out |
 | The same dead end repeated later | `/retro` records it; `/debug` reads it first |
 | Context lost between agents | `/lucia-relay` transfers evidence, next action, and negative knowledge |
@@ -257,7 +257,7 @@ command from any directory:
 
 ```bash
 luciazero                 # Claude Code
-luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3.9+
+luciazero --with-hooks    # Claude Code + hooks/statusline; needs Node 18+
 luciazero codex           # Codex CLI
 
 luciazero uninstall             # remove the Claude classic files
@@ -393,15 +393,22 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
 
 ## Security & requirements
 
-- Node.js 18+ for the CLI and discipline report.
-- Bash for classic installers; Python 3.9+ for hooks and Lucia Relay
-  (`install.sh --with-hooks` refuses anything older).
+- Node.js 18+ for the CLI, the discipline report, the hooks and status line,
+  and the helpers `/ready`, `/done` and `/bisect` run
+  (`node <skill-dir>/scripts/*.cjs`; the old `.sh` names are wrappers that
+  need Node too).
+- Bash for the classic installers on macOS and Linux. The hooks are wired in
+  exec form, which needs Claude Code 2.1.139 or newer
+  (`install.sh --with-hooks` refuses a Node older than 18).
+- Python 3.9+ for Lucia Relay: `python3 <skill-dir>/scripts/relay.py`, or
+  `python` / `py -3` on Windows.
 - The Agent Bus daemon (beta, opt-in) needs Python 3.10+ and a checkout: it is
   not in the npm payload and `npx luciazero` never starts it. From a checkout,
-  `./install.sh` adds the `luciazero-agentd` launcher to `~/.claude/bin`
+  `./install.sh` (on Windows, `node bin\luciazero.js`) adds the
+  `luciazero-agentd` and `lucia` launchers to `~/.claude/bin`
   (`LUCIAZERO_BIN_DIR` chooses another directory), and
-  `luciazero-agentd service install` runs the daemon under launchd or systemd
-  `--user`. macOS, Linux and WSL2 only. See [docs/agent-bus.md](docs/agent-bus.md).
+  `luciazero-agentd service install` runs the daemon under launchd, systemd
+  `--user`, or Task Scheduler on Windows. See [docs/agent-bus.md](docs/agent-bus.md).
 - Core installers, hooks, helpers, and graders are offline. Real behavioral
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.
@@ -423,8 +430,12 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   and named once at `SessionStart`. Your own settings still configure it: the
   search stops at the repo root and at `$HOME`, and never reads your global
   `~/.claude/settings.json` or gitignored `.claude/settings.local.json`.
-- Windows: the installers and hooks are Bash scripts — run them under WSL.
-  `npx luciazero discipline` works in native Node.
+- Windows runs natively, without WSL: `npx luciazero` installs through a
+  Node port of the installers, `global-install` uses npm's own global prefix,
+  and the hooks, status line and skill helpers are Node. There, the programs
+  Luciazero starts by name — git, node, npm, Python, a provider CLI,
+  PowerShell, schtasks — are looked up on PATH alone, never in the working
+  directory, where Windows would look first.
 
 See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) for the complete trust boundary.
 

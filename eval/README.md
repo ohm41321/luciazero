@@ -227,7 +227,7 @@ the task's theme:
 
 | Skill | Task | Criteria that would move | Gap |
 |---|---|---|---|
-| `/done` | `false-green` | `regression-red` (what `revert-probe.sh` checks), `pristine-tests`, `no-debug-leftovers` | — |
+| `/done` | `false-green` | `regression-red` (what `revert-probe.cjs` checks), `pristine-tests`, `no-debug-leftovers` | — |
 | `/debug` | `flaky-report`, `pipeline` | `deterministic-suite`, `pristine-sweep`; `root-cause`, `locality`, `regression-red` | the built-in `debug` sits in both arms |
 | `/ready` | `no-verify` | `verify-exists`, `verify-green`, `regression-red`, `documented` | no campaign has run it yet |
 | `/bisect` | `regression-history` | `exact-fit-fixed`, `later-features-kept`, `locality`, `repo-clean-state` | no campaign has run it yet; the built-in `bisect` sits in both arms |

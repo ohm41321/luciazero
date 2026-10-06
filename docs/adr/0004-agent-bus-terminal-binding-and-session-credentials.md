@@ -377,6 +377,22 @@ process running as the same user is out of scope), and a user who needs to
 hold that line should revoke the permission and use `run`, where identity
 comes from a terminal the user opened rather than from an answer on screen.
 
+## Amendment, 2026-10-07: native Windows
+
+A Windows console has no name, so a binding made there has no tty: it rests
+on the pid and its start time alone, both read from the Win32 API, and
+`terminal list` shows `-` for its tty. `run` remains the recommended
+path, as it is wherever the tty cannot say which process is which; it holds
+the provider on a pseudo console, as it holds a pty elsewhere, so a delivery
+is still typed at an idle prompt.
+
+The service is a Task Scheduler task in the user's own logon session, so the
+dialog has a desktop to appear on, and the M7d assumption of local desktop
+integrity applies to it unchanged. The dialog is PowerShell found through
+PATH's absolute entries, never the working directory: a stand-in there that
+exits 0 and prints nothing would be read as Allow, since that is how zenity
+and kdialog say yes.
+
 ## Amendment, 2026-09-04 (M7e): a daemon with no console fails the claim closed
 
 Running the daemon as a per-user service (launchd, systemd `--user`) removes

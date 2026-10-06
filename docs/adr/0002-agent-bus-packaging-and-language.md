@@ -66,7 +66,8 @@ published package.
   the status client, catalog and installer assertions, and the README skill
   count. Its `engines` floor stays at Node 18.
 - Platform support for v1: macOS, Linux, and WSL2, matching the Bash-based
-  core package. Native Windows is not supported in v1. The bin shim locates
+  core package. Native Windows is not supported in v1 (since amended: see
+  2026-10-07 below). The bin shim locates
   the interpreter by trying `python3`, then `python`, then the Windows
   launcher `py -3` (WSL and future native support), and accepts the first one
   reporting 3.10 or newer; otherwise it exits with a message naming the
@@ -114,6 +115,20 @@ published package.
   the same platform scope as this ADR, per-user rather than system-wide, and
   refused by name on Windows. It is the packaging decision applied to running
   the daemon: still no pip, still no root, still nothing outside the user.
+- 2026-10-07, native Windows. The core package's installers and hooks now
+  run on Node, so "matching the Bash-based core" no longer excludes Windows,
+  and the daemon runs there natively: process facts from the Win32 API
+  instead of `ps` and `lsof`, providers in Job Objects instead of process
+  groups, `run` on a pseudo console instead of a pty, a protected DACL on the
+  state directory instead of modes, and `SO_EXCLUSIVEADDRUSE` on the port.
+  The launcher is `bin/luciazero-agentd.cmd`, with the interpreter order of
+  the Decision above, and the Node installer puts it in place from a
+  checkout. `service install` writes a Task Scheduler task that runs in the
+  user's logon session at least privilege. Packaging is unchanged: still a
+  checkout, still no pip, still nothing outside the user. Cygwin is refused
+  by name. Windows looks for a bare command name in the working directory
+  before PATH, so on Windows every program the daemon starts by name is
+  found through PATH's absolute entries only.
 
 ## Decision record
 

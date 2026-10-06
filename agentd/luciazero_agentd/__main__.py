@@ -630,6 +630,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         raise KeyboardInterrupt
 
     previous = signal.signal(signal.SIGTERM, _stop_dispatch)
+    # Windows delivers no SIGTERM from outside; Ctrl+Break is how a console
+    # program is asked to stop there.
+    previous_break = signal.signal(signal.SIGBREAK, _stop_dispatch) if hasattr(signal, "SIGBREAK") else None
     try:
         started = 0
         for summary in _dispatch_passes(engine, passes=passes, interval=args.interval,
@@ -648,6 +651,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         print("dispatch: stopped", file=sys.stderr)
     finally:
         signal.signal(signal.SIGTERM, previous)
+        if previous_break is not None:
+            signal.signal(signal.SIGBREAK, previous_break)
     return 0
 
 

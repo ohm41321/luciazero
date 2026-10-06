@@ -3,15 +3,16 @@
 Every test here drives a real pty and a real store. What it never does is
 start a provider: the child is `cat`, which echoes what it is typed, so the
 assertion "the nudge reached the terminal" is the bytes coming back out.
+
+Windows has no pty. What decides when to knock runs there as everywhere;
+the terminal half is a pseudo console, driven by test_windows instead.
 """
 
 from __future__ import annotations
 
 import os
-import pty
 import signal
 import sys
-import termios
 import threading
 import time
 import unittest
@@ -22,6 +23,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from luciazero_agentd import nudge  # noqa: E402
 from luciazero_agentd.store import Store, utcnow  # noqa: E402
+
+try:
+    import pty
+    import termios
+except ImportError:  # Windows
+    pty = termios = None  # type: ignore[assignment]
+
+on_a_pty = unittest.skipIf(pty is None, "no pty on Windows; test_windows drives its pseudo console "
+                                        "(PseudoConsole, RunOnAConsole)")
 
 
 def make_store(path: Path) -> Store:
@@ -545,6 +555,7 @@ class TypistTests(unittest.TestCase):
         self.assertEqual(b"".join(self.written), nudge.TEXT.encode() + b"\r")
 
 
+@on_a_pty
 class ProxyTests(unittest.TestCase):
     """The pty half, with `cat` standing in for a provider.
 
@@ -820,6 +831,7 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(before, self.settings(self.slave))
 
 
+@on_a_pty
 class RunTests(unittest.TestCase):
     """`run` end to end, under a pty, with a delivery arriving mid-session.
 

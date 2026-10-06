@@ -460,10 +460,22 @@ class OnScreenTests(ClaimCase):
         time.sleep(0.05)
         return client, asked, console.getvalue()
 
+    def decided(self, claim_id: str) -> str:
+        """The claim's state once the dialog's answer is written. The answer
+        is recorded on the dialog's thread after the dialog returns, so a slow
+        machine can still show "open" for a moment after it was asked."""
+        state = "open"
+        for _ in range(1000):
+            state = self.store.get_claim(claim_id)["state"]
+            if state != "open":
+                break
+            time.sleep(0.01)
+        return state
+
     def test_clicking_allow_verifies_the_session_with_nothing_typed(self) -> None:
         server = self.server_with("button returned:Allow\n")
         client, asked, console = self.claim_through(server)
-        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "approved")
+        self.assertEqual(self.decided(asked["claim_id"]), "approved")
         who = client.call("agent_whoami", {})["structuredContent"]
         self.assertTrue(who["verified"])
         self.assertEqual(who["agent_id"], REVIEWER)
@@ -482,7 +494,7 @@ class OnScreenTests(ClaimCase):
     def test_clicking_deny_leaves_it_unverified(self) -> None:
         server = self.server_with("button returned:Deny\n")
         client, asked, _ = self.claim_through(server)
-        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "denied")
+        self.assertEqual(self.decided(asked["claim_id"]), "denied")
         self.assertFalse(client.call("agent_whoami", {})["structuredContent"]["verified"])
 
     def test_a_dialog_nobody_answers_decides_nothing(self) -> None:

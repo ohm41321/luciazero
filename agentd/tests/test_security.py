@@ -12,7 +12,6 @@ import inspect
 import io
 import json
 import os
-import pty
 import re
 import select
 import shutil
@@ -38,7 +37,7 @@ from luciazero_agentd import store as store_module
 from luciazero_agentd.redact import Redactor, find_credential_url
 import luciazero_agentd.server as server_module
 from luciazero_agentd.server import TOOLS, BusServer
-from tests.fixtures import commit_file, git, make_repo
+from tests.fixtures import WINDOWS, OnConsole, commit_file, git, make_repo
 from tests.test_mcp import Http
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +97,7 @@ class WorktreeIsolation(SecurityCase):
             self.store.bind_worktree("claude-reviewer", self.repo_a)
         self.assertIn("owned by 'codex-architect'", str(ctx.exception))
         link = self.tmp / "link-to-a"
-        os.symlink(self.repo_a, link)
+        os.symlink(self.repo_a, link, target_is_directory=True)  # Windows makes a file link otherwise
         with self.assertRaises(ConflictError):
             self.store.bind_worktree("claude-reviewer", str(link))  # resolves to the same toplevel
         with self.assertRaises(ConflictError):
@@ -218,7 +217,7 @@ class ArtifactContainment(SecurityCase):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "secret.txt").write_text("s\n", encoding="utf-8")
-        os.symlink(elsewhere, repo / "ext")
+        os.symlink(elsewhere, repo / "ext", target_is_directory=True)
         with self.assertRaises(UnsafeReference):
             self.publish("ext/secret.txt")
 
@@ -448,8 +447,23 @@ class ApprovalProvenance(SecurityCase):
         self.assertEqual(self.store.pending_approvals(), [])
 
 
+#: End of input typed at a terminal: Ctrl-D, or on a Windows console a Ctrl-Z
+#: on a line of its own.
+EOF_KEYS = "\x1a\n" if WINDOWS else "\x04"
+
+
 def run_in_pty(args: list[str], answer: str, env: dict[str, str], timeout: float = 60) -> tuple[int, str]:
-    """Run ``args`` on a pseudo-terminal, type ``answer``, return (exit, output)."""
+    """Run ``args`` on a terminal, type ``answer``, return (exit, output).
+
+    A pseudo-terminal, or on Windows a pseudo console, where Enter is a
+    carriage return."""
+    if WINDOWS:
+        console = OnConsole(args, env)
+        console.type(answer.replace("\n", "\r"))
+        code = console.finish(timeout)
+        return (-1 if code is None else code), console.screen()
+    import pty
+
     master, slave = pty.openpty()
     proc = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=env, cwd=PACKAGE_ROOT, close_fds=True)
     os.close(slave)
@@ -521,7 +535,7 @@ class ApprovalCli(unittest.TestCase):
         self.assertEqual(self.pending(), [])
 
     def test_eof_at_the_prompt_declines_cleanly(self) -> None:
-        code, output = run_in_pty(self.args, "\x04", self.env)  # Ctrl-D
+        code, output = run_in_pty(self.args, EOF_KEYS, self.env)
         self.assertEqual(code, 1, output)
         self.assertIn("not approved", output)
         self.assertNotIn("Traceback", output)

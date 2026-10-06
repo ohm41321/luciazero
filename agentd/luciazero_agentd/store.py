@@ -22,6 +22,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -37,6 +38,7 @@ from .redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX
 from .redact import DEFAULT as DEFAULT_REDACTOR
 from .redact import NONCE_PATTERN, NONCE_PREFIX, Redactor, find_credential_url
 
+WINDOWS = sys.platform == "win32"
 MESSAGE_KINDS = ("task", "question", "finding", "decision", "artifact", "result")
 ARTIFACT_KINDS = ("commit", "patch", "report", "log", "relay")
 PATH_ARTIFACT_KINDS = ("patch", "report", "log", "relay")
@@ -286,9 +288,25 @@ def _check_path_arg(value: Any) -> str:
         raise ValidationError(f"path must be a non-empty string of at most {MAX_PATH_LENGTH} chars")
     if CONTROL_CHARS.search(value):
         raise ValidationError("path must not contain control characters")
-    if not os.path.isabs(os.path.expanduser(value)):
+    if not _absolute(os.path.expanduser(value)):
         raise ValidationError("path must be absolute")
     return os.path.expanduser(value)
+
+
+def _absolute(path: str) -> bool:
+    """Absolute on every Python. Before 3.13, Windows called `\\x` absolute
+    although it names a different place on each drive; a drive is required
+    there, as 3.13 itself requires one."""
+    return os.path.isabs(path) and (not WINDOWS or bool(os.path.splitdrive(path)[0]))
+
+
+def _inside(path: str, root: str) -> bool:
+    """`path` is `root` or below it. Two Windows drives share no prefix at
+    all, and commonpath says so by raising rather than answering."""
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
 
 
 def _same_path(a: str, b: str) -> bool:
@@ -307,7 +325,10 @@ def _contained_file(toplevel: str, ref: str, expected_sha256: Optional[str], *, 
     directory, a regular file under the size cap whose content carries no
     strict secret shape. Returns the size and sha256; a caller-supplied digest
     must match the file."""
-    if os.path.isabs(ref) or ref.startswith("~"):
+    # On Windows a colon is a drive -- "C:x" is relative to that drive's own
+    # current directory -- or an alternate data stream; neither is a file in
+    # the worktree, and no Windows file name may contain one otherwise.
+    if os.path.isabs(ref) or ref.startswith("~") or (WINDOWS and ":" in ref):
         raise UnsafeReference("artifact paths are relative to the bound worktree")
     parts = ref.replace("\\", "/").split("/")
     if any(part in ("", ".", "..") for part in parts):
@@ -322,9 +343,9 @@ def _contained_file(toplevel: str, ref: str, expected_sha256: Optional[str], *, 
         if any(_same_path(current, git_dir) for git_dir in git_dirs):
             raise UnsafeReference("artifact paths must not point into .git")
     real = os.path.realpath(current)
-    if os.path.commonpath([real, toplevel]) != toplevel:
+    if not _inside(real, toplevel):
         raise UnsafeReference("artifact path escapes the bound worktree")
-    if any(os.path.commonpath([real, git_dir]) == git_dir for git_dir in git_dirs):
+    if any(_inside(real, git_dir) for git_dir in git_dirs):
         raise UnsafeReference("artifact paths must not point into .git")
     if not os.path.isfile(current):
         raise UnsafeReference("artifact path is not a regular file in the bound worktree")

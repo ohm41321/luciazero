@@ -132,7 +132,7 @@ _bind("ReadConsoleInputW", [wintypes.HANDLE, ctypes.POINTER(INPUT_RECORD), winty
                             ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL)
 _bind("ReadConsoleW", [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
                        ctypes.c_void_p], wintypes.BOOL)
-_bind("WriteConsoleW", [wintypes.HANDLE, wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+_bind("WriteConsoleW", [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
                         ctypes.c_void_p], wintypes.BOOL)
 _bind("ReadFile", [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
                    ctypes.c_void_p], wintypes.BOOL)
@@ -350,6 +350,9 @@ class _Console:
         self.in_mode, self.out_mode = _console_mode(stdin), _console_mode(stdout)
         self.codepages: Optional[tuple[int, int]] = None
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # Keys come the other way, as UTF-16 units; this holds the first half
+        # of a character outside the BMP from one read until the next.
+        self._keys = codecs.getincrementaldecoder("utf-16-le")("replace")
 
     def __enter__(self) -> "_Console":
         if self.in_mode is not None or self.out_mode is not None:
@@ -383,18 +386,23 @@ class _Console:
             while view:
                 written = wintypes.DWORD()
                 buffer = (ctypes.c_char * len(view)).from_buffer_copy(view)
-                if not _kernel32.WriteFile(self.stdout, buffer, len(view), ctypes.byref(written), None):
+                done = _kernel32.WriteFile(self.stdout, buffer, len(view), ctypes.byref(written), None)
+                if not done or not written.value:
                     return
                 view = view[written.value:]
             return
         # A UTF-8 character can arrive split across two reads; WriteConsoleW
-        # gets whole characters only.
-        text = self._decoder.decode(data)
-        while text:
+        # gets whole characters only. It counts UTF-16 units, not Python
+        # characters: one outside the BMP is two of them, and a partial write
+        # may stop between the two.
+        units = memoryview(self._decoder.decode(data).encode("utf-16-le"))
+        while units:
             written = wintypes.DWORD()
-            if not _kernel32.WriteConsoleW(self.stdout, text, len(text), ctypes.byref(written), None):
+            buffer = (ctypes.c_char * len(units)).from_buffer_copy(units)
+            done = _kernel32.WriteConsoleW(self.stdout, buffer, len(units) // 2, ctypes.byref(written), None)
+            if not done or not written.value:
                 return
-            text = text[written.value:]
+            units = units[2 * written.value:]
 
     def _key_waiting(self) -> bool:
         """Whether a read of the console would return now. Only a key press
@@ -418,20 +426,21 @@ class _Console:
             if not _kernel32.ReadFile(self.stdin, buffer, 4096, ctypes.byref(got), None):
                 return b""
             return buffer.raw[:got.value]
-        pending = ""
         while not stop.is_set():
             if _kernel32.WaitForSingleObject(self.stdin, 100) != WAIT_OBJECT_0 or not self._key_waiting():
                 continue
-            buffer = ctypes.create_unicode_buffer(1024)
+            # ReadConsoleW counts UTF-16 units, and a character outside the
+            # BMP can arrive as its two halves in two reads. The units are
+            # decoded here, by a decoder that outlives this call, so the
+            # halves meet; one that never finds its other half is U+FFFD,
+            # never invalid UTF-8 typed into the provider.
+            buffer = ctypes.create_string_buffer(2 * 1024)
             got = wintypes.DWORD()
             if not _kernel32.ReadConsoleW(self.stdin, buffer, 1024, ctypes.byref(got), None):
                 return b""
-            text = pending + buffer[:got.value]
-            pending = ""
-            if text and "\ud800" <= text[-1] <= "\udbff":
-                text, pending = text[:-1], text[-1]  # the other half is in the next read
+            text = self._keys.decode(buffer.raw[:2 * got.value])
             if text:
-                return text.encode("utf-8", "surrogatepass")
+                return text.encode("utf-8")
         return b""
 
 

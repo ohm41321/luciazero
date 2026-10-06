@@ -10,11 +10,8 @@ touches the user's own provider state, is a suite nobody can run.
 from __future__ import annotations
 
 import json
-import os
 import signal
-import stat
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
@@ -33,16 +30,16 @@ from luciazero_agentd.adapters import (
 )
 from luciazero_agentd.appserver import AppServer, AppServerError
 from luciazero_agentd.runlog import RunLog
+from tests.fixtures import fake_cli, pid_running
 
 CREDENTIAL = "lzsc_" + "e" * 32
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 URL = "http://127.0.0.1:65535/mcp"
 
 
 def script(path: Path, body: str) -> str:
     """An executable stand-in for a provider CLI."""
-    path.write_text("#!" + sys.executable + "\n" + body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return str(path)
+    return fake_cli(path, body)
 
 
 class AdapterCase(unittest.TestCase):
@@ -159,14 +156,16 @@ class CredentialCleanupTests(AdapterCase):
 
     def test_the_config_carries_the_credential_at_0600_while_the_turn_runs(self) -> None:
         adapter, request = self.claude(
-            "import json, os, sys\n"
+            "import json, sys\n"
+            f"sys.path.insert(0, {str(PACKAGE_ROOT)!r})\n"
+            "from tests.fixtures import private_problem\n"
             "path = [a for a in sys.argv if a.endswith('mcp.json')][0]\n"
-            "print(json.dumps({'mode': oct(os.stat(path).st_mode)[-3:], 'body': open(path).read()}))\n"
+            "print(json.dumps({'problem': private_problem(path), 'body': open(path).read()}))\n"
         )
         result = adapter.start(request)
         self.assertTrue(result.ok, result.error)
         reported = json.loads([line for line in self.logged().splitlines() if line.startswith("{")][-1])
-        self.assertEqual(reported["mode"], "600")
+        self.assertIsNone(reported["problem"])
         # The log is scrubbed, so the credential shows only as its shape.
         self.assertIn("[redacted]", reported["body"])
 
@@ -387,13 +386,7 @@ class AppServerTests(AdapterCase):
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return pid_running(pid)
 
 
 if __name__ == "__main__":

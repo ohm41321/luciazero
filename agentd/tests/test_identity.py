@@ -26,6 +26,7 @@ from luciazero_agentd import procinfo
 from luciazero_agentd.redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX, DEFAULT as DEFAULT_REDACTOR
 from luciazero_agentd.server import ACTOR_FIELDS, TOOL_INDEX, BusServer, tool_contract
 from luciazero_agentd.store import ConflictError, NotFound, UnsafeReference
+from tests.fixtures import WINDOWS, fake_cli, kill_pid, pid_running
 from tests.test_mcp import TOKEN, Http
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -293,7 +294,7 @@ class Bindings(StoreCase):
     def test_process_identity_is_filled_in_once(self) -> None:
         binding, _ = self.bind(tty="ttys108")
         self.assertIsNone(binding["pid"])
-        filled = self.store.bind_process(binding["id"], pid=os.getpid(), process_started_at="t0", cwd="/tmp")
+        filled = self.store.bind_process(binding["id"], pid=os.getpid(), process_started_at="t0", cwd=os.getcwd())
         self.assertEqual(filled["pid"], os.getpid())
         with self.assertRaises(ConflictError):
             self.store.bind_process(binding["id"], pid=1, process_started_at="t1")
@@ -592,12 +593,13 @@ class HumanCommands(unittest.TestCase):
             self.assertEqual(store.get_binding(binding["id"])["state"], "revoked")
         self.assertEqual(self.cli("detach", "--agent", "claude-reviewer").returncode, 2)
 
-    def _sleeper(self) -> Path:
+    def _sleeper(self) -> str:
         """A provider stand-in that ignores the flags `run` adds."""
-        script = self.state / "sleeper.sh"
-        script.write_text("#!/bin/sh\nexec sleep 30\n")
-        script.chmod(0o755)
-        return script
+        return fake_cli(self.state / "sleeper", "import time\ntime.sleep(30)\n")
+
+    def _echo(self) -> str:
+        """`echo`, as a provider stand-in every platform can start."""
+        return fake_cli(self.state / "echo", "import sys\nprint(' '.join(sys.argv[1:]))\n")
 
     def _bindings(self, states=("active", "revoked", "stale")) -> list[dict]:
         with Store.open(self.state / "bus.sqlite3") as store:
@@ -610,10 +612,20 @@ class HumanCommands(unittest.TestCase):
         endpoint = read_endpoint(self.state if state is None else state)
         if endpoint is None or not isinstance(endpoint.get("pid"), int):
             return
-        try:
-            os.kill(endpoint["pid"], __import__("signal").SIGTERM)
-        except OSError:
-            pass
+        if WINDOWS:
+            # An autostarted daemon there has no console to send Ctrl+Break
+            # to. Wait for it to be gone: Windows will not delete the state
+            # directory while it still holds the log and the database open.
+            kill_pid(endpoint["pid"])
+        else:
+            try:
+                os.kill(endpoint["pid"], __import__("signal").SIGTERM)
+            except OSError:
+                pass
+        for _ in range(200):
+            if not pid_running(endpoint["pid"]):
+                return
+            __import__("time").sleep(0.05)
 
     def test_run_starts_the_daemon_a_first_terminal_does_not_have(self) -> None:
         """Setup step one is "start the daemon in a terminal you can leave
@@ -624,7 +636,7 @@ class HumanCommands(unittest.TestCase):
         self.addCleanup(self._stop_daemon)
         self.assertIsNone(read_endpoint(self.state))
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         endpoint = read_endpoint(self.state)
         self.assertIsNotNone(endpoint, done.stderr)
@@ -634,7 +646,7 @@ class HumanCommands(unittest.TestCase):
         """Automation that wants to know a daemon was already running keeps
         the answer it had."""
         done = self.cli("run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 2, done.stdout)
         self.assertIn("no running daemon", done.stderr)
 
@@ -653,7 +665,7 @@ class HumanCommands(unittest.TestCase):
 
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         endpoint = read_endpoint(self.state)
         self.assertIsNotNone(endpoint, done.stderr)
@@ -667,7 +679,7 @@ class HumanCommands(unittest.TestCase):
             store.trust = "human"
             store.register_agent("claude-reviewer", provider="claude", role="reviewer")
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(second), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(second), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         other = read_endpoint(second)
         self.assertIsNotNone(other, done.stderr)
@@ -685,7 +697,7 @@ class HumanCommands(unittest.TestCase):
         (broken / "bus.sqlite3").mkdir()  # sqlite cannot open a directory
         started = _time.monotonic()
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(broken), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(broken), "--", self._echo(), "hello", raw=True)
         waited = _time.monotonic() - started
         self.assertEqual(done.returncode, 2, done.stdout)
         self.assertLess(waited, 10, "a dead child is not worth a twenty second wait")
@@ -713,7 +725,7 @@ class HumanCommands(unittest.TestCase):
 
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--agent", "claude-newcomer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         with Store.open(self.state / "bus.sqlite3") as store:
             store.migrate()
@@ -729,12 +741,11 @@ class HumanCommands(unittest.TestCase):
         bin_dir = self.state / "front bin"
         bin_dir.mkdir(exist_ok=True)
         for name in ("claude", "codex"):
-            fake = bin_dir / name
-            fake.write_text(f'#!/bin/sh\nprintf "%s started: %s\\n" {name} "$*"\n')
-            fake.chmod(0o755)
-        env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+            fake_cli(bin_dir / name, f"import sys\nprint({name!r} + ' started: ' + ' '.join(sys.argv[1:]))\n")
+        env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
         if home is not None:
             env["HOME"] = str(home)
+            env["USERPROFILE"] = str(home)  # what Windows calls home
         return self.cli(*args, "--state-dir", str(self.state), raw=True, env=env)
 
     def test_the_provider_is_the_verb_and_its_name_is_the_agent(self) -> None:
@@ -796,7 +807,7 @@ class HumanCommands(unittest.TestCase):
         a refusal that only one of them makes is half a refusal."""
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--strict", "--agent", "codex-architect", "--provider", "codex",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
         self.assertIn("--strict is only supported by claude", done.stderr)
         self.assertNotIn("hello", done.stdout)
@@ -860,11 +871,15 @@ class HumanCommands(unittest.TestCase):
         from luciazero_agentd.statedir import write_endpoint
 
         write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
+        # Windows has no SIGTERM to send; Ctrl+Break to a process group of
+        # its own is the request to stop there.
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
         cli = subprocess.Popen(
             [sys.executable, "-m", "luciazero_agentd", "run", "--agent", "claude-reviewer",
-             "--provider", "claude", "--state-dir", str(self.state), "--", str(self._sleeper())],
+             "--provider", "claude", "--state-dir", str(self.state), "--", self._sleeper()],
             cwd=str(PACKAGE_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+            **group,
         )
         self.addCleanup(cli.kill)
         for stream in (cli.stdout, cli.stderr):
@@ -877,7 +892,7 @@ class HumanCommands(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertIsNotNone(child_pid, "run never recorded its child")
-        cli.send_signal(signal.SIGTERM)
+        cli.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
         cli.wait(timeout=30)
         bindings = self._bindings()
         self.assertEqual([b["state"] for b in bindings], ["revoked"], "SIGTERM must not leave a live credential")
@@ -896,7 +911,7 @@ class HumanCommands(unittest.TestCase):
         # placed after it, so the state directory has to come first.
         done = self.cli(
             "run", "--agent", "claude-reviewer", "--provider", "claude", "--state-dir", str(self.state),
-            "--", "/bin/echo", "started", raw=True,
+            "--", self._echo(), "started", raw=True,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
         # the child was handed a path, never the secret itself: argv is

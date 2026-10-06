@@ -37,6 +37,7 @@ from luciazero_agentd.runlog import RunLog
 from luciazero_agentd.statedir import pid_alive as _pid_alive
 from luciazero_agentd.statedir import write_endpoint
 from luciazero_agentd.__main__ import main
+from tests.fixtures import WINDOWS, kill_pid, pid_running, private_problem
 from luciazero_agentd.store import (
     LEASE_TTL_SECONDS,
     GenerationFenced,
@@ -52,19 +53,14 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 def _running(pid: int) -> bool:
     """Is this pid still around? Polled, because a signal is not instant."""
     for _ in range(100):
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not pid_running(pid):
             return False
         time.sleep(0.05)
     return True
 
 
 def _reap_pid(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    kill_pid(pid)
 
 
 def _reap(process: subprocess.Popen) -> None:
@@ -368,7 +364,7 @@ class RunLogTests(DispatchCase):
         self.assertNotIn(credential, body)
         self.assertNotIn("shared-token-value", body)
         self.assertIn("bytes dropped", body)
-        self.assertEqual(oct(os.stat(ref).st_mode)[-3:], "600")
+        self.assertIsNone(private_problem(ref))
 
 
 class WrappedSecretTests(DispatchCase):
@@ -753,9 +749,12 @@ class DispatcherTests(DispatchCase):
         self.worker(command=[sys.executable, "-c", "import time; time.sleep(120)"], turn_timeout_seconds=120)
         self.queued()
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT))
+        # Windows has no SIGTERM to send another process; Ctrl+Break, to a
+        # child in a process group of its own, is the request to stop there.
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
         child = subprocess.Popen(
             [sys.executable, "-m", "luciazero_agentd", "dispatch", "--watch", "--state-dir", str(self.root)],
-            cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **group,
         )
         try:
             def in_flight() -> dict | None:
@@ -771,7 +770,7 @@ class DispatcherTests(DispatchCase):
             assert run is not None
             provider_pid = int(run["provider_pid"])
             self.assertEqual(self.store.get_binding(str(run["binding_id"]))["state"], "active")
-            child.terminate()  # SIGTERM, what `kill <pid>` sends
+            child.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)  # what `kill <pid>` sends
             self.assertEqual(child.wait(timeout=30), 0)
         finally:
             if child.poll() is None:

@@ -171,7 +171,7 @@ BUNDLED = "<this-skill-dir>/scripts/"
 def cataloged() -> list[str]:
     """The skills the installers copy, from the file they read."""
     names = []
-    for line in CATALOG.read_text().splitlines():
+    for line in CATALOG.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
             names.append(line)
@@ -195,7 +195,7 @@ class BundledScriptTests(unittest.TestCase):
         named = 0
         for name in cataloged():
             skill = SKILLS / name
-            body = (skill / "SKILL.md").read_text()
+            body = (skill / "SKILL.md").read_text(encoding="utf-8")
             for script in sorted((skill / "scripts").glob("*")):
                 if not script.is_file():
                     continue
@@ -222,7 +222,7 @@ class BundledScriptTests(unittest.TestCase):
         pointed = 0
         for name in cataloged():
             skill = SKILLS / name
-            body = (skill / "SKILL.md").read_text()
+            body = (skill / "SKILL.md").read_text(encoding="utf-8")
             for hit in re.finditer(re.escape(BUNDLED) + r"([A-Za-z0-9._-]+)", body):
                 target = skill / "scripts" / hit.group(1)
                 self.assertTrue(

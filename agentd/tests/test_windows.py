@@ -8,6 +8,7 @@ because no platform may let a second socket take it.
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
@@ -22,16 +23,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from luciazero_agentd import Store, procinfo, proctree
+from luciazero_agentd import Store, gitinfo, procinfo, proctree
+from luciazero_agentd import store as store_module
 from luciazero_agentd.server import BusServer
 from luciazero_agentd.statedir import ensure_state_dir, load_or_create_token
+from tests.fixtures import ANSI, OnConsole, dacl_sddl, fake_cli, make_repo, private_problem
 from tests.test_mcp import TOKEN
 
 WINDOWS = sys.platform == "win32"
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_NPM = r"C:\Users\First Last\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js"
 CODEX_NPM = r"C:\Users\u\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js"
-ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[=>()][0-9A-Za-z]?")
 only_windows = unittest.skipUnless(WINDOWS, "Windows only; the windows-agentd CI job runs it")
 if WINDOWS:
     from luciazero_agentd import winproc
@@ -162,6 +164,15 @@ class ProcessFacts(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(winproc.command_line(child.pid)[-4:], argv)
 
+    def test_a_table_that_cannot_be_read_is_a_process_error(self) -> None:
+        # What `ps` denied by a sandbox is on POSIX (test_no_process_table):
+        # the commands report a ProcessError, so nothing else may escape.
+        with mock.patch.object(winproc, "table", side_effect=OSError(5, "Access is denied")):
+            with self.assertRaises(procinfo.ProcessError):
+                procinfo.sessions()
+            with self.assertRaises(procinfo.ProcessError):
+                procinfo.provider_above(os.getpid())
+
 
 @only_windows
 class NodeHostedProviders(unittest.TestCase):
@@ -243,22 +254,27 @@ class PrivateState(unittest.TestCase):
         return [line.strip() for line in done.stdout.splitlines() if ":(" in line]
 
     def assertPrivate(self, path: Path) -> None:
-        entries = self.icacls(path)
-        self.assertEqual(len(entries), 2, entries)
-        self.assertFalse([e for e in entries if "(I)" in e], f"inherited entries remain: {entries}")
-        self.assertTrue([e for e in entries if "SYSTEM" in e], entries)
-        self.assertFalse([e for e in entries if "Everyone" in e or "Users" in e], entries)
+        # Read as SDDL, by SID: icacls prints localized names, and its first
+        # line starts with the path, which on a runner contains "Users".
+        self.assertIsNone(private_problem(path))
+
+    @staticmethod
+    def everyone(path: Path, *, inherited: bool = True) -> list[str]:
+        """The entries that admit Everyone (SID WD), from the SDDL."""
+        return [ace for ace in re.findall(r"\(([^)]*)\)", dacl_sddl(path))
+                if ace.split(";")[5] == "WD" and (inherited or "ID" not in ace.split(";")[1])]
 
     def test_the_state_directory_and_token_admit_this_user_and_system_only(self) -> None:
         state = self.parent / "agent-bus"
         state.mkdir()
-        self.assertTrue([e for e in self.icacls(state) if "Everyone" in e], "the fixture did not inherit Everyone")
+        self.assertTrue(self.everyone(state), "the fixture did not inherit Everyone")
+        self.assertIn("WD", private_problem(state) or "", "the check must refuse the grant it exists to catch")
         ensure_state_dir(state)
         self.assertPrivate(state)
         load_or_create_token(state)
         self.assertPrivate(state / "token")
         (state / "later").write_text("x", encoding="utf-8")
-        self.assertFalse([e for e in self.icacls(state / "later") if "Everyone" in e])
+        self.assertFalse(self.everyone(state / "later"))
 
     def test_a_token_and_database_left_with_grants_of_their_own_are_made_private(self) -> None:
         """A private directory does not protect a file on Windows: the file's
@@ -274,7 +290,8 @@ class PrivateState(unittest.TestCase):
         self.icacls(token, "/inheritance:r", "/grant", "*S-1-1-0:(R)", "/grant", f"*{mine}:(F)")
         self.icacls(db, "/grant", "*S-1-1-0:(R)")
         for path in (token, db):
-            self.assertTrue([e for e in self.icacls(path) if "Everyone" in e and "(I)" not in e], path)
+            self.assertTrue(self.everyone(path, inherited=False), path)
+            self.assertIn("WD", private_problem(path) or "", path)
         ensure_state_dir(state)
         for path in (state, token, db):
             self.assertPrivate(path)
@@ -291,7 +308,7 @@ class PrivateState(unittest.TestCase):
         self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
         with self.assertRaisesRegex(PermissionError, "is a link"):
             ensure_state_dir(state)
-        self.assertTrue([e for e in self.icacls(outside) if "Everyone" in e], "the link's target was changed")
+        self.assertTrue(self.everyone(outside), "the link's target was changed")
         os.rmdir(state / "runs" / "jump")
         theirs = state / "token"
         theirs.write_text("x", encoding="utf-8")
@@ -309,7 +326,7 @@ class PrivateState(unittest.TestCase):
             self.skipTest(f"this account may not give a directory away: {given.stdout.strip()}")
         with self.assertRaises(PermissionError):
             ensure_state_dir(theirs)
-        self.assertTrue([e for e in self.icacls(theirs) if "Everyone" in e], "a refused directory was changed")
+        self.assertTrue(self.everyone(theirs), "a refused directory was changed")
 
 
 @only_windows
@@ -473,6 +490,31 @@ class PseudoConsole(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("got:check your bus inbox", screen)
 
+    def test_its_own_console_takes_split_utf8_and_characters_outside_the_bmp(self) -> None:
+        # The child writes through _Console on the pseudo console's own screen
+        # buffer, so this is WriteConsoleW on a real console, not a pipe.
+        code, screen = self.drive(
+            "import ctypes, sys\n"
+            "from ctypes import wintypes\n"
+            f"sys.path.insert(0, {str(PACKAGE_ROOT)!r})\n"
+            "from luciazero_agentd import conpty\n"
+            "k = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+            "k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,\n"
+            "                          wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]\n"
+            "k.CreateFileW.restype = wintypes.HANDLE\n"
+            "def console(name):\n"
+            "    handle = k.CreateFileW(name, 0xC0000000, 3, None, 3, 0, None)\n"
+            "    if handle in (None, wintypes.HANDLE(-1).value):\n"
+            "        raise ctypes.WinError(ctypes.get_last_error())\n"
+            "    return handle\n"
+            "with conpty._Console(console('CONIN$'), console('CONOUT$')) as screen:\n"
+            "    assert screen.out_mode is not None, 'CONOUT$ is not a console'\n"
+            "    for chunk in (b'start\\xf0\\x9f', b'\\x98\\x80zebra|', '\u0e44\u0e17\u0e22\U0001f600'.encode(),\n"
+            "                  '\U0001f600'.encode()[:1], '\U0001f600'.encode()[1:], b'end|'):\n"
+            "        screen.write(chunk)\n")
+        self.assertEqual(code, 0, screen)
+        self.assertIn("start\U0001f600zebra|\u0e44\u0e17\u0e22\U0001f600\U0001f600end|", screen)
+
     def test_ending_the_session_ends_the_provider_tree(self) -> None:
         session = self.conpty.Session(
             [sys.executable, "-c", "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', "
@@ -492,6 +534,217 @@ class PseudoConsole(unittest.TestCase):
         drained.join(timeout=5)
         session.close()
         self.assertTrue(proctree.wait_gone(lambda: procinfo.alive(kids[0], started))(10.0))
+
+
+@only_windows
+class RunOnAConsole(unittest.TestCase):
+    """`run` end to end on a console, as test_nudge.RunTests does on a pty.
+
+    Three consoles deep: this test's pseudo console stands for the user's
+    terminal, `run` holds a second one for the provider, and the delivery
+    must cross both as keystrokes. The stand-in prints what it reads, so the
+    knock is proved to have arrived as input rather than merely painted.
+    """
+
+    def setUp(self) -> None:
+        from luciazero_agentd import conpty
+        from luciazero_agentd.statedir import write_endpoint
+        if not conpty.HAVE_CONPTY:
+            self.skipTest("this Windows has no pseudo console")
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-run-")
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "state"
+        self.state.mkdir()
+        self.db = self.state / "bus.sqlite3"
+        with Store.open(str(self.db)) as store:
+            store.migrate()
+            store.register_agent("codex-architect", provider="codex", role="architect")
+            store.register_agent("claude-implementer", provider="claude", role="implementer")
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
+        self.provider = fake_cli(Path(tmp.name) / "provider",
+                                 "import sys\nprint('provider-ready', flush=True)\n"
+                                 "for line in sys.stdin:\n    print('typed:' + line.strip(), flush=True)\n")
+
+    def start(self) -> OnConsole:
+        console = OnConsole([sys.executable, "-m", "luciazero_agentd", "run", "--agent", "codex-architect",
+                             "--provider", "claude", "--state-dir", str(self.state), "--", self.provider],
+                            {**os.environ, "PYTHONPATH": str(PACKAGE_ROOT), "PYTHONDONTWRITEBYTECODE": "1"})
+        self.addCleanup(console.finish, 0)
+        # Waited for on the provider's own output, not on `run`'s "bound as":
+        # a pseudo console paints the screen, not the stream, so a line the
+        # provider's console clears in the same frame is never painted at all.
+        self.assertTrue(console.wait_for("provider-ready"), console.screen())
+        return console
+
+    def test_keys_typed_at_the_console_reach_the_provider_as_typed(self) -> None:
+        # In through ReadConsoleW on `run`'s own console and out through its
+        # WriteConsoleW, with characters outside the BMP both ways.
+        console = self.start()
+        console.type("\u0e44\u0e17\u0e22 \U0001f600 \u00fc\U0001f680\r")
+        self.assertTrue(console.wait_for("typed:\u0e44\u0e17\u0e22 \U0001f600 \u00fc\U0001f680"), console.screen())
+
+    def test_a_delivery_knocks_on_a_session_that_is_doing_nothing(self) -> None:
+        from luciazero_agentd import nudge
+        console = self.start()
+        with Store.open(str(self.db)) as store:
+            store.heartbeat("codex-architect")
+            store.send_message(sender="claude-implementer", recipient="codex-architect",
+                               kind="finding", payload={"message": "while you were idle"})
+        self.assertTrue(console.wait_for("typed:" + nudge.TEXT), console.screen())
+        self.assertNotIn("while you were idle", console.screen())
+        log = self.state / nudge.LOG_NAME
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not log.exists():
+            time.sleep(0.05)
+        written = log.read_text(encoding="utf-8")
+        self.assertIn("claude-implementer [finding]:", written)
+        self.assertIn("while you were idle", written)
+
+
+class GitOutput(unittest.TestCase):
+    """git prints UTF-8 whatever the console's code page. Read in the
+    locale's encoding -- cp1252 on a Windows runner -- a Thai path comes back
+    as mojibake or not at all. Runs everywhere; it was wrong only on Windows."""
+
+    def test_a_worktree_and_branch_outside_ascii_are_read_back_exactly(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-git-")
+        self.addCleanup(tmp.cleanup)
+        branch = "\u0e07\u0e32\u0e19-\u00fc"
+        top = make_repo(Path(tmp.name) / "\u0e07\u0e32\u0e19 \u00fc", branch=branch)
+        found = gitinfo.inspect_worktree(top)
+        self.assertEqual(found["path"], top)
+        self.assertEqual(found["branch"], branch)
+
+@only_windows
+class WindowsPaths(unittest.TestCase):
+    """What a path means on Windows that it does not mean elsewhere: a
+    drive-relative path, an alternate data stream, a second drive."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-paths-")
+        self.addCleanup(tmp.cleanup)
+        self.top = make_repo(Path(tmp.name) / "repo")
+        self.git_dirs = gitinfo.inspect_worktree(self.top)["git_dirs"]
+
+    def contained(self, ref: str) -> object:
+        return store_module._contained_file(self.top, ref, None, git_dirs=self.git_dirs,
+                                            redactor=store_module.DEFAULT_REDACTOR)
+
+    def test_a_path_without_a_drive_is_not_absolute_on_any_python(self) -> None:
+        with self.assertRaises(store_module.ValidationError):
+            store_module._check_path_arg("\\tmp")
+        self.assertEqual(store_module._check_path_arg(self.top), self.top)
+
+    def test_a_drive_or_a_stream_is_not_a_file_in_the_worktree(self) -> None:
+        self.assertEqual(self.contained("reports/x.md")[0], len("# report\n".encode()))
+        drive = os.path.splitdrive(self.top)[0]
+        for ref in (f"{drive}reports/x.md", "reports/x.md:hidden", "reports/x.md::$DATA"):
+            with self.subTest(ref=ref), self.assertRaises(store_module.UnsafeReference):
+                self.contained(ref)
+
+    def test_a_junction_to_somewhere_else_is_refused_not_an_error(self) -> None:
+        # The checkout is on another drive from %TEMP% on a hosted runner, so
+        # this also proves two drives are an answer, not a ValueError.
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", os.path.join(self.top, "jump"), str(PACKAGE_ROOT)],
+                              capture_output=True, text=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.addCleanup(os.rmdir, os.path.join(self.top, "jump"))
+        with self.assertRaises(store_module.UnsafeReference):
+            self.contained("jump/README.md")
+
+@only_windows
+class ConsoleOutput(unittest.TestCase):
+    """WriteConsoleW counts UTF-16 units, and may take fewer than it was
+    given. A character outside the BMP is two units, and a partial write can
+    stop between them."""
+
+    def setUp(self) -> None:
+        from luciazero_agentd import conpty
+        self.conpty = conpty
+
+    def console(self, step: int, out: bytearray) -> object:
+        class Kernel32:
+            def GetConsoleMode(self, handle: int, mode: object) -> int:
+                mode._obj.value = 7
+                return 1
+
+            def WriteConsoleW(self, handle: int, buffer: object, count: int, written: object, _: object) -> int:
+                taken = min(count, step)
+                out.extend(buffer.raw[:2 * taken])
+                written._obj.value = taken
+                return 1
+
+        patcher = mock.patch.object(self.conpty, "_kernel32", Kernel32())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return self.conpty._Console(1, 2)
+
+    def test_partial_writes_lose_nothing_before_or_after_an_emoji(self) -> None:
+        emoji = "\U0001f600".encode()
+        chunks = [b"start\xf0\x9f", b"\x98\x80Z", "\u0e44\u0e17\u0e22".encode() + emoji, emoji[:1], emoji[1:], b"end"]
+        for step in (1, 2, 3, 1000):
+            with self.subTest(units_per_write=step):
+                out = bytearray()
+                console = self.console(step, out)
+                for chunk in chunks:
+                    console.write(chunk)
+                self.assertEqual(bytes(out).decode("utf-16-le"),
+                                 "start\U0001f600Z\u0e44\u0e17\u0e22\U0001f600\U0001f600end")
+
+    def test_a_console_that_takes_nothing_is_not_retried_forever(self) -> None:
+        out = bytearray()
+        self.console(0, out).write(b"stuck")
+        self.assertEqual(out, b"")
+
+
+@only_windows
+class ConsoleInput(unittest.TestCase):
+    """ReadConsoleW counts UTF-16 units as well, so one key outside the BMP
+    can arrive as its two halves in two reads -- alone, or after other keys.
+    Whatever is typed must reach the provider as valid UTF-8."""
+
+    def keys(self, reads: list[str]) -> bytes:
+        from luciazero_agentd import conpty
+        pending = [r.encode("utf-16-le", "surrogatepass") for r in reads]
+
+        class Kernel32:
+            def GetConsoleMode(self, handle: int, mode: object) -> int:
+                mode._obj.value = 7
+                return 1
+
+            def WaitForSingleObject(self, handle: int, milliseconds: int) -> int:
+                return conpty.WAIT_OBJECT_0
+
+            def ReadConsoleW(self, handle: int, buffer: object, count: int, got: object, _: object) -> int:
+                units = pending.pop(0)
+                self.asked = count
+                ctypes.memmove(buffer, units, len(units))
+                got._obj.value = len(units) // 2
+                return 1
+
+        with mock.patch.object(conpty, "_kernel32", Kernel32()):
+            console = conpty._Console(1, 2)
+            console._key_waiting = lambda: True
+            out = b""
+            while pending:
+                out += console.read(threading.Event())
+        return out
+
+    def test_a_surrogate_pair_split_across_reads_is_one_character(self) -> None:
+        emoji = "\U0001f600"
+        for reads in (["A\ud83d", "\ude00"], ["\ud83d", "\ude00Z"], ["A\ud83d", "\ude00\ud83d", "\ude00"]):
+            with self.subTest(reads=reads):
+                want = "".join(reads).encode("utf-16-le", "surrogatepass").decode("utf-16-le")
+                self.assertIn(emoji, want)
+                self.assertEqual(self.keys(reads), want.encode("utf-8"))
+
+    def test_a_key_inside_the_bmp_comes_through_as_typed(self) -> None:
+        self.assertEqual(self.keys(["\u0e44\u0e17\u0e22 \u00fc", "\r"]), "\u0e44\u0e17\u0e22 \u00fc\r".encode())
+
+    def test_a_half_with_no_other_half_is_never_invalid_utf8(self) -> None:
+        for reads in (["\ude00B"], ["\ud83dB"], ["A\ud83d", "B"]):
+            with self.subTest(reads=reads):
+                self.assertIn("\ufffd", self.keys(reads).decode("utf-8"))
 
 
 if __name__ == "__main__":

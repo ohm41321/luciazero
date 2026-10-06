@@ -43,4 +43,4 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Native Windows suites
-        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js
+        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js tests/node/global.test.js

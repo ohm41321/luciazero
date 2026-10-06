@@ -7,17 +7,35 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawnSync } = require("node:child_process");
 
+const WINDOWS = process.platform === "win32";
 const START = "# luciazero:start global-npm-path";
 const END = "# luciazero:end global-npm-path";
 const BODY = `${START}\nexport PATH="$HOME/.local/npm/bin:$PATH"\n${END}\n`;
 
+// Windows: npm's own global prefix. It is user-owned (%APPDATA%\npm unless
+// the user moved it), and the Node.js installer already puts it on the user's
+// Path, so nothing here edits PATH there; a shell config file is a POSIX idea.
+function windowsLocations(env = process.env) {
+  const result = spawnSync("npm", ["prefix", "--global"], { encoding: "utf8", env, shell: true, windowsHide: true });
+  const prefix = result.status === 0 ? String(result.stdout).trim() : "";
+  if (!prefix || !path.isAbsolute(prefix)) throw new Error("could not ask npm for its global prefix (npm prefix --global)");
+  return { prefix, command: path.join(prefix, "luciazero.cmd"), rc: null };
+}
+
+function onWindowsPath(dir, env = process.env) {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH");
+  const want = path.resolve(dir).replace(/[\\/]+$/, "").toLowerCase();
+  return (key ? env[key] : "").split(";").some((entry) => entry && path.resolve(entry).replace(/[\\/]+$/, "").toLowerCase() === want);
+}
+
 function locations(env = process.env) {
+  if (WINDOWS) return windowsLocations(env);
   const home = env.HOME || os.homedir();
   if (!path.isAbsolute(home)) throw new Error("HOME must be an absolute path");
   const shell = path.basename(env.SHELL || "");
   const rcName = shell === "zsh" ? ".zshrc" : shell === "bash" ? ".bashrc" : null;
   if (!rcName) throw new Error("supported shells are zsh and bash; set SHELL to the shell whose PATH should be updated");
-  return { home, prefix: path.join(home, ".local", "npm"), rc: path.join(home, rcName) };
+  return { home, prefix: path.join(home, ".local", "npm"), command: path.join(home, ".local", "npm", "bin", "luciazero"), rc: path.join(home, rcName) };
 }
 
 function readRc(file) {
@@ -68,8 +86,10 @@ function writeRc(file, text, mode) {
   }
 }
 
+// npm is npm.cmd on Windows, which only a shell can start; every argument
+// here is one of this file's own literals, never anything a caller typed.
 function npm(args, env = process.env) {
-  const result = spawnSync("npm", args, { stdio: "inherit", env });
+  const result = spawnSync("npm", args, { stdio: "inherit", env, shell: WINDOWS, windowsHide: true });
   if (result.error) throw new Error(`could not run npm: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`npm exited ${result.status === null ? "without a status" : result.status}`);
 }
@@ -85,12 +105,24 @@ function confirm(question) {
 
 async function install(args) {
   if (args.includes("--help")) {
-    console.log("Usage: luciazero global-install [--yes]\nInstalls luciazero@latest under ~/.local/npm and adds its bin to PATH.");
+    console.log(WINDOWS
+      ? "Usage: luciazero global-install [--yes]\nInstalls luciazero@latest in npm's own global prefix (%APPDATA%\\npm unless you moved it), which the Node.js installer puts on Path."
+      : "Usage: luciazero global-install [--yes]\nInstalls luciazero@latest under ~/.local/npm and adds its bin to PATH.");
     return 0;
   }
   const unknown = args.filter((arg) => arg !== "--yes");
   if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`);
   const place = locations();
+  if (WINDOWS) {
+    if (!args.includes("--yes") && !await confirm(`Install luciazero@latest globally in ${place.prefix}?`)) {
+      console.error("global install cancelled; nothing changed");
+      return 1;
+    }
+    npm(["install", "--global", "luciazero@latest"]);
+    console.log(`luciazero installed globally in ${place.prefix}`);
+    if (!onWindowsPath(place.prefix)) console.log(`${place.prefix} is not on your Path; add it in System Properties > Environment Variables`);
+    return 0;
+  }
   const before = readRc(place.rc);
   const after = nextRc(before.text);
   if (!args.includes("--yes") && !await confirm(`Install luciazero@latest globally in ${place.prefix}?`)) {
@@ -115,17 +147,27 @@ async function install(args) {
 
 function status(args) {
   if (args.includes("--help")) {
-    console.log("Usage: luciazero global-status\nChecks the user-owned global command and its shell PATH block.");
+    console.log(WINDOWS
+      ? "Usage: luciazero global-status\nChecks the global command in npm's global prefix and that the prefix is on Path."
+      : "Usage: luciazero global-status\nChecks the user-owned global command and its shell PATH block.");
     return 0;
   }
   if (args.length) throw new Error(`unknown option: ${args[0]}`);
   const place = locations();
-  const command = path.join(place.prefix, "bin", "luciazero");
+  const command = place.command;
   let commandOk = false;
   try {
     const commandStat = fs.statSync(command);
-    commandOk = commandStat.isFile() && Boolean(commandStat.mode & 0o111);
+    commandOk = commandStat.isFile() && (WINDOWS || Boolean(commandStat.mode & 0o111));
   } catch {}
+  if (WINDOWS) {
+    const pathOk = onWindowsPath(place.prefix);
+    if (!commandOk) console.error(`MISS  ${command}`);
+    if (!pathOk) console.error(`MISS  ${place.prefix} on Path`);
+    if (!commandOk || !pathOk) return 1;
+    console.log(`luciazero is installed globally in ${place.prefix}`);
+    return 0;
+  }
   let pathOk = false;
   try {
     const current = readRc(place.rc).text;
@@ -146,12 +188,23 @@ function status(args) {
 
 async function uninstall(args) {
   if (args.includes("--help")) {
-    console.log("Usage: luciazero global-uninstall [--yes]\nRemoves the global npm package and only Luciazero's exact PATH block.");
+    console.log(WINDOWS
+      ? "Usage: luciazero global-uninstall [--yes]\nRemoves the global npm package; Path is left as it was."
+      : "Usage: luciazero global-uninstall [--yes]\nRemoves the global npm package and only Luciazero's exact PATH block.");
     return 0;
   }
   const unknown = args.filter((arg) => arg !== "--yes");
   if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`);
   const place = locations();
+  if (WINDOWS) {
+    if (!args.includes("--yes") && !await confirm(`Uninstall global luciazero from ${place.prefix}?`)) {
+      console.error("global uninstall cancelled; nothing changed");
+      return 1;
+    }
+    npm(["uninstall", "--global", "luciazero"]);
+    console.log(`global luciazero removed from ${place.prefix}`);
+    return 0;
+  }
   const before = readRc(place.rc);
   const after = nextRc(before.text, true);
   if (!args.includes("--yes") && !await confirm(`Uninstall global luciazero from ${place.prefix}?`)) {
@@ -188,4 +241,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { BODY, locations, nextRc, readRc, writeRc };
+module.exports = { BODY, locations, nextRc, readRc, writeRc, onWindowsPath };

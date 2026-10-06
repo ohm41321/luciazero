@@ -608,6 +608,9 @@ function claudeStatus(dir) {
   };
   check(isFile(j(dir, DOCTRINE)), `doctrine ${DOCTRINE}`);
   for (const skill of skillInventory()) check(isFile(j(dir, "skills", skill, "SKILL.md")), `skill ${skill}`);
+  check(isExecutable(j(dir, "skills", "ready", "scripts", "detect.cjs")), "detect.cjs executable");
+  check(isExecutable(j(dir, "skills", "done", "scripts", "revert-probe.cjs")), "revert-probe.cjs executable");
+  check(isExecutable(j(dir, "skills", "bisect", "scripts", "safe-bisect.cjs")), "safe-bisect.cjs executable");
   check(isExecutable(j(dir, "skills", "ready", "scripts", "detect.sh")), "detect.sh executable");
   check(isExecutable(j(dir, "skills", "done", "scripts", "revert-probe.sh")), "revert-probe.sh executable");
   check(isExecutable(j(dir, "skills", "bisect", "scripts", "safe-bisect.sh")), "safe-bisect.sh executable");

@@ -18,13 +18,14 @@ set -euo pipefail
 if command -v node >/dev/null 2>&1; then
   python3 "${ROOT}/tests/installer_parity.py" "${ROOT}" || fail "the Node installers differ from the Bash ones (see above)"
   # The node:test suites the Windows CI job runs: the Node installer, the
-  # settings wiring, the hooks and the global install, each on its own. Run
-  # here too, so a change that breaks them is red before it reaches Windows;
-  # the Windows-only cases skip here.
+  # settings wiring, the hooks, the global install and the skills' helpers,
+  # each on its own. Run here too, so a change that breaks them is red before
+  # it reaches Windows; the Windows-only cases skip here.
   NT_OUT="$(node --test "${ROOT}/tests/node/hooks.test.js" "${ROOT}/tests/node/wiring.test.js" \
-    "${ROOT}/tests/node/installer.test.js" "${ROOT}/tests/node/global.test.js" 2>&1)" \
+    "${ROOT}/tests/node/installer.test.js" "${ROOT}/tests/node/global.test.js" \
+    "${ROOT}/tests/node/skill-helpers.test.js" 2>&1)" \
     || { printf '%s\n' "${NT_OUT}"; fail "the node:test suites are red (see above)"; }
-  echo "ok  node:test suites for the Windows installer, settings wiring, hooks and global install"
+  echo "ok  node:test suites for the Windows installer, settings wiring, hooks, global install and skill helpers"
 else
   echo "skip  installer parity and node:test suites (node not installed)"
 fi

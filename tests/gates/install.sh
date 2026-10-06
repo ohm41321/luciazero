@@ -42,6 +42,9 @@ while IFS= read -r NS; do
   [ -f "${SB}/skills/${NS}/SKILL.md" ] || fail "${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${SB}/skills/ready/scripts/detect.sh" ] || fail "detect.sh not installed or not executable"
+for HELPER in ready/scripts/detect.cjs done/scripts/revert-probe.cjs bisect/scripts/safe-bisect.cjs; do
+  [ -x "${SB}/skills/${HELPER}" ] || fail "${HELPER} not installed or not executable"
+done
 [ ! -e "${SB}/skills/luciazero-bootstrap" ] \
   || fail "classic install did not migrate the retired compatibility alias"
 [ -x "${SB}/skills/done/scripts/revert-probe.sh" ] || fail "revert-probe.sh not installed or not executable"

@@ -330,7 +330,9 @@ assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {re
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
 for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "bin/luciazero-agentd.cmd", "bin/lib/installer.js",
-                 "bin/lib/settings-wiring.js", "install.sh", "install-codex.sh", "claude/luciazero.md"):
+                 "bin/lib/settings-wiring.js", "install.sh", "install-codex.sh", "claude/luciazero.md",
+                 "skills/ready/scripts/detect.cjs", "skills/done/scripts/revert-probe.cjs",
+                 "skills/bisect/scripts/safe-bisect.cjs"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
   NP_VERSION="$(node -p "require('${NP_DIR}/package.json').version")"

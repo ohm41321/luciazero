@@ -129,7 +129,7 @@ ready_contracts = {
 }
 
 reviewer_code = (("Output", "```\npath:line — severity — problem. Concrete fix.\n```"),)
-ready_code = (("1. Detect", "```\n<this-skill-dir>/scripts/detect.sh <repo-root>\n```"),)
+ready_code = (("1. Detect", "```\nnode <this-skill-dir>/scripts/detect.cjs <repo-root>\n```"),)
 reviewer_fields = {"tools": "Read, Grep, Glob, Bash", "model": "inherit"}
 validate(reviewer, "reviewer", "reviewer", reviewer_fields, reviewer_sections,
          reviewer_contracts, reviewer_code, 400)

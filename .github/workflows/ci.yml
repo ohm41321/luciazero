@@ -30,9 +30,10 @@ jobs:
 
   windows:
     # Native Windows: no WSL and no Bash. What runs there is the Node
-    # installer, the settings wiring and the hooks, so their own suites run
-    # there, on the oldest Node the package supports and a current one. The
-    # installer's Agent Bus launcher (a .cmd) runs Python, the oldest it takes.
+    # installer, the settings wiring, the hooks and the skills' Node helpers,
+    # so their own suites run there, on the oldest Node the package supports
+    # and a current one. The installer's Agent Bus launcher (a .cmd) runs
+    # Python, the oldest it takes.
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -51,7 +52,7 @@ jobs:
           # Lets uninstall end and delete \Luciazero\agentd in the real Task
           # Scheduler of this throwaway runner; off on a developer's machine.
           LUCIAZERO_TEST_TASK_SCHEDULER: "1"
-        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js tests/node/global.test.js
+        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js tests/node/global.test.js tests/node/skill-helpers.test.js
 
   windows-agentd:
     # The Agent Bus daemon on native Windows: process facts through the
@@ -76,3 +77,7 @@ jobs:
           # this throwaway runner; off by default on a developer's machine.
           LUCIAZERO_TEST_TASK_SCHEDULER: "1"
         run: python -m unittest discover -s tests -t . -v
+      - name: Lucia Relay trust regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python test_lucia_relay.py

@@ -127,6 +127,9 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   while IFS= read -r SKILL; do
     check -f "${CLAUDE_DIR}/skills/${SKILL}/SKILL.md" "skill ${SKILL}"
   done < <(skill_inventory)
+  check -x "${CLAUDE_DIR}/skills/ready/scripts/detect.cjs" "detect.cjs executable"
+  check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.cjs" "revert-probe.cjs executable"
+  check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.cjs" "safe-bisect.cjs executable"
   check -x "${CLAUDE_DIR}/skills/ready/scripts/detect.sh" "detect.sh executable"
   check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.sh" "revert-probe.sh executable"
   check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.sh" "safe-bisect.sh executable"

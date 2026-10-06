@@ -907,6 +907,11 @@ printf '%s\n' \
   '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat \"/sb/skills/done/SKILL.md\"; PROBE=/sb/skills/done/scripts/revert-probe.sh; bash $PROBE\n/sb/skills/ready/scripts/detect.sh .; ls /x/myskills/plan/"}}]}}' \
   '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
   > "${SUF}/paths.jsonl"
+# the Node helpers, as the skills now name them, are evidence the same way
+printf '%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"node /sb/skills/done/scripts/revert-probe.cjs \"npm test\" && node /sb/skills/bisect/scripts/safe-bisect.cjs --good v1 --bad HEAD -- npm test"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
+  > "${SUF}/node-helpers.jsonl"
 # the sandbox reached through a symlink still resolves to the sandbox
 mkdir -p "${SUF}/real/skills/done"
 ln -s "${SUF}/real" "${SUF}/link"
@@ -970,6 +975,10 @@ assert r["status"] == "observed" and r["names"] == ["done", "ready"], r
 assert r["evidence"] == [ev("Bash", "done", "skills/done/SKILL.md", "sandbox"),
                          ev("Bash", "done", "skills/done/scripts/revert-probe.sh", "sandbox"),
                          ev("Bash", "ready", "skills/ready/scripts/detect.sh", "sandbox")], r'
+su_check node-helpers claude "${SUF}/node-helpers.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["bisect", "done"], r
+assert r["evidence"] == [ev("Bash", "done", "skills/done/scripts/revert-probe.cjs", "sandbox"),
+                         ev("Bash", "bisect", "skills/bisect/scripts/safe-bisect.cjs", "sandbox")], r'
 SU_SKILLS_DIR="${SUF}/link/skills" su_check symlink claude "${SUF}/symlink.jsonl" '
 assert r["status"] == "observed", r
 assert r["evidence"] == [ev("Read", "done", "skills/done/SKILL.md", "sandbox")], r'

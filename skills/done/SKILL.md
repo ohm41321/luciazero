@@ -25,7 +25,7 @@ Re-read the final diff as a hostile reviewer. Check:
 - **Test honesty**: would changed tests fail if implementation is reverted?
 
 Only when the diff adds or changes tests, run
-`<this-skill-dir>/scripts/revert-probe.sh "<verify-cmd>"` aimed at those tests.
+`node <this-skill-dir>/scripts/revert-probe.cjs "<verify-cmd>"` aimed at those tests.
 Exit 2 is UNASSESSABLE: report it as no proof, not
 as a pass. Weakened checks are findings. Fix findings and repeat full verify.
 

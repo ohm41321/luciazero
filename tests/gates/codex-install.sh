@@ -27,6 +27,9 @@ while IFS= read -r NS; do
   [ -f "${CX}/skills/${NS}/SKILL.md" ] || fail "codex ${NS} skill not installed"
 done < <(skill_inventory)
 [ -x "${CX}/skills/ready/scripts/detect.sh" ] || fail "codex detect.sh not installed or not executable"
+for HELPER in ready/scripts/detect.cjs done/scripts/revert-probe.cjs bisect/scripts/safe-bisect.cjs; do
+  [ -x "${CX}/skills/${HELPER}" ] || fail "codex ${HELPER} not installed or not executable"
+done
 [ ! -e "${CX}/skills/luciazero-bootstrap" ] \
   || fail "codex install did not migrate the retired compatibility alias"
 [ -x "${CX}/skills/done/scripts/revert-probe.sh" ] || fail "codex revert-probe.sh not installed or not executable"

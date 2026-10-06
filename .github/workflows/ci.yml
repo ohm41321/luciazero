@@ -47,8 +47,9 @@ jobs:
 
   windows-agentd:
     # The Agent Bus daemon on native Windows: process facts through the
-    # Win32 API, process trees, private state and the MCP server, on the
-    # oldest Python it supports and a current one.
+    # Win32 API, process trees, private state, the pseudo console, the MCP
+    # server and the Task Scheduler service, on the oldest Python it supports
+    # and a current one.
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -63,4 +64,7 @@ jobs:
         working-directory: agentd
         env:
           PYTHONDONTWRITEBYTECODE: "1"
+          # Registers, runs and removes real tasks under \LuciazeroTest\ on
+          # this throwaway runner; off by default on a developer's machine.
+          LUCIAZERO_TEST_TASK_SCHEDULER: "1"
         run: python -m unittest discover -s tests -t . -v

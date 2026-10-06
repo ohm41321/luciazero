@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # windows-native carries the native-Windows port until it merges; drop it
+    # from this list then.
+    branches: [main, windows-native]
   pull_request:
 
 # This workflow gates a package that writes into contributors' ~/.claude, so it
@@ -25,3 +27,20 @@ jobs:
             bash -c 'find /w -path /w/.git -prune -o -type f -name "*.sh" -exec bash -n {} +'
       - name: Run verify
         run: ./test.sh
+
+  windows:
+    # Native Windows: no WSL and no Bash. What runs there is the Node
+    # installer, the settings wiring and the hooks, so their own suites run
+    # there, on the oldest Node the package supports and a current one.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Native Windows suites
+        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js

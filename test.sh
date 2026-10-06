@@ -250,7 +250,7 @@ FAST_GATES=(tests/gates/agentd.sh tests/gates/relay.sh tests/gates/bisect.sh
             tests/gates/evidence.sh tests/gates/astra-luna.sh)
 FULL_GATES=(tests/gates/tiers.sh tests/gates/agent-bus.sh tests/gates/eval.sh
             tests/gates/packaging.sh tests/gates/install.sh
-            tests/gates/codex-install.sh)
+            tests/gates/codex-install.sh tests/gates/parity.sh)
 SCRIPTS+=("${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}")
 gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
   # The bash SECONDS counter: no process, nothing added to what it measures,
@@ -293,16 +293,16 @@ fi
 
 # The full-only gates. agent-bus runs first and alone: it writes
 # agentd/.last-store-run.log like the agentd gate and must never overlap
-# another writer. Then tiers, eval, packaging, install and codex-install run
-# at once — each owns its sandboxes and only reads the checkout (the suite
-# proves each is green in a clean subshell). Every one of the six runs as a
+# another writer. Then tiers, eval, packaging, install, codex-install and
+# parity run at once — each owns its sandboxes and only reads the checkout (the suite
+# proves each is green in a clean subshell). Every one of the seven runs as a
 # background subshell that is waited for: a subshell in a || list would lose
 # errexit for its whole body. In the parallel run each gate's stdout and
 # stderr land in a buffer and are replayed in the original order once all are
 # done, so both streams are the serial run's byte for byte; a red gate keeps
 # its own FAIL line and the summary names every red gate. LZ_TEST_PARALLEL=0
 # runs the same subshells one at a time, unbuffered.
-FULL_ORDER=(tiers agent-bus eval packaging install codex-install)
+FULL_ORDER=(tiers agent-bus eval packaging install codex-install parity)
 gate_sub() { # gate_sub <name>: run a gate in this subshell, which does not run
   # the parent's EXIT trap; it arms its own over an empty list, so the gate's
   # mktmp directories go when the gate ends and the parent's stay until the run does
@@ -328,7 +328,7 @@ else
   mktmp BUF
   gate_bg agent-bus "${BUF}/agent-bus.out" "${BUF}/agent-bus.err"
   wait "${GATE_PID}" || RED="${RED} agent-bus"
-  PARALLEL=(tiers eval packaging install codex-install)
+  PARALLEL=(tiers eval packaging install codex-install parity)
   PIDS=()
   for G in "${PARALLEL[@]}"; do
     gate_bg "${G}" "${BUF}/${G}.out" "${BUF}/${G}.err"

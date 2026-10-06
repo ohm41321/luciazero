@@ -264,12 +264,17 @@ function updateHelp(stream) {
   writeLine(stream, "Updates every detected classic Claude/Codex install and preserves Claude hook mode.");
 }
 
+// Bash runs the installers everywhere but Windows, which has none; there the
+// same steps run in Node (bin/lib/installer.js).
 function runInstaller(installation, dependencies = {}) {
   const spawn = dependencies.spawnSync || spawnSync;
-  const script = installation.channel === "codex" ? "install-codex.sh" : "install.sh";
-  const args = [path.join(ROOT, script)];
+  const platform = dependencies.platform || process.platform;
+  const codex = installation.channel === "codex";
+  const args = platform === "win32"
+    ? [path.join(ROOT, "bin", "lib", "installer.js"), codex ? "codex" : "claude"]
+    : [path.join(ROOT, codex ? "install-codex.sh" : "install.sh")];
   if (installation.channel === "claude-classic" && installation.hooks) args.push("--with-hooks");
-  return spawn("bash", args, { env: process.env, stdio: "inherit" });
+  return spawn(platform === "win32" ? process.execPath : "bash", args, { env: process.env, stdio: "inherit" });
 }
 
 function runUpdate(args = [], dependencies = {}) {
@@ -319,11 +324,6 @@ function runUpdate(args = [], dependencies = {}) {
     writeLine(stderr, "Repair or remove the malformed sidecar after confirming the installed version, then retry.");
     return 1;
   }
-  if (process.platform === "win32") {
-    writeLine(stderr, "Luciazero installers need Bash. Run this command inside WSL.");
-    return 1;
-  }
-
   writeLine(stdout, `Updating detected installations with Luciazero ${PACKAGE_VERSION}:`);
   let failed = false;
   for (const installation of installations) {

@@ -314,8 +314,8 @@ readmes = [path for path in paths if os.path.basename(path).upper().startswith("
 assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
-for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "install.sh",
-                 "install-codex.sh", "claude/luciazero.md"):
+for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "bin/lib/installer.js",
+                 "bin/lib/settings-wiring.js", "install.sh", "install-codex.sh", "claude/luciazero.md"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
   NP_VERSION="$(node -p "require('${NP_DIR}/package.json').version")"
@@ -587,6 +587,27 @@ const err = [];
   });
   assert.strictEqual(legacyRc, 0, "legacy installs without a sidecar must remain updatable");
   assert.strictEqual(legacySpawnCount, 1);
+
+  // Windows has no Bash: the update runs the Node installer there, with the
+  // same hook mode, and Bash everywhere else.
+  const runs = [];
+  for (const [platform, channel, hooks] of [["win32", "claude-classic", true], ["win32", "codex", false],
+    ["darwin", "claude-classic", true], ["linux", "codex", false]]) {
+    const rc = updater.runUpdate([], {
+      detectInstallations: () => [{channel, configDir: fixture, installedVersion: null, versionFilePresent: false, hooks}],
+      platform,
+      spawnSync: (command, args) => { runs.push([platform, command, args.map((arg) => path.relative(root, arg))]); return {status: 0}; },
+      stdout: {write: () => {}},
+      stderr: {write: () => {}},
+    });
+    assert.strictEqual(rc, 0, `update on ${platform} failed`);
+  }
+  assert.deepStrictEqual(runs, [
+    ["win32", process.execPath, [path.join("bin", "lib", "installer.js"), "claude", "--with-hooks"]],
+    ["win32", process.execPath, [path.join("bin", "lib", "installer.js"), "codex"]],
+    ["darwin", "bash", ["install.sh", "--with-hooks"]],
+    ["linux", "bash", ["install-codex.sh"]],
+  ]);
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
@@ -596,6 +617,22 @@ JS
     || { rm -rf "${UC}"; fail "check-update CLI route/help missing"; }
   node "${ROOT}/bin/luciazero.js" update --help | grep -q 'preserves Claude hook mode' \
     || { rm -rf "${UC}"; fail "update CLI route/help missing"; }
+  # On Windows the installer routes run the Node installer, not a Bash guard.
+  # The route is taken in a process that reports win32; the installer it
+  # starts is a separate process, so it runs as on this host.
+  mkdir -p "${UC}/win-cfg"
+  UC_WIN_RC=0
+  UC_WIN="$(CLAUDE_CONFIG_DIR="${UC}/win-cfg" node - "${ROOT}/bin/luciazero.js" <<'JS' 2>&1
+const router = process.argv[2];
+Object.defineProperty(process, "platform", {value: "win32"});
+process.argv = [process.execPath, router, "--status"];
+require(router);
+JS
+)" || UC_WIN_RC=$?
+  [ "${UC_WIN_RC}" = 1 ] && printf '%s\n' "${UC_WIN}" | grep -q 'not installed\|MISS' \
+    && ! printf '%s\n' "${UC_WIN}" | grep -qi 'wsl\|need bash' \
+    || { rm -rf "${UC}"; fail "the win32 install route did not run the Node installer (rc=${UC_WIN_RC}): ${UC_WIN}"; }
+  [ -z "$(ls -A "${UC}/win-cfg")" ] || { rm -rf "${UC}"; fail "the win32 --status route wrote files"; }
   rm -rf "${UC}"
 
   # The updater repairs every detected channel, preserves both possible

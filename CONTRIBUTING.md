@@ -23,8 +23,11 @@ different trees. `scripts/test-timings.sh --report` lists revisions and warns
 when they are mixed.
 
 CI runs `./test.sh` directly. Gates live in `tests/gates/`; full-only `tiers`,
-`eval`, `packaging`, `install`, and `codex-install` run in isolated subshells
-with buffered output replayed in order. Use `LZ_TEST_PARALLEL=0` for a serial
+`eval`, `packaging`, `install`, `codex-install` and `parity` run in isolated
+subshells with buffered output replayed in order. `parity` plays every
+scenario in `tests/installer_parity.py` through the Bash installers and
+through `bin/lib/installer.js`, the Node port that Windows runs, and fails on
+any difference in exit status, output or the resulting tree. Use `LZ_TEST_PARALLEL=0` for a serial
 diagnostic run. Real behavioral eval runs are separate and manual:
 they invoke the selected Claude or Codex CLI and consume API credit or
 subscription quota.

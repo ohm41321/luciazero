@@ -32,7 +32,7 @@ OUT="$(tier_gates --fast)" || fail "fast tier over stub gates exited red"
 [ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna" ] \
   || fail "fast tier sources the wrong gates: ${OUT}"
 OUT="$(tier_gates --full)" || fail "full tier over stub gates exited red"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "full tier sources the wrong gates: ${OUT}"
 (cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline) | grep -q '^PASS  discipline checks green$' \
   || fail "discipline tier over stub gates printed no PASS line"
@@ -190,7 +190,7 @@ stub() { # stub <gate>: a gate body that writes both streams and takes a mktmp d
   # shellcheck disable=SC2016
   printf 'echo "gate %s"\necho "err %s" >&2\nmktmp STUB\necho "${STUB}" >> "%s/paths.log"\n' "$1" "$1" "${TP}"
 }
-for G in tiers agent-bus eval packaging install codex-install; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
+for G in tiers agent-bus eval packaging install codex-install parity; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
 for G in tiers eval install; do echo 'sleep 2' >> "${TP}/repo/tests/gates/${G}.sh"; done
 par_full() { # par_full <label> [env assignments...]: run the stub full tier, keep both streams
   local LABEL="$1"; shift
@@ -198,9 +198,9 @@ par_full() { # par_full <label> [env assignments...]: run the stub full tier, ke
   (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
     >"${TP}/${LABEL}.out" 2>"${TP}/${LABEL}.err")
 }
-gone_with_gates() { # gone_with_gates <label>: all six stubs took a directory under the private TMPDIR; none is left
-  [ "$(wc -l < "${TP}/paths.log" | tr -d ' ')" = 6 ] \
-    || fail "$1: $(wc -l < "${TP}/paths.log" | tr -d ' ') stub directories recorded, want 6"
+gone_with_gates() { # gone_with_gates <label>: all seven stubs took a directory under the private TMPDIR; none is left
+  [ "$(wc -l < "${TP}/paths.log" | tr -d ' ')" = 7 ] \
+    || fail "$1: $(wc -l < "${TP}/paths.log" | tr -d ' ') stub directories recorded, want 7"
   while IFS= read -r P; do
     case "${P}" in "${TP}/tmp/"*) ;; *) fail "$1: a stub's mktmp directory landed outside the private TMPDIR: ${P}" ;; esac
   done < "${TP}/paths.log"
@@ -215,17 +215,17 @@ gone_with_gates "a green serial run"
 cmp -s "${TP}/parallel.out" "${TP}/serial.out" || fail "parallel gates changed stdout: $(diff "${TP}/serial.out" "${TP}/parallel.out" | head -3)"
 cmp -s "${TP}/parallel.err" "${TP}/serial.err" || fail "parallel gates changed stderr: $(diff "${TP}/serial.err" "${TP}/parallel.err" | head -3)"
 OUT="$(sed -n 's/^gate //p' "${TP}/parallel.out" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier replayed stdout out of order: ${OUT}"
 OUT="$(sed -n 's/^err //p' "${TP}/parallel.err" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier replayed stderr out of order: ${OUT}"
 [ "${PAR_WALL}" -lt 6 ] \
   || fail "three stub gates sleeping 2 s each took ${PAR_WALL} s in parallel, want under the 6 s they add up to"
 # timing lines: one per gate, still in order, still named right
 par_full timed LZ_TEST_TIMINGS=1 || fail "stub full tier exited red with LZ_TEST_TIMINGS=1"
 OUT="$(sed -n 's/^TIMING gate=\([a-z-]*\) seconds=[0-9]*$/\1/p' "${TP}/timed.err" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier printed the wrong timing lines: ${OUT}"
 grep -qE '^TIMING gate=eval seconds=[2-9]$' "${TP}/timed.err" \
   || fail "the eval stub slept 2 s but its timing line disagrees: $(grep 'gate=eval' "${TP}/timed.err")"

@@ -862,9 +862,10 @@ if ! { [ -f "${BLD}/b/f.bak.20000101000000.1" ] && [ ! -L "${BLD}/b/f.bak.200001
   && cmp -s "${BLD}/b/f" "${BLD}/b/f.bak.20000101000000.1"; }; then
   BLD_FAIL "file backup is not a copy of the file"
 fi
-[ -L "${BLD}/b/l.bak.20000101000000.1" ] \
-  && [ "$(readlink "${BLD}/b/l.bak.20000101000000.1")" = "../some where" ] \
-  || BLD_FAIL "symlink backup is not the symlink"
+if [ ! -L "${BLD}/b/l.bak.20000101000000.1" ] \
+  || [ "$(readlink "${BLD}/b/l.bak.20000101000000.1")" != "../some where" ]; then
+  BLD_FAIL "symlink backup is not the symlink"
+fi
 cmp -s "${BLD}/b/d/x" "${BLD}/b/d.bak.20000101000000.1/x" \
   || BLD_FAIL "tree backup is not a copy of the tree"
 [ -z "$(entries_named "${BLD}/b" .luciazero-bak.)" ] \
@@ -941,17 +942,19 @@ BLS_GOT="$(BLS_RUN l)" || BLS_FAIL "symlink backup failed when a directory was s
   || BLS_FAIL "symlink backup replaced the child of a directory swapped in at its name"
 [ "$(ls -A "${BLS}/b/l.bak.20000101000000")" = "some where" ] \
   || BLS_FAIL "symlink backup wrote into a directory swapped in at its name: $(ls -A "${BLS}/b/l.bak.20000101000000")"
-[ "${BLS_GOT}" = "${BLS}/b/l.bak.20000101000000.1" ] \
-  && [ "$(readlink "${BLS_GOT}")" = "../some where" ] \
-  || BLS_FAIL "symlink backup is not the symlink at the next free name: ${BLS_GOT#"${BLS}/"}"
+if [ "${BLS_GOT}" != "${BLS}/b/l.bak.20000101000000.1" ] \
+  || [ "$(readlink "${BLS_GOT}")" != "../some where" ]; then
+  BLS_FAIL "symlink backup is not the symlink at the next free name: ${BLS_GOT#"${BLS}/"}"
+fi
 [ "$(readlink "${BLS}/b/l")" = "../some where" ] || BLS_FAIL "symlink backup disturbed the symlink it backed up"
 if BLS_GOT="$(BLS_RUN d 2>/dev/null)"; then
   BLS_FAIL "tree backup reported ${BLS_GOT#"${BLS}/"} after its directory was swapped for another"
 fi
 [ -f "${BLS}/planted-d" ] || BLS_FAIL "mkdir never took the first tree backup name, so nothing was swapped"
-[ "$(cat "${BLS}/b/d.bak.20000101000000/x")" = "planted child" ] \
-  && [ "$(ls -A "${BLS}/b/d.bak.20000101000000")" = x ] \
-  || BLS_FAIL "tree backup wrote into a directory swapped in after mkdir took the name"
+if [ "$(cat "${BLS}/b/d.bak.20000101000000/x")" != "planted child" ] \
+  || [ "$(ls -A "${BLS}/b/d.bak.20000101000000")" != x ]; then
+  BLS_FAIL "tree backup wrote into a directory swapped in after mkdir took the name"
+fi
 [ -z "$(ls -A "${BLS}/moved-d")" ] || BLS_FAIL "tree backup followed its directory after the swap"
 cmp -s <(printf 'tree bytes\n') "${BLS}/b/d/x" || BLS_FAIL "tree backup disturbed the tree it backed up"
 if BLS_GOT="$(BLS_RUN f 2>/dev/null)"; then
@@ -994,17 +997,20 @@ grep -q 'no tool here makes a symlink at exactly a given name' "${BLN}/err" \
   || BLN_FAIL "install did not say why it stopped: $(cat "${BLN}/err")"
 [ "$(readlink "${BLN}/cfg/skills/plan")" = "${BLN}/mine/plan" ] \
   || BLN_FAIL "install removed a symlinked skill it could not back up"
-[ "$(cat "${BLN}/mine/plan/SKILL.md")" = "my plan skill" ] && [ "$(ls -A "${BLN}/mine/plan")" = SKILL.md ] \
-  || BLN_FAIL "install changed the directory behind a symlinked skill"
+if [ "$(cat "${BLN}/mine/plan/SKILL.md")" != "my plan skill" ] || [ "$(ls -A "${BLN}/mine/plan")" != SKILL.md ]; then
+  BLN_FAIL "install changed the directory behind a symlinked skill"
+fi
 [ -z "$(find "${BLN}/cfg" -name '*.bak.*' -o -name '.luciazero-bak.*')" ] \
   || BLN_FAIL "install left backup names behind after refusing: $(find "${BLN}/cfg" -name '*.bak.*' -o -name '.luciazero-bak.*')"
 CLAUDE_CONFIG_DIR="${BLN}/cfg" "${ROOT}/install.sh" >/dev/null \
   || BLN_FAIL "install failed to back up a symlinked skill with the system's own tools"
 BLN_BAK="$(find "${BLN}/cfg" -name 'plan.bak.*')"
-[ -n "${BLN_BAK}" ] && [ "$(readlink "${BLN_BAK}")" = "${BLN}/mine/plan" ] \
-  || BLN_FAIL "the backup of a symlinked skill is not that symlink: ${BLN_BAK:-none}"
-[ -d "${BLN}/cfg/skills/plan" ] && [ ! -L "${BLN}/cfg/skills/plan" ] \
-  || BLN_FAIL "install did not replace the symlinked skill after backing it up"
+if [ -z "${BLN_BAK}" ] || [ "$(readlink "${BLN_BAK}")" != "${BLN}/mine/plan" ]; then
+  BLN_FAIL "the backup of a symlinked skill is not that symlink: ${BLN_BAK:-none}"
+fi
+if [ ! -d "${BLN}/cfg/skills/plan" ] || [ -L "${BLN}/cfg/skills/plan" ]; then
+  BLN_FAIL "install did not replace the symlinked skill after backing it up"
+fi
 [ "$(cat "${BLN}/mine/plan/SKILL.md")" = "my plan skill" ] \
   || BLN_FAIL "install wrote through a symlinked skill"
 rm -rf "${BLN}"
@@ -1219,9 +1225,10 @@ rm -rf "${SB4B}/cfg" "${SB4B}/dotfiles"; mkdir -p "${SB4B}/cfg" "${SB4B}/dotfile
 ln -s "${SB4B}/dotfiles/loop" "${SB4B}/cfg/settings.json"
 ln -s "${SB4B}/cfg/settings.json" "${SB4B}/dotfiles/loop"
 SB4B_LOOP() {
-  [ "$(readlink "${SB4B}/cfg/settings.json")" = "${SB4B}/dotfiles/loop" ] \
-    && [ "$(readlink "${SB4B}/dotfiles/loop")" = "${SB4B}/cfg/settings.json" ] \
-    || SB4B_FAIL "$1 replaced a link of a settings.json symlink loop"
+  if [ "$(readlink "${SB4B}/cfg/settings.json")" != "${SB4B}/dotfiles/loop" ] \
+    || [ "$(readlink "${SB4B}/dotfiles/loop")" != "${SB4B}/cfg/settings.json" ]; then
+    SB4B_FAIL "$1 replaced a link of a settings.json symlink loop"
+  fi
 }
 for SB4B_MODE in check write; do
   RC=0; node "${ROOT}/bin/lib/settings-wiring.js" wire "${SB4B_MODE}" "${SB4B}/cfg/settings.json" \

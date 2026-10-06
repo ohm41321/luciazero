@@ -171,8 +171,10 @@ bakcopy() {
   # The private directory goes only when it passes the same owner and path
   # check as before it was written; anything else at its name stays.
   if [ -n "${BC_Q}" ]; then
-    ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
-      && rm -f f ) && rmdir "${BC_Q}" 2>/dev/null || :
+    if ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
+      && rm -f f ); then
+      rmdir "${BC_Q}" 2>/dev/null || :
+    fi
   fi
   [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }

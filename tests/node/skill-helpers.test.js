@@ -186,6 +186,50 @@ test("revert-probe writes nothing through a link the old tree has above a change
   assert.strictEqual(worktrees(b, dir), 1, "a worktree was left behind");
 });
 
+test("revert-probe stops rather than copy onto a path it could not inspect", (t) => {
+  const b = box(t);
+  const outside = path.join(b.box, "outside");
+  const sentinel = "console.log('outside, must stay as it is');\n";
+  write(outside, { "test_probe.cjs": sentinel });
+  const dir = path.join(b.box, "leaf");
+  fs.mkdirSync(dir);
+  git(b.env, dir, "init", "-q");
+  git(b.env, dir, "config", "core.symlinks", "true");
+  write(dir, { "value.txt": "old\n" });
+  fs.mkdirSync(path.join(dir, "tests"));
+  try {
+    fs.symlinkSync(path.join(outside, "test_probe.cjs"), path.join(dir, "tests", "test_probe.cjs"), "file");
+  } catch (error) {
+    if (WINDOWS && error.code === "EPERM") return t.skip("creating a symbolic link needs a privilege this account lacks");
+    throw error;
+  }
+  git(b.env, dir, "add", "-A");
+  git(b.env, dir, "commit", "-qm", "linked test");
+  fs.unlinkSync(path.join(dir, "tests", "test_probe.cjs"));
+  write(dir, {
+    "value.txt": "new\n",
+    "tests/test_probe.cjs": 'if (require("fs").readFileSync("value.txt", "utf8").trim() !== "new") { console.error("tests/test_probe.cjs: value is not new"); process.exit(1); }\n',
+  });
+  // the leaf in the throwaway worktree cannot be inspected: a denied lstat,
+  // injected into the probe's own process only
+  const deny = path.join(b.box, "deny-lstat.cjs");
+  fs.writeFileSync(deny, `const fs = require("fs");
+const lstatSync = fs.lstatSync;
+fs.lstatSync = function (p, ...rest) {
+  const s = String(p);
+  if (/[\\\\/]revert-probe-[^\\\\/]*[\\\\/]/.test(s) && /[\\\\/]test_probe\\.cjs$/.test(s)) {
+    throw Object.assign(new Error("EACCES: permission denied, lstat '" + s + "'"), { code: "EACCES" });
+  }
+  return lstatSync.call(this, p, ...rest);
+};
+`);
+  const r = run(b.env, dir, ["--require", deny, PROBE, "node tests/test_probe.cjs"]);
+  assert.strictEqual(fs.readFileSync(path.join(outside, "test_probe.cjs"), "utf8"), sentinel, "a file outside the worktree was overwritten");
+  assert.strictEqual(r.status, 2, r.out);
+  assert.match(r.out, /^UNASSESSABLE: revert-probe failed: EACCES/m);
+  assert.strictEqual(worktrees(b, dir), 1, "a worktree was left behind");
+});
+
 // The criterion lives outside the repository, so every revision runs the same
 // one, and takes arguments a shell would split or act on: they must arrive
 // exactly as given. It also refuses to run in a tree the last run dirtied.

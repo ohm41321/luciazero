@@ -167,12 +167,15 @@ function contained(target, rel) {
 function overlay(target, files) {
   for (const f of files) {
     const dest = path.join(directoryFor(target, f), path.basename(f));
+    let found = null;
     try {
-      // a link the old tree has at this path must not be written through
-      if (fs.lstatSync(dest).isSymbolicLink()) fs.unlinkSync(dest);
-    } catch {
-      // nothing there yet
+      found = fs.lstatSync(dest);
+    } catch (error) {
+      // only "nothing there yet" may skip the check; anything else stops here
+      if (error.code !== "ENOENT") throw error;
     }
+    // a link the old tree has at this path must not be written through
+    if (found && found.isSymbolicLink()) fs.unlinkSync(dest);
     fs.copyFileSync(f, dest);
   }
 }

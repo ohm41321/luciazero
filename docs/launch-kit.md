@@ -44,10 +44,12 @@ Safe claims for the README or a release post:
 - Claude Code, Codex CLI, and compatible skill-runtime install paths
 - Relay protocol fixture: reference 6/6; generic Markdown handoff 1/6; stale
   fingerprint 5/6
-- Claude snapshots: Haiku +15pp (2026-08-11, model-provenance caveat);
-  Sonnet +32pp across ten tasks (2026-09-02, five valid runs per arm/task).
-  The older Sonnet +31pp pilot remains preliminary.
-- Codex pilot (2026-08-12): 5 paired tasks, 0pp observed difference, exploratory
+- Claude snapshots, classic pack without hooks against bare: Haiku +15pp
+  (2026-08-11, model-provenance caveat); Sonnet +32pp across ten tasks
+  (2026-09-02, five valid runs per arm/task). The older Sonnet +31pp pilot
+  remains preliminary.
+- Codex pilot (2026-08-12): 5 paired tasks, 0pp observed difference, an
+  exploratory ceiling-effect warning, not evidence of uplift or of no effect
 
 The Relay scores are mechanical protocol checks, not model-uplift results. The
 Claude and Codex figures are model/task-specific measurements with the limits

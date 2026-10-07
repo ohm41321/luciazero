@@ -64,11 +64,12 @@ dispatch; see [its guide](agent-bus.md) for its limits.
 
 - The canonical Sonnet campaign covers ten tasks with five valid runs per
   arm/task (2026-09-02); Haiku covers six, with incomplete model provenance.
-  The older Sonnet pilot remains preliminary. These measure the full pack
-  against bare, not each skill's contribution. The `doctrine,noskills`
-  pair, the trace reader and all twelve fixtures (including the `/ready` and
-  `/bisect` outcome tasks) have offline coverage only; no real-model
-  skills-ablation pilot has run and none is published. Larger, multi-language campaigns and independent
+  The older Sonnet pilot remains preliminary. These measure the classic pack
+  without hooks (doctrine, skills and reviewer) against bare, not each skill's
+  contribution and not the hooks. The `doctrine,noskills` pair, the trace
+  reader and all twelve fixtures (including the `/ready` and `/bisect` outcome
+  tasks) have offline coverage only; no real-model skills-ablation pilot has
+  run and none is published. Larger, multi-language campaigns and independent
   replications are still needed. See [the benchmark](benchmark.md).
 - Agent Bus has local durable state and opt-in dispatch, but remains a
   checkout-only beta. Core npm/plugin installs do not provide an unattended

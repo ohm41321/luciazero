@@ -179,6 +179,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/check-skill-prompts.py` holds `/lucia-chat` to a word budget and
   its behavioural clauses, and fails when a cataloged skill has no prompt
   contract anywhere. `/lucia-chat` had neither, so nothing read its prompt.
+- The Astra/Luna canary wrapper refuses a root launch that sets anything
+  under `features` with `-c` in any TOML spelling (`features={...}`, a quoted
+  key segment) or selects a config `--profile`. It matched only the literal
+  `features.multi_agent=` prefixes, so other spellings of the same override
+  reached the provider.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

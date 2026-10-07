@@ -583,6 +583,18 @@ def _is_direct_provider_executable(token: str) -> bool:
     return Path(token).name in DIRECT_PROVIDER_EXECUTABLES
 
 
+def _sets_features(setting: str) -> bool:
+    """Whether a ``-c key=value`` override writes anywhere under ``features``.
+
+    TOML spells one key many ways -- quoted segments, spaces around the dots,
+    an inline table assigned to the parent -- so the key is normalised before
+    it is compared, and the whole table is refused rather than two names in it.
+    """
+
+    key = re.sub(r"[\s'\"]", "", setting.split("=", 1)[0])
+    return key == "features" or key.startswith("features.")
+
+
 def _reject_native_config_overrides(command: Sequence[str]) -> None:
     """Reject feature config forms whose effective precedence is unverified."""
 
@@ -593,14 +605,21 @@ def _reject_native_config_overrides(command: Sequence[str]) -> None:
             raise NativeSpawnPolicyError(
                 "Codex launch must not use an uninspected native feature config override"
             )
+        if part in {"--profile", "-p"} or part.startswith("--profile=") or (
+            part.startswith("-p") and not part.startswith("--")
+        ):
+            # a profile is config.toml the wrapper never reads, and it can
+            # set the same features the flags above disable
+            raise NativeSpawnPolicyError(
+                "Codex launch must not select an uninspected config profile"
+            )
         if part == "-c" and index + 1 < len(command):
-            setting = command[index + 1].replace(" ", "").strip("'\"")
-            if setting.startswith(("features.multi_agent=", "features.multi_agent_v2=")):
+            if _sets_features(command[index + 1]):
                 raise NativeSpawnPolicyError(
                     "Codex launch must not use a native multi-agent config override"
                 )
         compact = part[2:] if part.startswith("-c") else ""
-        if compact.startswith(("features.multi_agent=", "features.multi_agent_v2=")):
+        if compact and _sets_features(compact):
             raise NativeSpawnPolicyError(
                 "Codex launch must not use a native multi-agent enable/config override"
             )

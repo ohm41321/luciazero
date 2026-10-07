@@ -135,6 +135,32 @@ test("revert-probe: what cannot be attributed to the change is UNASSESSABLE", (t
   assert.strictEqual(added.status, 2, added.out);
   assert.match(added.out, /^UNASSESSABLE: the verify command could not be run on HEAD/m);
 
+  // the same, with cmd.exe answering in another language: exit 1 and a line
+  // no English pattern matches, injected into the old-code run only
+  const french = path.join(b.box, "cmd-fr.cjs");
+  fs.writeFileSync(french, `process.stderr.write("'run-tests' n'est pas reconnu en tant que commande interne\\r\\nou externe, un programme ex\\u00e9cutable ou un fichier de commandes.\\r\\n");
+process.exit(1);
+`);
+  const translate = path.join(b.box, "translate-cmd.cjs");
+  fs.writeFileSync(translate, `const cp = require("child_process");
+const spawn = cp.spawn;
+cp.spawn = function (command, options, ...rest) {
+  if (options && options.shell && /[\\\\/]revert-probe-[^\\\\/]*[\\\\/]old$/.test(String(options.cwd))) {
+    return spawn.call(this, process.execPath, [${JSON.stringify(french)}], { ...options, shell: false });
+  }
+  return spawn.call(this, command, options, ...rest);
+};
+`);
+  const translated = repo(b, "translated", plant);
+  write(translated, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]) });
+  if (WINDOWS) write(translated, { "run-tests.cmd": "@node %*\r\n" });
+  else fs.writeFileSync(path.join(translated, "run-tests.sh"), '#!/bin/sh\nexec node "$@"\n', { mode: 0o755 });
+  const foreign = run(b.env, translated, ["--require", translate, PROBE, `${WINDOWS ? "run-tests" : "./run-tests.sh"} tests/calc.test.js`]);
+  assert.strictEqual(foreign.status, 2, foreign.out);
+  assert.match(foreign.out, WINDOWS
+    ? /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): run-tests is not in its tree/m
+    : /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): \.\/run-tests\.sh is not in its tree/m);
+
   // the old tree cannot load a module the change adds
   const newmod = repo(b, "newmod", { "main.js": "" });
   write(newmod, { "helper.js": "module.exports = (n) => n * 2;\n",
@@ -157,7 +183,7 @@ test("revert-probe: what cannot be attributed to the change is UNASSESSABLE", (t
   const blame = run(b.env, unrelated, [PROBE, "node run-all.js"]);
   assert.strictEqual(blame.status, 2, blame.out);
   assert.match(blame.out, /cannot be attributed/);
-  for (const dir of [nocmd, newmod, bothred, unrelated]) assert.strictEqual(worktrees(b, dir), 1, `${dir} kept a worktree`);
+  for (const dir of [nocmd, translated, newmod, bothred, unrelated]) assert.strictEqual(worktrees(b, dir), 1, `${dir} kept a worktree`);
 });
 
 // The old tree may have a link where the working tree has a directory: here

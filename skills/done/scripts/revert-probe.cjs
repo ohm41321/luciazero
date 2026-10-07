@@ -12,18 +12,20 @@
 // broken test. So a red run has to survive three more checks before it counts:
 //   * its fingerprint must be a test verdict, not infrastructure — a shell that
 //     could not run or execute the command (exit 127/126, and cmd.exe's 9009
-//     on Windows) and a run that failed to load the tests at all
-//     (import/collection errors) are refused. cmd.exe exits 1 for a command
-//     it cannot find, as a failing test does, so on Windows its own
-//     "is not recognized" line is the fingerprint instead;
+//     on Windows), a verify command whose first word is a file the working
+//     tree has and the old tree lacks, and a run that failed to load the
+//     tests at all (import/collection errors) are refused. cmd.exe exits 1
+//     for a command it cannot find, as a failing test does, so on Windows its
+//     own "is not recognized" line counts as well;
 //   * it must be attributable to the changed tests — either the verify command
 //     targets one of them, or the failure output names one;
 //   * the same command must PASS against the current state (the base plus every
 //     changed file), so a command that is red everywhere cannot be read as a
 //     regression.
 // What it still cannot see: a flake that only reproduces on the old tree; a
-// command the change itself adds when a wrapper swallows the shell's exit 127
-// (or, on Windows, when cmd.exe reports it in a language other than English);
+// command the change itself adds that only a wrapper starts, when the wrapper
+// swallows the shell's exit 127 (on Windows, cmd.exe's line, which is matched
+// in English only);
 // and, in the other direction, a suite whose own output quotes a loader error is
 // read as one (this repository's revert-probe fixtures do exactly that, so
 // probing a change to this script needs the manual comparison instead).
@@ -205,6 +207,34 @@ function couldNotRun(rc) {
 // cmd.exe's own line for a command it cannot find, which it ends with exit 1.
 const CMD_NOT_FOUND = /^'[^'\r\n]+' is not recognized as an internal or external command,\r?$/m;
 
+// The verify command's first word as the platform's shell reads it, when that
+// word is a path inside the tree it runs in; null for anything else, a word
+// the shell would expand among them. sh looks a bare name up in PATH alone;
+// cmd.exe looks in the working directory first.
+function programWord(command) {
+  const text = command.replace(WINDOWS ? /^[\s@]+/ : /^\s+/, "");
+  let word;
+  if (text[0] === '"' || (!WINDOWS && text[0] === "'")) {
+    const end = text.indexOf(text[0], 1);
+    if (end < 0) return null;
+    word = text.slice(1, end);
+  } else {
+    word = text.match(WINDOWS ? /^[^\s&|<>()]*/ : /^[^\s;&|<>()]*/)[0];
+  }
+  if (!word || (WINDOWS ? /[%!^]/ : /[$`\\*?[=~]/).test(word)) return null;
+  if (!WINDOWS && !word.includes("/")) return null;
+  const rel = path.normalize(word);
+  if (path.isAbsolute(rel) || rel === ".." || rel.startsWith(`..${path.sep}`)) return null;
+  return word;
+}
+
+// Whether the shell would find `word` as a file in `dir`: on Windows with
+// each PATHEXT extension too.
+function inTree(dir, word) {
+  const exts = WINDOWS ? ["", ...(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
+  return exts.some((ext) => isFile(path.join(dir, word + ext)));
+}
+
 async function main(argv) {
   const verify = argv[0];
   if (!verify) {
@@ -294,6 +324,12 @@ async function main(argv) {
     }
 
     // --- the red run has to earn the word "regression" -----------------------
+    // a program the working tree has and the old tree lacks could not have
+    // run there, whatever the shell said and in whatever language
+    const program = programWord(verify);
+    if (program !== null && inTree(process.cwd(), program) && !inTree(oldTree, program)) {
+      unassessable(`the verify command could not be run on ${base} (exit ${old.rc}): ${program} is not in its tree`);
+    }
     const notFound = WINDOWS ? CMD_NOT_FOUND.exec(old.out) : null;
     if (couldNotRun(old.rc) || notFound) {
       const evidence = notFound ? notFound[0].replace(/\r$/, "") : lastLine(old.out);

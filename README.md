@@ -456,17 +456,17 @@ scripts/test-timings.sh --report     # median and p95 per gate over the green sa
 ```
 
 The discipline tier is the loop command for the enforcement pack, the
-discipline report and the prompts: syntax, bash 3.2 and ShellCheck over every
-shipped script, the prompt and doctrine contracts, and the hook state machine,
-nothing else. The fast tier is the default intermediate check for everything
+discipline report and the prompts: syntax and ShellCheck over every shipped
+script (plus a bash 3.2 parse when `LZ_BASH32` names one; CI always runs it),
+the prompt and doctrine contracts, and the hook state machine, nothing else. The fast tier is the default intermediate check for everything
 else; use a more targeted command when changing a component it does not cover. The default
 full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
 plugin/npm manifests, self-proving eval graders, and sandboxed install →
 reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full
 tier. `test.sh` is the dispatcher; the checks live in `tests/gates/*.sh`, one
 file per subsystem, sourced in order — read the gate a change touches. In the
-full tier the tiers, eval, packaging, install and codex-install gates run at
-once, each in its own subshell, with their output replayed in order so it
+full tier the tiers, eval, packaging, install, codex-install and parity gates
+run at once, each in its own subshell, with their output replayed in order so it
 reads as the serial run; `LZ_TEST_PARALLEL=0` runs them one at a time.
 
 More detail:

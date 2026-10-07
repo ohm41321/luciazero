@@ -441,15 +441,16 @@ scripts/test-timings.sh --report     # median กับ p95 ต่อ gate จ�
 ```
 
 discipline tier เป็นคำสั่ง loop สำหรับ enforcement pack, discipline report และ
-prompt: syntax, bash 3.2 และ ShellCheck ของทุก script ที่ ship, contract ของ
-prompt/doctrine และ state machine ของ hook เท่านั้น fast tier เป็นคำสั่งระหว่างทำงาน
+prompt: syntax และ ShellCheck ของทุก script ที่ ship (และ parse ด้วย bash 3.2
+เมื่อ `LZ_BASH32` ชี้ไปที่ bash 3.2; CI รันเสมอ), contract ของ prompt/doctrine
+และ state machine ของ hook เท่านั้น fast tier เป็นคำสั่งระหว่างทำงาน
 ของส่วนอื่น; ถ้าแก้ส่วนที่ fast tier ไม่ครอบคลุมให้ใช้คำสั่ง targeted ของส่วนนั้น ส่วน full tier (`./test.sh` หรือ
 `./test.sh --full`) ครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ
 plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
 แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier
 `test.sh` เป็นตัว dispatch ส่วนตัวตรวจอยู่ใน `tests/gates/*.sh` แยกไฟล์ตาม
 subsystem และถูก source ตามลำดับ อ่านเฉพาะ gate ที่งานแตะ ใน full tier gate
-tiers, eval, packaging, install และ codex-install รันพร้อมกันคนละ subshell แล้ว
+tiers, eval, packaging, install, codex-install และ parity รันพร้อมกันคนละ subshell แล้ว
 replay output ตามลำดับเดิมจึงอ่านเหมือนรันเรียง; `LZ_TEST_PARALLEL=0` รันทีละ gate
 
 อ่านต่อ:

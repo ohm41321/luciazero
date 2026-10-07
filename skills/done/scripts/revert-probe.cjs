@@ -321,8 +321,9 @@ async function main(argv) {
   // NUL-delimited, because git C-quotes non-ASCII/backslash names in its plain
   // output. `tests` drives the old-code overlay; `changed` and `gone` rebuild
   // the current state for the control run (a deleted test cannot bite, but a
-  // deleted source file is part of the change).
-  const names = [git(["diff", "--name-only", "-z", base, "--"], "buffer"),
+  // deleted source file is part of the change). --no-renames: a rename is
+  // listed under its new name only, and the old one must go too.
+  const names = [git(["diff", "--name-only", "-z", "--no-renames", base, "--"], "buffer"),
     git(["ls-files", "--others", "--exclude-standard", "-z"], "buffer")]
     .flatMap((result) => (result.stdout ? result.stdout.toString("utf8").split("\0") : []))
     .filter(Boolean);

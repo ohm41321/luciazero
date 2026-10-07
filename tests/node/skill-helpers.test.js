@@ -250,6 +250,21 @@ test("revert-probe writes nothing through a link the old tree has above a change
   assert.strictEqual(worktrees(b, dir), 1, "a worktree was left behind");
 });
 
+test("revert-probe's control run lacks a file the change renamed away", (t) => {
+  const b = box(t);
+  const uses = 'require("./helpers");\n';
+  const dir = repo(b, "renamed", { "calc.js": BUGGY, "tests/helpers.js": "module.exports = 1;\n",
+    "tests/calc.test.js": uses + check([0, 0, 0]) });
+  git(b.env, dir, "mv", "tests/helpers.js", "tests/support.js");
+  write(dir, { "calc.js": FIXED, "tests/calc.test.js": uses + check([0, 0, 0], [2, 2, 4]) });
+  // the current code fails: its test still loads the name the change took away
+  assert.notStrictEqual(run(b.env, dir, ["tests/calc.test.js"]).status, 0);
+  const r = run(b.env, dir, [PROBE, "node tests/calc.test.js"]);
+  assert.strictEqual(r.status, 2, r.out);
+  assert.match(r.out, /^UNASSESSABLE: the same command also fails on the current code/m);
+  assert.strictEqual(worktrees(b, dir), 1, "a worktree was left behind");
+});
+
 test("revert-probe stops rather than copy onto a path it could not inspect", (t) => {
   const b = box(t);
   const outside = path.join(b.box, "outside");

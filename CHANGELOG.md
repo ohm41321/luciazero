@@ -64,6 +64,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directory, the copy into the throwaway worktree used to follow the link and
   overwrite the file at its target. The link is now replaced inside the
   worktree, and nothing a link reaches is removed either.
+- `revert-probe` removes a file the change renamed away before its control
+  run. With git's rename detection the old name was listed nowhere, so the
+  control tree kept it and passed while the real tree, still loading it,
+  failed: a false PASS.
 - `safe-bisect --retries 00` (or any other spelling of zero) is a usage error.
   It used to sample neither endpoint, so a criterion that always passes went
   unchecked and bisect named the last commit.

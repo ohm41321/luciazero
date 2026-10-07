@@ -26,8 +26,10 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
-checkout นี้คือ tree ของ **2.6.0**: manifest กับรายการบนสุดใน
-[changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
+checkout นี้คือ tree ของ **2.6.0** บวกการเปลี่ยนแปลงใต้ `[Unreleased]` ใน
+[changelog](CHANGELOG.md) โดย manifest กับรายการที่ release ล่าสุดตรงกัน
+การรองรับ Windows แบบ native และคำแนะนำสำหรับ Windows ทุกข้อด้านล่างคือหนึ่งใน
+การเปลี่ยนแปลงที่ยังไม่ release: 2.6.0 ที่เผยแพร่แล้วยังติดตั้งผ่าน Bash บน Windows
 eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
 skills-ablation กับ model จริง
 
@@ -416,8 +418,9 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
   การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
   หรือ `.claude/settings.local.json` ของคุณ
-- Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL: `npx luciazero` ติดตั้งผ่าน installer
-  ที่ port เป็น Node, `global-install` ใช้ global prefix ของ npm เอง และ hook,
+- Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ยังไม่ release; ดูต้นหน้านี้):
+  `npx luciazero` ติดตั้งผ่าน installer ที่ port เป็น Node, `global-install`
+  ใช้ global prefix ของ npm เอง และ hook,
   status line และ skill helper เป็น Node ทั้งหมด บน Windows โปรแกรมที่
   Luciazero เรียกด้วยชื่อ — git, node, npm, Python, provider CLI, PowerShell,
   schtasks — ค้นจาก PATH เท่านั้น ไม่ค้นใน working directory ซึ่ง Windows

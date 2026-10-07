@@ -214,6 +214,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the mechanism against weakened tests. No install path ships one; the
   mechanisms are doctrine rule 3 and the `/done` review, with an inert
   opt-in hook example in `examples/`.
+- Both READMEs say native Windows support is unreleased. They called the
+  checkout the 2.6.0 tree while describing Windows features that 2.6.0, the
+  version `npx luciazero@latest` installs, does not have.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

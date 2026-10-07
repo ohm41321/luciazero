@@ -134,6 +134,23 @@ function finish(rc, cwd, quiet) {
   return rc;
 }
 
+// POSIX: a file the kernel will not run (ENOEXEC, an executable script with
+// no #! line) goes to /bin/sh, as execvp and the Bash runner this replaces
+// would have done. A bare name is found on PATH first, as exec found it.
+function viaShell(spec) {
+  const runnable = (p) => {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return isFile(p);
+    } catch {
+      return false;
+    }
+  };
+  const file = spec[0].includes("/") ? spec[0]
+    : (process.env.PATH || "").split(":").map((dir) => path.join(dir || ".", spec[0])).find(runnable) || spec[0];
+  return ["/bin/sh", [file, ...spec[1]], spec[2]];
+}
+
 function startError(argv, error, quiet) {
   if (!quiet) warn(`${argv[0]}: ${error && error.code === "EACCES" ? "permission denied" : "command not found"}`);
   return error && error.code === "EACCES" ? 126 : 127;
@@ -148,7 +165,9 @@ function runCriterion(file) {
   if (spec === null) {
     rc = startError(argv, null, false);
   } else {
-    const done = spawnSync(spec[0], spec[1], { cwd, stdio: "inherit", windowsHide: true, ...spec[2] });
+    const start = (s) => spawnSync(s[0], s[1], { cwd, stdio: "inherit", windowsHide: true, ...s[2] });
+    let done = start(spec);
+    if (!WINDOWS && done.error && done.error.code === "ENOEXEC") done = start(viaShell(spec));
     rc = done.error ? startError(argv, done.error, false) : status(done.status, done.signal);
   }
   return finish(rc, cwd, false);
@@ -163,6 +182,19 @@ let running = null;
 async function checkpoint() {
   await new Promise((resolve) => setImmediate(resolve));
   if (stopped) throw new Exit(stopped);
+}
+
+// Start spec and wait for it. spawn() throws some errors (ENOEXEC among them)
+// instead of emitting them, so both ways end in onError.
+function launch(spec, options, onError) {
+  let child;
+  try {
+    child = spawn(spec[0], spec[1], { ...options, ...spec[2] });
+  } catch (error) {
+    if (!WINDOWS && error.code === "ENOEXEC") return launch(viaShell(spec), options, onError);
+    return Promise.resolve(onError(error));
+  }
+  return wait(child, onError);
 }
 
 function wait(child, onError) {
@@ -262,7 +294,7 @@ async function main(args) {
       for (let n = 1; n <= samples; n += 1) {
         const spec = command(argv, worktree);
         let rc = spec === null ? startError(argv, null, true)
-          : await wait(spawn(spec[0], spec[1], { cwd: worktree, stdio: ["inherit", "ignore", "ignore"], windowsHide: true, ...spec[2] }),
+          : await launch(spec, { cwd: worktree, stdio: ["inherit", "ignore", "ignore"], windowsHide: true },
             (error) => startError(argv, error, true));
         rc = finish(rc, worktree, true);
         await checkpoint();

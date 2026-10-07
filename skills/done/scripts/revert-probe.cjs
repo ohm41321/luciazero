@@ -13,16 +13,17 @@
 //   * its fingerprint must be a test verdict, not infrastructure — a shell that
 //     could not run or execute the command (exit 127/126, and cmd.exe's 9009
 //     on Windows) and a run that failed to load the tests at all
-//     (import/collection errors) are refused. cmd.exe /c itself exits 1 for a
-//     command it cannot find, so on Windows the control run below is what
-//     refuses that one;
+//     (import/collection errors) are refused. cmd.exe exits 1 for a command
+//     it cannot find, as a failing test does, so on Windows its own
+//     "is not recognized" line is the fingerprint instead;
 //   * it must be attributable to the changed tests — either the verify command
 //     targets one of them, or the failure output names one;
 //   * the same command must PASS against the current state (the base plus every
 //     changed file), so a command that is red everywhere cannot be read as a
 //     regression.
 // What it still cannot see: a flake that only reproduces on the old tree; a
-// command the change itself adds when a wrapper swallows the shell's exit 127;
+// command the change itself adds when a wrapper swallows the shell's exit 127
+// (or, on Windows, when cmd.exe reports it in a language other than English);
 // and, in the other direction, a suite whose own output quotes a loader error is
 // read as one (this repository's revert-probe fixtures do exactly that, so
 // probing a change to this script needs the manual comparison instead).
@@ -188,8 +189,9 @@ function lastLine(text) {
 
 // a run that never loaded the tests judged nothing. Only loader failures are
 // matched here: an environment that cannot run the command at all shows up as
-// exit 127/126, or fails the current-code control run below as well. Matching
-// shell-level phrases too would flag any suite whose own output quotes them.
+// exit 127/126 (on Windows, cmd.exe's whole not-found line, CMD_NOT_FOUND), or
+// fails the current-code control run below as well. Matching other
+// shell-level phrases would flag any suite whose own output quotes them.
 const LOAD_MARKER = /ModuleNotFoundError|ImportError|error while loading shared libraries|[Cc]annot find module|MODULE_NOT_FOUND|ERROR collecting|errors? during collection|INTERNALERROR/;
 function loadMarker(text) {
   const line = text.split("\n").find((l) => LOAD_MARKER.test(l));
@@ -199,6 +201,9 @@ function loadMarker(text) {
 function couldNotRun(rc) {
   return rc === 127 || (WINDOWS && rc === 9009);
 }
+
+// cmd.exe's own line for a command it cannot find, which it ends with exit 1.
+const CMD_NOT_FOUND = /^'[^'\r\n]+' is not recognized as an internal or external command,\r?$/m;
 
 async function main(argv) {
   const verify = argv[0];
@@ -289,8 +294,10 @@ async function main(argv) {
     }
 
     // --- the red run has to earn the word "regression" -----------------------
-    if (couldNotRun(old.rc)) {
-      unassessable(`the verify command could not be run on ${base} (exit ${old.rc}): ${lastLine(old.out)}`);
+    const notFound = WINDOWS ? CMD_NOT_FOUND.exec(old.out) : null;
+    if (couldNotRun(old.rc) || notFound) {
+      const evidence = notFound ? notFound[0].replace(/\r$/, "") : lastLine(old.out);
+      unassessable(`the verify command could not be run on ${base} (exit ${old.rc}): ${evidence}`);
     }
     if (old.rc === 126) {
       unassessable(`the verify command was not executable on ${base} (exit 126): ${lastLine(old.out)}`);

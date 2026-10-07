@@ -115,16 +115,25 @@ test("revert-probe: what cannot be attributed to the change is UNASSESSABLE", (t
   assert.strictEqual(nogit.status, 2, nogit.out);
   assert.match(nogit.out, /^UNASSESSABLE: not a git repo/m);
 
-  // the platform's shell cannot find the command. sh exits 127, refused on
-  // sight; cmd.exe /c exits 1, so there the current-code control run is what
-  // refuses it.
+  // the platform's shell cannot find the command: sh exits 127; cmd.exe
+  // exits 1, as a failing test would, and says so in a line of its own
   const nocmd = repo(b, "nocmd", plant);
   write(nocmd, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]) });
   const missing = run(b.env, nocmd, [PROBE, "luciazero-not-a-real-command tests/calc.test.js"]);
   assert.strictEqual(missing.status, 2, missing.out);
   assert.match(missing.out, WINDOWS
-    ? /also fails on the current code \(exit 1\): operable program or batch file/
+    ? /could not be run on HEAD \(exit 1\): 'luciazero-not-a-real-command' is not recognized/
     : /could not be run on HEAD \(exit 127\)/);
+
+  // a runner the change itself adds is missing from the old tree, while the
+  // control tree has it and passes: the old run judged nothing
+  const runner = repo(b, "runner", plant);
+  write(runner, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]) });
+  if (WINDOWS) write(runner, { "run-tests.cmd": "@node %*\r\n" });
+  else fs.writeFileSync(path.join(runner, "run-tests.sh"), '#!/bin/sh\nexec node "$@"\n', { mode: 0o755 });
+  const added = run(b.env, runner, [PROBE, `${WINDOWS ? "run-tests.cmd" : "./run-tests.sh"} tests/calc.test.js`]);
+  assert.strictEqual(added.status, 2, added.out);
+  assert.match(added.out, /^UNASSESSABLE: the verify command could not be run on HEAD/m);
 
   // the old tree cannot load a module the change adds
   const newmod = repo(b, "newmod", { "main.js": "" });
@@ -287,6 +296,23 @@ test("safe-bisect finds the first bad commit with the command's arguments intact
 
   const usage = run(b.env, h.dir, [BISECT, "--good", h.good, "--bad", h.bad]);
   assert.strictEqual(usage.status, 64, usage.out);
+  assert.strictEqual(worktrees(b, h.dir), 1, "a worktree was left behind");
+});
+
+// An executable script with no #! line is the shell's to run, as it was under
+// the Bash runner: by path, and by a name found on PATH.
+test("safe-bisect hands an executable script with no #! line to /bin/sh", { skip: WINDOWS && "POSIX only: Windows has no #! line" }, (t) => {
+  const b = box(t);
+  const h = history(b);
+  const dir = path.join(b.box, "plain criterion");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, "lz-plain-check"), '[ "$(cat value.txt)" = good ]\n', { mode: 0o755 });
+  const byName = { ...b.env, PATH: `${dir}${path.delimiter}${b.env.PATH || ""}` };
+  for (const [env, criterion] of [[b.env, path.join(dir, "lz-plain-check")], [byName, "lz-plain-check"]]) {
+    const r = run(env, h.dir, [BISECT, "--good", h.good, "--bad", h.bad, "--", criterion]);
+    assert.strictEqual(r.status, 0, r.out);
+    assert.match(r.out, new RegExp(`^FIRST_BAD ${h.first}$`, "m"));
+  }
   assert.strictEqual(worktrees(b, h.dir), 1, "a worktree was left behind");
 });
 

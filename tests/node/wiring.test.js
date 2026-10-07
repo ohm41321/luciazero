@@ -163,6 +163,26 @@ test("wire check says whether write would change the file", (t) => {
   assert.strictEqual(check(), "unchanged\n");
 });
 
+// Windows PowerShell 5 saves UTF-8 with a byte order mark, which JSON.parse
+// refuses; the file is still the user's settings, and is wired and cleaned.
+test("a settings.json saved with a byte order mark is wired and cleaned", (t) => {
+  const box = sandbox(t);
+  const hooks = hooksDir(box);
+  const file = path.join(box.claude, "settings.json");
+  fs.writeFileSync(file, '\ufeff{\r\n  "model": "opus"\r\n}\r\n');
+  const wired = node(box.env, [WIRING, "wire", "write", file, hooks]);
+  assert.strictEqual(wired.status, 0, wired.stderr);
+  const after = fs.readFileSync(file, "utf8");
+  assert.strictEqual(JSON.parse(after).model, "opus");
+  assert.deepStrictEqual(wiring.missing(JSON.parse(after), hooks), []);
+  fs.writeFileSync(file, "\ufeff" + after);
+  const status = node(box.env, [WIRING, "status", file, hooks]);
+  assert.strictEqual(status.status, 0, status.stderr);
+  assert.strictEqual(status.stdout, "");
+  assert.strictEqual(node(box.env, [WIRING, "clean", file, box.claude]).status, 10);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, "utf8")), { model: "opus", hooks: {} });
+});
+
 test("a settings.json that cannot be read is refused, not replaced", (t) => {
   const box = sandbox(t);
   const hooks = hooksDir(box);

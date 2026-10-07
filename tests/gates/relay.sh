@@ -163,6 +163,36 @@ fi
 if command -v node >/dev/null 2>&1; then
   node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}" | grep -q '^VALID luciazero-relay' \
     || { rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"; }
+  # On Windows the wrapper takes the first Python 3.9+ among python3, python
+  # and `py -3`: a python.org install that left PATH alone has only py.exe,
+  # and the Store's python.exe stand-in fails the version check. The route
+  # runs in a process that reports win32, with stand-ins for those programs.
+  RW="$(mktemp -d)"
+  cat > "${RW}/python.exe" <<'RWPY'
+#!/bin/sh
+echo "Python was not found; run without arguments to install from the Microsoft Store" >&2
+exit 9009
+RWPY
+  RW_PY="$(command -v python3)"
+  cat > "${RW}/py.exe" <<RWPY
+#!/bin/sh
+[ "\$1" = -3 ] || exit 2
+shift
+exec "${RW_PY}" "\$@"
+RWPY
+  chmod +x "${RW}/python.exe" "${RW}/py.exe"
+  RW_RC=0
+  RW_OUT="$(PATH="${RW}:${PATH}" node - "${ROOT}/bin/luciazero.js" "${RR}" <<'JS' 2>&1
+const [router, root] = process.argv.slice(2);
+Object.defineProperty(process, "platform", {value: "win32"});
+process.argv = [process.execPath, router, "relay", "validate", "--root", root];
+require(router);
+JS
+)" || RW_RC=$?
+  rm -rf "${RW}"
+  if [ "${RW_RC}" != 0 ] || ! grep -q '^VALID luciazero-relay' <<<"${RW_OUT}"; then
+    rm -rf "${RR}"; fail "the win32 relay route did not find Python through py -3 (rc=${RW_RC}): ${RW_OUT}"
+  fi
 fi
 rm -f "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md"
 ln -s "${RR}/outside.json" "${RR}/LUCIA_RELAY.json"

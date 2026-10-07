@@ -65,6 +65,9 @@ and `Get-ExecutionPolicy -List`.
 - [ ] With your own status line and hooks already in `settings.json`
       (including one saved with a BOM and CRLF), install keeps them and backs
       up anything it replaces.
+- [ ] With a skill directory that is a junction (`mklink /J`), as a standard
+      user without Developer Mode, install backs it up (as a junction) and
+      goes on; it must not stop with EPERM.
 - [ ] `npx luciazero uninstall` removes only what install added, and your
       own settings are back exactly as they were.
 - [ ] `npx luciazero codex` and `npx luciazero uninstall-codex` behave the
@@ -123,8 +126,9 @@ settings:
 ## 6. Lucia Relay
 
 - [ ] `py -3 <skill-dir>\scripts\relay.py` and `python ...relay.py` both
-      work; with only the Store alias present, the error says which
-      interpreter is missing.
+      work, and so does `npx luciazero relay validate` with only the py
+      launcher on PATH; with only the Store alias present, the error says no
+      Python 3.9+ was found.
 
 ## 7. Agent Bus (from a checkout)
 

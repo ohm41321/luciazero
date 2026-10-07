@@ -172,7 +172,8 @@ function readSettings(file) {
     if (error.code === "ENOENT") return {};
     throw error;
   }
-  const settings = JSON.parse(text);
+  // Windows PowerShell 5 saves UTF-8 with a byte order mark; JSON has none
+  const settings = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   if (settings === null || typeof settings !== "object" || Array.isArray(settings)) {
     throw shapeError("settings.json is valid JSON but not the shape hooks live in");
   }

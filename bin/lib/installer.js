@@ -25,7 +25,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { onPathOnly, runResolved, runCommand } = require("./winexec.js");
+const { onPathOnly, runResolved, runCommand, windowsPython } = require("./winexec.js");
 const wiring = require("./settings-wiring.js");
 
 const WINDOWS = process.platform === "win32";
@@ -225,6 +225,19 @@ function symlinkType(target, linkPath) {
   return isDir(path.resolve(path.dirname(linkPath), target)) ? "dir" : "file";
 }
 
+// A link at `at` to what the link at `from` names. Windows refuses a symlink
+// without Developer Mode or an elevated prompt, but not a junction, and Node
+// reads a junction as a link to an absolute directory: such a link is made as
+// a junction when the symlink is refused.
+function copyLink(target, at, from) {
+  try {
+    fs.symlinkSync(target, at, symlinkType(target, from));
+  } catch (error) {
+    if (!(WINDOWS && error.code === "EPERM" && path.isAbsolute(target) && isDir(target))) throw error;
+    fs.symlinkSync(target, at, "junction");
+  }
+}
+
 // A new file at `dst`, which must be free: `wx` refuses anything there,
 // a dangling symlink included, without following it.
 function copyFileNew(src, dst, preserve) {
@@ -250,8 +263,7 @@ function copyInto(src, dst, preserve) {
     const to = path.join(dst, name);
     const s = fs.lstatSync(from);
     if (s.isSymbolicLink()) {
-      const target = fs.readlinkSync(from);
-      fs.symlinkSync(target, to, symlinkType(target, from));
+      copyLink(fs.readlinkSync(from), to, from);
     } else if (s.isDirectory()) {
       fs.mkdirSync(to, s.mode & 0o777);
       copyInto(from, to, preserve);
@@ -323,7 +335,7 @@ function bakcopy(follow, src, base) {
       if (kind === "tree") fs.mkdirSync(name);
       else if (kind === "link") {
         target = fs.readlinkSync(src);
-        fs.symlinkSync(target, name, symlinkType(target, src));
+        copyLink(target, name, src);
       } else {
         fd = fs.openSync(name, "wx", 0o600);
       }
@@ -534,17 +546,6 @@ function readServiceFile(p) {
 // (python3, python, py -3) and found through PATH alone, as [file,
 // ...arguments], or null. Only on Windows, where python3 is often absent and
 // python.exe may be the Microsoft Store stand-in.
-function windowsPython() {
-  for (const [name, ...pre] of [["python3.exe"], ["python.exe"], ["py.exe", "-3"]]) {
-    const file = onPathOnly(name);
-    if (file === null) continue;
-    const r = spawnSync(file, [...pre, "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
-      { stdio: "ignore", windowsHide: true });
-    if (r.status === 0) return [file, ...pre];
-  }
-  return null;
-}
-
 // Run `luciazero-agentd service uninstall` through the installed launcher;
 // on Windows that is a .cmd, which only cmd.exe can start.
 function launcherServiceUninstall(launcher) {
@@ -978,7 +979,7 @@ function claudeUninstall(args) {
     if (!isFile(svc) || !(readServiceFile(svc) || "").includes(AGENTD_SERVICE_MARKER)) continue;
     const launcherOurs = isFile(ad.launcher) && readRaw(ad.launcher).includes(AGENTD_MARKER);
     const viaLauncher = launcherOurs && launcherServiceUninstall(ad.launcher);
-    const python = viaLauncher || !isDir(j(SRC, "agentd", "luciazero_agentd")) ? null : WINDOWS ? windowsPython() : ["python3"];
+    const python = viaLauncher || !isDir(j(SRC, "agentd", "luciazero_agentd")) ? null : WINDOWS ? windowsPython(10) : ["python3"];
     // Run from the package, so `-m` cannot find a luciazero_agentd in
     // whatever directory the uninstaller was started from.
     const viaPackage =

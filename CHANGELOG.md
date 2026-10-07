@@ -124,6 +124,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--status` reports a `settings.json` it cannot read as unreadable, as the
   settings wiring's own contract says, instead of listing every hook as
   missing and suggesting a reinstall that would refuse the file.
+- The settings wiring reads a `settings.json` saved with a UTF-8 byte order
+  mark, as Windows PowerShell 5 saves it. Install refused such a file, and
+  uninstall could not clean it.
+- On Windows, `npx luciazero relay` takes the first Python 3.9+ among
+  `python3`, `python` and `py -3`, as the Agent Bus launcher does. It looked
+  for `python.exe` alone, which a python.org install that left PATH alone
+  does not have, and could reach the Microsoft Store stand-in.
+- On Windows, a link the Node installer backs up is made as a junction when
+  Windows refuses a symlink (no Developer Mode, no elevation) and the link
+  names an absolute directory, as a junction does. Install used to stop with
+  EPERM on a junction it had to back up.
 
 ## [2.6.0] - 2026-09-22
 

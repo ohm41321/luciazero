@@ -62,4 +62,19 @@ function runCommand(name, args, options = {}) {
   return runResolved(file, args, options);
 }
 
-module.exports = { onPathOnly, runResolved, runCommand };
+// The first Python at least 3.<minor> on Windows, as [program, ...leading
+// arguments]: python3, then python, then the py launcher (ADR 0002). A
+// python.org install that left PATH alone has only py.exe, and the Microsoft
+// Store's python.exe stand-in fails the version check, as it should.
+function windowsPython(minor, { env = process.env } = {}) {
+  for (const [name, ...pre] of [["python3.exe"], ["python.exe"], ["py.exe", "-3"]]) {
+    const file = onPathOnly(name, { env });
+    if (file === null) continue;
+    const r = spawnSync(file, [...pre, "-c", `import sys; raise SystemExit(0 if sys.version_info >= (3, ${minor}) else 1)`],
+      { stdio: "ignore", windowsHide: true, env });
+    if (r.status === 0) return [file, ...pre];
+  }
+  return null;
+}
+
+module.exports = { onPathOnly, runResolved, runCommand, windowsPython };

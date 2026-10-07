@@ -786,6 +786,44 @@ class HumanCommands(unittest.TestCase):
                               if b["agent_id"] == "claude-reviewer"])
         self.assertEqual([], [p.name for p in temp.iterdir() if p.name.startswith("luciazero-bind-")])
 
+    @unittest.skipIf(WINDOWS, "the pty path; Windows holds a console, which catches this already")
+    def test_a_process_table_that_fails_at_bind_leaves_no_credential_live(self) -> None:
+        """Review finding: binding the provider's pid on the pty path caught
+        StoreError alone, outside the cleanup, so a process table that failed
+        right then left the session's credential valid for its whole TTL."""
+        self.addCleanup(self._stop_daemon)
+        spy = (
+            "import os, subprocess, sys\n"
+            "from luciazero_agentd import __main__ as cli, procinfo\n"
+            "children = set()\n"
+            "def spawn(argv, env):\n"
+            "    child = subprocess.Popen(argv, env=env)\n"
+            "    children.add(child.pid)\n"
+            "    return child.pid, os.open(os.devnull, os.O_RDONLY)\n"
+            "def proxy(pid, master, **_):\n"
+            "    os.close(master)\n"
+            "    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])\n"
+            "real = procinfo.started_at\n"
+            "def started_at(pid, **kw):\n"
+            "    if pid in children:\n"
+            "        raise procinfo.ProcessError('injected: the process table is unreadable')\n"
+            "    return real(pid, **kw)\n"
+            "cli.nudge.usable, cli.nudge.spawn, cli.nudge.proxy = (lambda: True), spawn, proxy\n"
+            "procinfo.started_at = started_at\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._echo(), "hello"],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+        )
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("hello", done.stdout)
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+
     def _front(self, *args: str, home: Optional[Path] = None) -> subprocess.CompletedProcess:
         """`lucia claude` with a stand-in on PATH for the provider itself.
 

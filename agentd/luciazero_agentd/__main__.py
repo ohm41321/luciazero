@@ -1178,21 +1178,23 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
         cleanup("spawn failed")
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
-    store = _open_store("run", state_dir)
-    if store is not None:
-        with store:
-            try:
-                store.bind_process(binding["id"], pid=pid, process_started_at=procinfo.started_at(pid))
-            except StoreError:
-                pass
-    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
-                            limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
-
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
-    previous = signal.signal(signal.SIGTERM, _stop_run)
+    previous = signal.getsignal(signal.SIGTERM)
     try:
+        store = _open_store("run", state_dir)
+        if store is not None:
+            with store:
+                try:
+                    store.bind_process(binding["id"], pid=pid, process_started_at=procinfo.started_at(pid))
+                except (StoreError, procinfo.ProcessError):
+                    # as in cmd_run: the binding still dies when this exits
+                    pass
+        watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
+                                limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
+
+        def _stop_run(*_: object) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, _stop_run)
         return nudge.proxy(pid, master, watcher=watcher,
                            show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:

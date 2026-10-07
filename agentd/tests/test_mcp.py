@@ -175,6 +175,18 @@ class ErrorShapes(ServerCase):
         status, _, body = self.client.raw(json.dumps({"jsonrpc": "2.0", "method": "ping", "id": 1, "params": [1]}).encode())
         self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32600))
 
+    def test_a_store_that_is_not_a_database_is_a_refusal_not_a_dropped_connection(self) -> None:
+        """Review finding: sqlite3's own error escaped the identity lookups
+        every request makes, and the daemon closed the connection with a
+        traceback instead of answering."""
+        self.client.initialize()
+        Path(self.db).write_bytes(b"not a database, just bytes" * 100)
+        status, _, body = self.client.rpc("ping", {})
+        self.assertEqual((status, body.get("result")), (200, {}))
+        credential = Http(self.server.url, token="lzsc_" + "0" * 32)
+        status, _, _ = credential.raw(json.dumps({"jsonrpc": "2.0", "method": "ping", "id": 1}).encode())
+        self.assertEqual(status, 401)
+
     def test_method_not_found_and_unknown_tool(self) -> None:
         self.client.initialize()
         status, _, body = self.client.rpc("tools/nope", {})

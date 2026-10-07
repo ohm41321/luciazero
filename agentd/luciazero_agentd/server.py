@@ -915,7 +915,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.resolve_credential(credential)
-        except (StoreError, procinfo.ProcessError, OSError):
+        except (StoreError, procinfo.ProcessError, OSError, sqlite3.Error):
             # An unreadable store or process table means the terminal cannot
             # be verified: the request is refused, never admitted unnamed.
             return None
@@ -931,7 +931,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.claim_binding(session_key(session_id))
-        except (StoreError, procinfo.ProcessError, OSError):
+        except (StoreError, procinfo.ProcessError, OSError, sqlite3.Error):
             return None
 
     def _console_available(self) -> bool:
@@ -1023,7 +1023,7 @@ class BusServer:
                 store.migrate()
                 store.trust = "system"
                 store.end_claim_session(session_key(session_id))
-        except (StoreError, OSError):
+        except (StoreError, OSError, sqlite3.Error):
             pass
 
     def pending_claim(self, session_id: str) -> Optional[dict[str, Any]]:
@@ -1031,7 +1031,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.pending_claim(session_key(session_id))
-        except (StoreError, OSError):
+        except (StoreError, OSError, sqlite3.Error):
             return None
 
     def discovery(self) -> list[dict[str, Any]]:

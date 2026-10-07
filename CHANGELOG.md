@@ -110,6 +110,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An Agent Bus run log under its size cap is scrubbed as one text. Its head
   and tail were scrubbed apart, so a credential or token that crossed the
   point where the head filled up was written to disk whole.
+- The Agent Bus daemon answers when its database file is not a database:
+  the identity lookups each request makes let sqlite3's own error escape,
+  and the connection was dropped with a traceback instead of a refusal.
+- `luciazero-agentd run` on a terminal revokes the session's credential when
+  the process table fails just as the provider is bound. That error escaped
+  with a traceback, before the cleanup that revokes it.
 - Agent Bus binding renewal only moves an expiry forward and records a
   `binding.renewed` event only when the row changed, so out-of-order renewals
   cannot shorten a binding and a revoked one is never reported renewed

@@ -639,7 +639,9 @@ function claudeStatus(dir) {
     }
     if (any) {
       if (!onPath(ad.binDir)) say(`        (not on PATH: ${pathHint(ad.binDir)})`);
-      const home = isFile(ad.homeFile) ? readRaw(ad.homeFile).replace(/\n+$/, "") : null;
+      // a path, written as UTF-8 (one character per byte would garble a
+      // checkout under a name that is not ASCII)
+      const home = isFile(ad.homeFile) ? (readBytes(ad.homeFile) || Buffer.alloc(0)).toString("utf8").replace(/\n+$/, "") : null;
       if (home !== null && isDir(j(home, "luciazero_agentd"))) say(`  ok    agentd package recorded at ${home}`);
       else {
         say(`  MISS  ${ad.homeFile} does not point at an agentd package — re-run ./install.sh`);

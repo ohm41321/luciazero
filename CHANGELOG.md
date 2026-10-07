@@ -131,6 +131,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--status` reports a `settings.json` it cannot read as unreadable, as the
   settings wiring's own contract says, instead of listing every hook as
   missing and suggesting a reinstall that would refuse the file.
+- The Node installer's `--status` reads the recorded Agent Bus package path as
+  UTF-8. A checkout under a name that is not ASCII was reported missing, with
+  advice to reinstall.
 - The settings wiring reads a `settings.json` saved with a UTF-8 byte order
   mark, as Windows PowerShell 5 saves it. Install refused such a file, and
   uninstall could not clean it.

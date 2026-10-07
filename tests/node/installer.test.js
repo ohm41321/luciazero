@@ -57,6 +57,21 @@ test("claude: install with hooks, status, the wired hook runs, uninstall restore
   assert.ok(!JSON.stringify(left).includes("luciazero-"), "settings.json still names a hook of ours");
 });
 
+test("claude: status finds the agentd package at a path that is not ASCII", (t) => {
+  const box = sandbox(t);
+  ok(node(box.env, [INSTALLER, "claude"]), "install");
+  const before = node(box.env, [INSTALLER, "claude", "--status"]);
+  ok(before, "status");
+  if (!/agentd package recorded/.test(before.stdout)) return t.skip("no Agent Bus launcher was installed here");
+  // the home file, as the installer writes it, for a checkout under a Thai name
+  const home = path.join(box.box, "โค้ด ü", "agentd");
+  fs.mkdirSync(path.join(home, "luciazero_agentd"), { recursive: true });
+  fs.writeFileSync(path.join(box.claude, ".luciazero-agentd-home"), home + "\n");
+  const status = node(box.env, [INSTALLER, "claude", "--status"]);
+  ok(status, "status");
+  assert.ok(status.stdout.includes(`agentd package recorded at ${home}`), status.stdout);
+});
+
 // Take read access to a file away from this user, for real: mode 0200 on
 // POSIX, a deny-read-data ACE on Windows. Returns the undo, or a reason the
 // platform cannot do it here (root reads anything).

@@ -135,6 +135,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Windows refuses a symlink (no Developer Mode, no elevation) and the link
   names an absolute directory, as a junction does. Install used to stop with
   EPERM on a junction it had to back up.
+- The hooks no longer record a verify command started in the background
+  (`run_in_background`) as a result. Its PostToolUse marks the launch, so a
+  red run used to clear the nudge and pass the strict gate as green.
+- An edit made while a verify command runs stays unverified: the run is
+  recorded as of when it started, not when it finished.
+- The hooks and the status line keep their state per project
+  (`CLAUDE_PROJECT_DIR`, or the status line's `workspace.project_dir`), not per
+  working directory. A `cd` into a subdirectory used to start an empty state
+  that held none of the session's edits, so the nudge and the strict gate
+  never fired. The strict verify command runs in the project directory.
+- The refusal of committed `LUCIAZERO_*` and `CLAUDE_CONFIG_DIR` settings
+  applies to every hook mode, the session-start doctrine included, and goes on
+  past a nested repository (a submodule, a vendored checkout) up to
+  `CLAUDE_PROJECT_DIR`. A committed `CLAUDE_CONFIG_DIR` pointing at a planted
+  config directory could silence the doctrine and turn the hooks off. On
+  Windows a key is refused whatever its case, since a lowercase name sets the
+  same variable there.
+- On POSIX a strict verify command that times out is killed with every process
+  it started, not just the shell that ran it.
 
 ## [2.6.0] - 2026-09-22
 

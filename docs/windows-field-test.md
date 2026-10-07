@@ -92,6 +92,14 @@ and `Get-ExecutionPolicy -List`.
       runs. Repeat with `node.exe`.
 - [ ] A hook does not slow down an ordinary tool call noticeably. Record the
       time with and without the hooks.
+- [ ] Run the verify command as a background Bash call (`run_in_background`):
+      the nudge is not cleared until a foreground run finishes green.
+- [ ] `cd` into a subdirectory in one Bash call, edit a file, end the turn:
+      the nudge still appears, and the status line keeps the project's verify
+      state.
+- [ ] A committed `.claude/settings.json` whose `env` sets
+      `luciazero_strict_verify_cmd` in lowercase: named at `SessionStart` as
+      refused, and never run at stop.
 
 ## 4. Strict verify gate (Thai display language)
 
@@ -108,6 +116,10 @@ after an edit, once for each command below.
       exiting 1): record what cmd.exe printed, the exit status, and whether
       `lz-red` ran.
 - [ ] A command slower than `LUCIAZERO_STRICT_TIMEOUT`: nudge, not block.
+- [ ] A `.cmd` slower than the timeout that starts a child
+      (`ping -n 600 127.0.0.1`): record whether `ping.exe` still runs after
+      the nudge. On POSIX the timeout kills the whole process group; on
+      Windows only `cmd.exe` is known to be stopped.
 
 ## 5. Skill helpers
 

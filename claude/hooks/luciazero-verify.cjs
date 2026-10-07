@@ -31,7 +31,8 @@
 //
 // Optional strict gate: when LUCIAZERO_STRICT_VERIFY_CMD is set, `stop`
 // actually RUNS that command (through the platform shell: /bin/sh, or cmd.exe
-// on Windows) and refuses the stop (exit 2) while it is red. Set it in your
+// on Windows, in the session's project directory whichever subdirectory the
+// session moved to) and refuses the stop (exit 2) while it is red. Set it in your
 // PERSONAL settings (settings.local.json env block, or your shell).
 // LIMITATION: this hook cannot tell which settings scope set the variable — a
 // committed .claude/settings.json env block reaches it too — so never commit
@@ -113,6 +114,19 @@ function stateKey(cwd) {
   } catch {
     return sha256(cwd, 12);
   }
+}
+
+// The project a hook event belongs to, which names its state: the session's
+// CLAUDE_PROJECT_DIR when the event's cwd lies inside it, spelled as the cwd
+// spells it, else the cwd. A `cd` into a subdirectory persists between tool
+// calls, and must not move the session to state that holds none of its edits.
+function projectOf(cwd, project = process.env.CLAUDE_PROJECT_DIR || "") {
+  if (!project || !cwd || !path.isAbsolute(project) || !path.isAbsolute(cwd)) return cwd;
+  const rel = path.relative(project, cwd);
+  if (rel === "") return cwd;
+  if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return cwd;
+  const own = cwd.slice(0, cwd.length - rel.length).replace(/[\\/]+$/, "");
+  return own && path.relative(own, project) === "" ? own : path.resolve(project);
 }
 
 // Where the per-user state lives. POSIX keeps the shell's spelling,
@@ -230,15 +244,16 @@ function anyLine(text, source) {
 //
 // PROJECT scope only. The walk covers the session directory and its ancestors —
 // Claude Code merges project settings from the repository root and a session's
-// cwd is often a subdirectory — but it stops at the repository root, at
-// CLAUDE_PROJECT_DIR, and at the home directory, and it never reads the user's
+// cwd is often a subdirectory — but it stops at the repository root (a nested
+// repository inside CLAUDE_PROJECT_DIR does not end it), at CLAUDE_PROJECT_DIR,
+// and at the home directory, and it never reads the user's
 // own config directory. Personal settings (global `~/.claude/settings.json`,
 // gitignored `.claude/settings.local.json`) are the user's scope and keep
 // working.
 //
 // Refusal only ever falls back to this file's own defaults, never to a block,
-// and a parse error leaves the configured values untouched. Only the modes that
-// consume a knob pay for the lookup.
+// and a parse error leaves the configured values untouched. Every mode pays for
+// the lookup: each one reads CLAUDE_CONFIG_DIR before it does anything else.
 function refusedKey(key) {
   return key.startsWith("LUCIAZERO_") || key === "CLAUDE_CONFIG_DIR";
 }
@@ -262,7 +277,9 @@ function keysIn(file) {
     return [];
   }
   if (!env || typeof env !== "object" || Array.isArray(env)) return [];
-  return Object.keys(env).filter(refusedKey);
+  // Windows reads environment names regardless of case: a lowercase name
+  // sets the same variable
+  return Object.keys(env).map((key) => (WINDOWS ? key.toUpperCase() : key)).filter(refusedKey);
 }
 
 function real(file) {
@@ -288,6 +305,10 @@ function refusedKeys(start) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR ? real(process.env.CLAUDE_PROJECT_DIR) : null;
   const found = [];
   let directory = real(start || ".");
+  // Inside the session's project the walk goes on up to it: a submodule or
+  // nested checkout below the project root does not end the project's scope.
+  const rel = projectDir === null ? ".." : path.relative(projectDir, directory);
+  const inProject = rel === "" || !(rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel));
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const claudeDir = path.join(directory, ".claude");
     if (!samePath(directory, homeDir) && !samePath(real(claudeDir), userConfig)) {
@@ -296,7 +317,8 @@ function refusedKeys(start) {
       }
     }
     if (samePath(directory, homeDir)) break;
-    if (fs.existsSync(path.join(directory, ".git"))) break; // repository root: project scope ends here
+    // repository root: project scope ends here
+    if (!inProject && fs.existsSync(path.join(directory, ".git"))) break;
     if (projectDir !== null && samePath(directory, projectDir)) break;
     const parent = path.dirname(directory);
     if (parent === directory) break;
@@ -599,11 +621,20 @@ function runStrict(state, cwd, command, timeout) {
   // asked before the run as well as after it: a runner that deletes itself
   // as it fails was there to run, and its red stands
   const missingBefore = WINDOWS && cmdMissing(command, cwd);
+  // On POSIX the shell leads a process group of its own, so a timeout stops
+  // everything it started, not the shell alone.
   const result = childProcess.spawnSync(command, {
     shell: true, cwd: cwd || undefined, timeout: seconds * 1000, encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024, windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024, windowsHide: true, detached: !WINDOWS,
   });
-  if (result.error) return { verdict: "error" };
+  if (result.error) {
+    if (!WINDOWS && result.pid > 0) {
+      try {
+        process.kill(-result.pid, "SIGKILL");
+      } catch {}
+    }
+    return { verdict: "error" };
+  }
   // command not found / not executable: an internal error, not a red verify.
   // 126 and 127 are the POSIX shell's; 9009 is the ERRORLEVEL cmd.exe sets
   // for a command it cannot find, which a batch file can pass on. `cmd /c`
@@ -615,12 +646,25 @@ function runStrict(state, cwd, command, timeout) {
   return { verdict: "red", tail: tail.join("\n") };
 }
 
+// Drop every knob the project's committed settings set (see refusedKeys);
+// the names refused.
+function dropRefused(cwd) {
+  let refused = refusedKeys(cwd);
+  // `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
+  if (refused.includes("LUCIAZERO_*")) refused = ALL_KNOBS.slice();
+  for (const name of refused) {
+    if (/^LUCIAZERO_[A-Z_]+$/.test(name) || name === "CLAUDE_CONFIG_DIR") delete process.env[name];
+  }
+  return refused;
+}
+
 function main(argv) {
   const mode = argv[0] || "";
 
   // doctrine mode needs no state and no stdin — handled before the shared
-  // setup.
+  // setup. It reads the config directory, so a committed one is refused first.
   if (mode === "doctrine") {
+    dropRefused(process.env.CLAUDE_PROJECT_DIR || process.env.PWD || process.cwd());
     // a classic install's CLAUDE.md import already loads this text — never twice
     if (isFile(path.join(configDir(), "luciazero.md"))) return 0;
     try {
@@ -638,7 +682,8 @@ function main(argv) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return 0;
 
   const cwd = field(input, "cwd") || process.env.PWD || process.cwd();
-  const key = stateKey(cwd);
+  const project = projectOf(cwd);
+  const key = stateKey(project);
   const sessionKey = sha256(field(input, "session_id") || "parent-" + process.ppid, 16);
   // stable opaque tool key; raw tool input never leaves temporary state
   const toolKey = sha256(field(input, "tool_use_id") || field(input, "tool_input", "command")
@@ -665,14 +710,8 @@ function main(argv) {
   else if (response.interrupted === true) status = "ran";
   else status = mode === "bash" ? "ok" : "ran";
 
-  let refused = ["edit", "bash", "bash-failure", "stop", "session"].includes(mode) ? refusedKeys(cwd) : [];
-  if (refused.length) {
-    // `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
-    if (refused.includes("LUCIAZERO_*")) refused = ALL_KNOBS.slice();
-    for (const name of refused) {
-      if (/^LUCIAZERO_[A-Z_]+$/.test(name) || name === "CLAUDE_CONFIG_DIR") delete process.env[name];
-    }
-  }
+  // every mode reads the config directory (classicWired below)
+  const refused = dropRefused(cwd);
 
   if (classicWired(hookPath(process.argv[1] || __filename))) return 0;
 
@@ -807,7 +846,14 @@ function main(argv) {
           if (!process.env.LUCIAZERO_VERIFY_REGEX && anyLine(command, "test-timings\\.sh +--report")) isVerify = false;
         }
       }
-      if (isVerify) {
+      // A command started in the background has no result yet: its
+      // PostToolUse marks the launch, and a later failure comes back as a
+      // notice, never as a failed tool call. It counts, and records nothing.
+      const background = toolInput !== null && typeof toolInput === "object" && toolInput.run_in_background === true;
+      if (isVerify && background) {
+        mkdirs(path.join(telemetry, "verify_count"));
+        touch(path.join(telemetry, "verify_count", toolKey));
+      } else if (isVerify) {
         mkdirs(path.join(telemetry, "verify_count"));
         touch(path.join(telemetry, "verify_count", toolKey));
         // Red/green came from the tool response; failure hooks are red.
@@ -825,6 +871,13 @@ function main(argv) {
           }
         }
         write(path.join(state, "last_verify"), (status || "ran") + "\n");
+        // The run vouches for the code as it was when it started: an edit made
+        // while it ran (another session, a background agent) stays after it.
+        if (/^\d+$/.test(startMs) && nowMs >= Number(startMs)) {
+          try {
+            fs.utimesSync(path.join(state, "last_verify"), new Date(Number(startMs)), new Date(Number(startMs)));
+          } catch {}
+        }
         // Keep only an opaque digest for strict-gate equality; raw commands may
         // contain paths or secrets and must never persist in shared state.
         write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
@@ -856,7 +909,7 @@ function main(argv) {
         const startMs = Date.now();
         let outcome;
         try {
-          outcome = runStrict(state, cwd, strict, process.env.LUCIAZERO_STRICT_TIMEOUT || "120");
+          outcome = runStrict(state, project, strict, process.env.LUCIAZERO_STRICT_TIMEOUT || "120");
         } catch {
           outcome = { verdict: "error" };
         }
@@ -938,7 +991,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, trustedBase, ere, anyLine, readStdin };
+module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin };
 
 if (require.main === module) {
   try {

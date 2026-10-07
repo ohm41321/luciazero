@@ -15,10 +15,15 @@ const VERIFY = path.join(ROOT, "claude", "hooks", "luciazero-verify.cjs");
 const STATUS = path.join(ROOT, "claude", "hooks", "luciazero-statusline.cjs");
 
 function stateDir(env, cwd) {
-  const r = node(env, ["-e", "const v = require(process.argv[1]); console.log(require('path').join(v.stateBase(), v.stateKey(process.argv[2])))", VERIFY, cwd]);
+  const r = node(env, ["-e", "const v = require(process.argv[1]); console.log(require('path').join(v.stateBase(), v.stateKey(v.projectOf(process.argv[2]))))", VERIFY, cwd]);
   assert.strictEqual(r.status, 0, r.stderr);
   return r.stdout.trim();
 }
+
+const lastVerify = (env, cwd) => {
+  const file = path.join(stateDir(env, cwd), "last_verify");
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+};
 
 test("an edit nudges once at stop, and a verify run clears it", (t) => {
   const box = sandbox(t);
@@ -141,4 +146,122 @@ test("the status line names the branch with the git on PATH, never one in the pr
   });
   assert.strictEqual(shown.status, 0, shown.stderr);
   assert.match(shown.stdout, /^Model \| lz-branch \| /);
+});
+
+// A verify started in the background has no result yet when its PostToolUse
+// arrives, and a failure later comes back as a notice, never as a failed
+// tool call: the launch is not a green.
+test("a verify run in the background is not recorded as green", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "bg");
+  const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+  assert.strictEqual(node(box.env, [VERIFY, "edit"], event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
+  const ran = node(box.env, [VERIFY, "bash"], event({
+    tool_name: "Bash", tool_input: { command: "npm test", run_in_background: true }, tool_response: { backgroundTaskId: "b1" },
+  }));
+  assert.strictEqual(ran.status, 0, ran.stderr);
+  assert.strictEqual(lastVerify(box.env, cwd), null, "a background launch was recorded as a verify result");
+  assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 2, "the edit is still unverified");
+});
+
+// A verify proves the code as it was when the run started: an edit that
+// lands while it runs -- another session, a background agent -- is after it.
+test("an edit made while a verify runs is still unverified", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "during");
+  const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+  const edit = () => assert.strictEqual(node(box.env, [VERIFY, "edit"],
+    event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
+  const verify = (id, mode) => assert.strictEqual(node(box.env, [VERIFY, mode],
+    event({ tool_name: "Bash", tool_use_id: id, tool_input: { command: "npm test" } })).status, 0);
+  edit();
+  verify("t1", "bash-start");
+  verify("t1", "bash");
+  assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 0, "a verify started after the edit covers it");
+  verify("t2", "bash-start");
+  edit();
+  verify("t2", "bash");
+  assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 2, "the edit made during the run was taken as verified");
+});
+
+// The session's project is where Claude Code started; a `cd` into a
+// subdirectory persists between tool calls and must not move the session to
+// state that has none of its edits, nor stop the refusal walk at a checkout
+// nested inside the project.
+test("state and refusals follow the project, not the directory the session moved to", (t) => {
+  const box = sandbox(t);
+  const project = path.join(box.box, "proj");
+  const sub = path.join(project, "vendor", "lib");
+  fs.mkdirSync(path.join(sub, ".git"), { recursive: true });
+  fs.mkdirSync(path.join(project, ".claude"));
+  fs.writeFileSync(path.join(project, ".claude", "settings.json"), JSON.stringify({ env: { LUCIAZERO_VERIFY_REGEX: ".*" } }));
+  const env = { ...box.env, CLAUDE_PROJECT_DIR: project };
+  const event = (cwd, extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+  assert.strictEqual(node(env, [VERIFY, "edit"], event(project, { tool_name: "Edit", tool_input: { file_path: path.join(project, "a.js") } })).status, 0);
+  assert.strictEqual(node(env, [VERIFY, "stop"], event(sub)).status, 2, "a stop from a subdirectory escaped the nudge");
+  // the committed regex makes any command a verify; refused, `ls` is none
+  const ran = node({ ...env, LUCIAZERO_VERIFY_REGEX: ".*" }, [VERIFY, "bash"], event(sub, { tool_name: "Bash", tool_input: { command: "ls" } }));
+  assert.strictEqual(ran.status, 0, ran.stderr);
+  assert.strictEqual(lastVerify(env, sub), null, "the project's committed settings went unrefused below a nested checkout");
+  const shown = node(env, [STATUS], JSON.stringify({ model: { display_name: "M" }, workspace: { current_dir: sub, project_dir: project } }));
+  assert.match(shown.stdout, /unverified/, shown.stdout);
+});
+
+// Windows reads environment names without regard to case, so a committed
+// lowercase name sets the same variable and must be refused the same way.
+test("on Windows a committed knob in lowercase is refused too", { skip: !WINDOWS && "Windows only" }, (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "lower");
+  fs.mkdirSync(path.join(cwd, ".claude"), { recursive: true });
+  fs.mkdirSync(path.join(cwd, ".git"));
+  fs.writeFileSync(path.join(cwd, ".claude", "settings.json"), JSON.stringify({ env: { luciazero_verify_regex: ".*" } }));
+  const ran = node({ ...box.env, luciazero_verify_regex: ".*" }, [VERIFY, "bash"],
+    JSON.stringify({ cwd, tool_name: "Bash", tool_input: { command: "ls" } }));
+  assert.strictEqual(ran.status, 0, ran.stderr);
+  assert.strictEqual(lastVerify(box.env, cwd), null, "a lowercase committed knob was not refused");
+});
+
+// A strict verify that outlives its timeout is stopped whole: what the shell
+// started must not run on after the stop, beside the model's next command.
+test("a strict verify that times out leaves nothing running", { skip: WINDOWS && "POSIX process groups" }, (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "slow");
+  fs.mkdirSync(cwd);
+  const marker = `lz-strict-orphan-${process.pid}-${Date.now()}`;
+  t.after(() => spawnSync("pkill", ["-f", marker]));
+  const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+  assert.strictEqual(node(box.env, [VERIFY, "edit"], event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
+  const strict = `"${process.execPath}" -e "setTimeout(() => {}, 30000)" ${marker}; echo done`;
+  const stop = node({ ...box.env, LUCIAZERO_STRICT_VERIFY_CMD: strict, LUCIAZERO_STRICT_TIMEOUT: "1" }, [VERIFY, "stop"], event());
+  assert.strictEqual(stop.status, 2, stop.stderr);
+  assert.doesNotMatch(stop.stderr, /Strict verify gate/, "a timeout is no red");
+  const left = spawnSync("pgrep", ["-f", marker], { encoding: "utf8" });
+  assert.strictEqual(left.stdout.trim(), "", "the timed-out verify's program is still running");
+});
+
+// CLAUDE_CONFIG_DIR from a repository's committed settings moves the config
+// directory the hook checks for a classic install; refused there, it cannot
+// make a plugin's doctrine or hooks stand down for one that is not installed.
+test("a committed CLAUDE_CONFIG_DIR cannot silence the doctrine or the hooks", (t) => {
+  const box = sandbox(t);
+  const project = path.join(box.box, "cfgproj");
+  const planted = path.join(project, "cfg");
+  fs.mkdirSync(path.join(planted, "hooks"), { recursive: true });
+  fs.mkdirSync(path.join(project, ".git"));
+  fs.mkdirSync(path.join(project, ".claude"));
+  fs.writeFileSync(path.join(project, ".claude", "settings.json"), JSON.stringify({ env: { CLAUDE_CONFIG_DIR: planted } }));
+  fs.writeFileSync(path.join(planted, "luciazero.md"), "decoy\n");
+  // a classic install there, as far as the hook can tell
+  fs.copyFileSync(VERIFY, path.join(planted, "hooks", "luciazero-verify.cjs"));
+  fs.writeFileSync(path.join(planted, "settings.json"), JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: "command", command: "node", args: [path.join(planted, "hooks", "luciazero-verify.cjs"), "stop"] }] }] },
+  }));
+  const env = { ...box.env, CLAUDE_CONFIG_DIR: planted, PWD: project };
+  const doctrine = spawnSync(process.execPath, [VERIFY, "doctrine"], { cwd: project, env, encoding: "utf8", windowsHide: true });
+  assert.strictEqual(doctrine.status, 0, doctrine.stderr);
+  assert.match(doctrine.stdout, /Ground truth/, "the doctrine was silenced");
+  const prompt = node(env, [VERIFY, "prompt"], JSON.stringify({ cwd: project, session_id: "s1", prompt: "go" }));
+  assert.strictEqual(prompt.status, 0, prompt.stderr);
+  const turn = path.join(stateDir(box.env, project), "telemetry");
+  assert.ok(fs.existsSync(turn), "the prompt hook stood down for a classic install that is not there");
 });

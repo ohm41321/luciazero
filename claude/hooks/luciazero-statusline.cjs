@@ -16,7 +16,7 @@
 const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { stateBase, stateKey, trustedBase, readStdin } = require("./luciazero-verify.cjs");
+const { stateBase, stateKey, projectOf, trustedBase, readStdin } = require("./luciazero-verify.cjs");
 
 // git by its full path on Windows, where a bare name is looked for in the
 // working directory -- the project this line describes -- before PATH. Only
@@ -60,8 +60,11 @@ function line(input) {
   const cwd = (d.workspace && typeof d.workspace === "object" && pick(d.workspace.current_dir))
     || pick(d.cwd) || process.cwd();
 
+  // the project names the state, as it does for the hook
+  const project = (d.workspace && typeof d.workspace === "object" && pick(d.workspace.project_dir))
+    || process.env.CLAUDE_PROJECT_DIR || "";
   const base = stateBase();
-  const state = trustedBase(base) ? path.join(base, stateKey(cwd)) : null;
+  const state = trustedBase(base) ? path.join(base, stateKey(projectOf(cwd, project))) : null;
   const mtime = (name) => {
     if (state === null) return null;
     try {

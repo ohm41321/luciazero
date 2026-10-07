@@ -103,9 +103,10 @@ Runner = Callable[[list[str]], Any]
 def run_command(argv: list[str]) -> Any:
     if sys.platform == "win32":
         # schtasks and powershell by their full paths: CreateProcess would
-        # look for them in the working directory first.
+        # look for them in the working directory first. Never a batch file,
+        # whose arguments cmd.exe would read a second time.
         from . import proctree
-        program = proctree.find(argv[0])
+        program = proctree.find(argv[0], only=proctree.PROGRAMS)
         if program is None:
             raise FileNotFoundError(f"{argv[0]} is not on PATH")
         argv = [program, *argv[1:]]

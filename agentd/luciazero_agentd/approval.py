@@ -179,9 +179,10 @@ def _run(argv: list[str], timeout: int) -> Any:
     if sys.platform == "win32":
         # By its full path: CreateProcess would look for `powershell` in the
         # daemon's working directory first, and a stand-in there that exits
-        # 0 and prints nothing would read as "allow".
+        # 0 and prints nothing would read as "allow". Never a batch file,
+        # whose arguments cmd.exe would read a second time.
         from . import proctree
-        program = proctree.find(argv[0])
+        program = proctree.find(argv[0], only=proctree.PROGRAMS)
         if program is None:
             raise FileNotFoundError(f"{argv[0]} is not on PATH")
         argv = [program, *argv[1:]]

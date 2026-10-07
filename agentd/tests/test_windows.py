@@ -250,7 +250,7 @@ class WindowsLookup(unittest.TestCase):
              r"C:\repo\only.exe", r"C:\npm\claude.cmd"}
     ENV = {"Path": r'.;relative\bin;"C:\trusted";C:\node', "PATHEXT": ".COM;.EXE;.BAT;.CMD"}
 
-    def find(self, name: str, env: dict) -> object:
+    def find(self, name: str, env: dict, **options: object) -> object:
         """The lookup's answer, lower-cased: like Windows' own, this mocked
         filesystem ignores case, so `claude.EXE` and `claude.exe` are one file,
         and a relative path is relative to the working directory, C:\\repo."""
@@ -260,13 +260,19 @@ class WindowsLookup(unittest.TestCase):
             return ntpath.normpath(ntpath.join("C:\\repo", path)).lower() in files
 
         with mock.patch.object(proctree, "WINDOWS", True), mock.patch.object(proctree.os.path, "isfile", isfile):
-            found = proctree.find(name, env)
+            found = proctree.find(name, env, **options)
         return None if found is None else found.lower()
 
     def test_a_bare_name_comes_only_from_an_absolute_path_entry(self) -> None:
         self.assertEqual(self.find("claude", self.ENV), r"c:\trusted\claude.exe")
         self.assertEqual(self.find("node", self.ENV), r"c:\node\node.exe")
         self.assertIsNone(self.find("only", self.ENV))
+
+    def test_a_caller_can_refuse_batch_files(self) -> None:
+        env = {"Path": r"C:\npm;C:\trusted", "PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+        self.assertEqual(self.find("claude", env), r"c:\npm\claude.cmd")
+        self.assertEqual(self.find("claude", env, only=proctree.PROGRAMS), r"c:\trusted\claude.exe")
+        self.assertIsNone(self.find(r"C:\npm\claude.cmd", env, only=proctree.PROGRAMS))
 
     def test_a_path_is_the_callers_own_choice(self) -> None:
         self.assertEqual(self.find(r"C:\repo\only", self.ENV), r"c:\repo\only.exe")
@@ -593,6 +599,29 @@ class Commands(unittest.TestCase):
         said = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "Write-Output real"]
         self.assertEqual(approval._run(said, 60).stdout.strip(), "real")
         self.assertEqual(service.run_command(said).stdout.strip(), "real")
+
+    def test_git_powershell_and_schtasks_are_never_a_batch_file(self) -> None:
+        """cmd.exe reads a batch file's arguments a second time, and git is
+        given a worktree path and a ref an agent named: a git.bat, a
+        powershell.bat or a schtasks.cmd earlier on PATH must not run."""
+        from luciazero_agentd import approval, service
+        repo = make_repo(Path(tempfile.mkdtemp(prefix="agentd-git-")))
+        self.addCleanup(shutil.rmtree, repo, True)
+        early = Path(tempfile.mkdtemp(prefix="agentd-early-"))
+        self.addCleanup(shutil.rmtree, early, True)
+        marker = early / "ran.txt"
+        for name in ("git.bat", "powershell.bat", "schtasks.cmd"):
+            (early / name).write_text(f'@echo %~nx0>>"{marker}"\r\n@exit /b 0\r\n', encoding="utf-8", newline="")
+        key = next((k for k in os.environ if k.upper() == "PATH"), "PATH")
+        with mock.patch.dict(os.environ, {key: f"{early};{os.environ.get(key, '')}"}):
+            # The fixture bites: a lookup that takes batch files finds these.
+            self.assertEqual(Path(proctree.find("git") or "").parent, early)
+            self.assertRegex(gitinfo.git(str(repo), "rev-parse", "HEAD"), r"^[0-9a-f]{40}$")
+            said = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "Write-Output real"]
+            self.assertEqual(approval._run(said, 60).stdout.strip(), "real")
+            self.assertEqual(service.run_command(said).stdout.strip(), "real")
+            service.run_command(["schtasks", "/?"])
+        self.assertFalse(marker.exists(), marker.read_text() if marker.exists() else "")
 
     def test_a_plain_batch_file_starts_directly_and_on_a_pseudo_console(self) -> None:
         (self.bin / "lzplain.bat").write_text("@echo got %1\r\n@exit /b 7\r\n", encoding="utf-8", newline="")

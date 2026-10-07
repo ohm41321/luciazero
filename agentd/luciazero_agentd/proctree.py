@@ -45,6 +45,8 @@ WINDOWS = sys.platform == "win32"
 if WINDOWS:
     from . import winproc
 TASKKILL_SECONDS = 30
+# What `find(..., only=PROGRAMS)` accepts: a program, never a batch file.
+PROGRAMS = (".com", ".exe")
 # The characters cmd.exe acts on when it re-reads a batch file's command line.
 CMD_SPECIAL = re.compile(r'[\r\n"%^&|<>!]')
 # The line an npm `.cmd` shim ends with names the script it runs relative to
@@ -99,18 +101,23 @@ def _get(env: Mapping[str, str], name: str) -> Optional[str]:
     return next((value for key, value in env.items() if key.upper() == name), None)
 
 
-def find(name: str, env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+def find(name: str, env: Optional[Mapping[str, str]] = None, *,
+         only: Optional[Sequence[str]] = None) -> Optional[str]:
     """The program `name` means, or None. On Windows a name with a directory
     in it is the caller's own choice and is taken as given, with the PATHEXT
     extensions tried after it; a bare name is looked for only in PATH's
     absolute entries -- never in the working directory, and never in an
-    entry such as `.` that means it. Elsewhere this is `shutil.which`, which
-    looks only where PATH says."""
+    entry such as `.` that means it. `only` narrows PATHEXT to those
+    extensions: a caller whose arguments cmd.exe must not read a second time,
+    as it does for a batch file, passes (".com", ".exe"). Elsewhere this is
+    `shutil.which`, which looks only where PATH says."""
     env = os.environ if env is None else env
     search = _get(env, "PATH")
     if not WINDOWS:
         return shutil.which(name, path=search)
     exts = [ext for ext in (_get(env, "PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(";") if ext]
+    if only is not None:
+        exts = [ext for ext in exts if ext.lower() in {wanted.lower() for wanted in only}]
 
     def program(base: str) -> Optional[str]:
         if ntpath.splitext(base)[1].lower() in {ext.lower() for ext in exts} and os.path.isfile(base):

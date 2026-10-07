@@ -32,8 +32,9 @@ def _env() -> dict[str, str]:
 
 def git(path: str, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> str:
     # By its full path on Windows, where a bare name is looked for in the
-    # daemon's working directory first.
-    program = proctree.find("git") if sys.platform == "win32" else "git"
+    # daemon's working directory first, and never a batch file: cmd.exe would
+    # read the worktree path and ref an agent named a second time.
+    program = proctree.find("git", only=proctree.PROGRAMS) if sys.platform == "win32" else "git"
     if program is None:
         raise GitError("git is not installed or not on PATH")
     try:

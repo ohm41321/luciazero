@@ -849,7 +849,6 @@ class ProxyTests(unittest.TestCase):
 
 
 @on_a_pty
-@on_a_pty
 class PasteTests(unittest.TestCase):
     def test_a_large_paste_into_a_provider_that_echoes_does_not_freeze_the_proxy(self) -> None:
         """Review finding: keystrokes went to the pty in one blocking write.
@@ -935,6 +934,7 @@ class PasteTests(unittest.TestCase):
         self.assertEqual([0], code)
 
 
+@on_a_pty
 class RunTests(unittest.TestCase):
     """`run` end to end, under a pty, with a delivery arriving mid-session.
 

@@ -233,6 +233,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Windows the claim dialog opens no console window beside it. The service
   runs the daemon under `pythonw.exe`, so PowerShell got a console of its
   own, and closing that window ended the dialog with the claim unanswered.
+- A turn whose provider left a child outside its process group, in a session
+  of its own, no longer ends with a traceback from its output reader. What
+  that child prints after the turn is drained and dropped instead of written
+  into the closed run log, for the exec adapters and the Codex app server.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

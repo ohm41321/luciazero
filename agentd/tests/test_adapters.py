@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from dataclasses import replace
@@ -31,7 +32,7 @@ from luciazero_agentd.adapters import (
     _CodexExecAdapter,
     adapter_for,
 )
-from luciazero_agentd import appserver, proctree
+from luciazero_agentd import adapters, appserver, proctree
 from luciazero_agentd.appserver import AppServer, AppServerError
 from luciazero_agentd.runlog import RunLog
 from tests.fixtures import WINDOWS, fake_cli, kill_pid, pid_running
@@ -293,6 +294,44 @@ class ProcessGroupTests(AdapterCase):
         self.assertTrue(_gone(stubborn), "a group member that ignored SIGTERM survived")
 
 
+    @unittest.skipIf(WINDOWS, "start_new_session is POSIX; on Windows the job holds every child")
+    def test_what_an_escaped_child_prints_after_the_turn_is_not_written_to_its_closed_log(self) -> None:
+        """Review finding: a child outside the provider's group kept the output
+        pipe, so the turn returned with its reader still running, and the
+        reader then wrote into the run log the dispatcher had closed and died
+        with a traceback."""
+        marker = self.root / "escaped.pid"
+        fake = script(self.root / "provider", ESCAPES.format(marker=str(marker)))
+        errors: list[str] = []
+        with mock.patch.object(threading, "excepthook", lambda args: errors.append(repr(args.exc_value))):
+            with mock.patch.object(adapters, "TERMINATE_GRACE_SECONDS", 0.5):
+                result = ProcessAdapter().start(self.request((fake,)))
+            self.addCleanup(kill_pid, int(marker.read_text()))
+            logged = self.logged()
+            time.sleep(1.0)  # the escaped child prints every 50 ms
+        self.assertEqual(result.exit_state, "exit 0")
+        self.assertIn("started", logged)
+        self.assertEqual([], errors)
+
+    @unittest.skipIf(WINDOWS, "start_new_session is POSIX; on Windows the job holds every child")
+    def test_what_an_escaped_child_prints_after_the_server_closes_is_not_written_to_its_closed_log(self) -> None:
+        """The same, for the app-server's reader."""
+        marker = self.root / "escaped.pid"
+        fake = script(self.root / "app-server", ESCAPES.format(marker=str(marker)))
+        errors: list[str] = []
+        with mock.patch.object(threading, "excepthook", lambda args: errors.append(repr(args.exc_value))):
+            with mock.patch.object(appserver, "TERMINATE_GRACE_SECONDS", 0.5):
+                server = AppServer([fake], env=dict(os.environ), cwd=str(self.root), log=self.log)
+                deadline = time.monotonic() + 30
+                while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.addCleanup(kill_pid, int(marker.read_text()))
+                server.close()
+            logged = self.logged()
+            time.sleep(1.0)
+        self.assertIn("started", logged)
+        self.assertEqual([], errors)
+
     def test_a_callback_that_fails_does_not_leave_the_provider_running(self) -> None:
         """Review finding: an exception from `on_process` skipped the wait,
         the timeout and the reader, and the provider ran on unwatched."""
@@ -505,6 +544,18 @@ class AppServerTests(AdapterCase):
                 break
             time.sleep(0.1)
         self.assertFalse(_alive(grandchild), "the app-server's own child outlived the turn")
+
+
+#: A provider that leaves behind a child in a session of its own -- out of
+#: reach of the group sweep -- still printing on the pipe it inherited.
+ESCAPES = (
+    "import subprocess, sys\n"
+    "child = subprocess.Popen([sys.executable, '-c', "
+    "'import time\\nfor _ in range(600):\\n    print(\"late\", flush=True)\\n    time.sleep(0.05)'], "
+    "start_new_session=True)\n"
+    "open({marker!r}, 'w').write(str(child.pid))\n"
+    "print('started', flush=True)\n"
+)
 
 
 def _alive(pid: int) -> bool:

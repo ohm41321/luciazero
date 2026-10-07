@@ -119,6 +119,8 @@ class AppServer:
             raise AppServerError(f"cannot start {argv[0]!r}: {exc}", permanent=True) from exc
         self._next_id = 1
         self._lines: queue.Queue[Optional[str]] = queue.Queue()
+        self._gate = threading.Lock()
+        self._closed = False
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
         if on_process is not None:
@@ -133,8 +135,13 @@ class AppServer:
     def _read(self) -> None:
         assert self._process.stdout is not None
         for line in self._process.stdout:
-            self._log.write(line)
-            self._lines.put(line)
+            with self._gate:
+                if self._closed:
+                    # a child that left the group still holds the pipe:
+                    # drain and drop, the run log is closed by now
+                    continue
+                self._log.write(line)
+                self._lines.put(line)
         self._lines.put(None)
 
     def _write(self, payload: dict[str, Any]) -> None:
@@ -277,6 +284,8 @@ class AppServer:
         _terminate_group(self._process, group=None if proctree.WINDOWS else self._process.pid)
         proctree.release(self._process.pid)
         self._reader.join(timeout=TERMINATE_GRACE_SECONDS)
+        with self._gate:
+            self._closed = True
         for stream in (self._process.stdin, self._process.stdout):
             # Never the pipe a reader is still blocked on: closing it would
             # wait for that read, however long whatever holds the other end runs.

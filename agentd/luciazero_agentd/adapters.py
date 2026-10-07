@@ -287,11 +287,20 @@ class ProcessAdapter:
         with self._lock:
             self._child = child
 
+        # A child that left the provider's group can hold the pipe past the
+        # turn. Its reader then drains and drops: the run log is closed by
+        # then, and the tail belongs to the next turn.
+        ended = threading.Event()
+        gate = threading.Lock()
+
         def pump() -> None:
             assert child.stdout is not None
             for line in child.stdout:
-                request.log.write(line)
-                self._tail.append(line)
+                with gate:
+                    if ended.is_set():
+                        continue
+                    request.log.write(line)
+                    self._tail.append(line)
 
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
@@ -315,6 +324,8 @@ class ProcessAdapter:
             _terminate_group(child, group=None if proctree.WINDOWS else child.pid)
             proctree.release(child.pid)
             reader.join(timeout=TERMINATE_GRACE_SECONDS)
+            with gate:
+                ended.set()
             if child.stdout is not None and not reader.is_alive():
                 child.stdout.close()
             with self._lock:

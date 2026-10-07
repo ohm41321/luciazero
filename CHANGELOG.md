@@ -184,6 +184,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   key segment) or selects a config `--profile`. It matched only the literal
   `features.multi_agent=` prefixes, so other spellings of the same override
   reached the provider.
+- `scripts/check-astra-luna-adapter.py` refuses a Slice 0 baseline with a
+  top-level field outside its pinned sections. The check in that place
+  asserted a SHA-256 hex digest was non-empty, which is always true.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

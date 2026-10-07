@@ -83,13 +83,18 @@ expected behavior:
   npm's own global prefix (`%APPDATA%\npm` unless moved) and edits no startup
   file. These are separate, documented destinations, not a guarantee that all
   commands write only config.
-- **Hook state stays in `$TMPDIR`**, except the documented, size-capped
-  `luciazero-stats.log` in the config dir. Stats are local JSONL and identify
-  a repository by a truncated SHA-256 plus basename, never its absolute path
-  or verify command. Hook scratch state uses a user-owned `0700` base and
-  per-session telemetry directories. Schema-3 rows store aggregate turn, merged
-  Bash and verify wall-clock milliseconds, Bash/verify/skill counts, and
-  redundant-green counts; the report also reads schema 2 and legacy rows.
+- **Hook state stays in the per-user temporary directory** (`$TMPDIR`, else
+  `/tmp`; on Windows, Node's `os.tmpdir()`, normally `%TEMP%`), except the
+  documented, size-capped `luciazero-stats.log` in the config dir. Stats are
+  local JSONL and identify a repository by a truncated SHA-256 plus
+  basename, never its absolute path or verify command. On POSIX, hook
+  scratch state uses a user-owned `0700` base; on Windows the base must be a
+  real directory, not a symlink or junction, but its owner and ACL are not
+  checked: privacy rests on the temporary directory being per user, as it is
+  by default. Telemetry uses per-session directories. Schema-3 rows store
+  aggregate turn, merged Bash and verify wall-clock milliseconds,
+  Bash/verify/skill counts, and redundant-green counts; the report also
+  reads schema 2 and legacy rows.
   Raw commands, skill names, and absolute paths are not persisted by telemetry.
   With the explicit `LUCIAZERO_EDIT_DIAG=1` opt-in, `edit-diag.log` additionally
   records timestamps, mode, tool name, an opaque tool key, path presence,

@@ -100,6 +100,13 @@ and `Get-ExecutionPolicy -List`.
 - [ ] A committed `.claude/settings.json` whose `env` sets
       `luciazero_strict_verify_cmd` in lowercase: named at `SessionStart` as
       refused, and never run at stop.
+- [ ] Hook state lands in `%TEMP%\luciazero-verify-state-<user>`, and
+      `icacls` on it shows access for that user, SYSTEM and Administrators
+      only. For a user name with Thai characters or a space, those
+      characters become `_`, and the same directory is reused on every turn.
+- [ ] Replace that directory with a junction (`mklink /J`) to another
+      folder: the hooks write nothing through it and no nudge appears
+      (they fail open), and nothing is written in the junction's target.
 
 ## 4. Strict verify gate (Thai display language)
 

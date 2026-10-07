@@ -1245,25 +1245,28 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
         cleanup("spawn failed")
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
-    store = _open_store("run", state_dir)
-    if store is not None:
-        with store:
-            try:
-                store.bind_process(binding["id"], pid=session.pid,
-                                   process_started_at=procinfo.started_at(session.pid))
-            except (StoreError, procinfo.ProcessError):
-                pass
-    watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
-                            limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
-
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
-    # Ctrl+C is a keystroke for the provider while the console is raw; a
-    # Ctrl+Break, or one that lands before the console is raw, ends the
-    # session, and the proxy ends the provider's job on its way out.
-    previous = signal.signal(signal.SIGBREAK, _stop_run)
+    previous = signal.getsignal(signal.SIGBREAK)
+    # Everything after the spawn sits inside the try, as on a pty: whatever
+    # fails on the way to the proxy, the binding still dies with this run.
     try:
+        store = _open_store("run", state_dir)
+        if store is not None:
+            with store:
+                try:
+                    store.bind_process(binding["id"], pid=session.pid,
+                                       process_started_at=procinfo.started_at(session.pid))
+                except (StoreError, procinfo.ProcessError):
+                    pass
+        watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
+                                limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
+
+        def _stop_run(*_: object) -> None:
+            raise KeyboardInterrupt
+
+        # Ctrl+C is a keystroke for the provider while the console is raw; a
+        # Ctrl+Break, or one that lands before the console is raw, ends the
+        # session, and the proxy ends the provider's job on its way out.
+        signal.signal(signal.SIGBREAK, _stop_run)
         return conpty.proxy(session, watcher=watcher, show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
         return 130

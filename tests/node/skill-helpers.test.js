@@ -88,7 +88,8 @@ const check = (...cases) => `const add = require("../calc");\n${cases.map(([a, b
 
 test("revert-probe: a test that bites passes, a vacuous one fails, and neither touches the caller's tree", (t) => {
   const b = box(t);
-  const bites = repo(b, "bites", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]) });
+  const bites = repo(b, "bites", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]),
+    "gen.js": 'require("fs").writeFileSync(process.argv[2], "");\n' });
   write(bites, { "calc.js": FIXED, "tests/calc.test.js": check([0, 0, 0], [2, 2, 4]) });
   const before = git(b.env, bites, "status", "--porcelain");
   const r = run(b.env, bites, [PROBE, "node tests/calc.test.js"]);
@@ -97,11 +98,19 @@ test("revert-probe: a test that bites passes, a vacuous one fails, and neither t
   assert.match(r.out, /evidence \(exit 1 on HEAD\): tests\/calc\.test\.js: add\(2, 2\) is not 4/);
   assert.strictEqual(git(b.env, bites, "status", "--porcelain"), before, "the caller's working tree changed");
   assert.strictEqual(worktrees(b, bites), 1, "a worktree was left behind");
-  // a file the command only writes to is not a runner the old tree lacks
-  write(bites, { "probe.log": "" });
-  const redirected = run(b.env, bites, [PROBE, "node tests/calc.test.js > probe.log"]);
+  // what the command writes to is not a file the old tree lacks, though only
+  // the working tree has it before the run; what it reads from both trees
+  // have; and the 2 of 2>&1 is a stream, not the file 2
+  write(bites, { "probe.log": "", "2": "" });
+  const redirected = run(b.env, bites, [PROBE, "node tests/calc.test.js < calc.js > probe.log 2>&1"]);
   assert.strictEqual(redirected.status, 0, redirected.out);
   assert.match(redirected.out, /^PASS: regression tests bite/m);
+  // nor is a file the old run makes for itself, which the working tree has
+  // from the last run
+  write(bites, { "made.txt": "" });
+  const made = run(b.env, bites, [PROBE, "node gen.js made.txt && node tests/calc.test.js"]);
+  assert.strictEqual(made.status, 0, made.out);
+  assert.match(made.out, /^PASS: regression tests bite/m);
 
   const vacuous = repo(b, "vacuous", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]) });
   write(vacuous, { "calc.js": FIXED, "tests/calc.test.js": check([0, 0, 0], [1, 1, 2]) });
@@ -157,7 +166,8 @@ cp.spawn = function (command, options, ...rest) {
 };
 `);
   const translated = repo(b, "translated", plant);
-  write(translated, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]) });
+  const drive = 'require(require("path").resolve(process.argv[process.argv.length - 1]));\n';
+  write(translated, { "calc.js": FIXED, "tests/calc.test.js": check([2, 2, 4]), "drive.js": drive, "123": drive });
   if (WINDOWS) write(translated, { "run-tests.cmd": "@node %*\r\n" });
   else fs.writeFileSync(path.join(translated, "run-tests.sh"), '#!/bin/sh\nexec node "$@"\n', { mode: 0o755 });
   const foreign = run(b.env, translated, ["--require", translate, PROBE, `${WINDOWS ? "run-tests" : "./run-tests.sh"} tests/calc.test.js`]);
@@ -165,12 +175,15 @@ cp.spawn = function (command, options, ...rest) {
   assert.match(foreign.out, WINDOWS
     ? /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): run-tests is not in its tree/m
     : /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): \.\/run-tests\.sh is not in its tree/m);
-  // the same runner behind a variable, a cd, or the command that starts it
-  const behind = WINDOWS
+  // the same runner behind a variable, a cd, or the command that starts it,
+  // a script an interpreter runs after an option's value, and one it reads
+  const behind = [...(WINDOWS
     ? [["set CI=1&& run-tests tests\\calc.test.js", "run-tests"], ["cd . && run-tests tests\\calc.test.js", "run-tests"],
       ["call run-tests tests\\calc.test.js", "run-tests"], ["cmd /c run-tests tests\\calc.test.js", "run-tests"]]
     : [["FOO=1 ./run-tests.sh tests/calc.test.js", "./run-tests.sh"], ["cd . && ./run-tests.sh tests/calc.test.js", "./run-tests.sh"],
-      ["sh run-tests.sh tests/calc.test.js", "run-tests.sh"]];
+      ["sh run-tests.sh tests/calc.test.js", "run-tests.sh"], ["sh -o errexit run-tests.sh tests/calc.test.js", "run-tests.sh"]]),
+    ["node -r ./calc.js drive.js tests/calc.test.js", "drive.js"], ["node - tests/calc.test.js < drive.js", "drive.js"],
+    ["node - tests/calc.test.js < 123", "123"]];
   for (const [command, word] of behind) {
     const r = run(b.env, translated, ["--require", translate, PROBE, command]);
     assert.strictEqual(r.status, 2, `${command}: ${r.out}`);
@@ -398,7 +411,8 @@ test("on Windows, no helper runs a git.exe found in the repository", { skip: !WI
   assert.match(d.out, /^git repo: yes/m);
   assert.ok(!fs.existsSync(mark), `detect ran the repository's git.exe: ${fs.existsSync(mark) && fs.readFileSync(mark, "utf8")}`);
 
-  const bites = repo(b, "bites", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]) });
+  const bites = repo(b, "bites", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]),
+    "gen.js": 'require("fs").writeFileSync(process.argv[2], "");\n' });
   write(bites, { "calc.js": FIXED, "tests/calc.test.js": check([0, 0, 0], [2, 2, 4]) });
   const probeMark = poison(bites);
   const p = run(b.env, bites, [PROBE, "node tests/calc.test.js"]);

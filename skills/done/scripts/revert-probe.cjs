@@ -13,11 +13,11 @@
 //   * its fingerprint must be a test verdict, not infrastructure — a shell that
 //     could not run or execute the command (exit 127/126, and cmd.exe's 9009
 //     on Windows), a verify command that names a file the working tree has
-//     and the old tree lacks as a command or as an interpreter's script, and
-//     a run that failed to load the tests at all (import/collection errors)
-//     are refused. cmd.exe exits 1 for a command it cannot find, as a
-//     failing test does, so on Windows its own "is not recognized" line
-//     counts as well;
+//     and the old tree lacks, before the run and after it, as a command, an
+//     argument or the input of a `<`, and a run that failed to load the tests
+//     at all (import/collection errors) are refused. cmd.exe exits 1 for a
+//     command it cannot find, as a failing test does, so on Windows its own
+//     "is not recognized" line counts as well;
 //   * it must be attributable to the changed tests — either the verify command
 //     targets one of them, or the failure output names one;
 //   * the same command must PASS against the current state (the base plus every
@@ -25,12 +25,12 @@
 //     regression.
 // What it still cannot see: a flake that only reproduces on the old tree; a
 // command the change itself adds that the verify command does not name (one
-// an `npm test` script starts, or one reached after a `cd`), when what starts
-// it swallows the shell's exit 127 (on Windows, cmd.exe's line, which is
-// matched in English only); and, in the other direction, a suite whose own
-// output quotes a loader error is read as one (this repository's revert-probe
-// fixtures do exactly that, so probing a change to this script needs the
-// manual comparison instead).
+// an `npm test` script starts, one reached after a `cd`, or one given as
+// `--option=file`), when what starts it swallows the shell's exit 127 (on
+// Windows, cmd.exe's line, which is matched in English only); and, in the
+// other direction, a suite whose own output quotes a loader error is read as
+// one (this repository's revert-probe fixtures do exactly that, so probing a
+// change to this script needs the manual comparison instead).
 //
 // Usage: node revert-probe.cjs "<verify-cmd>" [base-ref]    (base-ref default: HEAD)
 // The verify command is one string for the platform's own shell: /bin/sh on
@@ -211,20 +211,23 @@ const CMD_NOT_FOUND = /^'[^'\r\n]+' is not recognized as an internal or external
 
 // The words of the verify command that name a file the shell, or a program
 // it starts, would need in the tree: each command's own word (after `&&`,
-// `;` or `|` as well, past `NAME=value` on POSIX and `@` on Windows), and the
-// first argument that is not an option, which is the script an interpreter
-// runs (on Windows also the command `call` or `cmd /c` starts). Left out: a
-// redirection's target, a word the shell would expand, and a path outside the
-// tree. sh looks a bare command up in PATH alone, so on POSIX only one with a
-// / in it is a file here; cmd.exe looks in the working directory first, with
-// each PATHEXT extension, which `command` marks.
+// `;` or `|` as well, past `NAME=value` on POSIX and `@` on Windows), every
+// argument that is not an option, since an option that takes a value can
+// stand before the script an interpreter runs (on Windows the first is also
+// the command `call` or `cmd /c` starts), and the file a `<` reads. Left out:
+// what `>` writes to, a stream `>&` or `<&` duplicates, a word the shell
+// would expand, an option's value joined to it with `=`, and a path outside
+// the tree. sh looks a bare command up in PATH alone, so on POSIX only one
+// with a / in it is a file here; cmd.exe looks in the working directory
+// first, with each PATHEXT extension, which `command` marks.
 function treeWords(text) {
   const ops = WINDOWS ? "&|()<>" : ";&|()<>";
   const expands = WINDOWS ? /[%!^*?]/ : /[$`\\*?[~]/;
   const words = [];
   let atCommand = true;
   let argTaken = false;
-  let redirect = false;
+  // what the next word is to a redirection: "read" for `<`, "skip" for the rest
+  let redirect = null;
   let starter = false;
   let i = 0;
   while (i < text.length) {
@@ -235,8 +238,10 @@ function treeWords(text) {
     }
     if (ops.includes(c)) {
       if (c === "<" || c === ">") {
-        while (i < text.length && "<>&".includes(text[i])) i += 1;
-        redirect = true;
+        let op = "";
+        while (i < text.length && "<>&".includes(text[i])) op += text[i++];
+        if (!WINDOWS && op === ">" && text[i] === "|") i += 1;
+        redirect = op === "<" ? "read" : "skip";
         continue;
       }
       atCommand = true;
@@ -261,8 +266,11 @@ function treeWords(text) {
         i += 1;
       }
     }
+    // the digits of `2>` name a stream, not a file
+    if (/^\d+$/.test(word) && (text[i] === "<" || text[i] === ">")) continue;
     if (redirect) {
-      redirect = false;
+      if (redirect === "read") words.push({ word, plain, command: false });
+      redirect = null;
       continue;
     }
     if (atCommand) {
@@ -271,9 +279,9 @@ function treeWords(text) {
       atCommand = false;
       starter = WINDOWS && /^(call|cmd(\.exe)?)$/i.test(word);
       if (WINDOWS || word.includes("/")) words.push({ word, plain, command: true });
-    } else if (!argTaken && !/^-/.test(word) && !(WINDOWS && word.startsWith("/"))) {
+    } else if (!/^-/.test(word) && !(WINDOWS && word.startsWith("/"))) {
+      words.push({ word, plain, command: starter && !argTaken });
       argTaken = true;
-      words.push({ word, plain, command: starter });
     }
   }
   return words.filter(({ word, plain }) => {
@@ -372,7 +380,13 @@ async function main(argv) {
     // old code in a throwaway worktree, with ONLY the changed test files on it
     const oldTree = await checkout("old");
     overlay(oldTree, tests);
+    // a program or input the working tree has and the old tree lacks could
+    // not have run there, whatever the shell said and in whatever language.
+    // Looked up before the run and after it: one the run makes for itself,
+    // as a build or a report does, was there when it was needed.
+    const lacking = treeWords(verify).filter((w) => inTree(process.cwd(), w) && !inTree(oldTree, w));
     const old = await runVerify(oldTree);
+    const absent = lacking.find((w) => !inTree(oldTree, w));
 
     if (old.rc === 0) {
       say("FAIL: the changed tests stay green against the old code — they do not cover the change");
@@ -380,9 +394,6 @@ async function main(argv) {
     }
 
     // --- the red run has to earn the word "regression" -----------------------
-    // a program the working tree has and the old tree lacks could not have
-    // run there, whatever the shell said and in whatever language
-    const absent = treeWords(verify).find((w) => inTree(process.cwd(), w) && !inTree(oldTree, w));
     if (absent) {
       unassessable(`the verify command could not be run on ${base} (exit ${old.rc}): ${absent.word} is not in its tree`);
     }

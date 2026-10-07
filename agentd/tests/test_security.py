@@ -586,6 +586,10 @@ class SecretRedaction(unittest.TestCase):
         ("ghp_" + "a" * 36 + "__", "[redacted:github-token]__"),
         ("id_AKIAIOSFODNN7EXAMPLE_x", "id_[redacted:aws-key]_x"),
         ("key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n", "key: [redacted:private-key]"),
+        # Review finding: an armored PGP key ends its markers in BLOCK.
+        ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----\ntail",
+         "[redacted:private-key]\ntail"),
+        ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n", "[redacted:private-key]"),
     )
 
     def test_patterns(self) -> None:

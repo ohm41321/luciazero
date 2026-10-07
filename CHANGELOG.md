@@ -239,6 +239,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into the closed run log, for the exec adapters and the Codex app server.
 - `run` on Windows revokes its binding however it fails between starting the
   provider and attaching to its console, as it already did on a pty.
+- Run logs redact an armored PGP private key (`-----BEGIN PGP PRIVATE KEY
+  BLOCK-----`), and a relay that carries one is refused, as other private
+  keys already were.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

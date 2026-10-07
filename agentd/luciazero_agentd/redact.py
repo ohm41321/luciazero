@@ -67,7 +67,7 @@ RULES: tuple[Rule, ...] = (
     # A key cut off before its END line is scrubbed to the end of the text.
     # That alternative also keeps a run of BEGIN lines linear: the first one
     # takes the rest, instead of each one scanning on for an END.
-    Rule("private-key", re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----(?:.*?-----END [A-Z ]{0,40}PRIVATE KEY-----|.*)", re.S), "[redacted:private-key]", True),
+    Rule("private-key", re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:.*?-----END [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----|.*)", re.S), "[redacted:private-key]", True),
     # In header context every value after "Bearer" is a credential, digits or
     # not. Outside it ("the bearer credentials keep users out") the value
     # must carry a digit; an all-letter opaque token pasted bare is the one

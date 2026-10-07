@@ -524,6 +524,7 @@ for mutate in (
     lambda d: d["knowledge"].update(inline=[{"label":"token","content":"npm_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}]),
     lambda d: d["knowledge"].update(inline=[{"label":"dsn","content":"postgres://user:password@example.invalid/db"}]),
     lambda d: d["knowledge"].update(inline=[{"label":"jwt","content":"eyJAAAAAAAAAAAA.eyJBBBBBBBBBBBB.CCCCCCCCCCCC"}]),
+    lambda d: d["knowledge"].update(inline=[{"label":"pgp","content":"-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF"}]),
 ):
     bad=copy.deepcopy(data); mutate(bad)
     assert module.validate(bad)[0]

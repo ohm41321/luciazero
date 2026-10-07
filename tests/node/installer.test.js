@@ -249,6 +249,51 @@ test("on Windows, luciazero-agentd.cmd and lucia.cmd run the Agent Bus from anyw
   assert.ok(!fs.existsSync(path.join(box.claude, ".luciazero-agentd-home")), "the package pointer was left behind");
 });
 
+test("on Windows, the launchers take Python from PATH's full-path entries, never the working directory", { skip: !WINDOWS && "Windows only; tests/gates/install.sh covers the POSIX launcher" }, (t) => {
+  const box = sandbox(t);
+  const bin = path.join(box.box, "bin");
+  const env = { ...box.env, LUCIAZERO_BIN_DIR: bin };
+  ok(node(env, [INSTALLER, "claude"]), "install");
+  // A stand-in for Python that answers every question with 0, as a 3.10 or
+  // newer would, and records that it ran. Nothing on a bare Windows does
+  // both, so it is compiled here with the C# compiler of .NET Framework 4.
+  const work = path.join(box.box, "work");
+  fs.mkdirSync(work);
+  const mark = path.join(box.box, "stand-in ran.txt");
+  const csc = path.join(process.env.SystemRoot || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
+  const source = path.join(box.box, "standin.cs");
+  fs.writeFileSync(source, 'class StandIn { static int Main() { System.IO.File.AppendAllText(System.Environment.GetEnvironmentVariable("LZ_STANDIN_MARK"), System.Environment.CommandLine + "\\n"); return 0; } }\n');
+  const built = spawnSync(csc, ["/nologo", `/out:${path.join(work, "python3.exe")}`, source], { encoding: "utf8", windowsHide: true });
+  assert.strictEqual(built.status, 0, `csc: ${built.stdout}${built.stderr}${built.error || ""}`);
+  for (const name of ["python.exe", "py.exe"]) fs.copyFileSync(path.join(work, "python3.exe"), path.join(work, name));
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") || "PATH";
+  const trusted = env[pathKey] || "";
+  const withEntries = (value) => ({ ...env, [pathKey]: value, LZ_STANDIN_MARK: mark });
+  const ran = () => (fs.existsSync(mark) ? fs.readFileSync(mark, "utf8") : "");
+
+  // The hazard is real: the for command's own PATH search, which the
+  // launcher used to rely on, reads "." as the working directory.
+  const before = path.join(box.box, "for-path-search.cmd");
+  fs.writeFileSync(before, '@for %%P in (python3.exe) do @if not "%%~$PATH:P"=="" "%%~$PATH:P" -c "import sys"\r\n');
+  runCmd(before, "", { cwd: work, env: withEntries(`.;${trusted}`) });
+  assert.match(ran(), /python3\.exe/i, "the PATH modifier did not run the stand-in, so this case proves nothing");
+  fs.rmSync(mark);
+
+  const quoted = trusted.split(";").filter(Boolean).map((dir) => `"${dir.replace(/"/g, "")}"`).join(";");
+  for (const [label, value] of [["a dot first", `.;${trusted}`], ["an empty entry first", `;${trusted}`],
+    ["relative entries first", `work;..\\work;${trusted}`], ["no relative entry", trusted], ["every entry quoted", quoted]]) {
+    const r = runCmd(path.join(bin, "lucia.cmd"), "claude --help", { cwd: work, env: withEntries(value) });
+    assert.strictEqual(r.status, 0, `${label}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /^usage: lucia claude/m, label);
+    assert.strictEqual(ran(), "", `${label}: the launcher ran a Python from the working directory`);
+  }
+  // Only relative entries left: nothing to run, and nothing run.
+  const none = runCmd(path.join(bin, "lucia.cmd"), "claude --help", { cwd: work, env: withEntries(".;work;..\\work") });
+  assert.strictEqual(none.status, 127, none.stdout + none.stderr);
+  assert.match(none.stderr, /needs Python 3\.10 or newer/);
+  assert.strictEqual(ran(), "", "the launcher ran a Python from the working directory");
+});
+
 test("on Windows, uninstall removes the Agent Bus task through the installed launcher", {
   skip: (!WINDOWS && "Windows only") ||
     (process.env.LUCIAZERO_TEST_TASK_SCHEDULER !== "1" &&
@@ -298,6 +343,11 @@ test("a command is found through absolute PATH entries alone, never the working 
       path.join(real, "python3.exe"));
     assert.strictEqual(onPathOnly("python3.exe", { env: withPath({}, `.${d}${d}..${path.sep}here`) }), null);
     assert.strictEqual(onPathOnly("python3.exe", { env: {} }), null);
+    // Quotes around an entry are not part of the directory; a quoted relative
+    // entry is still relative.
+    assert.strictEqual(onPathOnly("python3.exe", { env: withPath({}, `"."${d}"${real}"`) }),
+      path.join(real, "python3.exe"));
+    assert.strictEqual(onPathOnly("python3.exe", { env: withPath({}, `""${d}"..${path.sep}here"`) }), null);
     // Each directory's extensions before the next directory, as cmd.exe.
     assert.strictEqual(onPathOnly("claude", { env: withPath({}, `${here}${d}${real}`), exts: [".exe", ".cmd"] }),
       path.join(real, "claude.cmd"));
@@ -318,6 +368,20 @@ test("on Windows, a command by name runs from PATH, not from the working directo
   assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}\n${r.error}`);
   assert.match(r.stdout, /^from PATH --version/m);
   assert.doesNotMatch(r.stdout, /HIJACKED/);
+  // An entry in quotes, as Windows allows, around a directory with a space
+  // and parentheses: the program still starts, a .cmd and an .exe alike.
+  const quoted = path.join(box.box, "quoted bin (x86)");
+  fs.mkdirSync(quoted);
+  fs.writeFileSync(path.join(quoted, "lz-quoted.cmd"), "@echo quoted %1\r\n");
+  fs.copyFileSync(process.execPath, path.join(quoted, "lz-quoted-node.exe"));
+  const pathKey = Object.keys(box.env).find((key) => key.toUpperCase() === "PATH") || "PATH";
+  const quotedEnv = withPath(box.env, `"${quoted}";${box.env[pathKey] || ""}`);
+  const batch = runCommand("lz-quoted", ["--version"], { cwd: here, env: quotedEnv, encoding: "utf8", windowsHide: true });
+  assert.strictEqual(batch.status, 0, `${batch.stdout}\n${batch.stderr}\n${batch.error}`);
+  assert.match(batch.stdout, /^quoted --version/m);
+  const exe = runCommand("lz-quoted-node", ["-e", "console.log('quoted exe')"], { cwd: here, env: quotedEnv, encoding: "utf8", windowsHide: true });
+  assert.strictEqual(exe.status, 0, `${exe.stdout}\n${exe.stderr}\n${exe.error}`);
+  assert.match(exe.stdout, /^quoted exe/m);
   const missing = runCommand("lz-nowhere", ["--version"], { cwd: here, env: withPath(box.env, bin) });
   assert.strictEqual(missing.status, null);
   assert.strictEqual(missing.error.code, "ENOENT");

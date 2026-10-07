@@ -25,10 +25,12 @@ function isFile(p) {
 }
 
 // The first `name + ext` in an absolute PATH entry, trying each directory's
-// extensions before the next directory as cmd.exe does, or null. A relative
+// extensions before the next directory as cmd.exe does, or null. Windows
+// takes an entry in quotes, which are not part of the directory. A relative
 // or empty entry would mean the working directory again, so it is skipped.
 function onPathOnly(name, { env = process.env, exts = [""], delimiter = path.delimiter } = {}) {
-  for (const dir of pathValue(env).split(delimiter)) {
+  for (const entry of pathValue(env).split(delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
     if (!dir || !path.isAbsolute(dir)) continue;
     for (const ext of exts) {
       const candidate = path.join(dir, name + ext);

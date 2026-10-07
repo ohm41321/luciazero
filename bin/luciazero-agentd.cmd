@@ -14,7 +14,13 @@ rem     path is ever expanded inside a parenthesised block: a directory such as
 rem     "C:\Program Files (x86)" ends a block that names it bare.
 rem   * cmd.exe looks for a command in the working directory before PATH, so
 rem     Python is found through PATH alone and run by its full path; a
-rem     python.exe beside the caller is never the one that runs.
+rem     python.exe beside the caller is never the one that runs. PATH is
+rem     walked here rather than searched by the for command's PATH modifier,
+rem     which reads a relative or empty entry ("." among them) against the
+rem     working directory: only an entry that is a full path already counts,
+rem     with or without a closing backslash, and quotes around one are not
+rem     part of it. (No percent sign followed by a tilde may appear in a rem
+rem     line: cmd.exe expands it there too, and a malformed one is fatal.)
 rem   * cmd.exe reads a file in the console's code page, which mangles a UTF-8
 rem     path outside ASCII, so the recorded package path is read by Python.
 rem   * Arguments pass through as cmd.exe parsed them. Quote an argument that
@@ -41,8 +47,10 @@ rem ADR 0002: try python3, then python, then the Windows launcher, and take the
 rem first one that reports 3.10 or newer. The Microsoft Store's python.exe
 rem stand-in fails this check, as it should.
 set "LZ_PY="
-for %%P in (python3.exe python.exe) do if not defined LZ_PY if not "%%~$PATH:P"=="" "%%~$PATH:P" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1 && set "LZ_PY="%%~$PATH:P""
-for %%P in (py.exe) do if not defined LZ_PY if not "%%~$PATH:P"=="" "%%~$PATH:P" -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1 && set "LZ_PY="%%~$PATH:P" -3"
+set "LZ_DIRS=%PATH:"=%"
+for %%P in (python3.exe python.exe) do for %%E in ("%LZ_DIRS:;=" "%") do for %%F in ("%%~fE" "%%~fE\") do if not defined LZ_PY if not "%%~E"=="" if /i "%%~F"=="%%~E" if exist "%%~E\%%P" "%%~E\%%P" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1 && set "LZ_PY="%%~E\%%P""
+for %%E in ("%LZ_DIRS:;=" "%") do for %%F in ("%%~fE" "%%~fE\") do if not defined LZ_PY if not "%%~E"=="" if /i "%%~F"=="%%~E" if exist "%%~E\py.exe" "%%~E\py.exe" -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1 && set "LZ_PY="%%~E\py.exe" -3"
+set "LZ_DIRS="
 if not defined LZ_PY >&2 echo %~n0: needs Python 3.10 or newer; tried python3, python and py -3
 if not defined LZ_PY exit /b 127
 

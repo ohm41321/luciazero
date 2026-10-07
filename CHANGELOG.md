@@ -187,6 +187,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/check-astra-luna-adapter.py` refuses a Slice 0 baseline with a
   top-level field outside its pinned sections. The check in that place
   asserted a SHA-256 hex digest was non-empty, which is always true.
+- CI's Bash 3.2 step parses every shell script. `find -exec bash -n {} +`
+  handed all of them to one `bash -n`, which parses the first file and reads
+  the rest as its arguments. The step now runs one parse per file, counts
+  them, and pins the `bash:3.2` image by digest.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

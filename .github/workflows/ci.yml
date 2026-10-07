@@ -22,9 +22,20 @@ jobs:
           # test.sh exercises an upgrade from the last released tag.
           fetch-depth: 0
       - name: Parse shell scripts under Bash 3.2
+        # One `bash -n` per file: `bash -n a.sh b.sh` parses a.sh and reads
+        # the rest as its arguments. The image is pinned by digest (bash
+        # 3.2.57) for the same reason the actions are pinned by commit.
         run: |
-          docker run --rm --network=none -v "$PWD":/w:ro bash:3.2 \
-            bash -c 'find /w -path /w/.git -prune -o -type f -name "*.sh" -exec bash -n {} +'
+          docker run --rm --network=none -v "$PWD":/w:ro \
+            bash:3.2@sha256:0fd7cb8499c63a3c9345e7088a9cd83bb69f6e895e83833859aff838a0312091 \
+            bash -c 'n=0; rc=0
+              while IFS= read -r f; do
+                n=$((n + 1))
+                bash -n "$f" || { echo "bash 3.2 cannot parse ${f#/w/}" >&2; rc=1; }
+              done < <(find /w -path /w/.git -prune -o -type f -name "*.sh" -print)
+              echo "parsed $n scripts under $BASH_VERSION"
+              [ "$n" -gt 0 ] || rc=1
+              exit $rc'
       - name: Run verify
         run: ./test.sh
 

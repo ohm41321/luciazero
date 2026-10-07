@@ -785,6 +785,10 @@ that read it, the number of turns waited on, and the longest wait.
   again on the same state directory. Acknowledged messages, claimed tasks,
   worktree records and artifacts survive; the demo restarts the daemon
   between the reviewer's finding and the implementer's fix to prove it.
+  Identities given out by `claim approve` do not: MCP sessions live in the
+  daemon's memory, so `serve` revokes those bindings when it starts, and a
+  session that reconnects asks again. Terminals bound with `run` or `attach`
+  are checked by their process and stay bound.
 - **A second daemon.** `serve` refuses to start while `endpoint.json` names
   a live process, and a daemon only ever removes its own record.
 - **Stale worktree.** If an agent's checkout changed branch, moved, or was

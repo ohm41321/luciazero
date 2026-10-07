@@ -27,6 +27,7 @@ import io
 import re
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
@@ -35,6 +36,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from unittest import mock
 
 from luciazero_agentd import approval, procinfo
 from luciazero_agentd.__main__ import main
@@ -400,6 +402,36 @@ class ThroughTheDaemonTests(ClaimCase):
         self.client.call("message_send", {"recipient": ARCHITECT, "kind": "question", "payload": {"text": "hello"}})
         sent = [e for e in self.store.events(limit=200) if e["kind"] == "message.sent"]
         self.assertEqual([e["payload"]["trust"] for e in sent], ["bound"])
+
+
+class RestartTests(ClaimCase):
+    def test_a_restarted_daemon_frees_the_identities_its_sessions_were_given(self) -> None:
+        """MCP sessions live in the daemon's memory, so a restart ends every
+        one of them, and a client that reconnects gets a new session id. The
+        claim bindings they held have no pid for the reaper to check: left
+        alone they stay active for their whole TTL, and the session that comes
+        back cannot ask for its agent again."""
+        decided = self.approve(self.ask()["id"])
+        terminal, _credential = self.store.bind_terminal(ARCHITECT, provider="codex", by="human:test",
+                                                         tty="ttys001", pid=os.getpid())
+
+        def stop_at_once(server: BusServer) -> None:
+            server._httpd.server_close()
+            raise KeyboardInterrupt
+
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", None)) if sig is not None}
+        try:
+            with mock.patch.object(BusServer, "serve_forever", autospec=True, side_effect=stop_at_once), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["serve", "--state-dir", str(self.state_dir), "--port", "0"]), 0)
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        self.assertEqual(self.store.get_binding(str(decided["binding_id"]))["state"], "revoked")
+        self.assertIsNone(self.store.claim_binding(self.key()))
+        self.assertEqual(self.store.get_binding(str(terminal["id"]))["state"], "active",
+                         "a terminal binding is checked by its pid, and survives the restart")
+        self.assertEqual(self.ask(session="session-after-restart")["state"], "open")
 
 
 class OnScreenTests(ClaimCase):

@@ -2315,6 +2315,25 @@ class Store:
             self._end_binding(str(record["binding_id"]), state="revoked", by=by, reason=reason, now=utcnow())
             return str(record["binding_id"])
 
+    def end_orphaned_claims(self, *, by: str = "daemon", reason: str = "daemon restarted") -> list[str]:
+        """A daemon starting up ends every identity a claim gave out.
+
+        The MCP sessions those claims were approved for lived in the previous
+        daemon's memory and died with it; a client that reconnects gets a new
+        session id and has to ask again. Their bindings have no pid for the
+        reaper to check, so without this they would stay active for their
+        whole TTL and refuse that new ask.
+        """
+        with self._tx("end_orphaned_claims"):
+            rows = self._conn.execute(
+                "SELECT DISTINCT b.id FROM claim_requests c JOIN bindings b ON b.id = c.binding_id "
+                "WHERE c.state = 'approved' AND b.state = 'active' ORDER BY b.id").fetchall()
+            ended = [str(row["id"]) for row in rows]
+            now = utcnow()
+            for binding_id in ended:
+                self._end_binding(binding_id, state="revoked", by=by, reason=reason, now=now)
+        return ended
+
     def pending_claim(self, session_hash: str) -> Optional[dict[str, Any]]:
         """The request this session is waiting on, for `agent_whoami` to name."""
         session_hash = _check_text(session_hash, "session_hash", 64)

@@ -140,6 +140,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     token = load_or_create_token(state_dir)
     with Store.open(db_path(state_dir)) as store:
         store.migrate()
+        store.trust = "system"
+        store.end_orphaned_claims()
     server = BusServer(str(db_path(state_dir)), token, host=args.host, port=args.port, allow_remote=args.allow_remote,
                        allow_unattributed=bool(getattr(args, "allow_unattributed", False)),
                        approve_with=getattr(args, "approve_with", "auto"))

@@ -196,6 +196,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can hand the writer a closed pipe and turn a pass into a failure (seen in
   CI as `printf: write error: Broken pipe`); 92 sites are rewritten, and the
   core gate now rejects the piped form in every linted script.
+- A node test proves the hooks still name their state directory, with
+  sha256, when Node refuses md5 (FIPS mode). The only check left was a grep
+  for Python's `hashlib.md5(` in hooks that are now Node, which could not
+  fail.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

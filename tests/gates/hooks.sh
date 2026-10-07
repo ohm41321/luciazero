@@ -248,14 +248,16 @@ scope_keeps_regex "a settings file above the repository root was refused" \
 rm -rf "${GS}"
 echo "ok  refusal stays inside project scope"
 
-# 4c1b. both hooks name a state directory with md5; a FIPS-enforcing python3
-# raises on a bare md5() call and the tracker would fail open, doing nothing.
-for HFILE in claude/hooks/luciazero-verify.cjs claude/hooks/luciazero-statusline.cjs test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
+# 4c1b. the suite recomputes the hooks' md5 state keys in inline python3; a
+# FIPS-enforcing python3 raises on a bare md5() call. The hooks themselves
+# are Node, and their sha256 fallback when md5 is refused is proven in
+# tests/node/hooks.test.js.
+for HFILE in test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
   if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
     fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
   fi
 done
-echo "ok  md5 state keys are FIPS-safe"
+echo "ok  the suite's md5 state keys are FIPS-safe"
 
 # 4c2. strict gate: runs the configured command at stop, blocks on red quoting
 # the failure, fast-paths on green state, and degrades to the nudge on timeout

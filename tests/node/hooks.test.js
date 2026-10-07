@@ -265,3 +265,22 @@ test("a committed CLAUDE_CONFIG_DIR cannot silence the doctrine or the hooks", (
   const turn = path.join(stateDir(box.env, project), "telemetry");
   assert.ok(fs.existsSync(turn), "the prompt hook stood down for a classic install that is not there");
 });
+
+test("a Node that refuses md5 still names the state directory, with sha256", (t) => {
+  // FIPS mode makes createHash("md5") throw; the tracker must not fail open
+  const probe = [
+    "const crypto = require('node:crypto');",
+    "const real = crypto.createHash;",
+    "crypto.createHash = (name, ...rest) => {",
+    "  if (String(name).toLowerCase() === 'md5') throw new Error('md5 is disabled (FIPS)');",
+    "  return real.call(crypto, name, ...rest);",
+    "};",
+    "const v = require(process.argv[1]);",
+    "console.log(v.stateKey(process.argv[2]));",
+  ].join("\n");
+  const project = path.join(sandbox(t).box, "project");
+  const r = spawnSync(process.execPath, ["-e", probe, VERIFY, project], { encoding: "utf8" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const expected = require("node:crypto").createHash("sha256").update(project, "utf8").digest("hex").slice(0, 12);
+  assert.strictEqual(r.stdout.trim(), expected);
+});

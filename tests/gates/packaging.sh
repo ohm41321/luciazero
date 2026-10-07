@@ -357,7 +357,9 @@ for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "b
   NRC=$?
   set -e
   [ "${NRC}" -eq 1 ] || fail "npx wrapper --status on empty config dir: want rc 1, got ${NRC}"
-  printf '%s\n' "${NOUT}" | grep -q 'MISS' || fail "npx wrapper --status lost install.sh's MISS output"
+  # a here-string, not printf into grep -q: grep stops reading at the first
+  # match, and under pipefail printf's EPIPE (141) would fail a passing check
+  grep -q 'MISS' <<<"${NOUT}" || fail "npx wrapper --status lost install.sh's MISS output"
   rm -rf "${NB}"
 
   # An explicit global install uses only a user-owned prefix and leaves a

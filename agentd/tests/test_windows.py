@@ -105,6 +105,32 @@ class WindowsProviderRows(unittest.TestCase):
             self.assertEqual([s["pid"] for s in procinfo.sessions(with_cwd=False)], [20])
 
 
+class PosixProviderRows(unittest.TestCase):
+    """The same question on macOS and Linux, where `comm` is the command:
+    a full path on macOS, a bare name on Linux."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch.object(procinfo, "WINDOWS", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_provider_installed_under_a_path_with_a_space_is_still_found(self) -> None:
+        """Review finding: the command was cut at its first space, so a
+        provider under `my tools/` was no provider at all, and the check that
+        stops a session approving its own claim did not see it."""
+        cases = [
+            ("claude", "claude"),
+            ("/usr/local/bin/codex", "codex"),
+            ("/Users/someone/my tools/claude", "claude"),
+            ("/Users/someone/my tools/claudex", None),
+            ("/opt/claude tools/node", None),
+            ("python3", None),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command):
+                self.assertEqual(procinfo._provider_of(row(1, 0, command)), expected)
+
+
 class DaemonPort(unittest.TestCase):
     def test_a_second_socket_cannot_take_the_daemon_port_even_asking_for_reuse(self) -> None:
         """On Windows SO_REUSEADDR lets a second socket bind a port in use and

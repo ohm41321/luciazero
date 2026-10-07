@@ -89,8 +89,9 @@ def _provider_of(row: dict[str, Any]) -> Optional[str]:
                 if pattern.search(script):
                     return PROVIDER_COMMANDS[provider]
         return None
-    name = os.path.basename(command.split(" ", 1)[0])
-    return PROVIDER_COMMANDS.get(name)
+    # The whole field: `comm` carries no arguments, and on macOS it is the
+    # full path, which may hold a space.
+    return PROVIDER_COMMANDS.get(os.path.basename(command))
 
 
 def provider_named(command: str) -> Optional[str]:

@@ -154,6 +154,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   worktree. A path with a space split the line, and a worktree an agent
   named with a `;` made the `worker add` line the user copies run a second
   command.
+- On macOS a provider installed under a path with a space is recognised:
+  the process name was cut at its first space, which missed it (and the
+  check that stops a session approving its own claim with it) and could
+  take a `claude tools/` directory for a provider.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

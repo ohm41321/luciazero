@@ -391,6 +391,27 @@ class WrappedSecretTests(DispatchCase):
         body = Path(log.close()).read_text(encoding="utf-8")
         self.assertNotIn(credential, "".join(body.split()))
 
+    def test_a_secret_across_the_head_and_tail_is_scrubbed_when_nothing_was_dropped(self) -> None:
+        """Review finding: under the cap, head and tail were scrubbed one at a
+        time, so a secret that crossed from one into the other matched in
+        neither and reached the disk whole."""
+        for secret, literals in (("lzsc_" + "e" * 32, ("lzsc_" + "e" * 32,)),
+                                 ("shared-token-value", ("shared-token-value",)),
+                                 ("ghp_" + "A" * 36, ())):
+            with self.subTest(secret=secret[:5]):
+                log = RunLog(self.root / "runs" / "s.log", literals=literals, max_bytes=1024)
+                log.write("x" * (log.half - 8) + " " + secret + " end\n")
+                body = Path(log.close()).read_text(encoding="utf-8")
+                self.assertEqual(log.dropped, 0)
+                self.assertNotIn(secret, body)
+                (self.root / "runs" / "s.log").unlink()
+
+    def test_a_character_across_the_head_and_tail_is_kept_when_nothing_was_dropped(self) -> None:
+        log = RunLog(self.root / "runs" / "u.log", max_bytes=1024)
+        log.write("x" * (log.half - 1) + "\u0e01 end\n")
+        body = Path(log.close()).read_text(encoding="utf-8")
+        self.assertIn("\u0e01 end", body)
+
     def test_the_cap_drops_a_margin_so_a_split_secret_loses_a_half(self) -> None:
         log, credential, _ = self.log(max_bytes=2048)
         log.write("head " + credential[:16])

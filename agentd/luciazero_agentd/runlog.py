@@ -111,10 +111,15 @@ class RunLog:
                 if margin:
                     head, tail = head[:-margin], tail[margin:]
                     dropped += 2 * margin
-            body = self._scrub(head.decode("utf-8", "replace")).encode("utf-8")
             if dropped:
+                body = self._scrub(head.decode("utf-8", "replace")).encode("utf-8")
                 body += MARKER.format(dropped=dropped).encode("utf-8")
-            body += self._scrub(tail.decode("utf-8", "replace")).encode("utf-8")
+                body += self._scrub(tail.decode("utf-8", "replace")).encode("utf-8")
+            else:
+                # Nothing dropped: head and tail are one stream, split only by
+                # where the head filled up. Scrubbed apart, a secret (or a
+                # character) across that point would match neither half.
+                body = self._scrub((head + tail).decode("utf-8", "replace")).encode("utf-8")
             handle = create_private(self.path)
             try:
                 os.write(handle, body)

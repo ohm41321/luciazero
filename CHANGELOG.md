@@ -107,6 +107,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The discipline stats log rotates through a fresh `mkstemp` name rather than
   `luciazero-stats.log.tmp`, so a symlink planted at that name is not followed
   (roadmap R21).
+- An Agent Bus run log under its size cap is scrubbed as one text. Its head
+  and tail were scrubbed apart, so a credential or token that crossed the
+  point where the head filled up was written to disk whole.
 - Agent Bus binding renewal only moves an expiry forward and records a
   `binding.renewed` event only when the row changed, so out-of-order renewals
   cannot shorten a binding and a revoked one is never reported renewed

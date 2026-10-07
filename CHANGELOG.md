@@ -210,6 +210,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/gate-linux-container.sh` is linted with the other shipped
   scripts (syntax, Bash 3.2, ShellCheck); it was missing from the list, and
   an unused variable in it is gone.
+- The README and the site no longer list a "check-suppression guard" as
+  the mechanism against weakened tests. No install path ships one; the
+  mechanisms are doctrine rule 3 and the `/done` review, with an inert
+  opt-in hook example in `examples/`.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

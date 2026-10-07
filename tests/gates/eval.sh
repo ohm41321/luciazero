@@ -367,6 +367,15 @@ RC=0; "${CR}" --provider codex "${CRF}/codex-bad-usage.jsonl" >/dev/null 2>&1 ||
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted malformed Codex usage"; }
 RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
+# a run that printed nothing has no output to call plain text: an empty or
+# blank log is a run that never happened, not one nothing refutes
+: > "${CRF}/empty.log"
+printf ' \n\t\n' > "${CRF}/blank.log"
+for f in empty.log blank.log; do
+  RC=0; OUT="$("${CR}" "${CRF}/${f}" 2>&1)" || RC=$?
+  [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a log with no output (${f})"; }
+  echo "${OUT}" | grep -q 'no output' || { rm -rf "${CRF}"; fail "check-result empty-log rejection lost the reason: ${OUT}"; }
+done
 # --output-format stream-json writes one event per line and the result
 # object last; the same acceptance and rejection rules apply to that final
 # event, and a stream that never reached it is a run that died mid-way

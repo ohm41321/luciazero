@@ -170,6 +170,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The service runs under `pythonw.exe`, which has no console, so each call
   would have opened a console window on the desktop (reasoned; the test runs
   in the Windows CI job, and the field test lists it).
+- `eval/check-result.sh` marks an empty or blank agent log INVALID. It
+  used to read one as plain-text output with nothing in it to refute, so a
+  run that printed nothing could have been booked as a real arm.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

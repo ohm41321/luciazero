@@ -68,6 +68,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   run. With git's rename detection the old name was listed nowhere, so the
   control tree kept it and passed while the real tree, still loading it,
   failed: a false PASS.
+- `revert-probe` run on a fix that is already committed says nothing changed
+  and names the base ref to pass, instead of reporting that the change ships
+  without a test. The debug and done skills say to pass the pre-fix commit.
 - `safe-bisect --retries 00` (or any other spelling of zero) is a usage error.
   It used to sample neither endpoint, so a criterion that always passes went
   unchecked and bisect named the last commit.

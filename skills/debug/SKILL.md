@@ -50,7 +50,8 @@ input, concurrency, or a wrong test.
 ## 5. Close out
 
 - Commit a regression test. Run it both ways and quote both results: red before
-  the fix, green after. Use the done skill's `revert-probe.cjs` when applicable.
+  the fix, green after. Use the done skill's `revert-probe.cjs` when applicable;
+  once the fix is committed, pass the pre-fix commit as its base ref.
 - Remove all instrumentation: prints, sleeps, debug flags.
 - Run the full verify tier.
 - If the cause, footgun, or null result is not obvious from code, run `/retro`;

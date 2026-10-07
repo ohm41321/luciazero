@@ -338,6 +338,11 @@ async function main(argv) {
     changed.push(f);
     if (isTestFile(f)) tests.push(f);
   }
+  if (names.length === 0) {
+    // a fix committed before the probe ran: its tests are in the base
+    say(`FAIL: nothing changed since ${base} — if the change is committed, pass the commit before it as base-ref (${base}~1, say)`);
+    return 1;
+  }
   if (tests.length === 0) {
     say(`FAIL: no test files changed since ${base} — the change ships without a test that bites`);
     return 1;

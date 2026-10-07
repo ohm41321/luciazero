@@ -265,6 +265,19 @@ test("revert-probe's control run lacks a file the change renamed away", (t) => {
   assert.strictEqual(worktrees(b, dir), 1, "a worktree was left behind");
 });
 
+test("revert-probe names the base ref to pass when the change is already committed", (t) => {
+  const b = box(t);
+  const dir = repo(b, "committed", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]) });
+  write(dir, { "calc.js": FIXED, "tests/calc.test.js": check([0, 0, 0], [2, 2, 4]) });
+  git(b.env, dir, "commit", "-qam", "fix");
+  const clean = run(b.env, dir, [PROBE, "node tests/calc.test.js"]);
+  assert.strictEqual(clean.status, 1, clean.out);
+  assert.match(clean.out, /^FAIL: nothing changed since HEAD — if the change is committed, pass the commit before it as base-ref \(HEAD~1, say\)$/m);
+  const before = run(b.env, dir, [PROBE, "node tests/calc.test.js", "HEAD~1"]);
+  assert.strictEqual(before.status, 0, before.out);
+  assert.match(before.out, /^PASS: regression tests bite/m);
+});
+
 test("revert-probe stops rather than copy onto a path it could not inspect", (t) => {
   const b = box(t);
   const outside = path.join(b.box, "outside");

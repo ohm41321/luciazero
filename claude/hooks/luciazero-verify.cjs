@@ -509,6 +509,66 @@ function statLog(event, ctx) {
   } catch {}
 }
 
+// cmd.exe's own commands, which no file lookup finds.
+const CMD_BUILTINS = new Set(("assoc break call cd chdir cls color copy date del dir echo endlocal erase "
+  + "exit for ftype goto if md mkdir mklink move path pause popd prompt pushd rd rem ren rename rmdir "
+  + "set setlocal shift start time title type ver verify vol").split(" "));
+
+// Whether cmd.exe certainly failed to find the program `command` starts.
+// `cmd /c` exits 1 for that, as a failing test does, and names the cause only
+// in the display language, so this asks the file system instead: true only
+// for one command, or an && chain that stops at its first, whose first word
+// is no builtin and no file in the working directory or a PATH entry, as is
+// or with a PATHEXT extension. Anything it cannot read stays the command's
+// own verdict.
+function cmdMissing(command, cwd) {
+  const text = command.replace(/^[\s@]+/, "");
+  let word;
+  let rest;
+  if (text[0] === '"') {
+    const end = text.indexOf('"', 1);
+    if (end < 0) return false;
+    word = text.slice(1, end);
+    rest = text.slice(end + 1);
+  } else {
+    word = text.match(/^[^\s&|<>()"]*/)[0];
+    rest = text.slice(word.length);
+    // unquoted, cmd.exe reads a / as the start of a switch
+    if (word.includes("/")) return false;
+  }
+  if (!word || /[%!^*?]/.test(word)) return false;
+  const lead = word.match(/^[A-Za-z]+/);
+  if (lead && CMD_BUILTINS.has(lead[0].toLowerCase())) return false;
+  // after `&`, `||` or `|` a later command decides the exit status
+  let quoted = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const c = rest[i];
+    if (c === '"') quoted = !quoted;
+    else if (quoted) continue;
+    else if (c === "^") i += 1;
+    else if (c === "|" || c === "(" || c === ")") return false;
+    else if (c === "&" && rest[i - 1] !== ">" && rest[i - 1] !== "<") {
+      if (rest[i + 1] !== "&") return false;
+      i += 1;
+    }
+  }
+  const base = cwd || process.cwd();
+  const names = [word, ...(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+    .map((ext) => word + ext)];
+  // anything there but a directory, or anything that cannot be checked,
+  // counts as found
+  const found = (file) => {
+    try {
+      return !fs.lstatSync(file).isDirectory();
+    } catch (error) {
+      return !error || (error.code !== "ENOENT" && error.code !== "ENOTDIR");
+    }
+  };
+  const dirs = /[\\/:]/.test(word) ? [base]
+    : [base, ...(process.env.PATH || "").split(";").map((dir) => dir.replace(/^"(.*)"$/, "$1")).filter(Boolean)];
+  return !dirs.some((dir) => names.some((name) => found(path.resolve(base, dir, name))));
+}
+
 // The strict gate: the user's verify command, run through the platform shell.
 // "error" for anything that is not the command's own verdict — a timeout, a
 // shell that could not find the command — so the stop degrades to the
@@ -526,6 +586,9 @@ function runStrict(state, cwd, command, timeout) {
   }
   const seconds = Number(timeout);
   if (!(seconds > 0)) return { verdict: "error" };
+  // asked before the run as well as after it: a runner that deletes itself
+  // as it fails was there to run, and its red stands
+  const missingBefore = WINDOWS && cmdMissing(command, cwd);
   const result = childProcess.spawnSync(command, {
     shell: true, cwd: cwd || undefined, timeout: seconds * 1000, encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024, windowsHide: true,
@@ -534,9 +597,9 @@ function runStrict(state, cwd, command, timeout) {
   // command not found / not executable: an internal error, not a red verify.
   // 126 and 127 are the POSIX shell's; 9009 is the ERRORLEVEL cmd.exe sets
   // for a command it cannot find, which a batch file can pass on. `cmd /c`
-  // given a missing command directly exits 1 instead, so on Windows that one
-  // reads as red, with cmd.exe's own message in the tail: blocked, never green.
-  if ([126, 127].includes(result.status) || (WINDOWS && result.status === 9009)) return { verdict: "error" };
+  // given a missing command directly exits 1, which cmdMissing tells apart.
+  if ([126, 127].includes(result.status) || (WINDOWS && result.status === 9009)
+      || (result.status === 1 && missingBefore && cmdMissing(command, cwd))) return { verdict: "error" };
   if (result.status === 0) return { verdict: "ok" };
   const tail = ((result.stdout || "") + "\n" + (result.stderr || "")).trim().split(/\r?\n/).slice(-8);
   return { verdict: "red", tail: tail.join("\n") };

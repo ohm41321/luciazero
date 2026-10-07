@@ -123,6 +123,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   quadratic time; it is linear, and a payload over the 64 KiB cap is refused
   before it is scrubbed, so an oversized send no longer holds a server thread
   for seconds.
+- Asking again with `agent_claim_begin` while its approval dialog is still on
+  screen returns that request instead of raising a second window. The second
+  request superseded the first, so Allow on the window the user saw failed
+  silently. The tool no longer claims to be idempotent.
 - Agent Bus binding renewal only moves an expiry forward and records a
   `binding.renewed` event only when the row changed, so out-of-order renewals
   cannot shorten a binding and a revoked one is never reported renewed

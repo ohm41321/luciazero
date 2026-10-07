@@ -221,7 +221,8 @@ def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
 
 def prompt(request: dict[str, Any], *, decide: Callable[[bool], None], seconds: int,
            runner: Optional[Callable[[list[str], int], Any]] = None,
-           on_error: Optional[Callable[[BaseException], None]] = None) -> threading.Thread:
+           on_error: Optional[Callable[[BaseException], None]] = None,
+           on_close: Optional[Callable[[], None]] = None) -> threading.Thread:
     """Ask about one claim, off the request thread.
 
     The daemon must keep answering while the dialog is up: a modal window is
@@ -244,6 +245,10 @@ def prompt(request: dict[str, Any], *, decide: Callable[[bool], None], seconds: 
         except BaseException as exc:  # noqa: BLE001 - a background thread must not die silently
             if on_error is not None:
                 on_error(exc)
+        finally:
+            # answered, given up on or failed: the window is gone either way
+            if on_close is not None:
+                on_close()
 
     thread = threading.Thread(target=run, name="claim-dialog", daemon=True)
     thread.start()

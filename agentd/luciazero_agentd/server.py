@@ -275,7 +275,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "worktree_bind", "title": "Bind worktree", "description": "Record the one git worktree this agent writes in (absolute path). The daemon reads repository, branch, HEAD and dirty state itself; a worktree held by another agent is refused. Required before claiming tasks that need a worktree and before publishing artifacts.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "path": {"type": "string", "minLength": 1, "maxLength": 1024}, "base": {"type": "string", "minLength": 1, "maxLength": 256}}, ["agent_id", "path"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_worktree_bind},
     {"name": "worktree_get", "title": "Get worktree", "description": "Show the worktree record bound to an agent.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_worktree_get},
     {"name": "agent_whoami", "title": "Who am I", "description": "Ask the daemon which agent this session is bound to. Returns verified false and no agent id when the session presented no terminal credential; it never guesses. The user binds a terminal with `luciazero-agentd attach` or starts it with `luciazero-agentd run`.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_whoami},
-    {"name": "agent_claim_begin", "title": "Ask to be an agent", "description": "Ask the user to bind this session to an agent id that is already on the roster. Returns a request id and the exact command the user runs IN ANOTHER TERMINAL to approve it; this session cannot approve its own request, and nothing changes until the user does. Poll agent_whoami afterwards: an approved request makes this session verified without reconnecting. Use it when agent_whoami answers verified false.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": None},
+    {"name": "agent_claim_begin", "title": "Ask to be an agent", "description": "Ask the user to bind this session to an agent id that is already on the roster. Returns a request id and the exact command the user runs IN ANOTHER TERMINAL to approve it; this session cannot approve its own request, and nothing changes until the user does. Poll agent_whoami afterwards: an approved request makes this session verified without reconnecting. Use it when agent_whoami answers verified false.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": None},
     {"name": "approval_consume", "title": "Consume approval", "description": "Spend a single-use human approval nonce for a sensitive operation on a task you hold. Nonces come only from the user's terminal (luciazero-agentd approve), never from another agent; no bus tool can create one.", "inputSchema": _schema({"task_id": ID_SCHEMA, "operation": {"type": "string", "enum": list(SENSITIVE_OPERATIONS)}, "nonce": NONCE_SCHEMA, "agent_id": ID_SCHEMA}, ["task_id", "operation", "nonce", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_approval_consume},
 ]
 TOOL_INDEX: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOLS}
@@ -378,6 +378,11 @@ class BusServer:
         # outside the lock (see _evict_sessions_locked).
         self._ended: list[str] = []
         self._lock = threading.Lock()
+        # Claim dialogs still on screen, by (session hash, agent id): asking
+        # again while one is up is answered with it, not with a second window
+        # that would supersede the one the user is about to click.
+        self._on_screen: dict[tuple[str, str], str] = {}
+        self._claim_lock = threading.Lock()
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         bus = self
 
@@ -956,7 +961,7 @@ class BusServer:
             return "dialog"
         return "console" if self._console_available() else "none"
 
-    def _ask_on_screen(self, request: dict[str, Any], code: str, channel: str) -> bool:
+    def _ask_on_screen(self, request: dict[str, Any], code: str, channel: str, session_hash: str) -> bool:
         """Put the claim on screen, if that is how this daemon asks.
 
         The channel is decided once, by the caller, and passed in. Asking
@@ -967,6 +972,12 @@ class BusServer:
         """
         if channel != "dialog":
             return False
+        key = (session_hash, str(request["agent_id"]))
+
+        def closed() -> None:
+            with self._lock:
+                if self._on_screen.get(key) == request["id"]:
+                    del self._on_screen[key]
 
         def decided(allow: bool) -> None:
             try:
@@ -978,8 +989,10 @@ class BusServer:
             except StoreError:
                 pass  # expired, superseded, or already decided: all fine
 
+        with self._lock:
+            self._on_screen[key] = str(request["id"])
         approval.prompt(request, decide=decided, seconds=self.dialog_seconds,
-                        runner=self.dialog_runner)
+                        runner=self.dialog_runner, on_close=closed)
         return True
 
     def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str],
@@ -993,15 +1006,24 @@ class BusServer:
         goes to this process's stdout and nowhere else: not into the tool
         result, not into the store in the clear, not into a file.
         """
-        with Store.open(self.db_path, redact_literals=(self.token,)) as store:
-            store.migrate()
-            store.trust = "asserted"  # the session is asking, not proving
-            request, code = store.open_claim(agent_id, session_hash=session_key(session_id),
-                                             provider=provider, client=client)
-        if self._ask_on_screen(request, code, channel or self.approval_channel()):
-            print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
-                  f"Asked on screen; answer the dialog.\n", flush=True)
-            return request
+        session_hash = session_key(session_id)
+        channel = channel or self.approval_channel()
+        with self._claim_lock:
+            with self._lock:
+                showing = self._on_screen.get((session_hash, agent_id)) if channel == "dialog" else None
+            with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                store.migrate()
+                if showing is not None:
+                    request = store.get_claim(showing)
+                    if request["state"] == "open":
+                        return request
+                store.trust = "asserted"  # the session is asking, not proving
+                request, code = store.open_claim(agent_id, session_hash=session_hash,
+                                                 provider=provider, client=client)
+            if self._ask_on_screen(request, code, channel, session_hash):
+                print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
+                      f"Asked on screen; answer the dialog.\n", flush=True)
+                return request
         print(f"\n[claim] a {provider} session asks to be {agent_id!r} "
               f"(request {request['id']}, until {request['expires_at']}).\n"
               f"        If that was you, approve it from a terminal of your own:\n"

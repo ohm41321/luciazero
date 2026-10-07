@@ -28,6 +28,7 @@ import re
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
@@ -496,6 +497,45 @@ class OnScreenTests(ClaimCase):
         client, asked, _ = self.claim_through(server)
         self.assertEqual(self.decided(asked["claim_id"]), "denied")
         self.assertFalse(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_asking_again_while_the_dialog_is_up_reuses_it(self) -> None:
+        """Review finding: a second agent_claim_begin superseded the request
+        whose dialog was still on screen, so Allow on it failed silently and
+        the session stayed unverified."""
+        release = threading.Event()
+
+        class Result:
+            returncode, stdout = 0, "button returned:Allow\n"
+
+        def run(argv: list[str], timeout: int) -> Result:
+            self.asked.append(argv)
+            release.wait(10)
+            return Result()
+
+        server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False, approve_with="dialog",
+                           dialog_seconds=10, has_console=True, dialog_runner=run).start()
+        self.addCleanup(server.stop)
+        self.addCleanup(release.set)
+        client, first, _ = self.claim_through(server)
+        with redirect_stdout(io.StringIO()):
+            second = client.call("agent_claim_begin", {"agent_id": REVIEWER})["structuredContent"]
+        self.assertEqual(second["claim_id"], first["claim_id"])
+        release.set()
+        self.assertEqual(self.decided(first["claim_id"]), "approved")
+        self.assertEqual(len(self.asked), 1, "a second dialog was raised")
+        self.assertTrue(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_asking_again_after_the_dialog_closed_unanswered_asks_again(self) -> None:
+        server = self.server_with("gave up:true\n")
+        client, first, _ = self.claim_through(server)
+        for _ in range(200):
+            with redirect_stdout(io.StringIO()):
+                second = client.call("agent_claim_begin", {"agent_id": REVIEWER})["structuredContent"]
+            if second["claim_id"] != first["claim_id"]:
+                break
+            time.sleep(0.01)
+        self.assertNotEqual(second["claim_id"], first["claim_id"])
+        self.assertEqual(self.store.get_claim(first["claim_id"])["state"], "superseded")
 
     def test_a_dialog_nobody_answers_decides_nothing(self) -> None:
         server = self.server_with("gave up:true\n")

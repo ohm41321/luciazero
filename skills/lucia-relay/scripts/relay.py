@@ -119,10 +119,14 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
     snapshot_errors: list[str] = []
     head_rc, head = git(repo, "rev-parse", "HEAD")
     _, branch = git(repo, "branch", "--show-current")
-    exclusions = (
-        "--", ".", f":(exclude){MANIFEST}", f":(exclude){HUMAN}",
-        f":(exclude){RECEIPT}",
-    )
+    # the relay's own files sit in --root, which may be below the top level;
+    # paths below are the top level's, as git prints them from there
+    try:
+        prefix = root.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        prefix = "."
+    own = tuple(name if prefix == "." else f"{prefix}/{name}" for name in (MANIFEST, HUMAN, RECEIPT))
+    exclusions = ("--", ".", *(f":(exclude,literal){name}" for name in own))
     if head_rc == 0:
         modified_rc, raw_modified = git(repo, "diff", "--name-only", "-z", "HEAD", *exclusions)
         diff_rc, diff = git(repo, "diff", "--binary", "HEAD", *exclusions)
@@ -143,7 +147,7 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
     modified = sorted(set(item for item in raw_modified.split("\0") if item))
     untracked = [
         item for item in raw_untracked.split("\0")
-        if item and item not in (MANIFEST, HUMAN, RECEIPT)
+        if item and item not in own
     ]
     digest = hashlib.sha256(diff.encode("utf-8", errors="surrogateescape"))
     untracked_bytes = 0
@@ -517,14 +521,15 @@ def repo_pointer(value: Any) -> Optional[str]:
 
 
 def safe_command_argv(value: Any) -> Optional[list[str]]:
-    if not nonempty(value):
+    if not nonempty(value) or any(char in str(value) for char in "\r\n"):
         return None
     try:
         argv = shlex.split(str(value))
     except ValueError:
         return None
-    shell_tokens = {"|", "||", "&&", ";", ">", ">>", "<", "2>", "&"}
-    if not argv or any(token in shell_tokens for token in argv):
+    # an operator glued to a word (`test;id`, `$(id)`, `>out`) is still one a
+    # shell would act on, so any token holding one is refused
+    if not argv or any(char in token for token in argv for char in ";|&<>`$"):
         return None
     executable = PurePosixPath(argv[0].replace("\\", "/")).name.casefold()
     if executable in {"sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh", "env", "xargs"}:

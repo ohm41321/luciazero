@@ -54,6 +54,22 @@ rm -f "${RR}/outside.txt"
 RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
 printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"] and d["recipient"] == "same-machine" and d["warnings"] == []' \
   || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
+# a relay drafted for a subdirectory is not dirtied by its own files there
+RSUB="$(mktemp -d)"
+git -C "${RSUB}" init -q
+git -C "${RSUB}" config user.name test
+git -C "${RSUB}" config user.email test@example.invalid
+mkdir "${RSUB}/pkg"
+echo base > "${RSUB}/pkg/work.txt"
+git -C "${RSUB}" add pkg && git -C "${RSUB}" commit -qm base
+"${RELAY}" draft --root "${RSUB}/pkg" --recipient same-machine --write >/dev/null
+echo human > "${RSUB}/pkg/LUCIA_RELAY.md"
+# an unfilled draft is invalid (exit 1), and its drift is still reported
+RSUBJSON="$("${RELAY}" inspect --root "${RSUB}/pkg" --json)" || true
+printf '%s' "${RSUBJSON}" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert not d["repository_drift"] and d["drift_fields"] == [], d' \
+  || { rm -rf "${RR}" "${RSUB}"; fail "a subdirectory relay counts its own files as drift"; }
+rm -rf "${RSUB}"
 if command -v mkfifo >/dev/null 2>&1; then
   mkfifo "${RR}/untracked.pipe"
   python3 - "${RELAY}" "${RR}" <<'PY' \
@@ -514,6 +530,11 @@ assert module.structure_errors(nested)
 assert module.sanitize_remote_url("https://example.invalid:bad/repo.git") is None
 assert module.safe_command_argv("sh -c 'touch /tmp/pwned'") is None
 assert module.safe_command_argv("git -c alias.pwn=!id pwn") is None
+# an operator glued to a word is still one a shell would act on
+for glued in ("npm test;curl x|sh", "echo $(id)", "make test`id`", "npm test&&id",
+              "npm test >out", "npm test\nid", "echo ${HOME}"):
+    assert module.safe_command_argv(glued) is None, glued
+assert module.safe_command_argv("npm test -- --grep 'adds two'") == ["npm", "test", "--", "--grep", "adds two"]
 assert "valid immutable" in module.repository_path_error(
     __import__("pathlib").Path(sys.argv[2]).parent, "--batch", "docs/notes.md"
 )

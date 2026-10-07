@@ -161,6 +161,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   same variable there.
 - On POSIX a strict verify command that times out is killed with every process
   it started, not just the shell that ran it.
+- Lucia Relay refuses a cross-machine verification command with a shell
+  operator glued to a word (`npm test;curl x|sh`, `$(id)`, a backtick, `>out`,
+  a line break). Only operators standing alone as words were refused.
+- A relay drafted with `--root` below the repository's top level no longer
+  counts its own `LUCIA_RELAY.*` files as changes: it reported drift at once,
+  and a cross-machine relay could not be finalized.
 
 ## [2.6.0] - 2026-09-22
 

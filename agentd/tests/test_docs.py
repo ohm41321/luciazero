@@ -33,7 +33,7 @@ from luciazero_agentd.store import Store
 SKILL = Path(__file__).resolve().parents[2] / "skills" / "lucia-chat" / "SKILL.md"
 #: Every spelling of the daemon a reader could type, longest first so the
 #: prefix is stripped whole.
-LAUNCHERS = ("python3 -m luciazero_agentd", "luciazero-agentd", "lucia")
+LAUNCHERS = ("python3 -m luciazero_agentd", "py -3 -m luciazero_agentd", "luciazero-agentd", "lucia")
 
 
 def fenced(text: str) -> list[str]:

@@ -241,5 +241,27 @@ grep -q 'ran past a failing command' "${TP}/red.err" && fail "set -e did not sto
 grep -q '^gate codex-install$' "${TP}/red.out" || fail "a green gate's output was dropped because another gate was red"
 grep -q '^PASS' "${TP}/red.out" && fail "a red parallel run still printed PASS"
 gone_with_gates "a red parallel run"
+# interrupted: a signal to the dispatcher stops the parallel gates and what
+# they started before its EXIT trap removes their sandbox. Background jobs of
+# this shell start with SIGINT ignored, so the run is sent SIGTERM, which
+# the dispatcher handles the same way.
+for G in tiers agent-bus eval packaging install codex-install parity; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
+{ stub eval; printf 'touch "%s/started"\nsh -c '"'"'sleep 3; touch "%s/ran-on"'"'"'\n' "${TP}" "${TP}"; } \
+  > "${TP}/repo/tests/gates/eval.sh"
+rm -f "${TP}/started" "${TP}/ran-on"
+(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" ./test.sh --full \
+  >"${TP}/int.out" 2>"${TP}/int.err") &
+INT_PID=$!
+I=0
+while [ ! -e "${TP}/started" ] && [ "${I}" -lt 300 ]; do sleep 0.1; I=$((I + 1)); done
+[ -e "${TP}/started" ] || fail "the run to interrupt never started its eval stub"
+kill -TERM "${INT_PID}"
+RC=0; wait "${INT_PID}" || RC=$?
+[ "${RC}" = 143 ] || fail "an interrupted full tier exited ${RC}, want 143"
+sleep 4
+[ ! -e "${TP}/ran-on" ] || fail "a gate's child ran on after the dispatcher was interrupted"
+grep -q '^interrupted: stopped the running gates$' "${TP}/int.err" \
+  || fail "an interrupted run did not say it stopped the gates: $(tail -3 "${TP}/int.err")"
+[ -z "$(ls -A "${TP}/tmp")" ] || fail "an interrupted run left directories behind: $(ls "${TP}/tmp")"
 rm -rf "${TP}"
-echo "ok  full-only gates run in parallel with serial-identical output; red gates are all named; no gate's temp directory outlives it"
+echo "ok  full-only gates run in parallel with serial-identical output; red gates are all named; an interrupt stops them; no gate's temp directory outlives it"

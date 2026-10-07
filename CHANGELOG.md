@@ -203,6 +203,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The core gate fails when the node test files named in the parity gate or
   the Windows CI job differ from `tests/node/*.test.js`. Both lists were
   kept by hand, so a new test file could run nowhere.
+- An interrupted full run stops the gates it started. Background jobs of a
+  non-interactive shell ignore Ctrl-C, so `./test.sh` used to exit and
+  delete the shared sandbox while six gates ran on; it now stops each gate
+  and every process under it, then exits 130 (or 143 on SIGTERM).
+- `scripts/gate-linux-container.sh` is linted with the other shipped
+  scripts (syntax, Bash 3.2, ShellCheck); it was missing from the list, and
+  an unused variable in it is gone.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

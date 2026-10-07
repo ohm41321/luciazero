@@ -215,7 +215,6 @@ SEED
 cp "${H2}/.claude/CLAUDE.md" "${WORK}/seed-claude.md"
 cp "${H2}/.codex/AGENTS.md" "${WORK}/seed-codex.md"
 SEED_CLAUDE="$(shasum -a 256 < "${H2}/.claude/CLAUDE.md")"
-SEED_CODEX="$(shasum -a 256 < "${H2}/.codex/AGENTS.md")"
 SEED_CLAUDE_BODY="$(awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' "${H2}/.claude/CLAUDE.md" | shasum -a 256)"
 SEED_CODEX_BODY="$(awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' "${H2}/.codex/AGENTS.md" | shasum -a 256)"
 

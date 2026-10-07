@@ -221,6 +221,7 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/agent-bus-evidence.sh
          docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
+         scripts/gate-linux-container.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
          skills/ready/scripts/detect.sh
@@ -318,6 +319,28 @@ gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
   fi
   GATE_PID=$!
 }
+stop_gates() { # stop_gates <pid>...: each one and every process under it
+  local P C
+  for P in "$@"; do
+    for C in $(pgrep -P "${P}" 2>/dev/null || true); do stop_gates "${C}"; done
+    kill "${P}" 2>/dev/null || true
+  done
+}
+# A non-interactive shell starts its background jobs with SIGINT ignored, so
+# Ctrl-C would end only this shell -- whose EXIT trap deletes the sandbox and
+# the output buffers -- while the gates it started ran on for minutes. Stop
+# them first, children before parents so none is orphaned out of reach.
+GATE_PID=""
+PIDS=()
+on_signal() { # on_signal <exit code>
+  trap - INT TERM
+  stop_gates ${GATE_PID:+"${GATE_PID}"} ${PIDS[@]+"${PIDS[@]}"}
+  wait 2>/dev/null || true
+  echo "interrupted: stopped the running gates" >&2
+  exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 RED=""
 if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then
   for G in "${FULL_ORDER[@]}"; do
@@ -329,7 +352,6 @@ else
   gate_bg agent-bus "${BUF}/agent-bus.out" "${BUF}/agent-bus.err"
   wait "${GATE_PID}" || RED="${RED} agent-bus"
   PARALLEL=(tiers eval packaging install codex-install parity)
-  PIDS=()
   for G in "${PARALLEL[@]}"; do
     gate_bg "${G}" "${BUF}/${G}.out" "${BUF}/${G}.err"
     PIDS+=("${GATE_PID}")

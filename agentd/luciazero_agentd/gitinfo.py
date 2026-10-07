@@ -41,7 +41,7 @@ def git(path: str, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> str:
         result = subprocess.run(
             [program, "-C", path, *args],
             capture_output=True, text=True, encoding="utf-8", timeout=timeout, env=_env(), check=False,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, **proctree.NO_WINDOW,
         )
     except FileNotFoundError as exc:
         raise GitError("git is not installed or not on PATH") from exc

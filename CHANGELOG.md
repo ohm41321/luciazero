@@ -166,6 +166,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   than 500. The watcher read the oldest page of the queue only, so past it
   nothing new was ever seen; it now reads from the last delivery it knocked
   for, and finds the end of the backlog when the session opens.
+- On Windows the daemon starts `git` and `taskkill` with `CREATE_NO_WINDOW`.
+  The service runs under `pythonw.exe`, which has no console, so each call
+  would have opened a console window on the desktop (reasoned; the test runs
+  in the Windows CI job, and the field test lists it).
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

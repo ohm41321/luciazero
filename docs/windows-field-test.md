@@ -171,7 +171,11 @@ settings:
         console window;
   - [ ] `service status` reports it;
   - [ ] `daemon.log` is in the state directory, and that directory is
-        readable by you alone (check with `icacls`).
+        readable by you alone (check with `icacls`);
+  - [ ] with the service running, bind a worktree and cancel a managed
+        turn: no console window flashes for `git` or `taskkill`. Note
+        whether each managed turn's provider opens a console window of its
+        own; nothing suppresses that yet.
 - [ ] After sleep and resume, and after a logoff and logon, the daemon is
       serving again.
 - [ ] `service uninstall` removes the task and only the files carrying the

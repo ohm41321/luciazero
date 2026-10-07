@@ -152,6 +152,27 @@ class DaemonPort(unittest.TestCase):
 
 
 @only_windows
+class NoConsoleWindows(unittest.TestCase):
+    def test_git_and_taskkill_open_no_console_window(self) -> None:
+        """The service runs under pythonw.exe, which has no console, so every
+        console program it starts without CREATE_NO_WINDOW opens a window of
+        its own on the user's desktop."""
+        seen: list[dict] = []
+        real = subprocess.run
+
+        def spy(*args: object, **kwargs: object) -> object:
+            seen.append(dict(kwargs))
+            return real(*args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", spy):
+            gitinfo.git(str(Path(__file__).resolve().parents[2]), "rev-parse", "--git-dir")
+            proctree.end_tree(2 ** 30, lambda seconds: True)
+        self.assertEqual(len(seen), 2)
+        for kwargs in seen:
+            self.assertTrue(int(kwargs.get("creationflags", 0)) & subprocess.CREATE_NO_WINDOW, kwargs)
+
+
+@only_windows
 class ProcessFacts(unittest.TestCase):
     def test_the_table_knows_this_process_and_its_parent(self) -> None:
         rows = {r["pid"]: r for r in winproc.table()}

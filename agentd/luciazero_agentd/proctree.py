@@ -55,6 +55,11 @@ CMD_SPECIAL = re.compile(r'[\r\n"%^&|<>!]')
 NPM_SHIM_SCRIPT = re.compile(r'"%~?dp0%?\\([^"%]+\.(?:js|cjs|mjs))"\s+%\*')
 
 
+# A console program the daemon runs for itself (git, taskkill) gets no window
+# of its own: under the service's pythonw.exe there is no console to share,
+# and each call would open one on the user's desktop.
+NO_WINDOW: dict[str, Any] = {"creationflags": subprocess.CREATE_NO_WINDOW} if WINDOWS else {}
+
 # The job of every provider `start` put in one, by pid, until it is ended or
 # released.
 _jobs: dict[int, Any] = {}
@@ -218,7 +223,7 @@ def end_tree(pid: int, gone: Callable[[float], bool]) -> bool:
         return gone(5.0)
     try:
         subprocess.run([_taskkill(), "/PID", str(int(pid)), "/T", "/F"], capture_output=True,
-                       timeout=TASKKILL_SECONDS, check=False)
+                       timeout=TASKKILL_SECONDS, check=False, **NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
         pass
     return gone(5.0)

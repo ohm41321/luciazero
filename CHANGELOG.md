@@ -176,6 +176,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `/lucia-chat` names the module form the bus prints on Windows,
   `python -m luciazero_agentd`, and keeps `py -3` as the fallback where only
   the `py` launcher is on PATH. It said the bus printed `py -3`.
+- `scripts/check-skill-prompts.py` holds `/lucia-chat` to a word budget and
+  its behavioural clauses, and fails when a cataloged skill has no prompt
+  contract anywhere. `/lucia-chat` had neither, so nothing read its prompt.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

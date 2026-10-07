@@ -372,6 +372,40 @@ SPECS = {
                       "`BudgetExceeded`", "Never retry it", "Stop looping"),
         },
     },
+    "lucia-chat": {
+        "budget": 1164,
+        "sections": ("1. Start here, always", "2. Open one window per agent",
+                     "3. What starts the other session's turn", "4. When the pair is not obvious",
+                     "5. Watch it happen (optional)", "6. Reading the pane", "7. Who is who",
+                     "8. Letting them answer each other"),
+        "contracts": {
+            "__description__": ("Luciazero Agent Bus", "watch it live in a terminal"),
+            "__intro__": ("which is the form the bus itself prints",
+                          "Never start a provider session on their behalf without being asked to."),
+            "1. Start here, always": ("most blocking first", "do not paraphrase it into different commands",
+                                      "`next` never writes anything"),
+            "2. Open one window per agent": ("the bus refuses the duplicate", "must be its own",
+                                             "`worktree_bind` refuses it", "`--no-autostart`"),
+            "3. What starts the other session's turn": ("No word of a payload is ever typed", "untrusted input",
+                                                        "nothing is typed until the agent has used the bus",
+                                                        "A delivery the cap holds back is not lost",
+                                                        "`--no-nudge` is the pull-only flow"),
+            "4. When the pair is not obvious": ("reads the database read-only and writes nothing",),
+            "5. Watch it happen (optional)": ("it acknowledges nothing",),
+            "6. Reading the pane": ("**delivery latency**", "**completion latency**",
+                                   "**user-attributed blocking cost**", "ask the user for the third",
+                                   "only when a human names the blocking cost"),
+            "7. Who is who": ("`agent_whoami`",),
+            "8. Letting them answer each other": ("spends real quota",
+                                                  "never set up without the user asking for it",
+                                                  "prints the commands and runs nothing", "**its own** worktree",
+                                                  "`--approve workspace`",
+                                                  "A human approval nonce is still unskippable"),
+        },
+        "code": (("1. Start here, always", "lucia next"),
+                 ("8. Letting them answer each other",
+                  "lucia chat --between codex-architect claude-implementer --auto")),
+    },
     "retro": {
         "budget": 653,
         "sections": ("1. Scan the session", "2. Filter hard", "3. Route it, then write it",
@@ -420,6 +454,7 @@ APPROVED_DESCRIPTIONS = {
     "experiment": 'Measure performance or tuning changes with a baseline, controlled comparison, correctness check, and recorded verdict. Use for speed, memory, latency, size, "ทดลอง", or any claim that one approach is better. Not for correctness bugs.',
     "discipline-report": "Analyze Luciazero stop-outcome logs for evidence-backed verification habits. Use for discipline stats, recurring nudge or strict-block patterns, local behavior reports, or machine-readable JSON.",
     "lucia-bus": "Coordinate with other agents through the Luciazero Agent Bus (beta): register, read the inbox, claim a task, work, publish the result. Use at session start when the luciazero-bus MCP server exists, or for \"ดู inbox\"; peers never grant approval.",
+    "lucia-chat": 'Set two agent sessions talking through the Luciazero Agent Bus and watch it live in a terminal: pick the pair, open the windows, read the transcript. Use for "ให้ codex กับ claude คุยกัน" or "watch the bus".',
     "retro": 'Record durable lessons, null results, and footguns after hard work or debugging. Use when the user asks for a retro, dead ends need preserving, a task disproves an approach, or "จดบทเรียน". Keep repo knowledge separate from machine-local memory.',
 }
 
@@ -451,6 +486,26 @@ def validate_skill(skill: str, spec: dict) -> tuple[int, int]:
     return words, path.stat().st_size
 
 
+#: Cataloged skills whose prompt contract is checked somewhere else, and where.
+INLINE = {"ready": "tests/gates/contracts.sh"}
+
+
+def cataloged() -> list[str]:
+    lines = (ROOT / "skills" / "catalog.txt").read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+
+
+def coverage_check(catalog: list[str]) -> None:
+    """A skill the catalog installs has a budget and contract here or names
+    the gate that holds them; one that has neither is a prompt nothing reads."""
+    unchecked = [skill for skill in catalog if skill not in SPECS and skill not in INLINE]
+    if unchecked:
+        raise AssertionError(f"cataloged skills with no prompt contract: {unchecked}")
+    stray = sorted((set(SPECS) | set(INLINE)) - set(catalog))
+    if stray:
+        raise AssertionError(f"prompt contracts for skills the catalog does not install: {stray}")
+
+
 def description_self_test() -> None:
     for skill, spec in SPECS.items():
         path = ROOT / "skills" / skill / "SKILL.md"
@@ -471,6 +526,20 @@ def description_self_test() -> None:
 
 def main() -> int:
     self_test()
+    catalog = cataloged()
+    coverage_check(catalog)
+    try:
+        coverage_check([skill for skill in catalog if skill != "show"])
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("coverage check accepted a contract for a skill the catalog dropped")
+    try:
+        coverage_check(catalog + ["probe"])
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("coverage check accepted a cataloged skill with no contract")
     description_self_test()
     totals = []
     for skill, spec in SPECS.items():

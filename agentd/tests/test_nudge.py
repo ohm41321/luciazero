@@ -101,6 +101,23 @@ class WatcherTests(unittest.TestCase):
         self.seen()
         self.assertFalse(watcher.due())
 
+    def test_a_backlog_longer_than_a_page_neither_knocks_nor_hides_what_comes_next(self) -> None:
+        """Review finding: only the oldest 500 queued deliveries were read, so
+        behind a longer backlog a new arrival was never seen at all -- and a
+        start that saw only that page would have knocked for the rest of the
+        backlog as if it were new."""
+        with make_store(self.db) as store:
+            for n in range(501):
+                store.send_message(sender="claude-implementer", recipient="codex-architect",
+                                   kind="finding", payload={"message": f"waiting {n}"})
+        watcher = self.watcher()
+        self.seen()
+        self.assertFalse(watcher.due(), "the backlog is not a nudge, however long it is")
+        self.send("new")
+        arrival = watcher.due()
+        self.assertIsNotNone(arrival, "an arrival behind a long backlog never knocked")
+        self.assertEqual(arrival.text, "new")
+
     def test_one_delivery_is_one_nudge(self) -> None:
         watcher = self.watcher()
         self.seen()

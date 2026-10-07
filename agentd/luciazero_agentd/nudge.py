@@ -311,15 +311,26 @@ class Watcher:
             return default
 
     def _max_queued_seq(self) -> int:
-        return self._newest()[0]
+        """The highest queued delivery, past however many pages of backlog."""
+        def highest(store: Store) -> int:
+            after = 0
+            while True:
+                page = store.inbox(self.agent_id, states=("queued",), limit=500, after=after)
+                if not page["has_more"]:
+                    return int(page["next_after"])
+                after = int(page["next_after"])
+        return self._read(highest, 0)
 
     def _newest(self) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
-        """The highest queued delivery, what it says, and the shape of the
-        queue behind it: `(seq, kind, sender)` per delivery, which is what a
-        knock is counted from. No payload rides along with those -- only the
-        newest one carries its text, and only to be shown."""
+        """The highest queued delivery new to this session, what it says, and
+        the shape of the queue behind it: `(seq, kind, sender)` per delivery,
+        which is what a knock is counted from. No payload rides along with
+        those -- only the newest one carries its text, and only to be shown.
+
+        Read from `seen_seq` on: the backlog behind it has had its knock, and
+        a page that started at the oldest would never reach what is new."""
         def newest(store: Store) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
-            page = store.inbox(self.agent_id, states=("queued",), limit=500)
+            page = store.inbox(self.agent_id, states=("queued",), limit=500, after=self.seen_seq)
             queued = [(int(item["delivery_seq"]), str(item.get("kind") or ""),
                        str(item.get("sender") or "")) for item in page["items"]]
             latest = max(page["items"], key=lambda item: item["delivery_seq"], default=None)

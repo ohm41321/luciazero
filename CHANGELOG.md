@@ -162,6 +162,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one before the next turn resumes it. The `codex exec` fallback prints the
   model's own text, and a JSON line in it naming `--last` as the session
   would have become an option on the next command line.
+- `run` still knocks for a delivery that arrives behind a backlog of more
+  than 500. The watcher read the oldest page of the queue only, so past it
+  nothing new was ever seen; it now reads from the last delivery it knocked
+  for, and finds the end of the backlog when the session opens.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

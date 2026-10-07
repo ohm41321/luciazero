@@ -263,7 +263,9 @@ Checked-in campaigns live under [`eval/results/`](results/). The registry pins
 every raw file by SHA-256 and documents historical omissions. `eval/evidence.py`
 generates the public tables from those rows, while `test.sh` rejects edited raw
 data or documentation drift. The Terra run remains a pilot because one run per
-arm is below the publication threshold; the canonical Sonnet campaign remains
+arm is below the publication threshold. The canonical Sonnet campaign is the
+published 2026-09-02 one (`claude-sonnet-2026-08-21`): ten tasks, five valid
+runs in every cell and no invalid rows. The 2026-08-11 Sonnet pilot stays
 preliminary because eight invalid rows leave several arms at four valid runs.
 
 ## Honesty box

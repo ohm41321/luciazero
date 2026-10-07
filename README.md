@@ -271,6 +271,9 @@ luciazero global-uninstall      # remove the command and its exact PATH block
 For a one-off install without keeping the command, `npx luciazero@latest`
 continues to work. Automation may pass `global-install --yes`; interactive use
 asks before installing the package and changing a shell startup file.
+On Windows (unreleased), `global-install` uses npm's own global prefix
+(`%APPDATA%\npm` unless you moved it) and edits no startup file or Path;
+it and `global-status` say so if that prefix is not on your Path.
 
 Pick either plugin or classic for Claude Code: installing both loads every
 skill and the reviewer twice, even though hooks and doctrine deduplicate.

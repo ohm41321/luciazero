@@ -263,6 +263,9 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 ถ้าต้องการรันครั้งเดียวโดยไม่เก็บคำสั่งไว้ ใช้ `npx luciazero@latest` ได้เหมือน
 เดิม งาน automation ส่ง `global-install --yes` ได้ ส่วนการใช้แบบโต้ตอบจะถาม
 ก่อนติดตั้งแพ็กเกจหรือเปลี่ยนไฟล์เริ่มต้นของ shell
+บน Windows (ยังไม่ release) `global-install` ใช้ global prefix ของ npm เอง
+(`%APPDATA%\npm` ถ้าไม่ได้ย้าย) และไม่แก้ไฟล์เริ่มต้นใดหรือ Path ทั้ง
+`global-install` และ `global-status` จะแจ้งถ้า prefix นั้นไม่อยู่ใน Path
 
 ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่ง เพราะติดตั้งทั้งคู่
 จะโหลด skill และ reviewer ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้

@@ -532,7 +532,10 @@ function runStrict(state, cwd, command, timeout) {
   });
   if (result.error) return { verdict: "error" };
   // command not found / not executable: an internal error, not a red verify.
-  // 126 and 127 are the POSIX shell's; 9009 is cmd.exe's "is not recognized".
+  // 126 and 127 are the POSIX shell's; 9009 is the ERRORLEVEL cmd.exe sets
+  // for a command it cannot find, which a batch file can pass on. `cmd /c`
+  // given a missing command directly exits 1 instead, so on Windows that one
+  // reads as red, with cmd.exe's own message in the tail: blocked, never green.
   if ([126, 127].includes(result.status) || (WINDOWS && result.status === 9009)) return { verdict: "error" };
   if (result.status === 0) return { verdict: "ok" };
   const tail = ((result.stdout || "") + "\n" + (result.stderr || "")).trim().split(/\r?\n/).slice(-8);

@@ -33,6 +33,20 @@ else
   echo "skip shellcheck (not installed — local only; CI fails without it)"
 fi
 
+# 2b. Never pipe a variable into `grep -q`. grep exits at the first match;
+# under pipefail the writer's next line then meets a closed pipe and the
+# match reads as a failure (CI, `printf: write error: Broken pipe`). How
+# many lines follow the match decides it, not the output's size, so no
+# site is safe by being short. Match from a here-string instead:
+# `grep -q PATTERN <<<"${VAR}"`. Comment lines may name the bad form.
+PIPED_GREP="$(cd "${ROOT}" \
+  && grep -nE '(echo|printf)[^|]*[|][[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "${SCRIPTS[@]}" \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+[ -z "${PIPED_GREP}" ] \
+  || fail "echo/printf piped into grep -q; match from a here-string instead:
+${PIPED_GREP}"
+echo "ok  no variable piped into grep -q"
+
 # 2a. ambient LUCIAZERO_* must not change this suite's outcome. A tiny child
 # sources the same sanitation helper under every poisoned knob; the test
 # entrypoint itself has no environment-controlled early exit.
@@ -70,7 +84,7 @@ echo "ok  ambient LUCIAZERO_* sanitation"
 # 2b. detect.sh runs green against this repo and finds the CI verify command
 OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${ROOT}")" \
   || fail "detect.sh exited non-zero"
-echo "${OUT}" | grep -q 'test.sh' || fail "detect.sh did not surface test.sh from CI config"
+grep -q 'test.sh' <<<"${OUT}" || fail "detect.sh did not surface test.sh from CI config"
 echo "ok  detect.sh smoke run"
 
 # 2c. detect.sh must also match the '- run:' list form, the most common
@@ -81,7 +95,7 @@ printf 'jobs:\n  t:\n    steps:\n      - run: npm run canary-cmd\n' > "${FX}/.gi
 # capture, then grep: grep -q on a pipe would SIGPIPE detect.sh under pipefail
 OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${FX}")" \
   || { rm -rf "${FX}"; fail "detect.sh exited non-zero on the fixture"; }
-echo "${OUT}" | grep -q 'canary-cmd' \
+grep -q 'canary-cmd' <<<"${OUT}" \
   || { rm -rf "${FX}"; fail "detect.sh missed the '- run:' CI form"; }
 rm -rf "${FX}"
 echo "ok  detect.sh '- run:' form"

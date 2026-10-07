@@ -84,7 +84,7 @@ CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" --status >/dev/null \
 rm -rf "${SB}/skills/debug"
 RC=0; SOUT="$(CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || fail "--status green with a skill missing"
-echo "${SOUT}" | grep -q 'MISS.*debug' || fail "--status did not name the missing skill: ${SOUT}"
+grep -q 'MISS.*debug' <<<"${SOUT}" || fail "--status did not name the missing skill: ${SOUT}"
 CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null   # restore for the uninstall checks
 echo "ok  --status green/red"
 
@@ -108,7 +108,7 @@ grep -q 'user-owned alias' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
   || fail "classic uninstall deleted a customized retired alias"
 grep -q 'keep customized reviewer' "${SB}/agents/reviewer.md" \
   || fail "classic uninstall deleted a customized managed agent"
-echo "${UOUT}" | grep -q 'not the exact Luciazero-managed copy; left untouched' \
+grep -q 'not the exact Luciazero-managed copy; left untouched' <<<"${UOUT}" \
   || fail "classic uninstall did not explain preserved customizations"
 [ ! -f "${SB}/.luciazero-version" ] || fail "version sidecar left behind"
 grep -qxF '@RTK.md' "${SB}/CLAUDE.md" || fail "pre-existing CLAUDE.md content damaged"
@@ -413,7 +413,7 @@ RC=0; OUT_OLDNODE="$(PATH="${OLDNODE}/bin:${PATH}" CLAUDE_CONFIG_DIR="${OLDNODE}
   "${ROOT}/install.sh" --with-hooks 2>&1)" || RC=$?
 [ "${RC}" != 0 ] \
   || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks installed against a node that cannot run the hooks"; }
-printf '%s' "${OUT_OLDNODE}" | grep -q 'Node 18+' \
+grep -q 'Node 18+' <<<"${OUT_OLDNODE}" \
   || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks did not name the Node requirement: ${OUT_OLDNODE}"; }
 [ ! -e "${OLDNODE}/cfg/hooks/luciazero-verify.cjs" ] \
   || { rm -rf "${SB3}" "${OLDNODE}"; fail "--with-hooks left hook files behind after refusing to install"; }
@@ -432,7 +432,7 @@ SB3_BAKS="$(find "${SB3}" -maxdepth 1 -name 'settings.json.bak.*' | wc -l | tr -
 echo '// stale marker' >> "${SB3}/hooks/luciazero-verify.cjs"
 RC=0; SOUT="$(CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${SB3}"; fail "--status green with a stale hook file"; }
-echo "${SOUT}" | grep -q 'differs from this checkout' \
+grep -q 'differs from this checkout' <<<"${SOUT}" \
   || { rm -rf "${SB3}"; fail "--status did not name the stale hook: ${SOUT}"; }
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null   # restore
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1
@@ -503,7 +503,7 @@ FXPY
       | TMPDIR="${FXR}/tmp" "${FXSH}" -c "${FXRUN}" 2>&1)" \
       || FX_FAIL "the stored statusLine failed under ${FXSH} in ${FXNAME}: ${SLOUT}"
     # the edit hook above ran for this directory: our status line reports it
-    printf '%s' "${SLOUT}" | grep -q 'unverified' \
+    grep -q 'unverified' <<<"${SLOUT}" \
       || FX_FAIL "the stored statusLine ran something else under ${FXSH} in ${FXNAME}: ${SLOUT}"
   done
   [ ! -e "${SENTINEL}" ] || FX_FAIL "a stored command executed text from its own path: ${FXNAME}"
@@ -647,7 +647,7 @@ CLAUDE_CONFIG_DIR="${LGY}/up dir" "${ROOT}/install.sh" --status >/dev/null \
 mkdir -p "${LGY}/old dir"
 legacy_fixture "${LGY}/old dir"
 RC=0; LGY_ST="$(CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
-if [ "${RC}" = 0 ] || ! printf '%s' "${LGY_ST}" | grep -q 'older Bash version'; then
+if [ "${RC}" = 0 ] || ! grep -q 'older Bash version' <<<"${LGY_ST}"; then
   LGY_FAIL "--status did not flag a Bash-era hook install: ${LGY_ST}"
 fi
 CLAUDE_CONFIG_DIR="${LGY}/old dir" "${ROOT}/uninstall.sh" > "${LGY}/un.out" 2>&1 || true
@@ -1153,7 +1153,7 @@ BC_REF=""
 for BC_F in install.sh uninstall.sh install-codex.sh uninstall-codex.sh; do
   BC_BODY="$(awk '/^(bc_raw|bc_physical|bc_symlink|bc_enter|bakcopy)\(\) \{/,/^\}/' "${ROOT}/${BC_F}")"
   for BC_FN in bc_raw bc_physical bc_symlink bc_enter bakcopy; do
-    printf '%s\n' "${BC_BODY}" | grep -q "^${BC_FN}() {" || fail "${BC_F} has no ${BC_FN} helper"
+    grep -q "^${BC_FN}() {" <<<"${BC_BODY}" || fail "${BC_F} has no ${BC_FN} helper"
   done
   [ -n "${BC_REF}" ] || BC_REF="${BC_BODY}"
   [ "${BC_BODY}" = "${BC_REF}" ] || fail "${BC_F} bakcopy differs from install.sh"
@@ -1275,7 +1275,7 @@ CLAUDE_CONFIG_DIR="${SB5}" "${ROOT}/install.sh" --with-hooks >/dev/null
 rm -rf "${SB5}/hooks"
 RC=0; SOUT="$(CLAUDE_CONFIG_DIR="${SB5}" "${ROOT}/install.sh" --status 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${SB5}"; fail "--status green with dangling hook references"; }
-echo "${SOUT}" | grep -q 'dangling' || { rm -rf "${SB5}"; fail "--status did not name the dangling references: ${SOUT}"; }
+grep -q 'dangling' <<<"${SOUT}" || { rm -rf "${SB5}"; fail "--status did not name the dangling references: ${SOUT}"; }
 rm -rf "${SB5}"
 echo "ok  --status flags dangling hook references"
 
@@ -1336,14 +1336,14 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
     || lb_fail "the short name cannot run from outside the checkout"
   LB_USAGE="$( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
     lucia claude --help )" || lb_fail "lucia claude --help failed"
-  printf '%s' "${LB_USAGE}" | grep -q '^usage: lucia claude' \
+  grep -q '^usage: lucia claude' <<<"${LB_USAGE}" \
     || lb_fail "lucia printed the long name back at the user: ${LB_USAGE}"
 
   # `next` renders the short command when the launcher is on PATH...
   LB_NEXT="$( cd / && PATH="${LB_BIN}:${PATH}" CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
     luciazero-agentd next --state-dir "${LB_STATE}" )" \
     || lb_fail "next failed through the installed launcher"
-  printf '%s' "${LB_NEXT}" | grep -q '^    luciazero-agentd ' \
+  grep -q '^    luciazero-agentd ' <<<"${LB_NEXT}" \
     || lb_fail "next did not render the short command with the launcher installed: ${LB_NEXT}"
   # ...and falls back to the module form when it is not, so a user who has not
   # installed it is never handed a command that is not on their PATH.
@@ -1357,7 +1357,7 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
     CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" \
     python3 -m luciazero_agentd next --state-dir "${LB_STATE}" )" \
     || lb_fail "next failed without the launcher"
-  printf '%s' "${LB_NEXT_BARE}" | grep -q 'python3 -m luciazero_agentd' \
+  grep -q 'python3 -m luciazero_agentd' <<<"${LB_NEXT_BARE}" \
     || lb_fail "next did not fall back to the python form: ${LB_NEXT_BARE}"
 
   # A directory of the caller's must never be able to supply the package.
@@ -1371,7 +1371,7 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
   LB_DECOY="$( cd "${LB_ROOT}/decoy" && PATH="${LB_BIN}:${PATH}" \
     CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" luciazero-agentd sessions --state-dir "${LB_STATE}" )" \
     || lb_fail "the launcher failed next to a decoy package"
-  printf '%s' "${LB_DECOY}" | grep -q HIJACKED \
+  grep -q HIJACKED <<<"${LB_DECOY}" \
     && lb_fail "the caller's working directory supplied the package"
 
   # A ':' in the package path must not split it into two PYTHONPATH entries,
@@ -1383,7 +1383,7 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
   LB_COLON="$( cd "${LB_ROOT}/split" && LUCIAZERO_AGENTD_HOME="${LB_ROOT}/co:lon/agentd" \
     "${LB_BIN}/luciazero-agentd" sessions --state-dir "${LB_STATE}" )" \
     || lb_fail "the launcher failed with a ':' in the package path"
-  printf '%s' "${LB_COLON}" | grep -q HIJACKED \
+  grep -q HIJACKED <<<"${LB_COLON}" \
     && lb_fail "a ':' in the package path let the caller's directory supply the package"
 
   # An executable somebody else put there is never replaced, and never
@@ -1396,7 +1396,7 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
     printf '#!/bin/sh\nexit 3\n' > "${LB_BIN}/${LB_NAME}"
     LB_OUT="$(CLAUDE_CONFIG_DIR="${LB_HOME}/.claude" LUCIAZERO_BIN_DIR="${LB_BIN}" \
       "${ROOT}/install.sh" 2>&1)" || lb_fail "install.sh must not fail on a foreign ${LB_NAME}"
-    printf '%s' "${LB_OUT}" | grep -q 'not the Luciazero launcher' \
+    grep -q 'not the Luciazero launcher' <<<"${LB_OUT}" \
       || lb_fail "install.sh replaced or ignored a foreign ${LB_NAME} silently"
     grep -qF 'exit 3' "${LB_BIN}/${LB_NAME}" || lb_fail "install.sh overwrote a foreign ${LB_NAME}"
     [ -x "${LB_BIN}/${LB_OTHER}" ] \
@@ -1424,8 +1424,8 @@ with Store.open(sys.argv[1] + "/bus.sqlite3") as store:
   LB_SVC="$( cd / && PYTHONPATH="${ROOT}/agentd" python3 -m luciazero_agentd service install \
     --dry-run --root "${LB_ROOT}/svc root" --state-dir "${LB_STATE}" )" \
     || lb_fail "service install --dry-run failed"
-  printf '%s' "${LB_SVC}" | grep -q 'dry run' || lb_fail "service dry run did not say so"
-  if printf '%s' "${LB_SVC}" | grep -q -- '--allow-unattributed'; then
+  grep -q 'dry run' <<<"${LB_SVC}" || lb_fail "service dry run did not say so"
+  if grep -q -- '--allow-unattributed' <<<"${LB_SVC}"; then
     lb_fail "a service must never be planned with --allow-unattributed"
   fi
   [ -z "$(find "${LB_ROOT}/svc root" -type f 2>/dev/null)" ] \

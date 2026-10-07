@@ -191,6 +191,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   handed all of them to one `bash -n`, which parses the first file and reads
   the rest as its arguments. The step now runs one parse per file, counts
   them, and pins the `bash:3.2` image by digest.
+- The suite matches captured output from a here-string, never
+  `echo "$X" | grep -q`. Under `pipefail`, grep's early exit after a match
+  can hand the writer a closed pipe and turn a pass into a failure (seen in
+  CI as `printf: write error: Broken pipe`); 92 sites are rewritten, and the
+  core gate now rejects the piped form in every linted script.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

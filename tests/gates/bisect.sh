@@ -38,18 +38,18 @@ BBAD="$(git -C "${BR}" rev-parse HEAD)"
 BHEAD="${BBAD}"
 BOUT="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify-noskip.sh)" \
   || { rm -rf "${BR}"; fail "safe bisect exited red"; }
-echo "${BOUT}" | grep -q "FIRST_BAD ${BFIRST}" || { rm -rf "${BR}"; fail "safe bisect found wrong commit: ${BOUT}"; }
+grep -q "FIRST_BAD ${BFIRST}" <<<"${BOUT}" || { rm -rf "${BR}"; fail "safe bisect found wrong commit: ${BOUT}"; }
 if ! { [ "$(git -C "${BR}" rev-parse HEAD)" = "${BHEAD}" ] && [ "$(git -C "${BR}" status --porcelain)" = "" ]; }; then
   rm -rf "${BR}"; fail "safe bisect mutated caller worktree"
 fi
 [ "$(git -C "${BR}" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ] \
   || { rm -rf "${BR}"; fail "safe bisect leaked a temporary worktree"; }
 RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./verify.sh 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 2 ] && echo "${BERR}" | grep -q 'could not identify a unique first bad commit'; }; then
+if ! { [ "${RC}" -eq 2 ] && grep -q 'could not identify a unique first bad commit' <<<"${BERR}"; }; then
   rm -rf "${BR}"; fail "safe bisect did not preserve ambiguous exit-125 semantics (rc=${RC}): ${BERR}"
 fi
 RC=0; BERR="$(cd "${BR}" && "${ROOT}/skills/bisect/scripts/safe-bisect.sh" --good "${BGOOD}" --bad "${BBAD}" -- ./missing-verify 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 66 ] && echo "${BERR}" | grep -q 'could not be evaluated'; }; then
+if ! { [ "${RC}" -eq 66 ] && grep -q 'could not be evaluated' <<<"${BERR}"; }; then
   rm -rf "${BR}"; fail "safe bisect treated missing command as a bad revision (rc=${RC}): ${BERR}"
 fi
 rm -rf "${BR}"

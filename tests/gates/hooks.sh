@@ -37,7 +37,7 @@ RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" 
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "stop hook nudged on a docs-only write after green verify (rc=${RC})"; }
 SL="$(echo '{"model":{"display_name":"M"},"workspace":{"current_dir":"/hook/test/proj"}}' \
   | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
-printf '%s' "${SL}" | grep -q '✅ verify' || { rm -rf "${HT}"; fail "statusline missed green verify state: ${SL}"; }
+grep -q '✅ verify' <<<"${SL}" || { rm -rf "${HT}"; fail "statusline missed green verify state: ${SL}"; }
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'
@@ -70,14 +70,14 @@ RC=0; PERR="$(echo "${PEJ}" | TMPDIR="${HT}" \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1)" || RC=$?
 [ "${RC}" = 2 ] \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped verify regex still counted 'echo hello' as a verify run (rc=${RC})"; }
-if printf '%s' "${PERR}" | grep -q 'Strict verify gate'; then
+if grep -q 'Strict verify gate' <<<"${PERR}"; then
   rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command reached the strict gate"
 fi
 if [ -e "${PEJ_DIR}/strict-ran" ]; then
   rm -rf "${HT}" "${PEJ_DIR}"; fail "project-scoped strict command was executed at stop"
 fi
 SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
-printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_VERIFY_REGEX' \
+grep -q 'LUCIAZERO_VERIFY_REGEX' <<<"${SESS_OUT}" \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "SessionStart did not warn about the committed LUCIAZERO_* env block"; }
 # the lookup runs on every Bash call, so a repository must not be able to hang
 # it (fifo) or make it chew a huge file: both refuse the knobs, neither blocks
@@ -100,7 +100,7 @@ python3 -c 'import sys; open(sys.argv[1], "w").write("{\"env\": {}}" + " " * 1_1
 # install, whose wired classic hook would make this copy stand down
 SESS_OUT="$(echo "${PEJ}" | TMPDIR="${HT}" HOME="${PEJ_DIR}/no-home" \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
-printf '%s' "${SESS_OUT}" | grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' \
+grep -q 'LUCIAZERO_STRICT_VERIFY_CMD' <<<"${SESS_OUT}" \
   || { rm -rf "${HT}" "${PEJ_DIR}"; fail "an oversized settings.json was parsed instead of refused"; }
 # LUCIAZERO_VERIFY_CMD normally tightens matching, but from committed scope it
 # is a false-green lever: point it at `echo` and `echo hello` counts as a verify
@@ -265,8 +265,8 @@ echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom; exit 1' \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not block a red verify (rc=${RC})"; }
-echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate blocked without its message: ${ERR}"; }
-echo "${ERR}" | grep -q 'boom' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not quote the failing output: ${ERR}"; }
+grep -q 'Strict verify gate' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict gate blocked without its message: ${ERR}"; }
+grep -q 'boom' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not quote the failing output: ${ERR}"; }
 RC=0; printf '{"cwd":"%s","stop_hook_active":true}' "${SPJ}" \
   | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='exit 1' "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict gate re-blocked its own continuation (rc=${RC})"; }
@@ -285,15 +285,15 @@ echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='sleep 3' LUCIAZERO_STRICT_TIMEOUT=1 \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout did not degrade to the nudge (rc=${RC})"; }
-echo "${ERR}" | grep -q 'Doctrine rule 1' || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout produced the wrong message: ${ERR}"; }
+grep -q 'Doctrine rule 1' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout produced the wrong message: ${ERR}"; }
 # fail-open: command not found (shell 127) is an internal error, not a red
 # verify — must degrade to the nudge, never fabricate "RED" evidence
 echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='./no-such-cmd-xyz.sh' \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command did not degrade to the nudge (rc=${RC})"; }
-echo "${ERR}" | grep -q 'Doctrine rule 1' || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command message wrong: ${ERR}"; }
-! echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command fabricated a RED verdict: ${ERR}"; }
+grep -q 'Doctrine rule 1' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command message wrong: ${ERR}"; }
+! grep -q 'Strict verify gate' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command fabricated a RED verdict: ${ERR}"; }
 # a broad-regex false green (`cat test.sh` exits 0) must NOT disarm the gate:
 # the fast path only trusts a green the strict command itself produced
 echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
@@ -302,7 +302,7 @@ printf '{"cwd":"%s","tool_input":{"command":"cat test.sh"},"tool_response":{"exi
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo poisoned; exit 1' \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "broad-regex green disarmed the strict gate (rc=${RC})"; }
-echo "${ERR}" | grep -q 'Strict verify gate' || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not run past the poisoned green: ${ERR}"; }
+grep -q 'Strict verify gate' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict gate did not run past the poisoned green: ${ERR}"; }
 # unparseable stdin: the strict gate must not run a command on guessed state
 RC=0; printf 'not json' | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo boom; exit 1' \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
@@ -317,14 +317,14 @@ OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luci
 [ -z "${OUT}" ] || { rm -rf "${HT}" "${SD}"; fail "session hook spoke without a relay: ${OUT}"; }
 echo '{}' > "${SD}/LUCIA_RELAY.json"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
-echo "${OUT}" | grep -q 'LUCIA_RELAY.json exists' || { rm -rf "${HT}" "${SD}"; fail "session hook missed the relay: ${OUT}"; }
+grep -q 'LUCIA_RELAY.json exists' <<<"${OUT}" || { rm -rf "${HT}" "${SD}"; fail "session hook missed the relay: ${OUT}"; }
 touch -t 202001010000 "${SD}/LUCIA_RELAY.json"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
-echo "${OUT}" | grep -q 'stale' || { rm -rf "${HT}" "${SD}"; fail "session hook missed staleness: ${OUT}"; }
+grep -q 'stale' <<<"${OUT}" || { rm -rf "${HT}" "${SD}"; fail "session hook missed staleness: ${OUT}"; }
 rm -f "${SD}/LUCIA_RELAY.json"
 echo legacy > "${SD}/HANDOFF.md"
 OUT="$(printf '{"cwd":"%s"}' "${SD}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session)"
-echo "${OUT}" | grep -q 'Legacy HANDOFF.md' || { rm -rf "${HT}" "${SD}"; fail "session hook missed legacy migration: ${OUT}"; }
+grep -q 'Legacy HANDOFF.md' <<<"${OUT}" || { rm -rf "${HT}" "${SD}"; fail "session hook missed legacy migration: ${OUT}"; }
 RC=0; printf 'not json' | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" session >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}" "${SD}"; fail "session hook not fail-open on garbage stdin (rc=${RC})"; }
 rm -rf "${HT}" "${SD}"
@@ -524,7 +524,7 @@ printf '{"cwd":"%s","session_id":"evil"}' "${SPJ4}" \
 grep -qx sentinel "${EVILTARGET}/keep" || fail "hook followed hostile state symlink"
 ESL="$(printf '{"workspace":{"current_dir":"%s"}}' "${SPJ4}" \
   | env TMPDIR="${EVILTMP}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
-printf '%s' "${ESL}" | grep -q 'no verify yet' \
+grep -q 'no verify yet' <<<"${ESL}" \
   || fail "statusline trusted forged state through hostile symlink: ${ESL}"
 rm -rf "${EVILTMP}" "${EVILTARGET}"
 # a config directory may sit inside a project whose package.json declares ES
@@ -541,7 +541,7 @@ RC=0; echo "${ESMJ}" | TMPDIR="${ESM_TMP}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claud
 ESL="$(printf '{"workspace":{"current_dir":"%s/proj"}}' "${ESM}" \
   | TMPDIR="${ESM_TMP}" node "${ESM}/proj/.claude/hooks/luciazero-statusline.cjs" 2>&1)" \
   || { rm -rf "${ESM}" "${ESM_TMP}"; fail "the statusline did not run inside a type=module project: ${ESL}"; }
-printf '%s' "${ESL}" | grep -q 'unverified' \
+grep -q 'unverified' <<<"${ESL}" \
   || { rm -rf "${ESM}" "${ESM_TMP}"; fail "inside a type=module project the statusline missed the tracked edit: ${ESL}"; }
 RC=0; echo "${ESMJ}" | TMPDIR="${ESM_TMP}" CLAUDE_CONFIG_DIR="${ESM}/proj/.claude" \
   node "${ESM}/proj/.claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
@@ -568,8 +568,8 @@ rm -f "${SC}/luciazero-stats.log.tmp" "${STMP}/rotation-target"
 touch "${SC}/luciazero-heuristics.md" "${SC}/CLAUDE.md"
 service_guard  # the first uninstall.sh of the run: prove the guard is alive
 UOUT="$(CLAUDE_CONFIG_DIR="${SC}" "${ROOT}/uninstall.sh")"
-printf '%s\n' "${UOUT}" | grep -q 'kept luciazero-stats.log' || fail "uninstall must keep + mention the stats log"
-printf '%s\n' "${UOUT}" | grep -q 'kept luciazero-heuristics.md' || fail "uninstall must keep + mention the heuristics file"
+grep -q 'kept luciazero-stats.log' <<<"${UOUT}" || fail "uninstall must keep + mention the stats log"
+grep -q 'kept luciazero-heuristics.md' <<<"${UOUT}" || fail "uninstall must keep + mention the heuristics file"
 { [ -f "${SC}/luciazero-stats.log" ] && [ -f "${SC}/luciazero-heuristics.md" ]; } \
   || fail "uninstall deleted learned data"
 rm -rf "${SC}" "${STMP}"
@@ -612,11 +612,11 @@ assert any("redundant" in item or "no edit since the previous green" in item for
   printf '%s' "${DJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["records"] == 2 and d["outcomes"]["nudge"] == 1' \
     || { rm -rf "${DR}"; fail "discipline project filter wrong"; }
   DOUT="$(node "${ROOT}/bin/luciazero.js" discipline --log "${DR}/stats.log" --days 30 --now 2026-08-12T12:00:00Z)"
-  echo "${DOUT}" | grep -q 'Luciazero Discipline Report' \
+  grep -q 'Luciazero Discipline Report' <<<"${DOUT}" \
     || { rm -rf "${DR}"; fail "discipline CLI route missing report"; }
-  echo "${DOUT}" | grep -q 'Latency Telemetry' \
+  grep -q 'Latency Telemetry' <<<"${DOUT}" \
     || { rm -rf "${DR}"; fail "discipline text report missing telemetry"; }
-  echo "${DOUT}" | grep -q '1 redundant green' \
+  grep -q '1 redundant green' <<<"${DOUT}" \
     || { rm -rf "${DR}"; fail "discipline text report missing the verify line"; }
   # The report is pure Node and must route on native Windows too, where the
   # router runs every route under Node rather than Bash.
@@ -628,7 +628,7 @@ process.argv = [process.execPath, router, "discipline", "--log", log,
 require(router);
 JS
 )"
-  echo "${DWIN}" | grep -q 'Luciazero Discipline Report' \
+  grep -q 'Luciazero Discipline Report' <<<"${DWIN}" \
     || { rm -rf "${DR}"; fail "native-Windows discipline route was blocked by Bash guard"; }
   RC=0; node "${ROOT}/bin/luciazero.js" typo-command >/dev/null 2>&1 || RC=$?
   [ "${RC}" -eq 64 ] || { rm -rf "${DR}"; fail "unknown CLI command did not fail with usage (rc=${RC})"; }

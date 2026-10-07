@@ -32,7 +32,7 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" \
     || { rm -rf "${EWORK}"; fail "eval grader ${TN} rejects its own reference solution: ${OUT}"; }
   rm -rf "${EWORK}"
-  echo "${OUT}" | grep -q '^SCORE ' || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
+  grep -q '^SCORE ' <<<"${OUT}" || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
   EWORK="$(mktemp -d)"
   cp -R "${TDIR}project/." "${EWORK}/"
   if [ -x "${TDIR}setup.sh" ]; then
@@ -82,7 +82,7 @@ cp -R "${RH}/project/." "${RHW}/"
 [ -z "$(git -C "${RHW}" status --porcelain)" ] || fail "regression-history: setup.sh leaves the work copy dirty"
 PLANTED="refactor: track the running line length instead of re-joining"
 RHLOG="$(git -C "${RHW}" log --format=%s)"
-printf '%s\n' "${RHLOG}" | grep -qxF "${PLANTED}" || fail "regression-history: planted commit missing from the log"
+grep -qxF "${PLANTED}" <<<"${RHLOG}" || fail "regression-history: planted commit missing from the log"
 mktmp RHC
 for SHA in $(git -C "${RHW}" rev-list --reverse "v1.0^..HEAD"); do
   rm -rf "${RHC:?}"/* "${RHC}"/.[!.]* 2>/dev/null || true
@@ -105,9 +105,9 @@ FOUND="$(git -C "${RHW}" rev-parse --verify -q refs/bisect/bad 2>/dev/null || tr
 # red on repo-clean-state, and the line names why
 cp -R "${RH}/reference/." "${RHW}/"
 OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT repo-clean-state fail' \
+grep -qx 'CRIT repo-clean-state fail' <<<"${OUT}" \
   || fail "regression-history: a bisect left in progress is not graded red: ${OUT}"
-echo "${OUT}" | grep -q 'bisect-in-progress' || fail "regression-history: leftover bisect not named: ${OUT}"
+grep -q 'bisect-in-progress' <<<"${OUT}" || fail "regression-history: leftover bisect not named: ${OUT}"
 git -C "${RHW}" checkout -q -- .
 git -C "${RHW}" bisect reset >/dev/null 2>&1 || fail "regression-history: git bisect reset failed"
 cp -R "${RH}/reference/." "${RHW}/"
@@ -116,7 +116,7 @@ git -C "${RHW}" checkout -q -- .
 git -C "${RHW}" checkout -q --detach v1.1
 cp -R "${RH}/reference/." "${RHW}/"
 OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
-echo "${OUT}" | grep -q 'detached-HEAD' || fail "regression-history: detached HEAD not graded red: ${OUT}"
+grep -q 'detached-HEAD' <<<"${OUT}" || fail "regression-history: detached HEAD not graded red: ${OUT}"
 echo "ok  regression-history history premises + leftover bisect graded red"
 
 # 4d1c. no-verify: the grader finds a verify command by convention, and
@@ -146,7 +146,7 @@ rm "${NVW}/test_versions.py"
 OUT="$("${NV}/grade.sh" "${NVW}" 2>&1)" || fail "no-verify: tests/ without __init__.py not discovered: ${OUT}"
 printf 'import unittest\n' > "${NVW}/tests/test_versions.py"
 OUT="$("${NV}/grade.sh" "${NVW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+grep -qx 'CRIT verify-green fail' <<<"${OUT}" \
   || fail "no-verify: a test module that runs no tests counts as green: ${OUT}"
 nv_tree NVW
 cp "${NV}/reference/versions.py" "${NVW}/versions.py"
@@ -215,7 +215,7 @@ OUT="$(PYTHONPATH="${NVSTUB}" LZ_PYTEST_STUB_MARK="${NVSTUB}/ran" "${NV}/grade.s
 [ -f "${NVSTUB}/ran" ] || fail "no-verify: the pytest branch did not run the pytest command"
 printf 'import unittest\n' > "${NVW}/test_versions.py"
 OUT="$(PYTHONPATH="${NVSTUB}" "${NV}/grade.sh" "${NVW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+grep -qx 'CRIT verify-green fail' <<<"${OUT}" \
   || fail "no-verify: a pytest run that reports no tests counts as green: ${OUT}"
 echo "ok  no-verify discovery: tests/, bash verify.sh, module-named docs, pytest stub, zero-test runs red"
 
@@ -352,7 +352,7 @@ printf '%s\n' \
   > "${CRF}/codex-bad-usage.jsonl"
 RC=0; OUT="$("${CR}" "${CRF}/notlogged.json" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
 RC=0; "${CR}" "${CRF}/sneaky.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a login error without is_error"; }
 "${CR}" "${CRF}/good.json" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected a healthy result"; }
@@ -374,7 +374,7 @@ printf ' \n\t\n' > "${CRF}/blank.log"
 for f in empty.log blank.log; do
   RC=0; OUT="$("${CR}" "${CRF}/${f}" 2>&1)" || RC=$?
   [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a log with no output (${f})"; }
-  echo "${OUT}" | grep -q 'no output' || { rm -rf "${CRF}"; fail "check-result empty-log rejection lost the reason: ${OUT}"; }
+  grep -q 'no output' <<<"${OUT}" || { rm -rf "${CRF}"; fail "check-result empty-log rejection lost the reason: ${OUT}"; }
 done
 # --output-format stream-json writes one event per line and the result
 # object last; the same acceptance and rejection rules apply to that final
@@ -397,10 +397,10 @@ printf '%s\n' \
   || { rm -rf "${CRF}"; fail "check-result rejected a healthy stream-json log"; }
 RC=0; OUT="$("${CR}" "${CRF}/stream-notlogged.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in stream-json result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "stream-json rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "stream-json rejection lost the reason: ${OUT}"; }
 RC=0; OUT="$("${CR}" "${CRF}/stream-noresult.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a stream-json log with no result event"; }
-echo "${OUT}" | grep -q 'no result event' || { rm -rf "${CRF}"; fail "stream-json no-result rejection lost the reason: ${OUT}"; }
+grep -q 'no result event' <<<"${OUT}" || { rm -rf "${CRF}"; fail "stream-json no-result rejection lost the reason: ${OUT}"; }
 # a stray non-JSON line between two events (a warning on the same
 # descriptor) does not turn the stream into "plain text": the result event
 # after it is still read, and still refused
@@ -411,7 +411,7 @@ printf '%s\n' \
   > "${CRF}/stream-noise.jsonl"
 RC=0; OUT="$("${CR}" "${CRF}/stream-noise.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result read a stream with a stray line as plain text and accepted an error result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "noisy stream rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "noisy stream rejection lost the reason: ${OUT}"; }
 rm -rf "${CRF}"
 echo "ok  check-result rejects error payloads behind exit 0"
 
@@ -1181,7 +1181,7 @@ cp -R "${RPX}/bites" "${RPX}/bothred"
 ST1="$(cd "${RPX}/bites" && git status --porcelain)"
 RC=0; OUT="$(cd "${RPX}/bites" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a biting test: ${OUT}"; }
-echo "${OUT}" | grep -q '^PASS' || { rm -rf "${RPX}"; fail "revert-probe did not print PASS: ${OUT}"; }
+grep -q '^PASS' <<<"${OUT}" || { rm -rf "${RPX}"; fail "revert-probe did not print PASS: ${OUT}"; }
 ST2="$(cd "${RPX}/bites" && git status --porcelain)"
 [ "${ST1}" = "${ST2}" ] || { rm -rf "${RPX}"; fail "revert-probe touched the caller's working tree"; }
 [ "$(cd "${RPX}/bites" && git worktree list | wc -l | tr -d ' ')" = 1 ] \
@@ -1194,12 +1194,12 @@ ST2="$(cd "${RPX}/bites" && git status --porcelain)"
 )
 RC=0; OUT="$(cd "${RPX}/vacuous" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 1 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a vacuous test (want 1): ${OUT}"; }
-echo "${OUT}" | grep -q 'stay green' || { rm -rf "${RPX}"; fail "vacuous-test verdict wrong: ${OUT}"; }
+grep -q 'stay green' <<<"${OUT}" || { rm -rf "${RPX}"; fail "vacuous-test verdict wrong: ${OUT}"; }
 # (iii) not a git repo -> UNASSESSABLE, exit 2
 mkdir -p "${RPX}/nogit"
 RC=0; OUT="$(cd "${RPX}/nogit" && "${RP}" 'true')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} outside git (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q '^UNASSESSABLE' || { rm -rf "${RPX}"; fail "missing UNASSESSABLE marker: ${OUT}"; }
+grep -q '^UNASSESSABLE' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing UNASSESSABLE marker: ${OUT}"; }
 # (iv) a non-ASCII test filename (C-quoted in git's plain output, raw with
 # -z) must still be collected — regression: it was silently dropped
 mkdir -p "${RPX}/uni/tests"
@@ -1238,7 +1238,7 @@ RC=0; OUT="$(cd "${RPX}/root-script" && "${RP}" './test.sh')" || RC=$?
 )
 RC=0; OUT="$(cd "${RPX}/nocmd" && "${RP}" 'luciazero-not-a-real-command tests/test_calc.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a missing command (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'exit 127' || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
+grep -q 'exit 127' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
 # (vii) the old tree cannot import a module the change adds — a red run that
 # proves the file is new, not that the test asserts anything -> UNASSESSABLE
 mkdir -p "${RPX}/newmod/tests"
@@ -1253,7 +1253,7 @@ mkdir -p "${RPX}/newmod/tests"
 )
 RC=0; OUT="$(cd "${RPX}/newmod" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_helper.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a parent-only import failure (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
+grep -q 'never loaded the tests' <<<"${OUT}" || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
 # (viii) a test that is red on the old code AND on the current code proves
 # nothing about the change -> UNASSESSABLE
 (
@@ -1263,7 +1263,7 @@ echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "imp
 )
 RC=0; OUT="$(cd "${RPX}/bothred" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} when current code fails too (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'also fails on the current code' \
+grep -q 'also fails on the current code' <<<"${OUT}" \
   || { rm -rf "${RPX}"; fail "current-code control verdict wrong: ${OUT}"; }
 # (ix) a whole-suite verify whose failure belongs to an unrelated broken test
 # is not attributable to the changed tests -> UNASSESSABLE
@@ -1281,7 +1281,7 @@ mkdir -p "${RPX}/unrelated/tests"
 )
 RC=0; OUT="$(cd "${RPX}/unrelated" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an unrelated failure (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'cannot be attributed' \
+grep -q 'cannot be attributed' <<<"${OUT}" \
   || { rm -rf "${RPX}"; fail "attribution verdict wrong: ${OUT}"; }
 # (x) an untargeted suite still passes when the failure output names the
 # changed test, and says so
@@ -1298,7 +1298,7 @@ mkdir -p "${RPX}/suite/tests"
 )
 RC=0; OUT="$(cd "${RPX}/suite" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an untargeted but attributable suite: ${OUT}"; }
-echo "${OUT}" | grep -q 'not targeted' || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
+grep -q 'not targeted' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
 rm -rf "${RPX}"
 echo "ok  revert-probe bites/vacuous/unassessable"
 
@@ -1312,7 +1312,7 @@ DT="$(mktemp -d)"
 RC=0
 GOUT="$("${ROOT}/eval/tasks/slugify/grade.sh" "${DT}/demo" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${DT}"; fail "grader passed the untouched demo target: ${GOUT}"; }
-echo "${GOUT}" | grep -q ' fail' \
+grep -q ' fail' <<<"${GOUT}" \
   || { rm -rf "${DT}"; fail "grader exit ${RC} but no CRIT fail line in output: ${GOUT}"; }
 # a symlinked path into the repo must not slip past the in-repo refusal
 ln -s "${ROOT}" "${DT}/repolink"

@@ -57,30 +57,30 @@ cp -R "${ROOT}/site/." "${SITE_FX}/"
 sed '/rel="canonical"/d' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a page without its canonical link"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: canonical must be exactly' \
+grep -q '^FAIL: index.html: canonical must be exactly' <<<"${SITE_OUT}" \
   || fail "site check failed the canonical fixture for another reason: ${SITE_OUT}"
 # The count a search result shows is the meta description's, not the body's.
 sed '/name="description"/s/13 skills/12 skills/' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a stale skill count in the meta description"
-printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: states \['12', '13'\] skills" \
+grep -q "^FAIL: index.html: states \['12', '13'\] skills" <<<"${SITE_OUT}" \
   || fail "site check failed the skill-count fixture for another reason: ${SITE_OUT}"
 # Search Console re-reads its verification tag; a deploy without it unverifies the site.
 sed '/name="google-site-verification"/d' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a home page without its Search Console verification tag"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: home page needs one google-site-verification' \
+grep -q '^FAIL: index.html: home page needs one google-site-verification' <<<"${SITE_OUT}" \
   || fail "site check failed the verification fixture for another reason: ${SITE_OUT}"
 sed 's#poster="intro-poster.jpg"#poster="missing.jpg"#' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a video poster that is not in the site"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: missing.jpg does not resolve' \
+grep -q '^FAIL: index.html: missing.jpg does not resolve' <<<"${SITE_OUT}" \
   || fail "site check failed the video poster fixture for another reason: ${SITE_OUT}"
 sed 's#"contentUrl": "https://ohm41321.github.io/luciazero/intro.mp4"#"contentUrl": "https://ohm41321.github.io/luciazero/missing.mp4"#' \
   "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a JSON-LD contentUrl that is not in the site"
-printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: JSON-LD contentUrl 'https://ohm41321.github.io/luciazero/missing.mp4'" \
+grep -q "^FAIL: index.html: JSON-LD contentUrl 'https://ohm41321.github.io/luciazero/missing.mp4'" <<<"${SITE_OUT}" \
   || fail "site check failed the contentUrl fixture for another reason: ${SITE_OUT}"
 grep -qF '(https://ohm41321.github.io/luciazero/)' "${ROOT}/README.md" \
   || fail "README.md lost its link to the website"
@@ -186,11 +186,11 @@ OUT_C="$(CODEX_HOME="${AR}/cx2" bash "${ROOT}/uninstall-codex.sh" -q 2>&1)"; RC_
 set -e
 { [ "${RC_A}" -ne 0 ] && [ ! -e "${AR}/cx" ]; } \
   || fail "install-codex.sh must reject unknown options without installing (rc=${RC_A})"
-printf '%s\n' "${OUT_A}" | grep -q 'unknown option' || fail "install-codex.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_A}" || fail "install-codex.sh rejection message missing"
 [ "${RC_B}" -ne 0 ] || fail "uninstall.sh must reject unknown options (rc=${RC_B})"
-printf '%s\n' "${OUT_B}" | grep -q 'unknown option' || fail "uninstall.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_B}" || fail "uninstall.sh rejection message missing"
 [ "${RC_C}" -ne 0 ] || fail "uninstall-codex.sh must reject unknown options (rc=${RC_C})"
-printf '%s\n' "${OUT_C}" | grep -q 'unknown option' || fail "uninstall-codex.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_C}" || fail "uninstall-codex.sh rejection message missing"
 rm -rf "${AR}"
 echo "ok  installers reject unknown options"
 
@@ -404,7 +404,7 @@ SH
     || { rm -rf "${GI}"; fail "global-install duplicated or changed its PATH block on reinstall"; }
   GSTATUS="$(HOME="${GI}/home" SHELL=/bin/zsh node "${ROOT}/bin/luciazero.js" global-status)" \
     || { rm -rf "${GI}"; fail "global-status rejected the installed command"; }
-  printf '%s\n' "${GSTATUS}" | grep -qF 'luciazero is installed globally' \
+  grep -qF 'luciazero is installed globally' <<<"${GSTATUS}" \
     || { rm -rf "${GI}"; fail "global-status omitted the installed state"; }
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-uninstall --yes >/dev/null \
@@ -648,8 +648,8 @@ process.argv = [process.execPath, router, "--status"];
 require(router);
 JS
 )" || UC_WIN_RC=$?
-  if [ "${UC_WIN_RC}" != 1 ] || ! printf '%s\n' "${UC_WIN}" | grep -q 'not installed\|MISS' \
-    || printf '%s\n' "${UC_WIN}" | grep -qi 'wsl\|need bash'; then
+  if [ "${UC_WIN_RC}" != 1 ] || ! grep -q 'not installed\|MISS' <<<"${UC_WIN}" \
+    || grep -qi 'wsl\|need bash' <<<"${UC_WIN}"; then
     rm -rf "${UC}"; fail "the win32 install route did not run the Node installer (rc=${UC_WIN_RC}): ${UC_WIN}"
   fi
   [ -z "$(ls -A "${UC}/win-cfg")" ] || { rm -rf "${UC}"; fail "the win32 --status route wrote files"; }
@@ -687,9 +687,9 @@ JS
     || { rm -rf "${UU}"; fail "Claude update did not refresh version sidecar"; }
   [ "$(cat "${UU}/codex/.luciazero-version")" = "${PV}" ] \
     || { rm -rf "${UU}"; fail "Codex update did not refresh version sidecar"; }
-  printf '%s\n' "${UOUT}" | grep -q 'Claude classic + hooks' \
+  grep -q 'Claude classic + hooks' <<<"${UOUT}" \
     || { rm -rf "${UU}"; fail "update output omitted detected hook mode"; }
-  printf '%s\n' "${UOUT}" | grep -q 'Codex' \
+  grep -q 'Codex' <<<"${UOUT}" \
     || { rm -rf "${UU}"; fail "update output omitted detected Codex install"; }
   RC=0
   CLAUDE_CONFIG_DIR="${UU}/empty-claude" CODEX_HOME="${UU}/empty-codex" \

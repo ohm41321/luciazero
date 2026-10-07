@@ -91,7 +91,7 @@ expect_red() { # expect_red <label> <failure line the discipline tier must print
   ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
     PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
   [ "${RC}" = 1 ] || { rm -rf "${TM}"; fail "$1: discipline tier exited ${RC}, want 1"; }
-  printf '%s\n' "${ERR}" | grep -qF "$2" \
+  grep -qF "$2" <<<"${ERR}" \
     || { rm -rf "${TM}"; fail "$1: discipline tier went red for another reason: $(printf '%s\n' "${ERR}" | grep '^FAIL' | head -1)"; }
   no_leftovers "$1"
 }
@@ -150,19 +150,19 @@ grep -q '^exit=3$' "${LAST}" || fail "the red run's meta does not record exit=3"
 grep -q '^tier=fast$' "${LAST}" || fail "the meta does not record the tier"
 grep -qx 'ok  stub' "${LAST%.meta}.out" || fail "the sample kept no stdout"
 REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
-echo "${REPORT}" | grep -qE '^fast +hooks +3 +20 +30 +10 +30$' \
+grep -qE '^fast +hooks +3 +20 +30 +10 +30$' <<<"${REPORT}" \
   || fail "test-timings.sh --report ranks wrong (want fast hooks n=3 median=20 p95=30 min=10 max=30): ${REPORT}"
-echo "${REPORT}" | grep -q '^skipped 1 red run(s)$' || fail "the report did not skip the red run: ${REPORT}"
+grep -q '^skipped 1 red run(s)$' <<<"${REPORT}" || fail "the report did not skip the red run: ${REPORT}"
 # the samples' commits are named; the stub repo has no git, so all say unknown
-echo "${REPORT}" | grep -q '^fast: commits unknown x3$' || fail "the report does not name the samples' commit: ${REPORT}"
-echo "${REPORT}" | grep -q '^warning:' && fail "the report warned about mixed revisions over one: ${REPORT}"
+grep -q '^fast: commits unknown x3$' <<<"${REPORT}" || fail "the report does not name the samples' commit: ${REPORT}"
+grep -q '^warning:' <<<"${REPORT}" && fail "the report warned about mixed revisions over one: ${REPORT}"
 # one sample from another revision (a green one; the red run is skipped anyway)
 FIRST="$(find "${TS}/samples" -name '*-fast.meta' | sort | head -1)"
 sed 's/^commit=.*/commit=abc1234+dirty/' "${FIRST}" > "${FIRST}.new" && mv "${FIRST}.new" "${FIRST}"
 REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
-echo "${REPORT}" | grep -q '^fast: commits unknown x2, abc1234+dirty x1$' \
+grep -q '^fast: commits unknown x2, abc1234+dirty x1$' <<<"${REPORT}" \
   || fail "the report does not list every commit with its count: ${REPORT}"
-echo "${REPORT}" | grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' \
+grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' <<<"${REPORT}" \
   || fail "the report did not warn that the samples span two revisions: ${REPORT}"
 LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | grep -q '^no samples under ' \
   || fail "the report over no samples is not the one-line notice"

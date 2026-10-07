@@ -168,14 +168,14 @@ done
 ok "phase 1: both launcher names installed, marked, and pointed at the clone"
 
 USAGE="$(cd / && HOME="${H1}" "${BIN}/lucia" claude --help)" || fail "lucia claude --help failed"
-printf '%s' "${USAGE}" | grep -q '^usage: lucia claude' \
+grep -q '^usage: lucia claude' <<<"${USAGE}" \
   || fail "lucia printed the long name back: ${USAGE}"
 ok "phase 1: lucia claude --help runs from / and says 'lucia'"
 
 BUS="${WORK}/bus"
 SESS="$(cd / && HOME="${H1}" LUCIAZERO_AGENT_BUS_HOME="${BUS}" "${BIN}/lucia" sessions 2>&1)" \
   && fail "lucia sessions found a bus that never ran: ${SESS}"
-printf '%s' "${SESS}" | grep -q 'no bus database' \
+grep -q 'no bus database' <<<"${SESS}" \
   || fail "lucia sessions failed for another reason: ${SESS}"
 [ ! -e "${BUS}/bus.sqlite3" ] || fail "a read command created a bus database"
 ok "phase 1: lucia sessions on an unused bus says so and creates nothing"

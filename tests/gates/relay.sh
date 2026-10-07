@@ -154,7 +154,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] ==
 RC=0; "${RELAY}" draft --root "${RR}" --write >/dev/null 2>&1 || RC=$?
 [ "${RC}" -eq 1 ] || { rm -rf "${RR}"; fail "draft --write replaced an existing manifest (rc=${RC})"; }
 RC=0; FOUT="$("${RELAY}" finalize --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${FOUT}" | grep -q '^ERROR goal is required' && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
+if ! { [ "${RC}" -eq 1 ] && grep -q '^ERROR goal is required' <<<"${FOUT}" && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
   rm -rf "${RR}"; fail "finalize did not report validation errors before rendering (rc=${RC})"
 fi
 python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
@@ -167,7 +167,7 @@ open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
 FOUT="$("${RELAY}" finalize --root "${RR}")" \
   || { rm -rf "${RR}"; fail "finalize failed on a valid same-machine relay"; }
-if ! { [ -f "${RR}/LUCIA_RELAY.md" ] && [ "$(echo "${FOUT}" | grep -c .)" -eq 1 ] && echo "${FOUT}" | grep -q '^WROTE .*LUCIA_RELAY.md$'; }; then
+if ! { [ -f "${RR}/LUCIA_RELAY.md" ] && [ "$(echo "${FOUT}" | grep -c .)" -eq 1 ] && grep -q '^WROTE .*LUCIA_RELAY.md$' <<<"${FOUT}"; }; then
   rm -rf "${RR}"; fail "same-machine finalize did not stop after rendering: ${FOUT}"
 fi
 RC=0; "${RELAY}" finalize --root "${RR}" --envelope-out "${RR}.envelope.json" >/dev/null 2>&1 || RC=$?
@@ -309,7 +309,7 @@ if ! { [ "${RC}" -eq 1 ] && [ ! -e "${RR}/relay-envelope.json" ]; }; then
 fi
 FOUT="$("${RELAY}" finalize --root "${RR}" --envelope-out "${RENVELOPE_FILE}")" \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize failed"; }
-echo "${FOUT}" | grep -q '"trusted_manifest_sha256": "'"${RMANIFEST}"'"' \
+grep -q '"trusted_manifest_sha256": "'"${RMANIFEST}"'"' <<<"${FOUT}" \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize did not print the trusted envelope"; }
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] == "luciazero-relay-envelope" and d["trusted_manifest_sha256"] == sys.argv[2] and d["trusted_head"] == sys.argv[3]' \
   "${RENVELOPE_FILE}" "${RMANIFEST}" "${RHEAD}" \
@@ -564,10 +564,10 @@ echo "ok  lucia relay lifecycle + fresh-machine receiver verification"
 # than printing a canned transcript.
 RDEMO="$(DEMO_PAUSE=0 "${ROOT}/docs/assets/relay-demo.sh")" \
   || fail "relay demo exited red"
-echo "${RDEMO}" | grep -q 'Repository drift: no' \
+grep -q 'Repository drift: no' <<<"${RDEMO}" \
   || fail "relay demo never showed a matching fingerprint"
-echo "${RDEMO}" | grep -q 'Repository drift: yes' \
+grep -q 'Repository drift: yes' <<<"${RDEMO}" \
   || fail "relay demo never detected drift"
-echo "${RDEMO}" | grep -q 'consumed LUCIA_RELAY.json' \
+grep -q 'consumed LUCIA_RELAY.json' <<<"${RDEMO}" \
   || fail "relay demo did not explicitly consume the verified artifact"
 echo "ok  lucia relay real demo"

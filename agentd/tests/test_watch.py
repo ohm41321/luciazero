@@ -316,6 +316,25 @@ class ChatTests(WatchCase):
             line = plan[f"terminal for {IMPLEMENTER} (claude)"]
             self.assertTrue(line.startswith(expected), line)
 
+    def test_a_path_in_a_printed_command_is_one_argument(self) -> None:
+        """Review finding: a worktree and a state directory went into the
+        printed commands as they were. A space split the command, and a
+        worktree an agent named `/tmp/wt;touch PWNED;#` turned the line the
+        user copies into a second command."""
+        hostile = "/tmp/wt;touch PWNED;#"
+        state = Path("/tmp/state dir")
+        agents = [{"id": IMPLEMENTER, "provider": "claude", "worktree": hostile}]
+        lines = [line for _, line in watch.auto_turn_plan(agents, ARCHITECT, IMPLEMENTER, state_dir=state)]
+        lines += [line for _, line in watch.conversation_plan(agents, ARCHITECT, IMPLEMENTER, state_dir=state,
+                                                              which=lambda name: None)]
+        enrol = next(line for line in lines if f"worker add {IMPLEMENTER}" in line)
+        self.assertIn(f"--cwd {watch.shell_quote(hostile)} ", enrol)
+        for line in lines:
+            self.assertIn(f"--state-dir {watch.shell_quote(state)}", line)
+        if not WINDOWS:
+            words = shlex.split(enrol)
+            self.assertEqual(words[words.index("--cwd") + 1], hostile)
+
     def test_an_agent_whose_provider_has_no_known_command_is_not_guessed_at(self) -> None:
         self.store.register_agent("someone-else", provider="other", role="helper")
         plan = watch.conversation_plan(self.roster(), ARCHITECT, "someone-else")

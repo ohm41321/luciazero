@@ -150,6 +150,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before it stops anything. It ran `launchctl bootout` or `systemctl disable
   --now` first, so a service under the same label that was not ours was
   stopped and then reported as left untouched.
+- The commands `chat` prints quote the state directory and an agent's
+  worktree. A path with a space split the line, and a worktree an agent
+  named with a `;` made the `worker add` line the user copies run a second
+  command.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

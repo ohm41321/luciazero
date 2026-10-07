@@ -498,7 +498,7 @@ def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     reader is handed depends on whether `./install.sh` has run, so a caller
     that has to know cannot be left reading this process's PATH.
     """
-    where = f" --state-dir {state_dir}" if state_dir is not None else ""
+    where = f" --state-dir {shell_quote(state_dir)}" if state_dir is not None else ""
     known = {str(a["id"]): a for a in agents}
     run = launcher(which)
     plan = [("optional - watch the conversation",
@@ -527,7 +527,7 @@ def auto_turn_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     the user's own credentials, so the decision to spend that is the user's and
     has to be made in front of the commands, not behind them.
     """
-    where = f" --state-dir {state_dir}" if state_dir is not None else ""
+    where = f" --state-dir {shell_quote(state_dir)}" if state_dir is not None else ""
     run = launcher()
     known = {str(a["id"]): a for a in agents}
     plan: list[tuple[str, str]] = []
@@ -535,7 +535,9 @@ def auto_turn_plan(agents: list[dict[str, Any]], first: str, second: str, *,
         agent = known.get(agent_id, {})
         provider = str(agent.get("provider") or "other")
         command = PROVIDER_COMMAND.get(provider, f"<your {provider} command>")
-        cwd = agent.get("worktree") or f"<{agent_id}'s own worktree>"
+        # A worktree is a path an agent chose: quoted, it stays one argument
+        # in the line the user copies. The placeholder is left to be replaced.
+        cwd = shell_quote(agent["worktree"]) if agent.get("worktree") else f"<{agent_id}'s own worktree>"
         plan.append((f"enrol {agent_id} as a managed worker (its own worktree, workspace approvals)",
                      f"{run} worker add {agent_id} {provider} --cwd {cwd} "
                      f"--approve workspace --max-attempts 1{where} -- {command}"))

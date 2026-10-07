@@ -27,7 +27,10 @@ CI runs `./test.sh` directly. Gates live in `tests/gates/`; full-only `tiers`,
 subshells with buffered output replayed in order. `parity` plays every
 scenario in `tests/installer_parity.py` through the Bash installers and
 through `bin/lib/installer.js`, the Node port that Windows runs, and fails on
-any difference in exit status, output or the resulting tree. Use `LZ_TEST_PARALLEL=0` for a serial
+any difference in exit status, output or the resulting tree. The native
+Windows jobs run on an administrator account with no one at the desktop;
+what only a real machine can show is listed in
+[docs/windows-field-test.md](docs/windows-field-test.md). Use `LZ_TEST_PARALLEL=0` for a serial
 diagnostic run. Real behavioral eval runs are separate and manual:
 they invoke the selected Claude or Codex CLI and consume API credit or
 subscription quota.

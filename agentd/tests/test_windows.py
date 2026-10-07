@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from luciazero_agentd import Store, gitinfo, procinfo, proctree
+from luciazero_agentd import Store, approval, gitinfo, procinfo, proctree
 from luciazero_agentd import store as store_module
 from luciazero_agentd.server import BusServer
 from luciazero_agentd.statedir import ensure_state_dir, load_or_create_token
@@ -153,7 +153,7 @@ class DaemonPort(unittest.TestCase):
 
 @only_windows
 class NoConsoleWindows(unittest.TestCase):
-    def test_git_and_taskkill_open_no_console_window(self) -> None:
+    def test_git_taskkill_and_the_claim_dialog_open_no_console_window(self) -> None:
         """The service runs under pythonw.exe, which has no console, so every
         console program it starts without CREATE_NO_WINDOW opens a window of
         its own on the user's desktop."""
@@ -167,7 +167,8 @@ class NoConsoleWindows(unittest.TestCase):
         with mock.patch.object(subprocess, "run", spy):
             gitinfo.git(str(Path(__file__).resolve().parents[2]), "rev-parse", "--git-dir")
             proctree.end_tree(2 ** 30, lambda seconds: True)
-        self.assertEqual(len(seen), 2)
+            approval._run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "exit 0"], 60)
+        self.assertEqual(len(seen), 3)
         for kwargs in seen:
             self.assertTrue(int(kwargs.get("creationflags", 0)) & subprocess.CREATE_NO_WINDOW, kwargs)
 

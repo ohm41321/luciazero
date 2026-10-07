@@ -230,6 +230,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   detection on, as it is by default, a staged `git mv old new` was listed as
   `new` alone, so the receiver was not told `old` was gone. The fingerprint
   is unchanged.
+- On Windows the claim dialog opens no console window beside it. The service
+  runs the daemon under `pythonw.exe`, so PowerShell got a console of its
+  own, and closing that window ended the dialog with the claim unanswered.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

@@ -186,6 +186,10 @@ def _run(argv: list[str], timeout: int) -> Any:
         if program is None:
             raise FileNotFoundError(f"{argv[0]} is not on PATH")
         argv = [program, *argv[1:]]
+        # under the service's pythonw.exe a console program gets a window of
+        # its own; closing it would kill the dialog with the question unanswered
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False,
+                              **proctree.NO_WINDOW)
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
 
 

@@ -10,13 +10,16 @@ touches the user's own provider state, is a suite nobody can run.
 from __future__ import annotations
 
 import json
+import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from luciazero_agentd.adapters import (
     SERVER_NAME,
@@ -28,9 +31,10 @@ from luciazero_agentd.adapters import (
     _CodexExecAdapter,
     adapter_for,
 )
+from luciazero_agentd import appserver, proctree
 from luciazero_agentd.appserver import AppServer, AppServerError
 from luciazero_agentd.runlog import RunLog
-from tests.fixtures import fake_cli, pid_running
+from tests.fixtures import WINDOWS, fake_cli, kill_pid, pid_running
 
 CREDENTIAL = "lzsc_" + "e" * 32
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -218,6 +222,71 @@ class ProcessGroupTests(AdapterCase):
             time.sleep(0.1)
         self.assertFalse(_alive(grandchild), "the provider's own child outlived the turn")
 
+    def test_a_turn_that_exits_does_not_wait_for_what_it_left_running(self) -> None:
+        """Review finding: a provider that exited but left a child holding its
+        output pipe kept the turn open until that child ended -- with the
+        turn's credential in its environment the whole time."""
+        marker = self.root / "leftover.pid"
+        fake = script(self.root / "provider", (
+            "import subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+            "print('started')\n"
+        ))
+        began = time.monotonic()
+        result = ProcessAdapter().start(self.request((fake,)))
+        elapsed = time.monotonic() - began
+        leftover = int(marker.read_text())
+        self.addCleanup(kill_pid, leftover)
+        self.assertEqual(result.exit_state, "exit 0")
+        self.assertLess(elapsed, 30, "the turn waited for a child its provider left running")
+        self.assertTrue(_gone(leftover), "a child the provider left running outlived the turn")
+
+    @unittest.skipIf(WINDOWS, "a process group is POSIX; Windows ends the job instead")
+    def test_a_child_that_ignores_sigterm_does_not_outlive_its_group(self) -> None:
+        """Review finding: the group was signalled only until its leader
+        exited, so a member that ignores SIGTERM, or takes its time over it,
+        was never sent SIGKILL."""
+        ready = self.root / "stubborn.pid"
+        stubborn_py = self.root / "stubborn.py"
+        stubborn_py.write_text(
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "time.sleep(120)\n", encoding="utf-8")
+        leader_py = self.root / "leader.py"
+        leader_py.write_text(
+            "import subprocess, sys, time\n"
+            "subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])\n"
+            "time.sleep(120)\n", encoding="utf-8")
+        child = proctree.start([sys.executable, str(leader_py), str(stubborn_py), str(ready)])
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        stubborn = int(ready.read_text())
+        self.addCleanup(kill_pid, stubborn)
+        with mock.patch.object(appserver, "TERMINATE_GRACE_SECONDS", 0.5):
+            appserver._terminate_group(child)
+        self.assertIsNotNone(child.poll())
+        self.assertTrue(_gone(stubborn), "a group member that ignored SIGTERM survived")
+
+
+    def test_a_callback_that_fails_does_not_leave_the_provider_running(self) -> None:
+        """Review finding: an exception from `on_process` skipped the wait,
+        the timeout and the reader, and the provider ran on unwatched."""
+        seen: list[int] = []
+
+        def fails(pid: int) -> None:
+            seen.append(pid)
+            raise RuntimeError("cannot record the process")
+
+        fake = script(self.root / "provider", "import time; time.sleep(60)\n")
+        with self.assertRaises(RuntimeError):
+            ProcessAdapter().start(self.request((fake,), on_process=fails))
+        self.addCleanup(kill_pid, seen[0])
+        self.assertTrue(_gone(seen[0]), "the provider outlived the turn that failed to start")
+
 
 class ExitMappingTests(AdapterCase):
     def test_a_provider_exit_becomes_a_bus_outcome(self) -> None:
@@ -361,6 +430,38 @@ class AppServerTests(AdapterCase):
         self.assertFalse(result.permanent)
         self.assertIn(result.exit_state, ("app_server_error", "spawn_failed"))
 
+    def test_closing_after_the_app_server_exited_does_not_wait_for_what_it_left(self) -> None:
+        """The same leftover, on the app-server path: `close` skipped the
+        group once the server itself had exited, then closed a pipe the
+        leftover still held, which waits for the reader that waits for it."""
+        marker = self.root / "app-leftover.pid"
+        fake = script(self.root / "codex-leaves", (
+            "import subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+        ))
+        server = AppServer([fake], env=dict(os.environ), cwd=str(self.root), log=self.log)
+        server._process.wait(timeout=30)
+        leftover = int(marker.read_text())
+        self.addCleanup(kill_pid, leftover)
+        began = time.monotonic()
+        server.close()
+        self.assertLess(time.monotonic() - began, 30, "close waited for a child the app-server left running")
+        self.assertTrue(_gone(leftover), "a child the app-server left running outlived it")
+
+    def test_a_callback_that_fails_does_not_leave_the_app_server_running(self) -> None:
+        seen: list[int] = []
+
+        def fails(pid: int) -> None:
+            seen.append(pid)
+            raise RuntimeError("cannot record the process")
+
+        fake = script(self.root / "codex-sleeps", "import time; time.sleep(60)\n")
+        with self.assertRaises(RuntimeError):
+            AppServer([fake], env=dict(os.environ), cwd=str(self.root), log=self.log, on_process=fails)
+        self.addCleanup(kill_pid, seen[0])
+        self.assertTrue(_gone(seen[0]), "the app-server outlived the turn that failed to start")
+
     def test_the_app_server_child_dies_with_its_group(self) -> None:
         marker = self.root / "app-grandchild.pid"
         fake = script(self.root / "codex-spawns", (
@@ -387,6 +488,15 @@ class AppServerTests(AdapterCase):
 
 def _alive(pid: int) -> bool:
     return pid_running(pid)
+
+
+def _gone(pid: int, seconds: float = 10.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while _alive(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 if __name__ == "__main__":

@@ -117,12 +117,17 @@ class AppServer:
             )
         except (OSError, ValueError) as exc:
             raise AppServerError(f"cannot start {argv[0]!r}: {exc}", permanent=True) from exc
-        if on_process is not None:
-            on_process(self._process.pid)
         self._next_id = 1
         self._lines: queue.Queue[Optional[str]] = queue.Queue()
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
+        if on_process is not None:
+            try:
+                on_process(self._process.pid)
+            except BaseException:
+                # Nobody will hold this server to close it: end it here.
+                self.close()
+                raise
 
     # ------------------------------------------------------------- plumbing
     def _read(self) -> None:
@@ -267,15 +272,20 @@ class AppServer:
         """Stop the child and everything it started. Codex spawns its own
         children, so the signal goes to the process group; killing only the
         parent would leave those behind."""
-        if self._process.poll() is None:
-            _terminate_group(self._process)
+        # Even once the server itself has exited: what it left running still
+        # holds the turn's credential, and may hold its output pipe.
+        _terminate_group(self._process, group=None if proctree.WINDOWS else self._process.pid)
         proctree.release(self._process.pid)
+        self._reader.join(timeout=TERMINATE_GRACE_SECONDS)
         for stream in (self._process.stdin, self._process.stdout):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+            # Never the pipe a reader is still blocked on: closing it would
+            # wait for that read, however long whatever holds the other end runs.
+            if stream is None or (stream is self._process.stdout and self._reader.is_alive()):
+                continue
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def __enter__(self) -> "AppServer":
         return self
@@ -284,29 +294,40 @@ class AppServer:
         self.close()
 
 
-def _terminate_group(process: "subprocess.Popen[str]") -> None:
-    """SIGTERM the child's process group, then SIGKILL what is left; on
-    Windows, end the child's process tree."""
+def _terminate_group(process: "subprocess.Popen[str]", group: Optional[int] = None) -> None:
+    """SIGTERM the child's process group, then SIGKILL what is left, until
+    the group is empty and not only its leader gone; on Windows, end the
+    child's process tree.
+
+    `group` is for a caller that started the child as a group leader and
+    may call after it exited, when its group can no longer be looked up.
+    Otherwise the group is signalled only when the child leads it: a group
+    it shares with someone else is not ours to sweep."""
     if proctree.WINDOWS:
         if process.poll() is None:
             proctree.end_tree(process.pid, proctree.wait_gone(lambda: process.poll() is None))
         return
-    try:
-        group = os.getpgid(process.pid)
-    except (OSError, ProcessLookupError):
-        group = None
+    if group is None:
+        try:
+            group = os.getpgid(process.pid)
+        except OSError:
+            group = None
+        if group != process.pid:
+            group = None
+
+    def left() -> bool:
+        return process.poll() is None or (group is not None and proctree.group_alive(group))
+
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        if process.poll() is not None:
+        if not left():
             return
         try:
             if group is not None:
                 os.killpg(group, sig)
             else:
                 process.send_signal(sig)
-        except (OSError, ProcessLookupError):
+        except OSError:
             return
-        try:
-            process.wait(timeout=TERMINATE_GRACE_SECONDS)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+        deadline = time.monotonic() + TERMINATE_GRACE_SECONDS
+        while left() and time.monotonic() < deadline:
+            time.sleep(0.05)

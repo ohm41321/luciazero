@@ -25,11 +25,13 @@ import subprocess
 import sys
 import time
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-from luciazero_agentd import procinfo
+from luciazero_agentd import dispatcher as dispatcher_mod, procinfo
 from luciazero_agentd import ConflictError, NotFound, Store, ValidationError
 from luciazero_agentd.adapters import ProcessAdapter, TurnRequest
 from luciazero_agentd.dispatcher import DispatchError, Dispatcher
@@ -704,6 +706,29 @@ class DispatcherTests(DispatchCase):
         run = self.store.list_runs(agent_id="claude-reviewer")[0]
         self.assertIsNotNone(run["provider_pid"])
 
+    def test_a_process_table_that_cannot_be_read_still_lets_the_turn_run(self) -> None:
+        """Review finding: `started_at` raising escaped the callback, which
+        left the provider running with nothing waiting on it while the run was
+        settled as failed. The pid is still worth recording without a start
+        time; recovery refuses to signal a process it cannot check."""
+        self.worker(command=[sys.executable, "-c", "print('turn')"])
+        self.queued()
+        engine = self.engine()
+        real = procinfo.started_at
+
+        def unreadable(pid: int, **kwargs: object) -> str:
+            if pid == os.getpid():
+                return real(pid, **kwargs)  # the dispatcher's own record
+            raise procinfo.ProcessError("ps timed out")
+
+        with mock.patch.object(dispatcher_mod.procinfo, "started_at", side_effect=unreadable):
+            summaries = engine.tick()
+        # The turn ran to its end, not "error": this worker never touches its inbox.
+        self.assertEqual([s["outcome"] for s in summaries], ["failed"])
+        run = self.store.list_runs(agent_id="claude-reviewer")[0]
+        self.assertIsNotNone(run["provider_pid"])
+        self.assertIsNone(run["provider_started_at"])
+
     def test_recovery_revokes_the_credential_an_orphaned_provider_still_holds(self) -> None:
         """A killed dispatcher skips its own cleanup, so the child it started
         keeps a working credential until somebody takes it away."""
@@ -762,6 +787,42 @@ class DispatcherTests(DispatchCase):
         Dispatcher(self.root, alive=alive).recover()
         provider.wait(timeout=10)
         self.assertFalse(_running(grandchild), "the orphan's own child outlived recovery")
+
+    @unittest.skipIf(WINDOWS, "a process group is POSIX; Windows ends the tree instead")
+    def test_stopping_an_orphan_does_not_stop_at_its_leader(self) -> None:
+        """Review finding: `stop_group` returned as soon as the recorded pid
+        was gone, so a group member that ignores SIGTERM was never killed."""
+        ready = self.root / "stubborn.pid"
+        stubborn_py = self.root / "stubborn.py"
+        stubborn_py.write_text(
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "time.sleep(120)\n", encoding="utf-8")
+        provider = subprocess.Popen(
+            [sys.executable, "-c",
+             "import subprocess, sys, time\n"
+             f"subprocess.Popen([sys.executable, {str(stubborn_py)!r}, {str(ready)!r}])\n"
+             "time.sleep(120)\n"],
+            start_new_session=True,
+        )
+        self.addCleanup(_reap, provider)
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.read_text(encoding="utf-8")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        stubborn = int(ready.read_text(encoding="utf-8"))
+        self.addCleanup(_reap_pid, stubborn)
+        started_at = procinfo.started_at(provider.pid)
+        # An orphan's parent is gone, so it is reaped the moment it exits;
+        # without this waiter it would linger here as a zombie and look alive.
+        threading.Thread(target=provider.wait, daemon=True).start()
+        with mock.patch.object(dispatcher_mod, "TERMINATE_GRACE_SECONDS", 0.5):
+            Dispatcher(self.root).stop_group(provider.pid, started_at)
+        provider.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while _running(stubborn) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(_running(stubborn), "a group member that ignored SIGTERM outlived the stop")
 
     def test_a_sigterm_leaves_no_live_credential_and_no_running_provider(self) -> None:
         """Review finding: `run` installs a SIGTERM handler for exactly this

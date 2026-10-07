@@ -127,6 +127,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   screen returns that request instead of raising a second window. The second
   request superseded the first, so Allow on the window the user saw failed
   silently. The tool no longer claims to be idempotent.
+- A managed turn ends what its provider left running. A child still holding
+  the output pipe used to keep the turn open until it exited, with the turn's
+  credential in its environment; on macOS and Linux the group is now swept
+  after every turn, as Windows already did by closing the job, and the pipe
+  is never closed under a reader still blocked on it. Stopping a group also
+  waits for the group, not its leader: a member that ignored SIGTERM, in a
+  turn, an app-server or an orphan recovery stopped, was never sent SIGKILL.
+- A process table that could not be read when a turn started no longer
+  leaves the provider running unwatched. The dispatcher records the pid
+  without a start time, and an adapter whose `on_process` callback raises
+  ends the provider before the error propagates.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

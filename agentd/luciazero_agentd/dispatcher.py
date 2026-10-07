@@ -190,7 +190,9 @@ class Dispatcher:
                 return sig is signal.SIGKILL  # already gone by the second pass
             deadline = time.monotonic() + wait
             while time.monotonic() < deadline:
-                if not self._alive(pid, started_at):
+                # The leader going is not the group going: a member that
+                # ignores SIGTERM is still there for the second pass.
+                if not self._alive(pid, started_at) and (alone or not proctree.group_alive(group)):
                     return True
                 time.sleep(0.05)
         return True
@@ -363,7 +365,13 @@ class Dispatcher:
         )
         def remember(pid: int) -> None:
             try:
-                store.record_run_process(str(run["id"]), pid=pid, started_at=procinfo.started_at(pid))
+                started_at = procinfo.started_at(pid)
+            except procinfo.ProcessError:
+                # The pid is still worth naming. Recovery will not signal a
+                # process whose start time it cannot check against it.
+                started_at = None
+            try:
+                store.record_run_process(str(run["id"]), pid=pid, started_at=started_at)
             except StoreError:
                 pass
 

@@ -96,6 +96,18 @@ def release(pid: int) -> None:
         job.close()
 
 
+def group_alive(group: int) -> bool:
+    """POSIX: whether anything this user can signal is left in a process
+    group. The leader exiting does not end its group: a member that ignores
+    SIGTERM, or is slow over it, is still there and still holds what the
+    provider gave it."""
+    try:
+        os.killpg(group, 0)
+    except OSError:
+        return False  # ESRCH: empty; EPERM: nothing left that is ours to stop
+    return True
+
+
 def _get(env: Mapping[str, str], name: str) -> Optional[str]:
     """`env[name]`, with Windows' case-insensitive names."""
     return next((value for key, value in env.items() if key.upper() == name), None)

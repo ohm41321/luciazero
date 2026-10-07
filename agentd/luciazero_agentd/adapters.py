@@ -276,8 +276,6 @@ class ProcessAdapter:
             return TurnResult(ok=False, exit_state="spawn_failed", error=f"cannot start {argv[0]!r}: {exc}", permanent=True)
         with self._lock:
             self._child = child
-        if request.on_process is not None:
-            request.on_process(child.pid)
 
         def pump() -> None:
             assert child.stdout is not None
@@ -289,18 +287,28 @@ class ProcessAdapter:
         reader.start()
         timed_out = False
         try:
+            # Inside the try: if this raises, the provider is ended below
+            # rather than left running with nothing waiting on it.
+            if request.on_process is not None:
+                request.on_process(child.pid)
             code = wait_for(child, request.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
             self.cancel()
             code = child.returncode if child.returncode is not None else -1
         finally:
+            # What the provider left running ends with the turn, as it does
+            # when Windows lets go of the job: it holds the turn's credential,
+            # and while it holds the output pipe the reader cannot finish.
+            # The child led its own group (`proctree.start`), so the group is
+            # known even after the child has gone.
+            _terminate_group(child, group=None if proctree.WINDOWS else child.pid)
+            proctree.release(child.pid)
             reader.join(timeout=TERMINATE_GRACE_SECONDS)
-            if child.stdout is not None:
+            if child.stdout is not None and not reader.is_alive():
                 child.stdout.close()
             with self._lock:
                 self._child = None
-            proctree.release(child.pid)
         if timed_out:
             return TurnResult(ok=False, exit_state="timeout", error=f"the turn ran past {request.timeout_seconds}s and was stopped")
         if code != 0:

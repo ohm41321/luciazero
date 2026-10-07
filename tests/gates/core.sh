@@ -47,6 +47,19 @@ PIPED_GREP="$(cd "${ROOT}" \
 ${PIPED_GREP}"
 echo "ok  no variable piped into grep -q"
 
+# 2c. tests/node/*.test.js is named file by file twice -- the parity gate
+# and the Windows CI job (Node 18 takes no glob) -- so a new test file named
+# in neither would run nowhere, and green would say nothing about it.
+NODE_TESTS="$(cd "${ROOT}" && for T in tests/node/*.test.js; do echo "${T}"; done | sort)"
+[ -n "${NODE_TESTS}" ] || fail "no tests/node/*.test.js found"
+for LIST in .github/workflows/ci.yml tests/gates/parity.sh; do
+  NAMED="$(grep -oE 'tests/node/[A-Za-z0-9_.-]+[.]test[.]js' "${ROOT}/${LIST}" | sort -u)"
+  [ "${NAMED}" = "${NODE_TESTS}" ] \
+    || fail "${LIST} does not run exactly the node tests in tests/node:
+$(diff <(echo "${NODE_TESTS}") <(echo "${NAMED}") || true)"
+done
+echo "ok  every tests/node suite runs in parity and in the Windows CI job"
+
 # 2a. ambient LUCIAZERO_* must not change this suite's outcome. A tiny child
 # sources the same sanitation helper under every poisoned knob; the test
 # entrypoint itself has no environment-controlled early exit.

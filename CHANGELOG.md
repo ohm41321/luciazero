@@ -200,6 +200,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sha256, when Node refuses md5 (FIPS mode). The only check left was a grep
   for Python's `hashlib.md5(` in hooks that are now Node, which could not
   fail.
+- The core gate fails when the node test files named in the parity gate or
+  the Windows CI job differ from `tests/node/*.test.js`. Both lists were
+  kept by hand, so a new test file could run nowhere.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

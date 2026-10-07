@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 from datetime import datetime, timedelta, timezone
@@ -823,6 +824,26 @@ class HumanCommands(unittest.TestCase):
         self.assertIn("hello", done.stdout)
         self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
                               if b["agent_id"] == "claude-reviewer"])
+
+    @unittest.skipIf(WINDOWS, "the pty path; Windows ends the console's tree instead")
+    def test_a_provider_that_ignores_sigterm_does_not_hold_run_open(self) -> None:
+        """Review finding: stopping `run` on a pty sent SIGTERM and then waited
+        for the provider with no limit, so SIGKILL was never reached."""
+        from luciazero_agentd import __main__ as cli
+        ready = self.state / "stubborn.ready"
+        child = subprocess.Popen([sys.executable, "-c", (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "open(sys.argv[1], 'w').write('ready')\n"
+            "time.sleep(60)\n"), str(ready)])
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        began = time.monotonic()
+        cli._end_pty_child(child.pid, grace=0.5)
+        self.assertLess(time.monotonic() - began, 30, "run waited on a provider that ignored SIGTERM")
+        self.assertFalse(pid_running(child.pid))
 
     def _front(self, *args: str, home: Optional[Path] = None) -> subprocess.CompletedProcess:
         """`lucia claude` with a stand-in on PATH for the provider itself.

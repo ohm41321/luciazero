@@ -832,6 +832,92 @@ class ProxyTests(unittest.TestCase):
 
 
 @on_a_pty
+@on_a_pty
+class PasteTests(unittest.TestCase):
+    def test_a_large_paste_into_a_provider_that_echoes_does_not_freeze_the_proxy(self) -> None:
+        """Review finding: keystrokes went to the pty in one blocking write.
+        A provider that answers input with output -- an echo, a redraw --
+        fills the pty's output side while the proxy, stuck in that write, is
+        not reading it; the provider stops reading input, and both wait for
+        ever.
+
+        Pipes stand in for the user's terminal: closing a pty that still
+        holds output waits for it to drain, so a fixture built on one would
+        hang in its own cleanup when this test fails."""
+        size = 200_000
+        provider = (
+            "import os, tty\n"
+            "tty.setraw(0)\n"
+            "os.write(1, b'READY')\n"
+            "n = 0\n"
+            f"while n < {size}:\n"
+            "    chunk = os.read(0, 4096)\n"
+            "    n += len(chunk)\n"
+            "    os.write(1, chunk)\n"
+            "os.write(1, b'DONE')\n"
+        )
+        keyboard, typed = os.pipe()
+        screen, shown = os.pipe()
+        pid, master = nudge.spawn([sys.executable, "-c", provider], dict(os.environ))
+        seen = bytearray()
+        stop = threading.Event()
+
+        def watch() -> None:
+            while not stop.is_set():
+                try:
+                    chunk = os.read(screen, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                seen.extend(chunk)
+
+        def wait_for(needle: bytes, seconds: float) -> bool:
+            deadline = time.monotonic() + seconds
+            while needle not in seen:
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.05)
+            return True
+
+        def paste() -> None:
+            left = size
+            while left > 0 and not stop.is_set():
+                try:
+                    left -= os.write(typed, b"x" * min(left, 4096))
+                except OSError:
+                    return
+
+        code: list[int] = []
+        proxy = threading.Thread(target=lambda: code.append(nudge.proxy(pid, master, stdin=keyboard, stdout=shown)),
+                                 daemon=True)
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        proxy.start()
+
+        def end() -> None:
+            stop.set()
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proxy.join(5)
+            for fd in (typed, keyboard, shown):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            watcher.join(5)
+            os.close(screen)
+
+        self.addCleanup(end)
+        self.assertTrue(wait_for(b"READY", 30), bytes(seen[-200:]))
+        threading.Thread(target=paste, daemon=True).start()
+        self.assertTrue(wait_for(b"DONE", 60), "the proxy froze mid-paste")
+        proxy.join(15)
+        self.assertEqual([0], code)
+
+
 class RunTests(unittest.TestCase):
     """`run` end to end, under a pty, with a delivery arriving mid-session.
 

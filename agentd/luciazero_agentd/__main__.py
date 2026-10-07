@@ -1200,19 +1200,33 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
         return nudge.proxy(pid, master, watcher=watcher,
                            show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.kill(pid, sig)
-                os.waitpid(pid, 0)
-                break
-            except ChildProcessError:
-                break
-            except OSError:
-                continue
+        _end_pty_child(pid)
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
         cleanup("run exited")
+
+
+def _end_pty_child(pid: int, grace: float = 10.0) -> None:
+    """Stop the provider `run` started on a pty: SIGTERM, and SIGKILL if it
+    is still there after `grace`. A wait with no limit after the SIGTERM
+    would never reach the SIGKILL for a provider that ignores it."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, None)):
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+        deadline = None if wait is None else time.monotonic() + wait
+        while True:
+            try:
+                done, _status = os.waitpid(pid, 0 if deadline is None else os.WNOHANG)
+            except ChildProcessError:
+                return  # already reaped
+            if done:
+                return
+            if deadline is None or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
 
 
 def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, str],

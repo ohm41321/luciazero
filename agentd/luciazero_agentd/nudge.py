@@ -133,6 +133,9 @@ QUIET_SECONDS = 3.0
 #: stretch of typing answers exactly as well as one per keystroke, at a
 #: thousandth of the writes -- and this loop is holding the user's terminal.
 HUMAN_INPUT_SECONDS = 20.0
+# Keystrokes the provider has not taken yet. Past this the keyboard is not
+# read until it catches up, so a paste is slowed by the provider, not buffered.
+PENDING_INPUT_LIMIT = 65536
 
 
 @dataclass
@@ -599,7 +602,13 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
     returns -- an exception here would otherwise leave the user's shell without
     an echo.
     """
-    typist = typist or Typist(lambda data: os.write(master, data), clock=clock)
+    # Input to the provider is queued and written only as the pty takes it.
+    # One blocking write of a large paste deadlocks against a provider that
+    # answers input with output: its output fills the pty while this process,
+    # stuck in the write, is not reading it, and the provider stops reading.
+    pending = bytearray()
+    os.set_blocking(master, False)
+    typist = typist or Typist(pending.extend, clock=clock)
     _copy_window(stdout, master)
     restore: Optional[list[Any]] = None
     if os.isatty(stdin):
@@ -635,34 +644,45 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                 status = waited
                 _drain(master, stdout)
                 break
+            sources = [master] + ([stdin] if len(pending) < PENDING_INPUT_LIMIT else [])
             try:
-                ready, _, _ = select.select([stdin, master], [], [], 0.2)
+                ready, writable, _ = select.select(sources, [master] if pending else [], [], 0.2)
             except (OSError, select.error) as exc:  # EINTR on window change
                 if getattr(exc, "errno", None) == errno.EINTR:
                     continue
                 raise
+            if master in writable:
+                try:
+                    del pending[:os.write(master, pending)]
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    pending.clear()  # the pty closed; the wait above will see the exit
             if master in ready:
                 try:
                     data = os.read(master, 65536)
+                except BlockingIOError:
+                    data = None
                 except OSError:
                     break  # the pty closed: the provider is gone
-                if not data:
+                if data == b"":
                     break
-                os.write(stdout, data)
-                # A pane that is streaming is a pane mid-turn. The proxy is
-                # the only thing that sees it, so it is the only thing that
-                # can say so; the bytes themselves are the user's screen and
-                # are neither inspected nor kept.
-                printed = getattr(watcher, "saw_output", None)
-                if printed is not None:
-                    printed()
+                if data:
+                    os.write(stdout, data)
+                    # A pane that is streaming is a pane mid-turn. The proxy
+                    # is the only thing that sees it, so it is the only thing
+                    # that can say so; the bytes themselves are the user's
+                    # screen and are neither inspected nor kept.
+                    printed = getattr(watcher, "saw_output", None)
+                    if printed is not None:
+                        printed()
             if stdin in ready:
                 try:
                     data = os.read(stdin, 65536)
                 except OSError:
                     data = b""
                 if data:
-                    os.write(master, data)
+                    pending.extend(data)
                     # The proxy is the only thing that sees a keystroke, so it
                     # is the only thing that can tell the cap somebody is here.
                     typed = getattr(watcher, "human_typed", None)

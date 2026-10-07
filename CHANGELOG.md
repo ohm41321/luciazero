@@ -138,6 +138,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leaves the provider running unwatched. The dispatcher records the pid
   without a start time, and an adapter whose `on_process` callback raises
   ends the provider before the error propagates.
+- `run` on a pty stops a provider that ignores SIGTERM: it sent SIGTERM and
+  then waited with no limit, so the SIGKILL after it was never reached. It now
+  waits ten seconds.
+- `run` on a pty no longer freezes on a large paste into a provider that
+  echoes or redraws. Keystrokes went to the pty in one blocking write while
+  the provider's output filled the pty unread; input is now queued and
+  written as the pty takes it, and the keyboard is not read while 64 KiB is
+  still waiting.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

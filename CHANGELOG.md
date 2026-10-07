@@ -158,6 +158,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the process name was cut at its first space, which missed it (and the
   check that stops a session approving its own claim with it) and could
   take a `claude tools/` directory for a provider.
+- A provider session id read off a managed turn's output must look like
+  one before the next turn resumes it. The `codex exec` fallback prints the
+  model's own text, and a JSON line in it naming `--last` as the session
+  would have become an option on the next command line.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

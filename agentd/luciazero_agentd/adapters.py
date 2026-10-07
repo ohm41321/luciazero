@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -36,6 +37,15 @@ PROMPT_ENV = "LUCIAZERO_AGENT_BUS_PROMPT"
 AGENT_ENV = "LUCIAZERO_AGENT_BUS_AGENT"
 SESSION_ENV = "LUCIAZERO_AGENT_BUS_SESSION"
 TERMINATE_GRACE_SECONDS = 5.0
+# What a provider's session id looks like. One read off a turn's output, which
+# carries the model's own text, has to match or it could reach the next
+# turn's command line as an option: `--last`, or worse.
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
+def session_id(value: Any) -> Optional[str]:
+    """`value` if it has the shape of a session id, else None."""
+    return value if isinstance(value, str) and SESSION_ID.fullmatch(value) else None
 WINDOWS = sys.platform == "win32"
 #: How often a wait for the provider comes back to the interpreter on Windows.
 WAIT_SLICE_SECONDS = 0.25
@@ -373,7 +383,7 @@ class ClaudeAdapter(ProcessAdapter):
         user's own flags go early, where they cannot break that pairing."""
         base = list(request.command) or ["claude"]
         argv = base[:1] + ["-p"] + base[1:]
-        if resuming and request.provider_session_id:
+        if resuming and session_id(request.provider_session_id):
             argv += ["--resume", request.provider_session_id]
         argv += ["--mcp-config", str(self.config_path(request)), "--strict-mcp-config",
                  "--allowedTools", self.ALLOWED_TOOLS,
@@ -390,7 +400,7 @@ class ClaudeAdapter(ProcessAdapter):
                 message = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(message, dict) and isinstance(message.get("session_id"), str):
+            if isinstance(message, dict) and session_id(message.get("session_id")):
                 return message["session_id"]
         return request.provider_session_id
 
@@ -535,7 +545,7 @@ class _CodexExecAdapter(ProcessAdapter):
         base = list(request.command) or ["codex", "exec"]
         extra = [part for part in base[1:] if part != "exec"]
         argv = [base[0], "exec"]
-        if resuming and request.provider_session_id:
+        if resuming and session_id(request.provider_session_id):
             argv += ["resume", request.provider_session_id]
         for override in CodexAdapter.overrides(request):
             argv += ["-c", override]
@@ -551,7 +561,7 @@ class _CodexExecAdapter(ProcessAdapter):
                 continue
             if isinstance(message, dict):
                 for key in ("thread_id", "threadId", "session_id"):
-                    if isinstance(message.get(key), str):
+                    if session_id(message.get(key)):
                         return message[key]
         return request.provider_session_id
 

@@ -137,6 +137,19 @@ echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
 "${RELAY}" draft --root "${RR}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["route"]["recipient"] == "same-machine"' \
   || { rm -rf "${RR}"; fail "relay broke legacy draft callers without --recipient"; }
 rm -rf "${RR}"
+# a staged rename lists both names: the receiver has to learn the old one is
+# gone, whatever diff.renames says
+RR="$(mktemp -d)"
+git -C "${RR}" init -q
+git -C "${RR}" config user.name test
+git -C "${RR}" config user.email test@example.invalid
+git -C "${RR}" config diff.renames true
+echo moved > "${RR}/old.txt"
+git -C "${RR}" add old.txt && git -C "${RR}" commit -qm base
+git -C "${RR}" mv old.txt new.txt
+"${RELAY}" draft --root "${RR}" --recipient same-machine | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["files"]["modified"] == ["new.txt", "old.txt"], d["files"]' \
+  || { rm -rf "${RR}"; fail "relay listed a renamed file under its new name only"; }
+rm -rf "${RR}"
 
 # `draft --write` lands the manifest in --root, refuses to replace one, and
 # never follows a planted symlink. `finalize` is validate + render in one

@@ -127,14 +127,15 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
         prefix = "."
     own = tuple(name if prefix == "." else f"{prefix}/{name}" for name in (MANIFEST, HUMAN, RECEIPT))
     exclusions = ("--", ".", *(f":(exclude,literal){name}" for name in own))
+    # --no-renames: a rename lists the name it left as well as the one it took
     if head_rc == 0:
-        modified_rc, raw_modified = git(repo, "diff", "--name-only", "-z", "HEAD", *exclusions)
+        modified_rc, raw_modified = git(repo, "diff", "--name-only", "--no-renames", "-z", "HEAD", *exclusions)
         diff_rc, diff = git(repo, "diff", "--binary", "HEAD", *exclusions)
         if modified_rc != 0 or diff_rc != 0:
             snapshot_errors.append("Git diff failed, timed out, or exceeded its output budget")
     else:
-        staged_names_rc, raw_staged = git(repo, "diff", "--cached", "--name-only", "-z", *exclusions)
-        unstaged_names_rc, raw_unstaged = git(repo, "diff", "--name-only", "-z", *exclusions)
+        staged_names_rc, raw_staged = git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z", *exclusions)
+        unstaged_names_rc, raw_unstaged = git(repo, "diff", "--name-only", "--no-renames", "-z", *exclusions)
         raw_modified = raw_staged + raw_unstaged
         staged_diff_rc, staged_diff = git(repo, "diff", "--cached", "--binary", "--root", *exclusions)
         unstaged_diff_rc, unstaged_diff = git(repo, "diff", "--binary", *exclusions)

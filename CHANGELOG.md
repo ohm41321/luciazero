@@ -226,6 +226,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Both READMEs say native Windows support is unreleased. They called the
   checkout the 2.6.0 tree while describing Windows features that 2.6.0, the
   version `npx luciazero@latest` installs, does not have.
+- A relay's `Modified:` list names both sides of a rename. With git's rename
+  detection on, as it is by default, a staged `git mv old new` was listed as
+  `new` alone, so the receiver was not told `old` was gone. The fingerprint
+  is unchanged.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

@@ -97,6 +97,11 @@ test("revert-probe: a test that bites passes, a vacuous one fails, and neither t
   assert.match(r.out, /evidence \(exit 1 on HEAD\): tests\/calc\.test\.js: add\(2, 2\) is not 4/);
   assert.strictEqual(git(b.env, bites, "status", "--porcelain"), before, "the caller's working tree changed");
   assert.strictEqual(worktrees(b, bites), 1, "a worktree was left behind");
+  // a file the command only writes to is not a runner the old tree lacks
+  write(bites, { "probe.log": "" });
+  const redirected = run(b.env, bites, [PROBE, "node tests/calc.test.js > probe.log"]);
+  assert.strictEqual(redirected.status, 0, redirected.out);
+  assert.match(redirected.out, /^PASS: regression tests bite/m);
 
   const vacuous = repo(b, "vacuous", { "calc.js": BUGGY, "tests/calc.test.js": check([0, 0, 0]) });
   write(vacuous, { "calc.js": FIXED, "tests/calc.test.js": check([0, 0, 0], [1, 1, 2]) });
@@ -160,6 +165,17 @@ cp.spawn = function (command, options, ...rest) {
   assert.match(foreign.out, WINDOWS
     ? /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): run-tests is not in its tree/m
     : /^UNASSESSABLE: the verify command could not be run on HEAD \(exit 1\): \.\/run-tests\.sh is not in its tree/m);
+  // the same runner behind a variable, a cd, or the command that starts it
+  const behind = WINDOWS
+    ? [["set CI=1&& run-tests tests\\calc.test.js", "run-tests"], ["cd . && run-tests tests\\calc.test.js", "run-tests"],
+      ["call run-tests tests\\calc.test.js", "run-tests"], ["cmd /c run-tests tests\\calc.test.js", "run-tests"]]
+    : [["FOO=1 ./run-tests.sh tests/calc.test.js", "./run-tests.sh"], ["cd . && ./run-tests.sh tests/calc.test.js", "./run-tests.sh"],
+      ["sh run-tests.sh tests/calc.test.js", "run-tests.sh"]];
+  for (const [command, word] of behind) {
+    const r = run(b.env, translated, ["--require", translate, PROBE, command]);
+    assert.strictEqual(r.status, 2, `${command}: ${r.out}`);
+    assert.ok(r.out.includes(`could not be run on HEAD (exit 1): ${word} is not in its tree`), `${command}: ${r.out}`);
+  }
 
   // the old tree cannot load a module the change adds
   const newmod = repo(b, "newmod", { "main.js": "" });

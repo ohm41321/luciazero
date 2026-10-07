@@ -58,6 +58,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `revert-probe` reports `UNASSESSABLE` (exit 2) when the verify command names
+  a file the working tree has and the old tree lacks both before and after the
+  old-code run: the command itself, any non-option argument, or the input of a
+  `<`. Such a run judged nothing, but when the missing file was reported with
+  an exit other than 127 it was read as a regression. In 2.6.0, `python3
+  run_tests.py tests/test_calc.py` with a `run_tests.py` the change adds gave
+  PASS on Python's "can't open file" (exit 2). The check does not depend on
+  the message, so it also holds on Windows, where cmd.exe exits 1 for a
+  missing command and words it in the display language.
 - `revert-probe` no longer writes through a link the old tree has above a
   changed file. Where the base revision had a directory link (to anywhere,
   outside the repository included) and the working tree has a real

@@ -607,6 +607,22 @@ class UninstallTests(ServiceCase):
         self.assertTrue(path.exists())
         self.assertEqual([(str(path), "left untouched (not ours)")], result["files"])
 
+    def test_a_service_that_is_not_ours_is_not_stopped_either(self) -> None:
+        """Review finding: launchd and systemd were told to stop the service
+        before its file was checked, so a service under this label that is
+        not ours was booted out, then reported as left untouched."""
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform):
+                plan = self.plan(platform=platform)
+                path = plan.paths()[0]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("someone else's service\n", encoding="utf-8")
+                runner = FakeRunner()
+                result = service.uninstall(plan, runner=runner)
+                self.assertEqual([], runner.commands)
+                self.assertEqual([], result["steps"])
+                self.assertEqual([(str(path), "left untouched (not ours)")], result["files"])
+
     def test_uninstalling_what_was_never_installed_is_not_an_error(self) -> None:
         result = service.uninstall(self.plan(), runner=FakeRunner())
         self.assertEqual([(str(self.plan().paths()[0]), "absent")], result["files"])

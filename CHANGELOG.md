@@ -146,6 +146,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the provider's output filled the pty unread; input is now queued and
   written as the pty takes it, and the keyboard is not read while 64 KiB is
   still waiting.
+- `service uninstall` on macOS and Linux checks the service file is ours
+  before it stops anything. It ran `launchctl bootout` or `systemctl disable
+  --now` first, so a service under the same label that was not ours was
+  stopped and then reported as left untouched.
 - `serve` revokes the bindings approved claims minted. A restart ends every
   MCP session, but those bindings have no process to reap, so they stayed
   active for an hour and refused the reconnected session's new claim.

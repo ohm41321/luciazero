@@ -626,15 +626,25 @@ def install(plan_: Plan, *, runner: Optional[Runner] = None, dry_run: bool = Fal
 
 def uninstall(plan_: Plan, *, runner: Optional[Runner] = None, dry_run: bool = False) -> dict[str, Any]:
     """Stop the service, then delete only the files this module wrote. A
-    task under the same name that is not ours is neither ended nor deleted."""
+    task or service under the same name that is not ours is neither stopped
+    nor deleted."""
     if _foreign(plan_, runner):
         return {"kind": plan_.kind, "label": plan_.label, "dry_run": dry_run,
                 "files": [(str(path), "left untouched (the task is not ours)") for path in plan_.paths()],
                 "steps": []}
+    states = [(path, file_state(path)) for path in plan_.paths()]
+    if plan_.probe is None and any(state in ("foreign", "symlink") for _, state in states):
+        # Without a probe the file is what says whose the service is. One
+        # that is not ours defines a service that is not ours: launchd and
+        # systemd are not told to stop it, as a task that is not ours is not
+        # ended above.
+        return {"kind": plan_.kind, "label": plan_.label, "dry_run": dry_run,
+                "files": [(str(path), {"absent": "absent", "ours": "left untouched (the service is not ours)"}
+                           .get(state, "left untouched (not ours)")) for path, state in states],
+                "steps": []}
     steps = [] if dry_run else run_steps(plan_.uninstall_steps, runner=runner)
     removed: list[tuple[str, str]] = []
-    for path in plan_.paths():
-        state = file_state(path)
+    for path, state in states:
         if state == "absent":
             removed.append((str(path), "absent"))
         elif state == "ours":
@@ -642,7 +652,7 @@ def uninstall(plan_: Plan, *, runner: Optional[Runner] = None, dry_run: bool = F
                 path.unlink()
             removed.append((str(path), "removed"))
         else:
-            removed.append((str(path), "left untouched (not ours)"))
+            removed.append((str(path), "left untouched (not ours)"))  # a task's file, the task ours
     return {"kind": plan_.kind, "label": plan_.label, "dry_run": dry_run,
             "files": removed, "steps": [(argv, code, msg) for argv, code, msg in steps]}
 

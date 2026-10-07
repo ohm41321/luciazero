@@ -152,7 +152,8 @@ installed with `--allow-unattributed` — and its output goes to
 
 Every file carries an ownership marker. A service file that is not ours is
 reported and left exactly as it is, never backed up and replaced, and
-`service uninstall` deletes only files carrying that marker. `uninstall.sh`
+`service uninstall` deletes only files carrying that marker; nor does it stop
+a launchd or systemd service whose file lacks the marker. `uninstall.sh`
 stops the service before it removes the launcher — otherwise the manager
 would keep restarting a file that is gone — and leaves the launcher in place,
 loudly, if it could not.

@@ -510,9 +510,9 @@ function statLog(event, ctx) {
 }
 
 // cmd.exe's own commands, which no file lookup finds.
-const CMD_BUILTINS = new Set(("assoc break call cd chdir cls color copy date del dir echo endlocal erase "
-  + "exit for ftype goto if md mkdir mklink move path pause popd prompt pushd rd rem ren rename rmdir "
-  + "set setlocal shift start time title type ver verify vol").split(" "));
+const CMD_BUILTINS = new Set(("assoc break call cd chdir cls color copy date del dir dpath echo endlocal "
+  + "erase exit for ftype goto if keys md mkdir mklink move path pause popd prompt pushd rd rem ren rename "
+  + "rmdir set setlocal shift start time title type ver verify vol").split(" "));
 
 // Whether cmd.exe certainly failed to find the program `command` starts.
 // `cmd /c` exits 1 for that, as a failing test does, and names the cause only
@@ -523,6 +523,9 @@ const CMD_BUILTINS = new Set(("assoc break call cd chdir cls color copy date del
 // own verdict.
 function cmdMissing(command, cwd) {
   const text = command.replace(/^[\s@]+/, "");
+  // cmd.exe skips a leading delimiter and takes a leading redirection apart
+  // from the command, which this does not follow
+  if (/^[;,=<>]/.test(text)) return false;
   let word;
   let rest;
   if (text[0] === '"') {
@@ -531,14 +534,21 @@ function cmdMissing(command, cwd) {
     word = text.slice(1, end);
     rest = text.slice(end + 1);
   } else {
-    word = text.match(/^[^\s&|<>()"]*/)[0];
+    word = text.match(/^[^\s&|<>()";,=]*/)[0];
     rest = text.slice(word.length);
     // unquoted, cmd.exe reads a / as the start of a switch
     if (word.includes("/")) return false;
   }
   if (!word || /[%!^*?]/.test(word)) return false;
+  // the word has to end where cmd.exe certainly ends it: a quote, delimiter
+  // or redirection right after it (`"C:\Program Files"\x`, `npm,test`,
+  // `2>nul npm test`) makes a different command of it there
+  if (rest && !/^[\s&|]/.test(rest)) return false;
   const lead = word.match(/^[A-Za-z]+/);
   if (lead && CMD_BUILTINS.has(lead[0].toLowerCase())) return false;
+  // `D:` changes the drive and a word that starts with `:` is a label: no
+  // program either way
+  if (/^:|^[A-Za-z]:$/.test(word)) return false;
   // after `&`, `||` or `|` a later command decides the exit status
   let quoted = false;
   for (let i = 0; i < rest.length; i += 1) {

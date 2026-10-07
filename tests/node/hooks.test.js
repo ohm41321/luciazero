@@ -45,8 +45,10 @@ test("an edit nudges once at stop, and a verify run clears it", (t) => {
 // records a red. cmd.exe exits 1 for it, as a failing test does, and says so
 // only in the display language, so the reds that must still block matter as
 // much here: a builtin, a program in the project, one that deletes itself as
-// it fails, a compound command, and a program that prints cmd.exe's own
-// English line.
+// it fails, one found only through PATH and PATHEXT, forms cmd.exe takes
+// apart differently (a leading redirection or delimiter, a quote inside the
+// word, a drive change), a compound command, and a program that prints
+// cmd.exe's own English line.
 test("the strict gate nudges for a command the shell cannot find, and blocks a real red", (t) => {
   const nodeExe = `"${process.execPath}"`;
   const missing = WINDOWS
@@ -54,12 +56,20 @@ test("the strict gate nudges for a command the shell cannot find, and blocks a r
       '".\\luciazero-no-such.cmd" x', "tests"]
     : ["./luciazero-no-such-cmd.sh", "luciazero-no-such-cmd --x"];
   const red = WINDOWS
-    ? ["exit /b 1", "dir luciazero-no-such-file", "runner", "gone", `${nodeExe} -e "process.exit(1)"`,
-      `${nodeExe} say.js`, "luciazero-no-such-cmd & exit /b 1"]
-    : ["exit 1", "./gone.sh", `${nodeExe} -e "process.exit(1)"`, `${nodeExe} say.js`];
+    ? ["exit /b 1", "dir luciazero-no-such-file", "runner", "gone", "lz-red", "2>nul lz-red", ";lz-red", "lz-red,x",
+      '"%BIN%"\\lz-red.cmd', "%DRIVE% && lz-red", `${nodeExe} -e "process.exit(1)"`, `${nodeExe} say.js`,
+      "luciazero-no-such-cmd & exit /b 1"]
+    : ["exit 1", "./gone.sh", "lz-red", `${nodeExe} -e "process.exit(1)"`, `${nodeExe} say.js`];
   for (const [command, blocks] of [...missing.map((c) => [c, false]), ...red.map((c) => [c, true])]) {
     const box = sandbox(t);
     const cwd = path.join(box.box, "project");
+    const bin = path.join(box.box, "bin");
+    fs.mkdirSync(bin);
+    if (WINDOWS) fs.writeFileSync(path.join(bin, "lz-red.cmd"), "@exit /b 1\r\n");
+    else fs.writeFileSync(path.join(bin, "lz-red"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const pathKey = Object.keys(box.env).find((key) => key.toUpperCase() === "PATH") || "PATH";
+    const env = { ...box.env, [pathKey]: `${bin}${path.delimiter}${box.env[pathKey] || ""}` };
+    const verify = command.replace("%BIN%", bin).replace("%DRIVE%", path.parse(cwd).root.slice(0, 2));
     fs.mkdirSync(path.join(cwd, "tests"), { recursive: true });
     fs.writeFileSync(path.join(cwd, "runner.cmd"), "@exit /b 1\r\n");
     fs.writeFileSync(path.join(cwd, "gone.cmd"), '@del "%~f0" & exit /b 1\r\n');
@@ -67,22 +77,22 @@ test("the strict gate nudges for a command the shell cannot find, and blocks a r
     fs.writeFileSync(path.join(cwd, "say.js"), "console.error(\"'x' is not recognized as an internal or external command,\");\nprocess.exit(1);\n");
     const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
     assert.strictEqual(node(box.env, [VERIFY, "edit"], event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
-    const stop = node({ ...box.env, LUCIAZERO_STRICT_VERIFY_CMD: command, LUCIAZERO_STRICT_TIMEOUT: "60" }, [VERIFY, "stop"], event());
+    const stop = node({ ...env, LUCIAZERO_STRICT_VERIFY_CMD: verify, LUCIAZERO_STRICT_TIMEOUT: "60" }, [VERIFY, "stop"], event());
     const stats = path.join(box.claude, "luciazero-stats.log");
     const events = fs.existsSync(stats)
       ? fs.readFileSync(stats, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line).event) : [];
     const last = path.join(stateDir(box.env, cwd), "last_verify");
     const verdict = fs.existsSync(last) ? fs.readFileSync(last, "utf8") : null;
-    assert.strictEqual(stop.status, 2, `${command}: ${stop.stderr}`);
+    assert.strictEqual(stop.status, 2, `${verify}: ${stop.stderr}`);
     if (blocks) {
-      assert.match(stop.stderr, /Strict verify gate/, `${command} is a real red and must block`);
-      assert.deepStrictEqual(events, ["strict-block"], command);
-      assert.strictEqual(verdict, "fail\n", command);
+      assert.match(stop.stderr, /Strict verify gate/, `${verify} is a real red and must block`);
+      assert.deepStrictEqual(events, ["strict-block"], verify);
+      assert.strictEqual(verdict, "fail\n", verify);
     } else {
-      assert.match(stop.stderr, /Doctrine rule 1/, `${command} could not run, which must nudge`);
-      assert.doesNotMatch(stop.stderr, /Strict verify gate/, `${command} could not run, yet a red was reported`);
-      assert.deepStrictEqual(events, ["nudge"], command);
-      assert.strictEqual(verdict, null, command);
+      assert.match(stop.stderr, /Doctrine rule 1/, `${verify} could not run, which must nudge`);
+      assert.doesNotMatch(stop.stderr, /Strict verify gate/, `${verify} could not run, yet a red was reported`);
+      assert.deepStrictEqual(events, ["nudge"], verify);
+      assert.strictEqual(verdict, null, verify);
     }
   }
 });

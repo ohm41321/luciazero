@@ -577,6 +577,15 @@ class SecretRedaction(unittest.TestCase):
         ("feature/sk-implement-login-page-redesign", "feature/sk-implement-login-page-redesign"),
         ("token = request.headers.get(name)", "token = request.headers.get(name)"),
         ("no secrets here", "no secrets here"),
+        # Review findings: a secret glued to a word, or a key cut off before
+        # its END line, is still that secret.
+        ("__lzap_" + "0123456789abcdef" * 2 + "__", "__[redacted:approval-nonce]"),
+        ("xlzap_" + "0123456789abcdef" * 2, "x[redacted:approval-nonce]"),
+        ("_lzsc_" + "0123456789abcdef" * 2 + "_", "_[redacted:session-credential]"),
+        ("my_ghp_" + "a" * 36, "my_[redacted:github-token]"),
+        ("ghp_" + "a" * 36 + "__", "[redacted:github-token]__"),
+        ("id_AKIAIOSFODNN7EXAMPLE_x", "id_[redacted:aws-key]_x"),
+        ("key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n", "key: [redacted:private-key]"),
     )
 
     def test_patterns(self) -> None:
@@ -598,12 +607,25 @@ class SecretRedaction(unittest.TestCase):
         self.assertEqual(scrubbed, {"[redacted:approval-nonce]": "use this", "password": "[redacted]", "GITHUB_TOKEN": "[redacted]", "note": "ok", "short_secret": "abc", "nested": {"client_secret": "[redacted]"}})
         self.assertEqual(count, 4)
 
+    def test_json_keys_that_scrub_to_the_same_text_keep_both_values(self) -> None:
+        scrubbed, count = Redactor().json({"lzap_" + "0" * 32: 1, "lzap_" + "f" * 32: 2})
+        self.assertEqual(sorted(scrubbed.values()), [1, 2])
+        self.assertEqual(count, 2)
+
     def test_scan_reports_strict_shapes_only(self) -> None:
         redactor = Redactor(["my-daemon-token-value"])
         self.assertEqual(redactor.scan("nothing"), [])
         self.assertEqual(redactor.scan("token = request.headers.get(name)"), [])  # heuristic tier never refuses
         self.assertEqual(sorted(redactor.scan("lzap_" + "a" * 32 + " and my-daemon-token-value")), ["approval-nonce", "daemon-token"])
         self.assertEqual(redactor.scan("https://u:p1@h/x"), ["url-credential"])
+
+    def test_private_key_headers_with_no_end_stay_linear(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        blob = (header * (128 * 1024 // len(header) + 1))[: 128 * 1024]
+        started = time.monotonic()
+        scrubbed, _ = Redactor().text(blob)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(scrubbed, "[redacted:private-key]")
 
     def test_large_hyphenated_payload_stays_linear(self) -> None:
         blob = "a-" * (32 * 1024)
@@ -631,6 +653,14 @@ class StoreAndServerRedaction(SecurityCase):
             self.assertNotIn(secret, dump)
         events = self.store.events(limit=100)
         self.assertEqual([e["payload"]["redactions"] for e in events if e["kind"] == "message.sent"], [4])
+
+    def test_an_oversized_payload_is_refused_before_it_is_scrubbed(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        started = time.monotonic()
+        with self.assertRaises(ValidationError):
+            self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="finding",
+                                    payload={"log": header * (256 * 1024 // len(header))})
+        self.assertLess(time.monotonic() - started, 1.0)
 
     def test_credential_bearing_urls_are_refused_not_stored(self) -> None:
         for call in (

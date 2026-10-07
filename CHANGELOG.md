@@ -116,6 +116,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `luciazero-agentd run` on a terminal revokes the session's credential when
   the process table fails just as the provider is bound. That error escaped
   with a traceback, before the cleanup that revokes it.
+- The Agent Bus redactor scrubs a token glued to a word (`my_ghp_...`,
+  `__lzap_...__` in Markdown bold, `xlzsc_...`), a private key whose END line
+  is missing (to the end of the text), and keeps both values when two JSON
+  keys scrub to the same text. A run of `BEGIN ... PRIVATE KEY` lines took
+  quadratic time; it is linear, and a payload over the 64 KiB cap is refused
+  before it is scrubbed, so an oversized send no longer holds a server thread
+  for seconds.
 - Agent Bus binding renewal only moves an expiry forward and records a
   `binding.renewed` event only when the row changed, so out-of-order renewals
   cannot shorten a binding and a revoked one is never reported renewed

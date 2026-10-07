@@ -618,6 +618,9 @@ class Store:
         result is size-capped. Returns the encoding and the redaction count."""
         if not isinstance(value, dict):
             raise ValidationError(f"{what} must be a JSON object")
+        # The cap first: what is refused anyway is not worth scrubbing, and a
+        # peer must not hold a thread with the redactor on a megabyte.
+        _check_json_object(value, what)
         hit = find_credential_url(value)
         if hit is not None:
             raise UnsafeReference(f"{what} carries a credential-bearing URL; peers fetch repositories with their own credentials")

@@ -503,7 +503,10 @@ function removers(home) {
 // ---------------------------------------------------------------- Claude Code
 
 function agentdLayout(dir) {
-  const binDir = process.env.LUCIAZERO_BIN_DIR || j(dir, "bin");
+  // LUCIAZERO_BIN_DIR, else where an install given it recorded, else the default
+  const binFile = j(dir, ".luciazero-agentd-bin");
+  const recorded = (readBytes(binFile) || Buffer.alloc(0)).toString("utf8").split("\n")[0];
+  const binDir = process.env.LUCIAZERO_BIN_DIR || (path.isAbsolute(recorded) ? recorded : j(dir, "bin"));
   // Windows runs a launcher by its extension; the same .cmd goes in twice,
   // as install.sh puts its shell launcher in twice.
   const ext = WINDOWS ? ".cmd" : "";
@@ -513,6 +516,8 @@ function agentdLayout(dir) {
     source: j(SRC, "bin", "luciazero-agentd" + ext),
     launcher: j(binDir, "luciazero-agentd" + ext),
     homeFile: j(dir, ".luciazero-agentd-home"),
+    binFile,
+    defaultBin: binDir === j(dir, "bin"),
   };
 }
 
@@ -663,18 +668,12 @@ function claudeStatus(dir) {
         rc = 1;
       }
     }
-    // As `settings-wiring.js status` answers install.sh: a file it cannot
-    // read is a file with nothing wired.
-    let settings;
-    try {
-      const file = j(dir, "settings.json");
-      settings = fs.existsSync(file) ? wiring.readSettings(file) : {};
-    } catch {
-      settings = {};
-    }
+    // As `settings-wiring.js status` answers install.sh: what is wired in a
+    // file it cannot read is unknown, not nothing.
     let missing = null;
     try {
-      missing = wiring.missing(settings, hooks);
+      const file = j(dir, "settings.json");
+      missing = wiring.missing(fs.existsSync(file) ? wiring.readSettings(file) : {}, hooks);
     } catch {
       missing = null;
     }
@@ -800,6 +799,8 @@ function claudeInstall(args) {
     }
     if (kindAll !== "absent") {
       fs.writeFileSync(ad.homeFile, j(SRC, "agentd") + "\n");
+      if (ad.defaultBin) rmFile(ad.binFile);
+      else fs.writeFileSync(ad.binFile, fs.realpathSync(ad.binDir) + "\n");
       if (!onPath(ad.binDir)) say(`      add to PATH:  ${pathHint(ad.binDir)}`);
     }
   }
@@ -855,7 +856,8 @@ function claudeInstall(args) {
     }
     const settings = j(dir, "settings.json");
     const hooks = j(dir, "hooks");
-    if (wiring.main(["wire", "check", settings, hooks]) !== 0) {
+    const pending = wiring.wireCheck(settings, hooks);
+    if (pending === null) {
       warn("FAIL: settings.json cannot be wired (see above) — hook files not copied, settings.json untouched");
       return 1;
     }
@@ -871,7 +873,8 @@ function claudeInstall(args) {
       else copyFileNew(src, dst, false);
       chmodX(dst);
     }
-    if (isFile(settings)) bakcopy(true, settings, settings);
+    // backed up only when the wiring is about to change it
+    if (isFile(settings) && pending) bakcopy(true, settings, settings);
     if (wiring.main(["wire", "write", settings, hooks]) !== 0) {
       warn("FAIL: could not update settings.json (see above) — hook files copied but not wired");
       return 1;
@@ -1011,6 +1014,7 @@ function claudeUninstall(args) {
     }
     rmdirQuiet(ad.binDir);
     rmFile(ad.homeFile);
+    rmFile(ad.binFile);
   }
 
   const legacyHandoff = j(dir, "skills", "handoff");
@@ -1077,12 +1081,18 @@ function claudeUninstall(args) {
     const out = appended ? dropImportAndSeparator(snapshot) : dropLine(snapshot, IMPORT_LINE);
     let rewritten = false;
     if (cmp(saved, globalMd)) {
-      const info = fs.statSync(saved);
-      const tmp = j(dir, ".luciazero-claude-md." + crypto.randomBytes(6).toString("hex"));
-      fs.writeFileSync(tmp, Buffer.from(out, "latin1"), { flag: "wx", mode: info.mode & 0o777 });
-      if (!WINDOWS) fs.chmodSync(tmp, info.mode & 0o7777);
-      fs.renameSync(tmp, globalMd);
-      if (!nonEmpty(globalMd)) rmFile(globalMd);
+      if (fs.lstatSync(globalMd).isSymbolicLink()) {
+        // a link -- into a dotfiles checkout, say -- stays a link: the result
+        // goes through it to the file it names, as the install's append did
+        fs.writeFileSync(globalMd, Buffer.from(out, "latin1"));
+      } else {
+        const info = fs.statSync(saved);
+        const tmp = j(dir, ".luciazero-claude-md." + crypto.randomBytes(6).toString("hex"));
+        fs.writeFileSync(tmp, Buffer.from(out, "latin1"), { flag: "wx", mode: info.mode & 0o777 });
+        if (!WINDOWS) fs.chmodSync(tmp, info.mode & 0o7777);
+        fs.renameSync(tmp, globalMd);
+        if (!nonEmpty(globalMd)) rmFile(globalMd);
+      }
       rewritten = true;
     } else {
       warn(`  !!  CLAUDE.md changed while this was running; left exactly as it is now (backup: ${path.basename(saved)})`);
@@ -1355,12 +1365,19 @@ function codexUninstall(args) {
     warn(`      expected exactly one '${START}' ... '${END}' pair, on their own lines`);
   } else if (hasStart) {
     const saved = bakcopy(true, agentsMd, agentsMd);
-    const info = fs.statSync(saved);
-    const tmp = j(dir, ".luciazero-agents-md." + crypto.randomBytes(6).toString("hex"));
-    fs.writeFileSync(tmp, Buffer.from(stripMarkerBlock(readRaw(agentsMd)), "latin1"), { flag: "wx", mode: info.mode & 0o777 });
-    if (!WINDOWS) fs.chmodSync(tmp, info.mode & 0o7777);
-    fs.renameSync(tmp, agentsMd);
-    if (!nonEmpty(agentsMd)) rmFile(agentsMd);
+    const stripped = Buffer.from(stripMarkerBlock(readRaw(agentsMd)), "latin1");
+    if (fs.lstatSync(agentsMd).isSymbolicLink()) {
+      // a link -- into a dotfiles checkout, say -- stays a link: the result
+      // goes through it to the file it names, as the install's append did
+      fs.writeFileSync(agentsMd, stripped);
+    } else {
+      const info = fs.statSync(saved);
+      const tmp = j(dir, ".luciazero-agents-md." + crypto.randomBytes(6).toString("hex"));
+      fs.writeFileSync(tmp, stripped, { flag: "wx", mode: info.mode & 0o777 });
+      if (!WINDOWS) fs.chmodSync(tmp, info.mode & 0o7777);
+      fs.renameSync(tmp, agentsMd);
+      if (!nonEmpty(agentsMd)) rmFile(agentsMd);
+    }
     say(`  ok  removed doctrine block (backup: ${path.basename(saved)})`);
   } else {
     say("  ok  no doctrine block in AGENTS.md");

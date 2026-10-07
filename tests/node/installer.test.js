@@ -47,6 +47,8 @@ test("claude: install with hooks, status, the wired hook runs, uninstall restore
     "the installed hook did not record the verify run");
 
   ok(node(box.env, [INSTALLER, "claude", "--with-hooks"]), "second install");
+  assert.deepStrictEqual(fs.readdirSync(box.claude).filter((n) => n.startsWith("settings.json.bak.")), [],
+    "a second install with nothing to change backed up settings.json");
   ok(node(box.env, [INSTALLER, "claude-uninstall"]), "uninstall");
   assert.deepStrictEqual(fs.readFileSync(path.join(box.claude, "CLAUDE.md")), mine, "uninstall did not restore CLAUDE.md byte for byte");
   assert.ok(!fs.existsSync(path.join(box.claude, "luciazero.md")), "the doctrine was left behind");

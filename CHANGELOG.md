@@ -106,6 +106,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (roadmap R16). A managed bind settles process liveness before its write
   transaction instead of probing the process table while holding the lock
   (roadmap R17).
+- The settings wiring recognizes its own hook and status line entries however
+  the config directory was spelled. A `CLAUDE_CONFIG_DIR` given with a trailing
+  or doubled separator used to wire every hook a second time on the next
+  install and leave all of them in place on uninstall.
+- Uninstalling writes through a `CLAUDE.md` or `AGENTS.md` that is a symlink
+  (into a dotfiles checkout, say) instead of replacing the link with a file.
+- Agent Bus launchers installed with `LUCIAZERO_BIN_DIR` are found again by
+  `--status`, a reinstall and the uninstall when the variable is not set:
+  the install records the directory in `.luciazero-agentd-bin`. They used to
+  be left behind.
+- `uninstall.sh` stops the Agent Bus service through `python3 -m` from the
+  package directory when no launcher is left, so a `luciazero_agentd` in the
+  directory it was started from is never the one that runs.
+- `install.sh --with-hooks` and the Node installer back up `settings.json`
+  only when the wiring is about to change it, not on every run.
+- `--status` reports a `settings.json` it cannot read as unreadable, as the
+  settings wiring's own contract says, instead of listing every hook as
+  missing and suggesting a reinstall that would refuse the file.
 
 ## [2.6.0] - 2026-09-22
 

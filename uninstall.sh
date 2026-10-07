@@ -269,7 +269,15 @@ rmdir "${MANAGED_DIR}/skills" "${MANAGED_DIR}/agents" "${MANAGED_DIR}" 2>/dev/nu
 # the marker is another program that happens to share the name.
 AGENTD_MARKER="luciazero-managed: agentd-launcher"
 AGENTD_SERVICE_MARKER="luciazero-managed: agentd-service"
-AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+# Where install.sh put them: LUCIAZERO_BIN_DIR, else the directory an install
+# given it recorded, else the default.
+AGENTD_BIN_FILE="${CLAUDE_DIR}/.luciazero-agentd-bin"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-}"
+if [ -z "${AGENTD_BIN_DIR}" ] && [ -f "${AGENTD_BIN_FILE}" ]; then
+  AGENTD_BIN_DIR="$(head -n 1 "${AGENTD_BIN_FILE}" 2>/dev/null || true)"
+  case "${AGENTD_BIN_DIR}" in /*) ;; *) AGENTD_BIN_DIR="" ;; esac
+fi
+AGENTD_BIN_DIR="${AGENTD_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
 # Both names install.sh writes. The long one is kept in its own variable
 # because the service is stopped through it before either is removed.
@@ -292,8 +300,10 @@ for AGENTD_SVC in "${AGENTD_SERVICE_ROOT}/Library/LaunchAgents/com.luciazero.age
   fi
   if [ -n "${AGENTD_RUN}" ] && "${AGENTD_RUN}" service uninstall >/dev/null 2>&1; then
     echo "  ok  agent bus service stopped and removed"
+  # Run from the package, so `-m` cannot find a luciazero_agentd in whatever
+  # directory the uninstaller was started from.
   elif [ -d "${SRC}/agentd/luciazero_agentd" ] && command -v python3 >/dev/null 2>&1 \
-    && PYTHONPATH="${SRC}/agentd" python3 -m luciazero_agentd service uninstall >/dev/null 2>&1; then
+    && (cd "${SRC}/agentd" && PYTHONPATH="${SRC}/agentd" python3 -m luciazero_agentd service uninstall) >/dev/null 2>&1; then
     echo "  ok  agent bus service stopped and removed"
   else
     echo "  !!  the Agent Bus service is still installed (${AGENTD_SVC})" >&2
@@ -321,7 +331,7 @@ if [ "${AGENTD_KEEP}" = 0 ]; then
   done
   # Only once both are gone, and only if it is empty.
   rmdir "${AGENTD_BIN_DIR}" 2>/dev/null || true
-  rm -f "${CLAUDE_DIR}/.luciazero-agentd-home"
+  rm -f "${CLAUDE_DIR}/.luciazero-agentd-home" "${AGENTD_BIN_FILE}"
 fi
 
 LEGACY_HANDOFF="${CLAUDE_DIR}/skills/handoff"
@@ -451,8 +461,15 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
     grep -vxF "${IMPORT_LINE}" "${BACKUP}" > "${MD_TMP}" || [ $? -eq 1 ]
   fi
   if cmp -s "${BACKUP}" "${GLOBAL_MD}"; then
-    mv "${MD_TMP}" "${GLOBAL_MD}"
-    [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
+    if [ -L "${GLOBAL_MD}" ]; then
+      # a link -- into a dotfiles checkout, say -- stays a link: the result
+      # goes through it to the file it names, as the install's append did
+      cat "${MD_TMP}" > "${GLOBAL_MD}"
+      rm -f "${MD_TMP}"
+    else
+      mv "${MD_TMP}" "${GLOBAL_MD}"
+      [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
+    fi
     IMPORT_REWRITTEN=1
   else
     rm -f "${MD_TMP}"

@@ -406,7 +406,8 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   not in the npm payload and `npx luciazero` never starts it. From a checkout,
   `./install.sh` (on Windows, `node bin\luciazero.js`) adds the
   `luciazero-agentd` and `lucia` launchers to `~/.claude/bin`
-  (`LUCIAZERO_BIN_DIR` chooses another directory), and
+  (`LUCIAZERO_BIN_DIR` chooses another directory, which later runs
+  remember), and
   `luciazero-agentd service install` runs the daemon under launchd, systemd
   `--user`, or Task Scheduler on Windows. See [docs/agent-bus.md](docs/agent-bus.md).
 - Core installers, hooks, helpers, and graders are offline. Real behavioral

@@ -6,7 +6,8 @@
 // platform.
 //
 //   node settings-wiring.js wire <check|write> <settings.json> <hooks dir>
-//       exit 0 wired (or would be), 1 cannot be wired -- nothing written
+//       exit 0 wired (or would be), 1 cannot be wired -- nothing written;
+//       `check` prints `changes` or `unchanged`: whether `write` would write
 //   node settings-wiring.js status <settings.json> <hooks dir>
 //       prints the subcommands not wired, space-led; exit 1 if unreadable
 //   node settings-wiring.js clean <settings.json> <config dir>
@@ -46,6 +47,16 @@ const WIRING = [
 // so a path written by an older install is found byte for byte.
 function join(dir, name) {
   return /[\\/]$/.test(dir) ? dir + name : dir + (WINDOWS ? "\\" : "/") + name;
+}
+
+// Whether two paths name the same script however each was spelled: a config
+// dir given with a trailing or doubled separator is joined as given, and an
+// install, a reinstall and an uninstall need not have been given it alike.
+function samePath(a, b) {
+  if (a === b) return true;
+  if (typeof a !== "string" || typeof b !== "string" || !path.isAbsolute(a) || !path.isAbsolute(b)) return false;
+  const canon = (p) => (WINDOWS ? path.resolve(p).toLowerCase() : path.resolve(p));
+  return canon(a) === canon(b);
 }
 
 function names(hooksDir) {
@@ -113,23 +124,22 @@ function legacyCommand(command, scripts) {
     if (command.startsWith(script + " ")) return [script, command.slice(script.length + 1).trim()];
   }
   const words = shellWords(command);
-  if (words && words.length && scripts.includes(words[0])) return [words[0], words.slice(1).join(" ")];
+  const script = words && words.length ? scripts.find((s) => samePath(s, words[0])) : undefined;
+  if (script !== undefined) return [script, words.slice(1).join(" ")];
   return null;
 }
 
-// What a hook object runs, as [script, subcommand], when it is one of ours.
-// Wiring looks for the verify hook only; removal (`broad`) takes anything
-// that runs either script, since both are about to be deleted and an entry
-// left naming one would run a file that is gone.
+// What a hook object runs, as [script, subcommand], when it is one of ours;
+// the script as `n` spells it. Wiring looks for the verify hook only; removal
+// (`broad`) takes anything that runs either script, since both are about to
+// be deleted and an entry left naming one would run a file that is gone.
 function ourHook(hook, n, broad) {
   if (hook === null || typeof hook !== "object" || Array.isArray(hook)) return null;
   const scripts = broad ? [n.verify, n.status] : [n.verify];
   if (Array.isArray(hook.args)) {
-    if (hook.command === "node" && hook.args.length >= 1 && scripts.includes(hook.args[0])
-        && hook.args.every((a) => typeof a === "string")) {
-      return [hook.args[0], hook.args.slice(1).join(" ")];
-    }
-    return null;
+    const script = hook.command === "node" && hook.args.length >= 1 && hook.args.every((a) => typeof a === "string")
+      ? scripts.find((s) => samePath(s, hook.args[0])) : undefined;
+    return script === undefined ? null : [script, hook.args.slice(1).join(" ")];
   }
   return legacyCommand(hook.command, broad ? [n.verify, n.status, n.legacyVerify, n.legacyStatus]
     : [n.verify, n.legacyVerify]);
@@ -139,7 +149,7 @@ function ourStatusLine(statusLine, n, broad) {
   if (statusLine === null || typeof statusLine !== "object" || Array.isArray(statusLine)) return false;
   if (typeof statusLine.command !== "string") return false;
   const script = statusScript(statusLine.command);
-  if (script === n.status || (broad && script === n.verify)) return true;
+  if (samePath(script, n.status) || (broad && samePath(script, n.verify))) return true;
   const legacy = legacyCommand(statusLine.command, broad
     ? [n.legacyStatus, n.legacyVerify, n.status, n.verify] : [n.legacyStatus]);
   return legacy !== null && (broad || legacy[1] === "");
@@ -450,11 +460,30 @@ function modeOf(target) {
   }
 }
 
+// Whether wiring `file` would change it, or null when it cannot be wired
+// (the reason printed). Writes nothing.
+function wireCheck(file, hooksDir) {
+  try {
+    const settings = readSettings(file);
+    writableTarget(file);
+    return wire(settings, hooksDir).changed;
+  } catch (error) {
+    console.error("      " + (error.shape ? error.message : (error && error.message) || String(error)));
+    return null;
+  }
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   if (command === "wire") {
     const [mode, file, hooksDir] = rest;
-    const say = mode === "write" ? (text) => console.log(text) : () => {};
+    if (mode !== "write") {
+      const changes = wireCheck(file, hooksDir);
+      if (changes === null) return 1;
+      console.log(changes ? "changes" : "unchanged");
+      return 0;
+    }
+    const say = (text) => console.log(text);
     let settings;
     let target;
     let result;
@@ -473,7 +502,6 @@ function main(argv) {
       say("  !!  statusline SKIPPED — a custom statusLine exists; to use ours, set");
       say("      settings.json statusLine.command to: " + result.statusWant);
     }
-    if (mode !== "write") return 0;
     if (!result.changed) {
       console.log("  ok  hooks already wired");
       return 0;
@@ -489,13 +517,14 @@ function main(argv) {
   }
   if (command === "status") {
     const [file, hooksDir] = rest;
-    let settings;
+    let gaps;
     try {
-      settings = fs.existsSync(file) ? readSettings(file) : {};
+      gaps = missing(fs.existsSync(file) ? readSettings(file) : {}, hooksDir);
     } catch {
-      settings = {};
+      // what is wired in a file that cannot be read is unknown, not nothing
+      return 1;
     }
-    process.stdout.write(missing(settings, hooksDir).map((s) => " " + s).join(""));
+    process.stdout.write(gaps.map((s) => " " + s).join(""));
     return 0;
   }
   if (command === "clean") {
@@ -531,7 +560,7 @@ function main(argv) {
   return 64;
 }
 
-module.exports = { SUBS, WIRING, names, statusCommand, statusScript, shellWords, legacyCommand, wire, missing, clean, render, replaceFile, backup, readSettings, writableTarget, modeOf, main };
+module.exports = { SUBS, WIRING, names, statusCommand, statusScript, shellWords, legacyCommand, wire, wireCheck, missing, clean, render, replaceFile, backup, readSettings, writableTarget, modeOf, main };
 
 if (require.main === module) {
   try {

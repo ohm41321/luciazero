@@ -422,6 +422,11 @@ cp "${SB3}/settings.json" "${SB3}/settings.snap"
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/install.sh" --with-hooks >/dev/null
 cmp -s "${SB3}/settings.json" "${SB3}/settings.snap" \
   || { rm -rf "${SB3}"; fail "--with-hooks reinstall changed settings.json (not idempotent)"; }
+# one backup, of the user's own file: a reinstall with nothing to change
+# leaves no copy of a file it did not touch
+SB3_BAKS="$(find "${SB3}" -maxdepth 1 -name 'settings.json.bak.*' | wc -l | tr -d ' ')"
+[ "${SB3_BAKS}" = 1 ] \
+  || { rm -rf "${SB3}"; fail "--with-hooks left ${SB3_BAKS} settings.json backups, not 1: a reinstall that changed nothing backed it up"; }
 # --status must catch a stale hook file (the `git pull && ./install.sh`
 # without --with-hooks failure mode: sidecar fresh, hook file old)
 echo '// stale marker' >> "${SB3}/hooks/luciazero-verify.cjs"
@@ -741,6 +746,9 @@ BLI_CFG="${BLI}/cfg"; BLI_OUT="${BLI}/outside"
 mkdir -p "${BLI_CFG}" "${BLI_OUT}"
 BLI_FAIL() { rm -rf "${BLI}"; fail "$1"; }
 CLAUDE_CONFIG_DIR="${BLI_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null
+# settings.json as the user left it, unwired, so the reinstall has a change
+# to make and a backup to take
+printf '{"model": "opus"}\n' > "${BLI_CFG}/settings.json"
 cp -p "${BLI_CFG}/settings.json" "${BLI}/settings.before"
 python3 - "${BLI_CFG}/settings.json" "${BLI_OUT}/escaped" "${BLI}/decoys" <<'BLIPY'
 import os, sys, time
@@ -794,6 +802,7 @@ BLR_CFG="${BLR}/cfg"; BLR_OUT="${BLR}/outside"; BLR_BIN="${BLR}/bin"
 mkdir -p "${BLR_CFG}" "${BLR_OUT}" "${BLR_BIN}"
 BLR_FAIL() { rm -rf "${BLR}"; fail "$1"; }
 CLAUDE_CONFIG_DIR="${BLR_CFG}" "${ROOT}/install.sh" --with-hooks >/dev/null
+printf '{"model": "opus"}\n' > "${BLR_CFG}/settings.json"
 cp -p "${BLR_CFG}/settings.json" "${BLR}/settings.before"
 BLR_CP="$(command -v cp)"
 cat > "${BLR_BIN}/cp" <<BLRSH

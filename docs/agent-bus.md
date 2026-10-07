@@ -35,7 +35,8 @@ So the one-time part is a clone, an install, and a PATH entry:
 git clone https://github.com/ohm41321/luciazero.git
 cd luciazero
 # plain ./install.sh uses ~/.claude/bin; this picks a directory you may
-# already have on PATH
+# already have on PATH, and later installs, --status and the uninstall
+# remember it
 LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh
 export PATH="$HOME/.local/bin:$PATH"      # and in your shell profile
 ```

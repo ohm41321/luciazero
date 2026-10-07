@@ -333,9 +333,17 @@ elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
   # redirection below replaces the content and leaves the mode alone.
   cp -p "${BACKUP}" "${AGENTS_TMP}"
   strip_marker_block "${AGENTS_MD}" > "${AGENTS_TMP}"
-  mv "${AGENTS_TMP}" "${AGENTS_MD}"
-  AGENTS_TMP=""
-  [ -s "${AGENTS_MD}" ] || rm -f "${AGENTS_MD}"
+  if [ -L "${AGENTS_MD}" ]; then
+    # a link -- into a dotfiles checkout, say -- stays a link: the result
+    # goes through it to the file it names, as the install's append did
+    cat "${AGENTS_TMP}" > "${AGENTS_MD}"
+    rm -f "${AGENTS_TMP}"
+    AGENTS_TMP=""
+  else
+    mv "${AGENTS_TMP}" "${AGENTS_MD}"
+    AGENTS_TMP=""
+    [ -s "${AGENTS_MD}" ] || rm -f "${AGENTS_MD}"
+  fi
   echo "  ok  removed doctrine block (backup: $(basename "${BACKUP}"))"
 else
   echo "  ok  no doctrine block in AGENTS.md"

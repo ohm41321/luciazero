@@ -11,9 +11,10 @@
 #   ./install.sh --status      read-only health check of an existing install;
 #                              exits non-zero if a core piece is missing
 #
-#   LUCIAZERO_BIN_DIR=<dir>    where `luciazero-agentd` goes (default
-#                              ~/.claude/bin; a checkout only -- the daemon
-#                              is not in the npm payload)
+#   LUCIAZERO_BIN_DIR=<dir>    where `luciazero-agentd` goes (default: where
+#                              the last install put it, else ~/.claude/bin;
+#                              a checkout only -- the daemon is not in the
+#                              npm payload)
 set -euo pipefail
 
 WITH_HOOKS=0
@@ -37,7 +38,15 @@ BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
 # its promise to write nowhere else; LUCIAZERO_BIN_DIR points it at a PATH
 # directory such as ~/.local/bin when the user wants one.
 AGENTD_MARKER="luciazero-managed: agentd-launcher"
-AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+# An install told LUCIAZERO_BIN_DIR records where it put the launchers, so a
+# status check, a reinstall or an uninstall not told it again still finds them.
+AGENTD_BIN_FILE="${CLAUDE_DIR}/.luciazero-agentd-bin"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-}"
+if [ -z "${AGENTD_BIN_DIR}" ] && [ -f "${AGENTD_BIN_FILE}" ]; then
+  AGENTD_BIN_DIR="$(head -n 1 "${AGENTD_BIN_FILE}" 2>/dev/null || true)"
+  case "${AGENTD_BIN_DIR}" in /*) ;; *) AGENTD_BIN_DIR="" ;; esac
+fi
+AGENTD_BIN_DIR="${AGENTD_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
 # One script, installed twice. `lucia claude` is the whole of the ordinary
 # path and the long name is what the subcommands were documented under, so
@@ -529,6 +538,11 @@ if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -f "${SRC}/bin/lucia
     # The installed copy is no longer next to the package, so it is told
     # where the package went. Nothing here depends on the caller's cwd.
     printf '%s\n' "${SRC}/agentd" > "${AGENTD_HOME_FILE}"
+    if [ "${AGENTD_BIN_DIR}" = "${CLAUDE_DIR}/bin" ]; then
+      rm -f "${AGENTD_BIN_FILE}"
+    else
+      printf '%s\n' "$(CDPATH='' cd -- "${AGENTD_BIN_DIR}" && pwd -P)" > "${AGENTD_BIN_FILE}"
+    fi
     on_path "${AGENTD_BIN_DIR}" \
       || echo "      add to PATH:  export PATH=\"${AGENTD_BIN_DIR}:\$PATH\""
   fi
@@ -634,7 +648,7 @@ if [ "${WITH_HOOKS}" = 1 ]; then
   # is copied: a file that is not JSON, not the shape hooks live in, or not
   # writable stops the install here, with no hook file in place and
   # settings.json untouched (roadmap R14).
-  wire_settings check \
+  WIRE_PENDING="$(wire_settings check)" \
     || { echo "FAIL: settings.json cannot be wired (see above) — hook files not copied, settings.json untouched" >&2; exit 1; }
   mkdir -p "${CLAUDE_DIR}/hooks"
   for H in luciazero-verify.cjs luciazero-statusline.cjs; do
@@ -646,7 +660,8 @@ if [ "${WITH_HOOKS}" = 1 ]; then
     cp "${SRC}/claude/hooks/${H}" "${DST}"
     chmod +x "${DST}"
   done
-  if [ -f "${SETTINGS}" ]; then
+  # backed up only when the wiring is about to change it
+  if [ -f "${SETTINGS}" ] && [ "${WIRE_PENDING}" = changes ]; then
     bakcopy -L "${SETTINGS}" "${SETTINGS}" >/dev/null
   fi
   wire_settings write \

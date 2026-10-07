@@ -117,6 +117,52 @@ test("clean removes only ours and keeps a backup", (t) => {
   assert.notDeepStrictEqual(fs.readFileSync(path.join(box.claude, backups[0])), before, "the backup is of the wired file");
 });
 
+// The config dir may come with a trailing separator, or doubled ones, and the
+// installers join it as given: what one spelling wired, another must still
+// find, so a second install does not wire every hook twice and uninstall does
+// not leave entries naming files it deleted.
+test("a hooks path spelled another way is still ours", (t) => {
+  const box = sandbox(t);
+  hooksDir(box);
+  const file = path.join(box.claude, "settings.json");
+  const sep = path.sep;
+  const doubled = box.claude + sep + sep + "hooks";
+  assert.strictEqual(node(box.env, [WIRING, "wire", "write", file, doubled]).status, 0);
+  const again = node(box.env, [WIRING, "wire", "write", file, path.join(box.claude, "hooks")]);
+  assert.strictEqual(again.status, 0, again.stderr);
+  const wired = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const [event, , sub] of wiring.WIRING) {
+    const ours = wired.hooks[event].flatMap((e) => e.hooks).filter((h) => h.command === "node" && h.args[1] === sub);
+    assert.strictEqual(ours.length, 1, `${event} ${sub} is wired ${ours.length} times`);
+  }
+  assert.strictEqual(node(box.env, [WIRING, "wire", "write", file, doubled]).status, 0);
+  const status = node(box.env, [WIRING, "status", file, box.claude + sep + "hooks" + sep]);
+  assert.strictEqual(status.stdout, "", "status called a wired hook missing");
+  const cleaned = node(box.env, [WIRING, "clean", file, box.claude + sep]);
+  assert.strictEqual(cleaned.status, 10, cleaned.stderr);
+  const after = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepStrictEqual(after.hooks, {}, "clean left entries of ours");
+  assert.strictEqual(after.statusLine, undefined, "clean left the status line");
+});
+
+// The installers back settings.json up only when the wiring will change it,
+// so check must say which, and write nothing either way.
+test("wire check says whether write would change the file", (t) => {
+  const box = sandbox(t);
+  const hooks = hooksDir(box);
+  const file = path.join(box.claude, "settings.json");
+  fs.writeFileSync(file, '{"model": "opus"}\n');
+  const check = () => {
+    const r = node(box.env, [WIRING, "wire", "check", file, hooks]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  assert.strictEqual(check(), "changes\n");
+  assert.strictEqual(fs.readFileSync(file, "utf8"), '{"model": "opus"}\n', "check wrote the file");
+  assert.strictEqual(node(box.env, [WIRING, "wire", "write", file, hooks]).status, 0);
+  assert.strictEqual(check(), "unchanged\n");
+});
+
 test("a settings.json that cannot be read is refused, not replaced", (t) => {
   const box = sandbox(t);
   const hooks = hooksDir(box);
@@ -127,6 +173,15 @@ test("a settings.json that cannot be read is refused, not replaced", (t) => {
     assert.notStrictEqual(r.status, 0, `wire ${mode} accepted a directory as settings.json`);
   }
   assert.ok(fs.statSync(file).isDirectory());
+  // status cannot say what is wired in a file it cannot read: not "nothing"
+  for (const unreadable of [() => {}, () => { fs.rmdirSync(file); fs.writeFileSync(file, "{ not json"); }]) {
+    unreadable();
+    const r = node(box.env, [WIRING, "status", file, hooks]);
+    assert.strictEqual(r.status, 1, `status answered for an unreadable settings.json: ${JSON.stringify(r.stdout)}`);
+    assert.strictEqual(r.stdout, "");
+  }
+  fs.rmSync(file);
+  fs.mkdirSync(file);
   fs.rmdirSync(file);
 
   const loop = path.join(box.box, "loop");

@@ -137,12 +137,12 @@ class Pair:
         for side, box in self.boxes.items():
             fn(box)
 
-    def run(self, command, *args):
+    def run(self, command, *args, env=None):
         self.step += 1
         got = {}
         for side, box in self.boxes.items():
             cmd = (SHELL[command] if side == "sh" else node_cmd(command)) + list(args)
-            p = subprocess.run(cmd, env=env_for(box), cwd=os.path.join(box, "home"),
+            p = subprocess.run(cmd, env=dict(env_for(box), **(env(box) if env else {})), cwd=os.path.join(box, "home"),
                                capture_output=True, timeout=300)
             got[side] = (
                 p.returncode,
@@ -308,6 +308,73 @@ def scenarios(top):
                 if f.read() != text.encode():
                     print("FAIL: installer parity, %s: %s AGENTS.md did not come back byte for byte" % (name, side))
                     raise SystemExit(1)
+
+    # CLAUDE.md and AGENTS.md as links into a dotfiles checkout: the install
+    # appends through the link, and the uninstall must write through it too,
+    # never replace the link with a file of its own
+    for name, link, run, undo in (("claude-linked", cfg, "claude", "claude-uninstall"),
+                                  ("codex-linked", codex, "codex", "codex-uninstall")):
+        md = "CLAUDE.md" if run == "claude" else "AGENTS.md"
+        s = Pair(top, name)
+
+        def linked(box, link=link, md=md):
+            write(os.path.join(box, "home", "dotfiles", md), "# mine\n\nkeep this\n", 0o640)
+            os.makedirs(link(box), exist_ok=True)
+            os.symlink(os.path.join("..", "dotfiles", md), link(box, md))
+        s.both(linked)
+        s.run(run)
+        s.run(undo)
+        for side, box in s.boxes.items():
+            if not os.path.islink(link(box, md)):
+                print("FAIL: installer parity, %s: %s %s is no longer a link" % (name, side, md))
+                raise SystemExit(1)
+            with open(os.path.join(box, "home", "dotfiles", md), "rb") as f:
+                if f.read() != b"# mine\n\nkeep this\n":
+                    print("FAIL: installer parity, %s: %s the file %s links to did not come back byte for byte" % (name, side, md))
+                    raise SystemExit(1)
+
+    # Launchers put elsewhere with LUCIAZERO_BIN_DIR are found again by a
+    # status check, a reinstall and an uninstall that are not given it
+    s = Pair(top, "claude-bin-dir")
+    s.run("claude", env=lambda box: {"LUCIAZERO_BIN_DIR": os.path.join(box, "home", "localbin")})
+    s.run("claude", "--status")
+    s.run("claude")
+    s.run("claude-uninstall")
+    for side, box in s.boxes.items():
+        for left in (os.path.join(box, "home", "localbin"), cfg(box, "bin")):
+            if os.path.lexists(left):
+                print("FAIL: installer parity, claude-bin-dir: %s left %s behind: %s"
+                      % (side, left.replace(box, "<box>"), sorted(os.listdir(left))))
+                raise SystemExit(1)
+
+    # With no launcher left, the service is stopped through the package, run
+    # from the package so that `-m` cannot pick up a luciazero_agentd in the
+    # directory the uninstall was started from
+    s = Pair(top, "claude-service-fallback")
+
+    def service(box):
+        write(os.path.join(box, "no-service", "Library", "LaunchAgents", "com.luciazero.agentd.plist"),
+              "<!-- luciazero-managed: agentd-service -->\n")
+        write(os.path.join(box, "shim", "python3"), '#!/bin/sh\npwd -P > "$HOME/python3-ran-in"\n', 0o755)
+    s.both(service)
+    s.run("claude-uninstall")
+    for side, box in s.boxes.items():
+        with open(os.path.join(box, "home", "python3-ran-in")) as f:
+            ran_in = f.read().strip()
+        if ran_in != os.path.realpath(os.path.join(ROOT, "agentd")):
+            print("FAIL: installer parity, claude-service-fallback: %s ran python3 -m in %s"
+                  % (side, ran_in.replace(box, "<box>")))
+            raise SystemExit(1)
+
+    # A settings.json that cannot be read: what is wired in it is unknown,
+    # and re-running the install (which refuses the file) is no remedy
+    s = Pair(top, "claude-status-unreadable")
+    s.run("claude", "--with-hooks")
+    s.both(lambda box: write(cfg(box, "settings.json"), "{ not json\n"))
+    shown = s.run("claude", "--status")
+    if shown[0] == 0 or "settings.json could not be read" not in shown[1]:
+        print("FAIL: installer parity, claude-status-unreadable: --status exited %d:\n%s" % (shown[0], shown[1]))
+        raise SystemExit(1)
 
     s = Pair(top, "codex-ambiguous")
     s.both(lambda box: write(codex(box, "AGENTS.md"), "<!-- luciazero:start -->\nx\n"))

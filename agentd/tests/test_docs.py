@@ -24,8 +24,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-from luciazero_agentd import nudge
+from luciazero_agentd import nudge, watch
 from luciazero_agentd import __main__ as cli
 from luciazero_agentd.__main__ import main, split_command
 from luciazero_agentd.store import Store
@@ -33,7 +34,8 @@ from luciazero_agentd.store import Store
 SKILL = Path(__file__).resolve().parents[2] / "skills" / "lucia-chat" / "SKILL.md"
 #: Every spelling of the daemon a reader could type, longest first so the
 #: prefix is stripped whole.
-LAUNCHERS = ("python3 -m luciazero_agentd", "py -3 -m luciazero_agentd", "luciazero-agentd", "lucia")
+LAUNCHERS = ("python3 -m luciazero_agentd", "python -m luciazero_agentd", "py -3 -m luciazero_agentd",
+             "luciazero-agentd", "lucia")
 
 
 def fenced(text: str) -> list[str]:
@@ -118,6 +120,15 @@ class ChatSkillTests(unittest.TestCase):
         self.assertIn(f"stops after {nudge.MAX_NUDGES} in a row", self.text)
         # the pull-only flow is a separate explanation, not a footnote
         self.assertIn("`--no-nudge` is the pull-only flow", self.text)
+
+    def test_the_module_form_it_names_is_the_one_the_bus_prints(self) -> None:
+        """The skill says its fallback is "the form the bus itself prints",
+        so the interpreter each platform's printed command starts is the one
+        the skill names for that platform."""
+        for windows in (False, True):
+            with self.subTest(windows=windows), mock.patch.object(watch, "WINDOWS", windows):
+                printed = watch.module_launcher("checkout").rsplit("; " if windows else "&& ", 1)[-1]
+                self.assertTrue(f"`{printed}`" in " ".join(self.text.split()), f"the skill never names `{printed}`")
 
     def test_the_three_latencies_stay_three(self) -> None:
         for name in ("delivery latency", "completion latency", "user-attributed blocking cost"):

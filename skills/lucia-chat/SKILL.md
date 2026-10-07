@@ -12,10 +12,11 @@ read-only pane showing every message as it lands.
 After `./install.sh` (on Windows, `node bin\luciazero.js` from the checkout),
 `lucia` is that command from anywhere and `luciazero-agentd` is the same
 program under its long name. Without the launcher, each command below is the
-same one run as `python3 -m luciazero_agentd` (on Windows, `py -3 -m
+same one run as `python3 -m luciazero_agentd` (on Windows, `python -m
 luciazero_agentd`) from the repository's `agentd/` directory, which is the form
-the bus itself prints. Run them in the user's terminal, or hand them over to
-paste. Never start a provider session on their behalf without being asked to.
+the bus itself prints; where Windows has only the `py` launcher on PATH, type
+`py -3 -m luciazero_agentd` instead. Run them in the user's terminal, or hand
+them over to paste. Never start a provider session on their behalf without being asked to.
 
 ## 1. Start here, always
 

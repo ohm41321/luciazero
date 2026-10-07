@@ -25,7 +25,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from luciazero_agentd import ConflictError, NotFound, Store, ValidationError
+from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, ValidationError
 from luciazero_agentd.store import (
     CONVERSATION_TTL_SECONDS,
     MAX_HOPS,
@@ -177,6 +177,18 @@ class GraphTests(WorkflowCase):
         again = self.store.create_task_graph(created_by="codex-architect", nodes=nodes, idempotency_key="g1")
         self.assertEqual([t["id"] for t in first], [t["id"] for t in again])
         self.assertEqual(self.store.counts()["tasks"], 2)
+        self.assertEqual(len([e for e in self.store.events(limit=100) if e["kind"] == "task_graph.created"]), 1)
+
+    def test_a_retried_graph_that_adds_or_drops_a_node_is_a_different_request(self) -> None:
+        """Review finding: idempotency was kept per node, so the same batch key
+        with one more node created that node and a second graph event."""
+        nodes = [{"key": "fix", "title": "fix"}, {"key": "verify", "title": "verify", "depends_on": ["fix"]}]
+        self.store.create_task_graph(created_by="codex-architect", nodes=nodes, idempotency_key="g1")
+        for changed in (nodes + [{"key": "ship", "title": "ship", "depends_on": ["verify"]}], nodes[:1]):
+            with self.assertRaises(IdempotencyConflict):
+                self.store.create_task_graph(created_by="codex-architect", nodes=changed, idempotency_key="g1")
+        self.assertEqual(self.store.counts()["tasks"], 2)
+        self.assertEqual(len([e for e in self.store.events(limit=100) if e["kind"] == "task_graph.created"]), 1)
 
     def test_bad_graphs_are_refused(self) -> None:
         with self.assertRaises(ValidationError):

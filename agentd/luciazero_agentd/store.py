@@ -1080,8 +1080,9 @@ class Store:
         A node's ``depends_on`` names either another node's ``key`` in the same
         batch or a task that already exists. A batch with a cycle is refused
         whole, so a half-built graph is never committed. With an
-        ``idempotency_key`` each node replays under ``<key>:<node key>``, so a
-        retried batch returns the same tasks instead of a second graph."""
+        ``idempotency_key`` the batch replays as a whole, and each node under
+        ``<key>:<node key>``: a retried batch returns the same tasks instead
+        of a second graph, and one that adds or drops a node is refused."""
         _check_id(created_by, "created_by", self._redactor)
         if idempotency_key is not None:
             _check_id(idempotency_key, "idempotency key", self._redactor)
@@ -1110,13 +1111,22 @@ class Store:
                 )
                 for key, item in prepared.items()
             }
+            batch = _fingerprint("create_task_graph", nodes=fingerprints)
+            batch_seen = self._replay(created_by, idempotency_key, "create_task_graph", batch) is not None
+            node_keys = {key: (f"{idempotency_key}:{key}" if idempotency_key is not None else None) for key in order}
+            existing = {key: self._replay(created_by, node_keys[key], "create_task", fingerprints[key]) for key in order}
+            seen = [key for key in order if existing[key] is not None]
+            if seen and len(seen) < len(order):
+                # some of these nodes were created under this key before, so
+                # this is that batch retried with a node more (or a graph
+                # made before batches were remembered whole, grown since)
+                raise IdempotencyConflict(f"idempotency key {idempotency_key!r} was already used by {created_by!r} for a different request")
             now = utcnow()
             for key in order:
                 item = prepared[key]
-                node_key = f"{idempotency_key}:{key}" if idempotency_key is not None else None
-                existing = self._replay(created_by, node_key, "create_task", fingerprints[key])
-                if existing is not None:
-                    created[key] = existing
+                node_key = node_keys[key]
+                if existing[key] is not None:
+                    created[key] = existing[key]
                     continue
                 if item["assigned_to"] is not None:
                     self._require_agent(item["assigned_to"])
@@ -1129,7 +1139,10 @@ class Store:
                 self._insert_task(item, created_by=created_by, task_id=task_id, now=now, dep_states=dep_states)
                 self._remember(created_by, node_key, "create_task", fingerprints[key], "task", task_id)
                 created[key] = task_id
-            self._event(created_by, "task_graph.created", "task", created[order[0]], {"nodes": [created[key] for key in order], "keys": list(order)})
+            if not seen:
+                self._event(created_by, "task_graph.created", "task", created[order[0]], {"nodes": [created[key] for key in order], "keys": list(order)})
+            if not batch_seen:
+                self._remember(created_by, idempotency_key, "create_task_graph", batch, "task", created[order[0]])
         return [self.get_task(created[key]) for key in order]
 
     def get_task(self, task_id: str) -> dict[str, Any]:

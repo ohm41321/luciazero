@@ -127,6 +127,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   screen returns that request instead of raising a second window. The second
   request superseded the first, so Allow on the window the user saw failed
   silently. The tool no longer claims to be idempotent.
+- `task_graph_create` with an `idempotency_key` replays the batch as a whole.
+  A retry with a node added used to create that node and a second
+  `task_graph.created` event; adding or dropping a node is now an
+  idempotency conflict, and an exact retry records no second event.
 - Agent Bus binding renewal only moves an expiry forward and records a
   `binding.renewed` event only when the row changed, so out-of-order renewals
   cannot shorten a binding and a revoked one is never reported renewed

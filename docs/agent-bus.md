@@ -671,8 +671,9 @@ forever.
 
 The two the daemon measures cannot be under-reported. Only the task's
 creator and assignee spend its turns: if a message from anyone else naming
-the task counted, any agent could stop another's work. The two only a
-provider can know are
+the task counted, any agent could stop another's work. A message from anyone
+naming a task past its deadline, or with a budget already spent, still stops
+it. The two only a provider can know are
 additive and holder-only: a report raises a total, never lowers
 one, only the agent holding the claim may make it, and every report keeps how
 much the reporting session's identity was worth. A spent

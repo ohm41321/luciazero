@@ -73,6 +73,11 @@ is the point:
 | `tokens`   | the provider, reported through `task_record_usage` | the claim holder reports usage |
 | `cost_usd` | the provider, reported through `task_record_usage` | the claim holder reports usage |
 
+Amended 2026-10-08: a message spends a turn only when its sender created the
+task or is assigned it, since anyone else's could stop another agent's work.
+A passed deadline still stops the task whoever names it
+([docs/agent-bus.md](../agent-bus.md)).
+
 `seconds` and `turns` cannot be under-reported: the daemon counts them itself
 as a side effect of work it already performs. `tokens` and `cost_usd` exist
 only inside the provider, so they are accepted from the worker under four

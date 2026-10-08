@@ -386,6 +386,22 @@ class BudgetTests(WorkflowCase):
                                     payload={"task_id": task["id"]})
         self.assertEqual(self.state(task["id"]), "exhausted")
 
+    def test_a_task_past_its_deadline_is_stopped_whoever_names_it(self) -> None:
+        """Review finding on the test above: limiting the turn count to a
+        task's parties skipped the deadline too, so a task message from
+        anyone else for a task past it was queued and the task kept running."""
+        task = self.task("bounded", assigned_to="codex-implementer", budget={"seconds": 3600})
+        self.store.claim_task(task["id"], "codex-implementer")
+        self.store._conn.execute("UPDATE tasks SET deadline_at = ? WHERE id = ?", (_plus_seconds(utcnow(), -60), task["id"]))
+        messages = self.store.counts()["messages"]
+        with self.assertRaises(BudgetExceeded) as caught:
+            self.store.send_message(sender="claude-reviewer", recipient="claude-reviewer", kind="task",
+                                    payload={"task_id": task["id"]})
+        self.assertIn("seconds", str(caught.exception))
+        self.assertEqual(self.store.counts()["messages"], messages)
+        self.assertEqual(self.state(task["id"]), "exhausted")
+        self.assertEqual(self.store.get_task(task["id"])["spent"].get("turns", 0), 0)
+
     def test_a_task_message_for_a_stopped_task_is_refused(self) -> None:
         """Review finding: a stopped task's queued task messages are dead-
         lettered, yet a new one -- the refused send retried, or one naming a

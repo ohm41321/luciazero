@@ -98,7 +98,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked
-  and its holder's completion refused.
+  and its holder's completion refused. A message from anyone naming a task
+  past its deadline still stops it.
 - `revert-probe` reports `UNASSESSABLE` (exit 2) when the verify command names
   a file the working tree has and the old tree lacks both before and after the
   old-code run: the command itself, any non-option argument, or the input of a

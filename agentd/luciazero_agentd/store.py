@@ -806,12 +806,14 @@ class Store:
                             raise BudgetExceeded(self._budget_message(str(task_row["id"]), over))
                         raise ConflictError(f"task {task_row['id']!r} is {task_row['state']}; it takes no more task "
                                             "messages, and a human continues the work by creating a new task")
-                    # Only the task's own parties spend its turns: anyone else
-                    # naming it could otherwise stop another agent's work.
+                    # A passed deadline or a budget already spent stops the
+                    # task whoever names it. Only the task's own parties
+                    # spend a turn: anyone else naming it could otherwise
+                    # stop another agent's work.
                     party = task_row is not None and sender in (task_row["created_by_agent_id"], task_row["assigned_agent_id"])
-                    if party:
+                    if task_row is not None:
                         stopped = self._over_budget(task_row, now)
-                        if stopped is None and task_row["state"] in LIVE_TASK_STATES:
+                        if stopped is None and party and task_row["state"] in LIVE_TASK_STATES:
                             budget = self._decode(task_row["budget"])
                             spent = self._decode(task_row["spent"])
                             turns = int(spent.get("turns", 0)) + 1

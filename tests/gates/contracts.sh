@@ -11,7 +11,7 @@ set -euo pipefail
 SKILL_DESC_WORDS=0
 while IFS= read -r NAME; do
   SKILL="${ROOT}/skills/${NAME}/SKILL.md"
-  head -1 "${SKILL}" | grep -qx -- '---' || fail "${NAME}/SKILL.md missing frontmatter"
+  [ "$(head -n 1 "${SKILL}")" = '---' ] || fail "${NAME}/SKILL.md missing frontmatter"
   grep -q "^name: ${NAME}\$" "${SKILL}" || fail "${NAME}/SKILL.md missing 'name: ${NAME}'"
   grep -q '^description: .' "${SKILL}" || fail "${NAME}/SKILL.md missing description"
   DESC_WORDS="$(sed -n 's/^description:[[:space:]]*//p' "${SKILL}" | wc -w | tr -d '[:space:]')"
@@ -21,7 +21,7 @@ while IFS= read -r NAME; do
 done < <(skill_inventory)
 while IFS= read -r AGENT_NAME; do
   AGENT="${ROOT}/claude/agents/${AGENT_NAME}.md"
-  head -1 "${AGENT}" | grep -qx -- '---' || fail "${AGENT_NAME}.md missing frontmatter"
+  [ "$(head -n 1 "${AGENT}")" = '---' ] || fail "${AGENT_NAME}.md missing frontmatter"
   grep -q "^name: ${AGENT_NAME}\$" "${AGENT}" || fail "${AGENT_NAME}.md missing name"
   grep -q '^description: .' "${AGENT}" || fail "${AGENT_NAME}.md missing description"
   AGENT_DESC_WORDS="$(sed -n 's/^description:[[:space:]]*//p' "${AGENT}" | wc -w | tr -d '[:space:]')"

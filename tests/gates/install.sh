@@ -198,7 +198,7 @@ grep -qxF 'someone elses data' "${SB3}-target" \
 LEFT="$(find "${SB3}" -maxdepth 1 -name '.luciazero-import.*' -type f | wc -l | tr -d ' ')"
 [ "${LEFT}" = 0 ] || SB3_FAIL "install.sh left ${LEFT} temporary provenance files behind"
 provenance_ok=0
-head -n 1 "${SB3}/.luciazero-import" 2>/dev/null | grep -qxF 'luciazero-managed: import-provenance' \
+[ "$(head -n 1 "${SB3}/.luciazero-import" 2>/dev/null)" = 'luciazero-managed: import-provenance' ] \
   && provenance_ok=1
 [ "${provenance_ok}" = 1 ] || SB3_FAIL "install.sh did not write its own provenance record"
 CLAUDE_CONFIG_DIR="${SB3}" "${ROOT}/uninstall.sh" >/dev/null 2>&1

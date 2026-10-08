@@ -34,8 +34,10 @@ OUT="$(tier_gates --fast)" || fail "fast tier over stub gates exited red"
 OUT="$(tier_gates --full)" || fail "full tier over stub gates exited red"
 [ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "full tier sources the wrong gates: ${OUT}"
-(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline) | grep -q '^PASS  discipline checks green$' \
-  || fail "discipline tier over stub gates printed no PASS line"
+if ! DOUT="$(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline)" \
+  || ! grep -q '^PASS  discipline checks green$' <<<"${DOUT}"; then
+  fail "discipline tier over stub gates printed no PASS line"
+fi
 # (c) LZ_TEST_TIMINGS: unset or 0, stdout and stderr are exactly as before;
 # 1, one `TIMING gate=<name> seconds=<n>` line per sourced gate on stderr, in
 # order, with stdout unchanged. The hooks stub sleeps a second for that run
@@ -164,8 +166,10 @@ grep -q '^fast: commits unknown x2, abc1234+dirty x1$' <<<"${REPORT}" \
   || fail "the report does not list every commit with its count: ${REPORT}"
 grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' <<<"${REPORT}" \
   || fail "the report did not warn that the samples span two revisions: ${REPORT}"
-LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | grep -q '^no samples under ' \
-  || fail "the report over no samples is not the one-line notice"
+if ! NONE="$(LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report)" \
+  || ! grep -q '^no samples under ' <<<"${NONE}"; then
+  fail "the report over no samples is not the one-line notice"
+fi
 rm -rf "${TS}"
 echo "ok  test-timings.sh keeps a sample per run, ranks gates by median and p95, and names the revisions"
 

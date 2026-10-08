@@ -126,8 +126,10 @@ agent_bus_store() {
     || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status failed against a running daemon"; }
   printf '%s' "${BUS_JSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["queued_deliveries"] == 0 and d["server"]["name"] == "luciazero-agentd", d' \
     || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status returned an unexpected summary"; }
-  LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status | grep -q "queued deliveries: 0" \
-    || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status human output drift"; }
+  if ! BUS_HUMAN="$(LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status)" \
+    || ! grep -q "queued deliveries: 0" <<<"${BUS_HUMAN}"; then
+    kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status human output drift"
+  fi
   kill "${BUS_PID}" 2>/dev/null; wait "${BUS_PID}" 2>/dev/null || true
   LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status >/dev/null 2>&1 \
     && { rm -rf "${BUS_STATE}"; fail "luciazero bus status must fail once the daemon is gone"; }

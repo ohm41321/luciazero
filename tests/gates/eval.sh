@@ -323,8 +323,10 @@ printf '%s\n' \
   '{"task":"t","arm":"doctrine","run":2,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"other"}]}}' \
   '{"task":"t","arm":"doctrine","run":3,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"unresolved"}]}}' \
   > "${RPT}"
-"${ROOT}/eval/report.sh" "${RPT}" 2>/dev/null | grep -q '^skill use (trace evidence, valid runs): doctrine observed 3/3 (debug x1, debug x2\*)$' \
-  || { rm -f "${RPT}"; fail "report.sh pooled sandbox and untied observations of one name: $("${ROOT}/eval/report.sh" "${RPT}" 2>&1 | grep '^skill use')"; }
+if ! RPT_OUT="$("${ROOT}/eval/report.sh" "${RPT}" 2>/dev/null)" \
+  || ! grep -q '^skill use (trace evidence, valid runs): doctrine observed 3/3 (debug x1, debug x2\*)$' <<<"${RPT_OUT}"; then
+  rm -f "${RPT}"; fail "report.sh pooled sandbox and untied observations of one name: $("${ROOT}/eval/report.sh" "${RPT}" 2>&1 | grep '^skill use')"
+fi
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
 
@@ -768,8 +770,10 @@ if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
 fi
 [ "$(wc -l < "${OFJ}/order-drift.jsonl" | tr -d ' ')" = 1 ] \
   || { rm -rf "${OFJ}"; fail "arm-order drift appended before preflight"; }
-"${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
-  || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
+if ! SMOKE_OUT="$("${ROOT}/eval/report.sh" "${OFJ}/r.jsonl")" \
+  || ! grep -q 'SYNTHETIC OFFLINE SMOKE' <<<"${SMOKE_OUT}"; then
+  rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"
+fi
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \
   || { rm -rf "${OFJ}"; fail "report.sh failed on the offline fixture"; }
 cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \

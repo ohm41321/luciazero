@@ -33,19 +33,36 @@ else
   echo "skip shellcheck (not installed — local only; CI fails without it)"
 fi
 
-# 2b. Never pipe a variable into `grep -q`. grep exits at the first match;
-# under pipefail the writer's next line then meets a closed pipe and the
-# match reads as a failure (CI, `printf: write error: Broken pipe`). How
-# many lines follow the match decides it, not the output's size, so no
-# site is safe by being short. Match from a here-string instead:
-# `grep -q PATTERN <<<"${VAR}"`. Comment lines may name the bad form.
-PIPED_GREP="$(cd "${ROOT}" \
-  && grep -nE '(echo|printf)[^|]*[|][[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "${SCRIPTS[@]}" \
-  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+# 2b. Never pipe into `grep -q`. grep exits at the first match; under
+# pipefail the writer's next write then meets a closed pipe and the match
+# reads as a failure (CI, `printf: write error: Broken pipe`), or, in an `if`,
+# a hit reads as none. How many lines follow the match decides it, not the
+# output's size, so no site is safe by being short. Capture the output, then
+# match from a here-string: `grep -q PATTERN <<<"${OUT}"`. Any stage counts,
+# -q in any option group, --quiet and --silent too, and a command continued
+# with `\` or a trailing `|` is read as one line. Comment lines may name the
+# bad form.
+PIPED_GREP="$(cd "${ROOT}" && awk '
+  FNR == 1 { line = "" }
+  {
+    text = $0
+    if (line == "") {
+      if (text ~ /^[[:space:]]*#/) next
+      start = FNR
+    }
+    more = text ~ /\\$/ || (text ~ /[|][[:space:]]*$/ && text !~ /[|][|][[:space:]]*$/)
+    sub(/\\$/, "", text)
+    line = line text " "
+    if (more) next
+    gsub(/[|][|]/, ";", line)
+    if (line ~ /[|][[:space:]]*grep([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[a-zA-Z]*q[a-zA-Z]*|--quiet|--silent)([[:space:]]|$)/)
+      print FILENAME ":" start ": " line
+    line = ""
+  }' "${SCRIPTS[@]}")"
 [ -z "${PIPED_GREP}" ] \
-  || fail "echo/printf piped into grep -q; match from a here-string instead:
+  || fail "output piped into grep -q; capture it and match from a here-string:
 ${PIPED_GREP}"
-echo "ok  no variable piped into grep -q"
+echo "ok  nothing piped into grep -q"
 
 # 2c. tests/node/*.test.js is named file by file twice -- the parity gate
 # and the Windows CI job (Node 18 takes no glob) -- so a new test file named

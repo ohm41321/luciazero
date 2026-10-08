@@ -253,7 +253,7 @@ echo "ok  refusal stays inside project scope"
 # are Node, and their sha256 fallback when md5 is refused is proven in
 # tests/node/hooks.test.js.
 for HFILE in test.sh "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
-  if grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}" | grep -qv 'usedforsecurity=False'; then
+  if HITS="$(grep -n 'hashlib\.md5(' "${ROOT}/${HFILE}")" && grep -qv 'usedforsecurity=False' <<<"${HITS}"; then
     fail "${HFILE} calls hashlib.md5() without usedforsecurity=False (breaks under FIPS)"
   fi
 done

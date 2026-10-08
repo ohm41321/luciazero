@@ -201,11 +201,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   handed all of them to one `bash -n`, which parses the first file and reads
   the rest as its arguments. The step now runs one parse per file, counts
   them, and pins the `bash:3.2` image by digest.
-- The suite matches captured output from a here-string, never
-  `echo "$X" | grep -q`. Under `pipefail`, grep's early exit after a match
-  can hand the writer a closed pipe and turn a pass into a failure (seen in
-  CI as `printf: write error: Broken pipe`); 92 sites are rewritten, and the
-  core gate now rejects the piped form in every linted script.
+- The suite matches captured output from a here-string, never through a
+  pipe into `grep -q`, from a variable or from a command. Under `pipefail`,
+  grep's early exit after a match can hand the writer a closed pipe and turn
+  a pass into a failure (seen in CI as `printf: write error: Broken pipe`),
+  or, in an `if`, a hit into none; 104 sites are rewritten. The core gate
+  rejects any pipe into `grep` with `-q` in any option group, `--quiet` or
+  `--silent`, at any stage of a pipeline and across continued lines, in
+  every linted script.
 - A node test proves the hooks still name their state directory, with
   sha256, when Node refuses md5 (FIPS mode). The only check left was a grep
   for Python's `hashlib.md5(` in hooks that are now Node, which could not

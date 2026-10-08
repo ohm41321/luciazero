@@ -632,10 +632,14 @@ const err = [];
   process.exitCode = 1;
 });
 JS
-  node "${ROOT}/bin/luciazero.js" check-update --help | grep -q 'never changes files' \
-    || { rm -rf "${UC}"; fail "check-update CLI route/help missing"; }
-  node "${ROOT}/bin/luciazero.js" update --help | grep -q 'preserves Claude hook mode' \
-    || { rm -rf "${UC}"; fail "update CLI route/help missing"; }
+  if ! UC_HELP="$(node "${ROOT}/bin/luciazero.js" check-update --help)" \
+    || ! grep -q 'never changes files' <<<"${UC_HELP}"; then
+    rm -rf "${UC}"; fail "check-update CLI route/help missing"
+  fi
+  if ! UC_HELP="$(node "${ROOT}/bin/luciazero.js" update --help)" \
+    || ! grep -q 'preserves Claude hook mode' <<<"${UC_HELP}"; then
+    rm -rf "${UC}"; fail "update CLI route/help missing"
+  fi
   # On Windows the installer routes run the Node installer, not a Bash guard.
   # The route is taken in a process that reports win32; the installer it
   # starts is a separate process, so it runs as on this host.

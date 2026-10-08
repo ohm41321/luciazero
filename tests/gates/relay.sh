@@ -190,8 +190,10 @@ fi
 "${RELAY}" inspect --root "${RR}" --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
   || { rm -rf "${RR}"; fail "finalized same-machine relay does not inspect clean"; }
 if command -v node >/dev/null 2>&1; then
-  node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}" | grep -q '^VALID luciazero-relay' \
-    || { rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"; }
+  if ! RV_OUT="$(node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}")" \
+    || ! grep -q '^VALID luciazero-relay' <<<"${RV_OUT}"; then
+    rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"
+  fi
   # On Windows the wrapper takes the first Python 3.9+ among python3, python
   # and `py -3`: a python.org install that left PATH alone has only py.exe,
   # and the Store's python.exe stand-in fails the version check. The route

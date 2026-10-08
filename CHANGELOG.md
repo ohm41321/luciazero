@@ -68,7 +68,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared one marker: a session that edited nothing was nudged for the other's
   edit, and the session that made it then stopped without a nudge. Each
   session that edited since the last verify run is now nudged once, and a
-  verify run in any session still covers every session's edits.
+  verify run in any session still covers every edit made before it started.
+  An unverified edit recorded before the update still nudges every session
+  once, and a session still running an older copy keeps its old behaviour.
 
 ### Fixed
 

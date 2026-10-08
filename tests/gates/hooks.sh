@@ -79,14 +79,32 @@ sess_hook B bash "${SESS_GREEN}"
 sess_hook A edit "${SESS_EDIT}"
 sess_stop B 0 "a green run did not cover the edit made before it"
 sess_stop A 2 "an edit after a green run in another session did not re-arm this session's nudge"
-# State an older copy left -- last_edit with no edited/, one plain nudged file
-# for the whole project -- still nudges, and the marker becomes per session.
+# A verify run vouches for the code as it was when it started, so it does
+# not cover an edit made while it ran, nor re-arm the nudge that edit caused.
+SESS_RUN=',"tool_use_id":"slow-verify","tool_input":{"command":"./test.sh"}'
+sess_hook B bash-start "${SESS_RUN}"
+sess_hook A edit "${SESS_EDIT}"
+sess_stop A 2 "an edit made while another session's verify ran was not nudged"
+sess_hook B bash "${SESS_RUN}"',"tool_response":{"exit_code":0}'
+sess_stop A 0 "a verify run that started before an edit re-armed the nudge that edit had caused"
+# State an older copy left -- last_edit with no edited/ yet, and its one
+# plain nudged file -- still nudges each session once, before and after
+# another session's first edit under this copy. That edit re-arms the older
+# copy's file, as an edit always did.
 SESS_CWD=/hook/test/sessions-legacy
 mkdir -p "$(sess_state)"; chmod 700 "$(sess_state)"
 touch "$(sess_state)/last_edit" "$(sess_state)/nudged"
 sess_stop C 2 "an older copy's project-wide nudged file silenced a session that was never nudged"
 sess_stop C 0 "the nudge after an older copy's state is not one-shot"
-[ -d "$(sess_state)/nudged" ] || { rm -rf "${HT}"; fail "the older copy's nudged file was not replaced by the per-session marker"; }
+sess_hook P edit "${SESS_EDIT}"
+sess_stop D 2 "an edit only an older copy recorded was dropped once another session edited"
+sess_stop C 0 "a session nudged for an older copy's edit was nudged for it again"
+sess_stop P 2 "the session that edited under this copy was not nudged"
+if [ -e "$(sess_state)/nudged" ]; then
+  rm -rf "${HT}"; fail "an edit left the older copy's nudged file in place, so that copy stays silent"
+fi
+sess_hook P bash "${SESS_GREEN}"
+sess_stop D 0 "a green run did not cover the older copy's edit"
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'
@@ -210,7 +228,7 @@ RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CH
 # a copy running from anywhere else still stands down when classic is wired;
 # the classic stop above fired the one-shot nudge, which alone would make this
 # stop exit 0, so re-arm it first
-rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
+rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged-sessions
 RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
@@ -256,7 +274,7 @@ legacy_rc() { # legacy_rc <settings.json body>: stop exit code beside a legacy i
   printf '%s\n' "$1" > "${CHD}/legacy/settings.json"
   LG_RC=0; echo "${LGJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/legacy" \
     "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || LG_RC=$?
-  rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
+  rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged-sessions
 }
 LGW="$(printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/legacy/hooks/luciazero-verify.sh stop"}]}]}}' "${CHD}")"
 chmod -x "${CHD}/legacy/hooks/luciazero-verify.sh"

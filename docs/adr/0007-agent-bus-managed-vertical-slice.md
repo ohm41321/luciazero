@@ -300,10 +300,13 @@ In order, and none of them is a technical step:
 - `bus status` gains stalled flows. No new command: restarting a flow stays a
   human act through the existing cancel and re-queue path.
 - A new gate tier `./test.sh --agent-bus-managed`, offline, in `--full`, run on
-  native Windows, macOS and Linux, to be added by this work: `test.sh` today
-  offers `--agent-bus-spike|store|mcp|security|e2e|workflow|dispatch|chat|live`
-  and nothing named `managed`. The M4 tier and its assertions are untouched,
-  which is the point of scoping the new delivery to enrolled workers.
+  macOS and Linux, to be added by this work: `test.sh` today offers
+  `--agent-bus-spike|store|mcp|security|e2e|workflow|dispatch|chat|live` and
+  nothing named `managed`. `test.sh` does not run on native Windows, so there
+  the same assertions run in the agentd unittest suite, the way the Windows
+  port's CI runs the Agent Bus suite. The M4 tier and its assertions are
+  untouched, which is the point of scoping the new delivery to enrolled
+  workers.
 - `docs/agent-bus.md` and the demo grow a managed section; `/lucia-bus` gains
   the idempotency and re-entrancy rules, since they bind every worker and not
   only the rehearsal ones. That last one is not free: the skill sits at its

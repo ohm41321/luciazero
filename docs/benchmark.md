@@ -25,6 +25,24 @@ Every grader is tested three ways in CI:
 - the unfixed `project/` tree fails; and
 - one or more `project/` + `gamed*/` overlays are rejected.
 
+Known grader bugs are pinned by overlays of their own: a malformed relay
+manifest, an escape written before the archive is refused, and a suite that
+was red before the regression probe.
+
+Three graders changed after the published Sonnet campaign:
+- `relay-transfer` scores a string `verification` entry as a failed criterion
+  instead of crashing on it, which used to drop the run as invalid;
+- `archive-security`'s `no-path-escape` also fails an implementation that
+  writes an escaping member before it refuses the archive;
+- `archive-security`, `schema-migration` and `paginated-sync` award
+  `regression-red` only after a green suite.
+
+That campaign's rows pin the earlier task hashes and stand as graded. None of
+them depends on the first or the third change: no row is invalid, and none
+has `regression-red` without `suite-green`. The second could lower
+`no-path-escape` for the two `archive-security` rows that passed it, one per
+arm. Their work trees were not kept, so they cannot be re-graded.
+
 Runs that never produced a valid agent result are marked invalid and excluded.
 See [eval/README.md](../eval/README.md) for commands, costs, and the full honesty
 box.

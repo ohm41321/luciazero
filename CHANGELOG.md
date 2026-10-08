@@ -62,6 +62,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Eval graders: `relay-transfer` scores a string `verification` entry as a
+  failed criterion; it crashed with no `SCORE` line, so `run.sh` dropped a
+  wrong answer as invalid. `archive-security` restores two levels down and
+  searches the whole temp tree, so a restore that writes `../../outside.txt`
+  and only then refuses fails `no-path-escape`; the old check looked in the
+  wrong directory. `archive-security`, `schema-migration` and `paginated-sync`
+  award `regression-red` only after a green suite, so deleting or breaking
+  the tests no longer earns it. The eval gate pins all three with overlays;
+  `docs/benchmark.md` says which published rows each change can touch.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

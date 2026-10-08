@@ -67,6 +67,80 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   echo "ok  eval grader ${TN} red/green/anti-gamed"
 done
 
+# 4d1a. graders score a wrong answer instead of crashing on it, judge what was
+# written as well as what was refused, and award regression-red only on a
+# green suite. Each grader runs with its temp files inside GW.
+GW="$(mktemp -d)"
+mkdir "${GW}/tmp"
+# relay-transfer: a string where a verification object belongs. A grader
+# crash prints no SCORE, and run.sh drops the run as INVALID instead of
+# counting it as failed.
+RT="${ROOT}/eval/tasks/relay-transfer"
+mkdir "${GW}/rt"
+cp -R "${RT}/project/." "${GW}/rt/"
+"${RT}/setup.sh" "${GW}/rt"
+cp -R "${RT}/reference/." "${GW}/rt/"
+python3 - "${GW}/rt/LUCIA_RELAY.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["verification"] = ["./verify.sh exited 1: FAIL quoted separator"]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
+RC=0
+OUT="$(TMPDIR="${GW}/tmp" "${RT}/grade.sh" "${GW}/rt" 2>&1)" || RC=$?
+if [ "${RC}" != 1 ] || ! grep -q '^CRIT exact_verification fail$' <<<"${OUT}" || ! grep -q '^SCORE ' <<<"${OUT}"; then
+  fail "relay-transfer grader does not score a string verification entry as a failure (rc=${RC}): ${OUT}"
+fi
+# archive-security: an implementation that writes an escaping member and
+# only then refuses the archive has already escaped.
+AS="${ROOT}/eval/tasks/archive-security"
+mkdir "${GW}/as"
+cp -R "${AS}/project/." "${GW}/as/"
+cp -R "${AS}/reference/." "${GW}/as/"
+python3 - "${GW}/as/archive_store.py" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
+anchor = "def restore(zip_path, destination):\n    destination = Path(destination)\n"
+leak = anchor + (
+    "    with zipfile.ZipFile(zip_path) as bundle:\n"
+    "        for info in bundle.infolist():\n"
+    "            if info.filename == '../../outside.txt':\n"
+    "                naive = destination / info.filename\n"
+    "                naive.parent.mkdir(parents=True, exist_ok=True)\n"
+    "                naive.write_bytes(bundle.read(info))\n"
+)
+assert text.count(anchor) == 1
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text.replace(anchor, leak))
+PY
+OUT="$(TMPDIR="${GW}/tmp" "${AS}/grade.sh" "${GW}/as" 2>&1 || true)"
+if ! grep -q '^CRIT no-path-escape fail$' <<<"${OUT}"; then
+  fail "archive-security grader passes a restore that writes outside its destination before refusing: ${OUT}"
+fi
+# archive-security, schema-migration, paginated-sync: a suite that is red
+# before the probe fails on the probe too, whatever the implementation.
+for TN in archive-security schema-migration paginated-sync; do
+  mkdir "${GW}/${TN}"
+  cp -R "${ROOT}/eval/tasks/${TN}/project/." "${GW}/${TN}/"
+  cp -R "${ROOT}/eval/tasks/${TN}/reference/." "${GW}/${TN}/"
+  printf 'import unittest\n\n\nclass Red(unittest.TestCase):\n    def test_red(self):\n        self.fail("red before the probe")\n' \
+    >"${GW}/${TN}/test_zz_red.py"
+  OUT="$(TMPDIR="${GW}/tmp" "${ROOT}/eval/tasks/${TN}/grade.sh" "${GW}/${TN}" 2>&1 || true)"
+  if ! grep -q '^CRIT suite-green fail$' <<<"${OUT}" || ! grep -q '^CRIT regression-red fail$' <<<"${OUT}"; then
+    fail "${TN} grader awards regression-red to a suite that was already red: ${OUT}"
+  fi
+done
+if [ -n "$(ls -A "${GW}/tmp")" ]; then
+  fail "an eval grader left files behind in its temp directory: $(ls -A "${GW}/tmp")"
+fi
+rm -rf "${GW}"
+echo "ok  graders score a malformed relay, a written-then-refused escape and an already-red suite as failures"
+
 # 4d1b. regression-history: the fixture's premise is a history whose first bad
 # commit is the planted refactor and whose suite was green at every commit
 # since the good tag — prove both from the replayed repository, not from the

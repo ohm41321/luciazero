@@ -10,7 +10,9 @@ trap 'rm -rf "${TMP}"' EXIT
 
 crit() { printf 'CRIT %s %s\n' "$1" "$2"; [ "$2" = pass ] && PASS=$((PASS + 1)); }
 
-if (cd "${WORK}" && python3 -m unittest discover >/dev/null 2>&1); then crit suite-green pass; else crit suite-green fail; fi
+SUITE=fail
+if (cd "${WORK}" && python3 -m unittest discover >/dev/null 2>&1); then SUITE=pass; fi
+crit suite-green "${SUITE}"
 
 if WORK="${WORK}" python3 2>/dev/null <<'PY'
 import os, tempfile, zipfile
@@ -22,7 +24,9 @@ from archive_store import restore
 cases = ["../../outside.txt", "/absolute.txt", "..\\outside.txt", "C:/drive.txt"]
 for name in cases:
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp); archive = root / "x.zip"; output = root / "out"
+        # Two levels down, so that the deepest escape a case names still
+        # lands inside the directory this check searches.
+        root = Path(tmp); archive = root / "x.zip"; output = root / "deep" / "out"
         with zipfile.ZipFile(archive, "w") as bundle:
             bundle.writestr(name, "bad")
         try:
@@ -31,7 +35,14 @@ for name in cases:
             pass
         else:
             raise AssertionError(name)
-        assert not (root / "outside.txt").exists()
+        # Refusing is not enough: nothing may have been written outside the
+        # destination first.
+        inside = output.resolve()
+        escaped = [p for p in root.rglob("*")
+                   if p.is_file() and p != archive and inside not in p.resolve().parents]
+        assert not escaped, escaped
+        target = (output / name).resolve()
+        assert inside in target.parents or not target.exists(), target
 PY
 then crit no-path-escape pass; else crit no-path-escape fail; fi
 
@@ -102,7 +113,13 @@ then crit destination-boundary pass; else crit destination-boundary fail; fi
 
 cp -R "${WORK}/." "${TMP}/probe"
 cp "${HERE}/project/archive_store.py" "${TMP}/probe/archive_store.py"
-if ! (cd "${TMP}/probe" && python3 -m unittest discover >/dev/null 2>&1); then crit regression-red pass; else crit regression-red fail; fi
+# Only a green suite can show the restored bug: one that is red already, or
+# has no tests at all, fails on the probe whatever the implementation.
+if [ "${SUITE}" = pass ] && ! (cd "${TMP}/probe" && python3 -m unittest discover >/dev/null 2>&1); then
+  crit regression-red pass
+else
+  crit regression-red fail
+fi
 
 if (cd "${WORK}" && python3 - <<'PY'
 import pathlib

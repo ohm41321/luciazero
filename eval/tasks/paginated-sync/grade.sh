@@ -9,7 +9,9 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 crit() { printf 'CRIT %s %s\n' "$1" "$2"; [ "$2" = pass ] && PASS=$((PASS + 1)); }
 
-if (cd "${WORK}" && python3 -m unittest discover >/dev/null 2>&1); then crit suite-green pass; else crit suite-green fail; fi
+SUITE=fail
+if (cd "${WORK}" && python3 -m unittest discover >/dev/null 2>&1); then SUITE=pass; fi
+crit suite-green "${SUITE}"
 
 if WORK="${WORK}" python3 2>/dev/null <<'PY'
 import os, sys
@@ -75,7 +77,13 @@ cp -R "${WORK}/." "${TMP}/probe"
 cp "${HERE}/project/client.py" "${TMP}/probe/client.py"
 cp "${HERE}/project/service.py" "${TMP}/probe/service.py"
 cp "${HERE}/project/cli.py" "${TMP}/probe/cli.py"
-if ! (cd "${TMP}/probe" && python3 -m unittest discover >/dev/null 2>&1); then crit regression-red pass; else crit regression-red fail; fi
+# Only a green suite can show the restored bug: one that is red already, or
+# has no tests at all, fails on the probe whatever the implementation.
+if [ "${SUITE}" = pass ] && ! (cd "${TMP}/probe" && python3 -m unittest discover >/dev/null 2>&1); then
+  crit regression-red pass
+else
+  crit regression-red fail
+fi
 
 if (cd "${WORK}" && python3 - <<'PY'
 import pathlib

@@ -1357,6 +1357,38 @@ class RunSetupSignals(unittest.TestCase):
                     self.assertEqual({"exit": 130, "provider exits": [0] if path.startswith("after") else [],
                                       "configuration on disk": False, "bindings": ["revoked"]}, left)
 
+    def test_a_signal_as_run_takes_the_signals_over_gives_every_one_back(self) -> None:
+        """Review finding: `run` took its signals over before the try that
+        gives them back, so a signal that landed just after one of them was
+        taken over escaped `run` and left the ones already taken over
+        replaced. Nothing was minted by then; the handlers were the leak."""
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        signals = {"SIGTERM": signal.SIGTERM, "SIGINT": signal.SIGINT}
+        if WINDOWS:
+            signals["SIGBREAK"] = signal.SIGBREAK  # Ctrl+Break
+        install = signal.signal
+        for taken, after in signals.items():
+            for raised, sig in signals.items():
+                with self.subTest(after=taken, raised=raised):
+                    # Python's own, whatever a failed subtest before this left.
+                    self.addCleanup(install, signal.SIGINT, install(signal.SIGINT, signal.default_int_handler))
+                    breaks = signal.getsignal(signal.SIGBREAK) if WINDOWS else None
+
+                    def taking(signum: int, handler: object) -> object:
+                        previous = install(signum, handler)  # type: ignore[arg-type]
+                        if signum == after and isinstance(handler, cli._Stop):
+                            signal.raise_signal(sig)
+                        return previous
+
+                    with mock.patch.object(signal, "signal", taking):
+                        code, made, waits = self.signalled(sig)
+                    self.assertEqual((130, [], [], []), (code, made, waits, self.bindings()))
+                    if WINDOWS:
+                        self.assertIs(breaks, signal.getsignal(signal.SIGBREAK), "run must give Ctrl+Break back")
+
     def test_run_takes_ctrl_c_over_only_from_pythons_own_handler(self) -> None:
         """A job that its shell started with Ctrl+C ignored keeps ignoring
         it, and a handler someone else installed stays theirs; both are

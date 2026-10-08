@@ -1041,13 +1041,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     # valid until its TTL, its configuration stayed on disk, and the agent's
     # next `run` was refused as a live session. Ctrl+C too, while it is still
     # Python's own handler, which raised again in the cleanup.
+    # Every handler is read before any is changed, and changed inside the try
+    # that gives them back: a signal that landed between two changes used to
+    # escape with the ones already changed left in place.
     stop = _Stop()
     cleanups: list[Callable[[str], None]] = []
-    previous = signal.signal(signal.SIGTERM, stop)
-    previous_break = signal.signal(signal.SIGBREAK, stop) if proctree.WINDOWS else None
-    previous_int = (signal.signal(signal.SIGINT, stop)
-                    if signal.getsignal(signal.SIGINT) is signal.default_int_handler else None)
+    previous = signal.getsignal(signal.SIGTERM)
+    previous_break = signal.getsignal(signal.SIGBREAK) if proctree.WINDOWS else None
+    previous_int = signal.getsignal(signal.SIGINT)
+    take_int = previous_int is signal.default_int_handler
     try:
+        signal.signal(signal.SIGTERM, stop)
+        if proctree.WINDOWS:
+            signal.signal(signal.SIGBREAK, stop)
+        if take_int:
+            signal.signal(signal.SIGINT, stop)
         return _run_bound(args, state_dir, command, provider, endpoint, cleanups, stop)
     except KeyboardInterrupt:
         stop.stopping = True  # for an interrupt that did not come through `stop`
@@ -1056,9 +1064,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
-        if previous_break is not None:
+        if proctree.WINDOWS:
             signal.signal(signal.SIGBREAK, previous_break)
-        if previous_int is not None:
+        if take_int:
             signal.signal(signal.SIGINT, previous_int)
 
 

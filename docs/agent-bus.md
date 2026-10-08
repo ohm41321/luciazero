@@ -649,18 +649,24 @@ forever.
 | dimension  | measured by | spent when |
 | ---------- | ----------- | ---------- |
 | `seconds`  | the daemon  | the wall clock passes the task's deadline |
-| `turns`    | the daemon  | a message naming the task is sent |
+| `turns`    | the daemon  | the task's creator or assignee sends a message naming it |
 | `tokens`   | the provider, through `task_record_usage` | the claim holder reports usage |
 | `cost_usd` | the provider, through `task_record_usage` | the claim holder reports usage |
 
-The two the daemon measures cannot be under-reported. The two only a provider
-can know are additive and holder-only: a report raises a total, never lowers
+The two the daemon measures cannot be under-reported. Only the task's
+creator and assignee spend its turns: if a message from anyone else naming
+the task counted, any agent could stop another's work. The two only a
+provider can know are
+additive and holder-only: a report raises a total, never lowers
 one, only the agent holding the claim may make it, and every report keeps how
 much the reporting session's identity was worth. A spent
 budget is a stop, not a warning: the task becomes `exhausted`, its queued
 messages are dead-lettered, whatever waited on it is blocked, and the send or
-claim that hit the limit is refused. `bus status` names stopped tasks on their
-own line. There is no reopening; the user creates a new task.
+claim that hit the limit is refused. A new `task` message naming a stopped
+task -- exhausted, cancelled or blocked -- is refused too, so a retry cannot
+queue the same dead work again; other kinds may still name it. `bus status`
+names stopped tasks on their own line. There is no reopening; the user
+creates a new task.
 
 Two limits bound a conversation regardless of budgets: `MAX_HOPS` (32
 messages in one `correlation_id`) and a 24-hour conversation time to live.

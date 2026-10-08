@@ -367,6 +367,52 @@ class BudgetTests(WorkflowCase):
             self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": first["id"]})
         self.assertEqual(self.state(second["id"]), "blocked")
 
+    def test_only_the_tasks_creator_and_assignee_spend_its_turns(self) -> None:
+        """Review finding: any sender naming a task_id spent a turn, so an agent
+        with no part in a task could message itself until the task stopped,
+        blocking its dependents and refusing its holder's completion."""
+        task = self.task("bounded", assigned_to="codex-implementer", budget={"turns": 2})
+        self.store.claim_task(task["id"], "codex-implementer")
+        for _ in range(5):
+            self.store.send_message(sender="claude-reviewer", recipient="claude-reviewer", kind="question",
+                                    payload={"task_id": task["id"]})
+        self.assertEqual(self.store.get_task(task["id"])["spent"].get("turns", 0), 0)
+        self.assertEqual(self.state(task["id"]), "claimed")
+        self.store.send_message(sender="codex-architect", recipient="codex-implementer", kind="task", payload={"task_id": task["id"]})
+        self.store.send_message(sender="codex-implementer", recipient="codex-architect", kind="result", payload={"task_id": task["id"]})
+        self.assertEqual(self.store.get_task(task["id"])["spent"]["turns"], 2)
+        with self.assertRaises(BudgetExceeded):
+            self.store.send_message(sender="codex-implementer", recipient="codex-architect", kind="result",
+                                    payload={"task_id": task["id"]})
+        self.assertEqual(self.state(task["id"]), "exhausted")
+
+    def test_a_task_message_for_a_stopped_task_is_refused(self) -> None:
+        """Review finding: a stopped task's queued task messages are dead-
+        lettered, yet a new one -- the refused send retried, or one naming a
+        cancelled task -- was queued as live work."""
+        spent = self.task("bounded", budget={"turns": 1})
+        send = dict(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": spent["id"]})
+        self.store.send_message(**send)
+        with self.assertRaises(BudgetExceeded):
+            self.store.send_message(**send, idempotency_key="retry")
+        messages = self.store.counts()["messages"]
+        with self.assertRaises(BudgetExceeded) as caught:
+            self.store.send_message(**send, idempotency_key="retry")
+        self.assertIn("turns", str(caught.exception))
+        cancelled = self.task("dropped")
+        waiting = self.task("after", depends_on=[cancelled["id"]])
+        self.store.cancel_task(cancelled["id"], "human")
+        for stopped in (cancelled, waiting):
+            with self.assertRaises(ConflictError) as caught:
+                self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task",
+                                        payload={"task_id": stopped["id"]})
+            self.assertIn(self.state(stopped["id"]), str(caught.exception))
+        self.assertEqual(self.store.counts()["messages"], messages)
+        self.assertEqual(self.store.inbox("claude-reviewer", states=("queued",))["items"], [])
+        # Talking about a stopped task is still allowed; only new work for it is refused.
+        self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="finding",
+                                payload={"task_id": cancelled["id"]})
+
     def test_budget_remaining_reports_what_is_left(self) -> None:
         task = self.task("bounded", budget={"turns": 3, "tokens": 10})
         self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": task["id"]})

@@ -55,9 +55,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/assets/og-card.html`, which records the render command. The READMEs
   pin the image at the `main` commit that added it, as the npm page requires;
   `docs/assets/lucia.png` stays for the READMEs of earlier releases.
+- Agent Bus: a `task` message naming a stopped task (exhausted, cancelled or
+  blocked) is refused. Stopping already dead-lettered the queued ones, yet a
+  new one, including the very send the budget had refused, was queued as live
+  work. Other kinds may still name the task.
 
 ### Fixed
 
+- Agent Bus: only a task's creator and assignee spend its turn budget. Any
+  sender naming a `task_id` spent a turn, so an agent with no part in a task
+  could message itself until the task was exhausted, its dependents blocked
+  and its holder's completion refused.
 - `revert-probe` reports `UNASSESSABLE` (exit 2) when the verify command names
   a file the working tree has and the old tree lacks both before and after the
   old-code run: the command itself, any non-option argument, or the input of a

@@ -794,9 +794,22 @@ class Store:
                                    f"conversation {conversation!r} is older than its {CONVERSATION_TTL_SECONDS}s time to live; start a new one with a fresh correlation_id",
                                    {"age_seconds": round(age, 3), "ttl_seconds": CONVERSATION_TTL_SECONDS, "sender": sender, "recipient": recipient})
                 task_row = None
+                party = False
                 if refusal is None and isinstance(payload, dict) and isinstance(payload.get("task_id"), str):
                     task_row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (payload["task_id"],)).fetchone()
-                    if task_row is not None:
+                    if task_row is not None and kind == "task" and task_row["state"] in STOPPED_TASK_STATES:
+                        # Stopping dead-letters a task's queued task messages;
+                        # a new one, the refused send retried included, would
+                        # be the same dead work queued again.
+                        over = self._decode(task_row["result"])
+                        if task_row["state"] == "exhausted" and "dimension" in over:
+                            raise BudgetExceeded(self._budget_message(str(task_row["id"]), over))
+                        raise ConflictError(f"task {task_row['id']!r} is {task_row['state']}; it takes no more task "
+                                            "messages, and a human continues the work by creating a new task")
+                    # Only the task's own parties spend its turns: anyone else
+                    # naming it could otherwise stop another agent's work.
+                    party = task_row is not None and sender in (task_row["created_by_agent_id"], task_row["assigned_agent_id"])
+                    if party:
                         stopped = self._over_budget(task_row, now)
                         if stopped is None and task_row["state"] in LIVE_TASK_STATES:
                             budget = self._decode(task_row["budget"])
@@ -822,7 +835,7 @@ class Store:
                         "INSERT INTO deliveries (id, message_id, recipient_agent_id, state, updated_at) VALUES (?, ?, ?, 'queued', ?)",
                         (delivery_id, message_id, recipient, now),
                     )
-                    if task_row is not None and task_row["state"] in LIVE_TASK_STATES:
+                    if party and task_row["state"] in LIVE_TASK_STATES:
                         spent = self._decode(task_row["spent"])
                         spent["turns"] = int(spent.get("turns", 0)) + 1
                         self._conn.execute("UPDATE tasks SET spent = ?, updated_at = ? WHERE id = ?", (json.dumps(spent, sort_keys=True), now, task_row["id"]))

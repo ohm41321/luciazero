@@ -66,11 +66,16 @@ echo "ok  nothing piped into grep -q"
 
 # 2c. tests/node/*.test.js is named file by file twice -- the parity gate
 # and the Windows CI job (Node 18 takes no glob) -- so a new test file named
-# in neither would run nowhere, and green would say nothing about it.
+# in neither would run nowhere, and green would say nothing about it. Only
+# a `node --test` command counts (continued with `\`, read as one line);
+# a comment or a message naming the file runs nothing.
 NODE_TESTS="$(cd "${ROOT}" && for T in tests/node/*.test.js; do echo "${T}"; done | sort)"
 [ -n "${NODE_TESTS}" ] || fail "no tests/node/*.test.js found"
 for LIST in .github/workflows/ci.yml tests/gates/parity.sh; do
-  NAMED="$(grep -oE 'tests/node/[A-Za-z0-9_.-]+[.]test[.]js' "${ROOT}/${LIST}" | sort -u)"
+  NAMED="$(awk '
+    { text = $0; more = text ~ /\\$/; sub(/\\$/, "", text); line = line text " " }
+    !more { if (line !~ /^[[:space:]]*#/ && line ~ /node --test /) print line; line = "" }
+  ' "${ROOT}/${LIST}" | grep -oE 'tests/node/[A-Za-z0-9_.-]+[.]test[.]js' | sort -u || true)"
   [ "${NAMED}" = "${NODE_TESTS}" ] \
     || fail "${LIST} does not run exactly the node tests in tests/node:
 $(diff <(echo "${NODE_TESTS}") <(echo "${NAMED}") || true)"

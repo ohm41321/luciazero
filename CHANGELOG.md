@@ -215,7 +215,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fail.
 - The core gate fails when the node test files named in the parity gate or
   the Windows CI job differ from `tests/node/*.test.js`. Both lists were
-  kept by hand, so a new test file could run nowhere.
+  kept by hand, so a new test file could run nowhere. Only a `node --test`
+  command counts: a comment naming the file runs nothing.
 - An interrupted full run stops the gates it started. Background jobs of a
   non-interactive shell ignore Ctrl-C, so `./test.sh` used to exit and
   delete the shared sandbox while six gates ran on; it now stops each gate

@@ -953,6 +953,11 @@ class ConsoleRunSetup(unittest.TestCase):
 
         previous = signal.signal(signal.SIGUSR1, default)
         self.addCleanup(signal.signal, signal.SIGUSR1, previous)
+        # The delivery watcher opens the bus before the spawn, and opening
+        # one creates it: a state directory of the test's own, not the
+        # host's temporary directory.
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-console-setup-")
+        self.addCleanup(tmp.cleanup)
         ended: list[str] = []
         with mock.patch.dict(sys.modules, {"luciazero_agentd.conpty": conpty}), \
                 mock.patch.object(luciazero_agentd, "conpty", conpty, create=True), \
@@ -960,7 +965,7 @@ class ConsoleRunSetup(unittest.TestCase):
                 mock.patch.object(cli, "_open_store", open_store):
             code = cli._run_on_a_console(types.SimpleNamespace(max_nudges=1), ["provider"], {},
                                          {"id": "bind_x", "agent_id": "codex-architect"},
-                                         Path(tempfile.gettempdir()), ended.append)
+                                         Path(tmp.name), ended.append)
         self.assertEqual(130, code)
         self.assertEqual(["run exited"], ended)
         self.assertIs(default, signal.getsignal(signal.SIGUSR1))

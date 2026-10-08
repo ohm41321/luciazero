@@ -196,14 +196,19 @@ class CredentialCleanupTests(AdapterCase):
         self.assertIn("[redacted]", reported["body"])
 
     def test_the_config_is_gone_however_the_turn_ends(self) -> None:
-        for body, ok in (("print('done')\n", True),
-                         ("raise SystemExit(2)\n", False),
-                         ("import time; time.sleep(30)\n", False)):
+        # Only the turn that is meant to time out gets a short timeout. With
+        # one second for all three, a host loaded enough to take that long to
+        # start Python turned the turn that prints into a timeout, and the
+        # one that exits 2 could pass as a timeout without reaching its exit.
+        for body, timeout, ended in (("print('done')\n", 30, "exit 0"),
+                                     ("raise SystemExit(2)\n", 30, "exit 2"),
+                                     ("import time; time.sleep(30)\n", 1, "timeout")):
             with self.subTest(body=body):
                 self.log = RunLog(self.root / "run.log", literals=(CREDENTIAL,))
                 adapter, request = self.claude(body)
-                result = adapter.start(replace(request, timeout_seconds=1))
-                self.assertEqual(result.ok, ok)
+                result = adapter.start(replace(request, timeout_seconds=timeout))
+                self.assertEqual(result.exit_state, ended)
+                self.assertEqual(result.ok, ended == "exit 0")
                 self.assertFalse((self.workspace / "mcp.json").exists())
 
     def test_a_provider_that_cannot_start_leaves_no_config_behind(self) -> None:

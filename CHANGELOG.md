@@ -97,6 +97,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   submitted both. A held knock is not lost and spends neither the cap nor the
   cooldown; `turn.nudge_deferred` records `human_typed_ago`. A pause longer
   than 20 seconds is still not covered: the proxy never reads what was typed.
+- Agent Bus: `run` starts its knock watcher before the provider, not after.
+  A provider that reached the bus in between was taken for one that never
+  had, so nothing knocked until its next bus call, and a delivery that
+  arrived in between counted as backlog and never knocked. The two `run`
+  tests that synchronised on the "bound as" line, which is printed before
+  either, now wait for the provider's pid; a one-second delay before the
+  watcher made both fail every time before this change.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

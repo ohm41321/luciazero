@@ -990,6 +990,36 @@ class RunTests(unittest.TestCase):
         self.provider.write_text("#!/bin/sh\nexec cat\n")
         self.provider.chmod(0o755)
 
+    def _wait_for_the_provider(self, master: int, seen: bytearray, seconds: float = 30.0) -> None:
+        """Until `run` has recorded the provider's pid, reading its terminal
+        meanwhile.
+
+        "bound as" is printed before the delivery watcher exists, so a
+        heartbeat or a delivery sent on that line alone could reach the bus
+        first on a loaded host: a heartbeat from before the session opened
+        does not count, a delivery from before is backlog, and nothing ever
+        knocked. The watcher is made before the spawn and the pid written
+        after it, so once the pid is there both are behind this test."""
+        import select
+
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            with make_store(self.db) as store:
+                binding = store.binding_of("codex-architect", alive=None)
+            if binding is not None and binding["pid"] is not None:
+                return
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen.extend(chunk)
+        self.fail(f"run never recorded the provider it started: {bytes(seen)!r}")
+
     def test_a_delivery_knocks_on_a_session_that_is_doing_nothing(self) -> None:
         package_root = str(Path(__file__).resolve().parents[1])
         pid, master = nudge.spawn(
@@ -1019,9 +1049,9 @@ class RunTests(unittest.TestCase):
             return False
 
         self.assertTrue(wait_for(b"bound as"), bytes(seen))
+        self._wait_for_the_provider(master, seen)
         # The session reaches the bus, as the skill does at its first turn;
         # until it has, a nudge could land in a dialog nobody read.
-        time.sleep(0.05)
         with make_store(self.db) as store:
             store.heartbeat("codex-architect")
             store.send_message(sender="claude-implementer", recipient="codex-architect",
@@ -1087,7 +1117,7 @@ class RunTests(unittest.TestCase):
             return needle in seen
 
         self.assertTrue(wait_for(b"bound as"), bytes(seen))
-        time.sleep(0.05)
+        self._wait_for_the_provider(master, seen)
         with make_store(self.db) as store:
             store.heartbeat("codex-architect")
             store.send_message(sender="claude-implementer", recipient="codex-architect",

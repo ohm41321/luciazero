@@ -1169,12 +1169,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         _cleanup("run exited")
 
 
+def _watcher_for(args: argparse.Namespace, binding: dict[str, Any], state_dir: Path) -> nudge.Watcher:
+    """The delivery watcher of a session `run` is about to start.
+
+    Made before the provider exists, so that the moment the session opened
+    and the backlog it opened with are both read before the provider can do
+    anything. Made after the spawn, a provider that reached the bus in
+    between looked as if it never had, and nothing knocked until its next
+    call; a delivery in between was taken for backlog and never knocked."""
+    return nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
+                         limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
+
+
 def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str],
                   binding: dict[str, Any], state_dir: Path,
                   cleanup: Callable[[str], None]) -> int:
     """`run`, holding the provider's terminal so the bus can knock on it."""
     if proctree.WINDOWS:
         return _run_on_a_console(args, argv, env, binding, state_dir, cleanup)
+    watcher = _watcher_for(args, binding, state_dir)
     try:
         pid, master = nudge.spawn(argv, env)
     except OSError as exc:
@@ -1198,8 +1211,6 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
                 except (StoreError, procinfo.ProcessError):
                     # as in cmd_run: the binding still dies when this exits
                     pass
-        watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
-                                limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
         return nudge.proxy(pid, master, watcher=watcher,
                            show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
@@ -1238,6 +1249,7 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
     """`run` on Windows: the provider on a pseudo console this process holds,
     as `_run_on_a_pty` holds a pty."""
     from . import conpty
+    watcher = _watcher_for(args, binding, state_dir)
     try:
         session = conpty.spawn(proctree.argv_for(argv, env), env)
     except proctree.CommandError as exc:
@@ -1269,8 +1281,6 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
                                        process_started_at=procinfo.started_at(session.pid))
                 except (StoreError, procinfo.ProcessError):
                     pass
-        watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
-                                limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
         return conpty.proxy(session, watcher=watcher, show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
         return 130

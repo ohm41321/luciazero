@@ -206,9 +206,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   grep's early exit after a match can hand the writer a closed pipe and turn
   a pass into a failure (seen in CI as `printf: write error: Broken pipe`),
   or, in an `if`, a hit into none; 104 sites are rewritten. The core gate
-  rejects any pipe into `grep` with `-q` in any option group, `--quiet` or
-  `--silent`, at any stage of a pipeline and across continued lines, in
-  every linted script.
+  rejects a pipe (`|` or `|&`) into `grep`, `egrep` or `fgrep`, bare or
+  behind `command`, `env` or a `VAR=value` prefix, when `-q` (in any option
+  group), `--quiet` or `--silent` appears before the stage ends, at any
+  stage of a pipeline and across continued lines, in every linted script.
 - A node test proves the hooks still name their state directory, with
   sha256, when Node refuses md5 (FIPS mode). The only check left was a grep
   for Python's `hashlib.md5(` in hooks that are now Node, which could not

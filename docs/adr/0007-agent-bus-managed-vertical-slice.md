@@ -1,7 +1,9 @@
 # ADR 0007: Agent Bus managed vertical slice: chaining, resume, recovery
 
 Status: proposed 2026-09-04, recorded 2026-09-05, for the roadmap milestone
-"M7 — Managed-dispatch vertical slice".
+"M7 — Managed-dispatch vertical slice". Amended 2026-10-08 and still
+proposed: the M4 decision gate is resolved, and one root allowance per
+managed flow replaces the inherited remainder.
 
 Not M7a through M7f. Those were written and shipped between this ADR's
 proposal and its recording, under the same number and about a different
@@ -42,10 +44,13 @@ stop being free across a flow.
 
 There is also a precondition that is not technical. The decision log
 (`docs/agent-bus-decision-log.md`) records that the M4 decision gate was passed
-by rather than met, and says in as many words that until one of its three ways
-out is recorded, M7 has no baseline. This ADR designs M7; it does not
-authorise starting it. The section "What must be true before the live slice
-runs" states the order.
+by rather than met: M5 and M6 shipped before its evidence existed, and until
+one of its three ways out was recorded, M7 had no baseline. The evidence was
+recorded later -- seven workflows by 2026-09-07 and the second qualifying
+retro on 2026-09-09 -- and on 2026-10-08 the user accepted it as M7's
+baseline and amended the gate's "before M5 starts" condition rather than
+counting it as met. This ADR designs M7; it does not authorise starting it.
+The section "What must be true before the live slice runs" states the order.
 
 ## Decision
 
@@ -149,22 +154,62 @@ worlds and never counts one turn twice. A dispatched turn that exceeds the
 budget exhausts the task exactly as M5 says, and ADR 0006's rule already
 refuses to dispatch a delivery whose task is exhausted.
 
-### A budget descends; it is not minted
+### One root allowance per managed flow
 
 A worker may create tasks. A machine-started chain that creates tasks with no
 budget therefore mints itself a fresh allowance at every hop, and the 32-hop
 cap is the only thing left standing.
 
-**A task created inside a dispatched turn inherits the unspent remainder of the
-turn's own task budget when the creator names none.** A human-created task, or
-one whose creator sets a budget explicitly, is unaffected. The chain can
-subdivide what it was given; it cannot enlarge it.
+Until 2026-10-08 this ADR answered that by letting a task created inside a
+dispatched turn inherit the unspent remainder of its creator's budget. That
+copies the remainder instead of dividing it: a task with five turns left could
+create two children holding five each, and a worker that wrote an explicit,
+larger budget was outside the rule altogether. The amendment replaces it with
+one allowance per flow.
 
-What this does not claim: it is not a global spend cap. A flow whose root task
-carries no budget still has none to divide, and the answer there is the hop
-cap, `max_attempts`, and a human running `cancel`. The gate requires the M7
-slice's root task to carry one, so the slice proves the mechanism rather than
-assuming it.
+- **A managed flow has one budget root, and it is finite.** Each flow enrolled
+  in chaining gets a root assigned by the host, with an explicit turn
+  allowance; a flow without one is not chained. Pull-beta and M6 behaviour
+  outside this opt-in is unchanged.
+- **Every descendant keeps that root.** Worker-created tasks with explicit
+  budgets, tasks in new conversations, graph fan-out and retries all draw on
+  the same root. The host derives the association from the authenticated
+  managed run, never from a caller's payload, so a worker cannot open a fresh
+  root.
+- **A task's own budget can only tighten.** It may stop a descendant before
+  the root would; it cannot enlarge the root. Extending a root is a separate
+  human act with its approval recorded. A number in a worker's message is not
+  approval.
+- **An attempt is charged before it launches.** `begin_turn` charges one
+  provider-start attempt to the root in the transaction that records the run,
+  its attempt id, the task's own accounting and dispatch ownership. Replaying
+  that transaction charges once; a genuinely new retry is a new charge.
+  Concurrent dispatchers see the same remainder, and once the root's allowance
+  is spent no further attempt starts, whichever descendant or conversation
+  names it. With an allowance of six a seventh attempt is refused; six is the
+  slice's allowance, not a global limit. Creating a task spends nothing.
+- **An unknown outcome is not refunded.** A charge permits one launch; it is
+  not a token to launch again. Recovery never relaunches an unknown attempt on
+  its old charge: it recovers the identified live process if there is one, and
+  otherwise settles that attempt and admits any retry as a new charge. A crash
+  between charging and a provable launch can therefore spend allowance without
+  a turn, and a flow can stop after fewer completed turns than its allowance.
+  That is the conservative direction, chosen on purpose.
+- **Deadlines are absolute.** A child may shorten the root's deadline, never
+  restart its clock. Task and root limits are checked in the same admission
+  decision, and a refusal settles leases and credentials through the existing
+  failure and recovery paths.
+- **The two ledgers stay apart.** A task's own `spent` totals keep meaning
+  that task; they are not relabelled as the flow's. The root's id, its charged
+  attempts and its remaining allowance are new, additive fields, specified
+  before implementation. Message-based accounting for undispatched turns stays
+  scoped to the pull flow.
+
+This bounds admitted provider attempts. It is not a monetary cap: tokens and
+cost are reported after a provider has done the work, so they can stop the
+next admission but not a turn already running. A hard dollar cap would need a
+separately reviewed bound that the provider enforces; without one, spend is
+reported, with a stop on later admissions.
 
 ### The exit gate is offline by construction, and live is one approved run
 
@@ -190,17 +235,40 @@ In order, and none of them is a technical step:
    project's own gate does not accept is the failure mode the gate exists to
    prevent.
 
-   As of 2026-09-05 the ledger reads 1 of 3 workflows and 0 of 2 retros. The
-   first workflow closed its loop that day -- its result delivery was
-   acknowledged and completed by its recipient -- which changes nothing here:
-   the decision log already records that this first workflow can never supply
-   a retro, because its waits were reconstructed afterwards rather than noted
-   as they happened. Two workflows and two retros remain, and they have to be
-   recorded while they happen.
-2. The offline gate is green, including the kill matrix and the rotation.
-3. Quota approval is a human act with a number attached: six real turns across
-   two providers, the root task's budget written down before the run, and the
-   run stopped by that budget rather than by a person watching it.
+   Resolved 2026-10-08. When this ADR was recorded the ledger read 1 of 3
+   workflows and 0 of 2 retros. It reached 7 workflows by 2026-09-07 and 2
+   qualifying retros on 2026-09-09, with no open M3 finding, but only after M5
+   and M6 had shipped. The user accepted that evidence as M7's baseline and
+   amended the "before M5 starts" condition, with the date and the reason, in
+   the decision log. The gate's ordering was missed and the log still says
+   so; no replacement workflows were run, and the demo is not counted.
+2. The offline gate is green on native Windows, macOS and Linux. Against
+   model-free rehearsal workers it shows that:
+   - three agents carry the six-turn flow to the end from bus records alone,
+     and a fresh provider session midway costs efficiency, not correctness;
+   - a task that becomes claimable for an enabled managed worker queues one
+     system delivery in the same transaction, and a replay or recovery pass
+     queues no second one;
+   - each side-effecting worker step, killed and retried, leaves no duplicate
+     artifact, message or commit, and the dispatcher acknowledges nothing on a
+     worker's behalf;
+   - concurrent children cannot each spend the root's remainder; explicit
+     worker budgets, new conversations and new tasks cannot escape the root;
+     and a spent root starts nothing;
+   - a crash before or after charging, and before or after launch, leaves one
+     charge per attempt, an unknown outcome admits nothing extra, and each
+     real retry carries its own charge;
+   - past the absolute deadline no provider starts, a child cannot reset the
+     clock, and a task's own limit can stop it before the root does;
+   - a stalled, human-blocked, cancelled, exhausted or failed flow is shown as
+     what it is, stall detection starts no repair turn, and a human cancel
+     stops the admitted provider tree through the platform's existing
+     mechanism.
+3. Quota approval is a human act with a number attached: at most six provider
+   attempts across the two providers, the providers and billing mode written
+   down, the root's allowance and deadline set before the run, no automatic
+   refill and no invisible retry, and the run stopped by that allowance, with
+   the stop recorded, rather than by a person watching it.
 
 ## Consequences
 
@@ -211,15 +279,17 @@ In order, and none of them is a technical step:
   counts only an undispatched one. Existing per-task budgets change meaning for
   managed work — they now bound turns actually run — and the M5 tests that
   count turns through `send_message` need the dispatched case added beside them.
-- Task creation inside a dispatched turn derives a default budget from the
-  turn's task. A task created with an explicit budget is unchanged.
+- A managed flow carries one root allowance. `begin_turn` charges each
+  attempt to it, every descendant task keeps the root, and reads gain the
+  root's id, charged attempts and remaining allowance beside each task's own
+  totals, not in place of them.
 - `bus status` gains stalled flows. No new command: restarting a flow stays a
   human act through the existing cancel and re-queue path.
-- A new gate tier `./test.sh --agent-bus-managed`, offline, in `--full`, to be
-  added by this work: `test.sh` today offers `--agent-bus-spike|store|mcp|
-  security|e2e|workflow|dispatch|chat|live` and nothing named `managed`. The M4
-  tier and its assertions are untouched, which is the point of scoping the new
-  delivery to enrolled workers.
+- A new gate tier `./test.sh --agent-bus-managed`, offline, in `--full`, run on
+  native Windows, macOS and Linux, to be added by this work: `test.sh` today
+  offers `--agent-bus-spike|store|mcp|security|e2e|workflow|dispatch|chat|live`
+  and nothing named `managed`. The M4 tier and its assertions are untouched,
+  which is the point of scoping the new delivery to enrolled workers.
 - `docs/agent-bus.md` and the demo grow a managed section; `/lucia-bus` gains
   the idempotency and re-entrancy rules, since they bind every worker and not
   only the rehearsal ones. That last one is not free: the skill sits at its
@@ -235,12 +305,16 @@ with the addition that the machine now starts turns in sequence, so a mistake
 propagates without a human between two of them. The mitigations are the ones
 already built (worktree isolation, approval provenance, the hop cap, per-task
 budgets, `max_attempts`, the lease) plus the two this ADR adds: a turn is
-counted against the budget whether or not it speaks, and a derived task cannot
-mint a larger allowance than the task that created it.
+counted against the budget whether or not it speaks, and every task in a
+managed flow draws on one root allowance that no worker can enlarge or
+restart.
 
 What is explicitly not claimed:
 
-- The bus does not bound spend on a flow whose root carries no budget.
+- The bus bounds provider attempts, not money. Usage is reported after a turn
+  has run, so a turn in flight can cost more than any estimate. Chaining
+  refuses a flow with no root allowance; outside chaining, an unbudgeted task
+  is bounded only by the hop cap, `max_attempts` and a human `cancel`.
 - A chain of correct-looking turns that is collectively wrong is not detected.
   The bus proves who did what, not that it was worth doing.
 - Approval is unchanged and unchangeable: a managed turn that needs a nonce
@@ -273,6 +347,10 @@ What is explicitly not claimed:
   as the mechanism for the `turns` dimension: the daemon can measure a turn it
   started itself, and a limit that stops a runaway loop must not depend on the
   runaway process reporting honestly.
+- **Copy the creator's remaining budget into each new task.** What this ADR
+  proposed until 2026-10-08. Rejected: it copies an allowance instead of
+  dividing it, so two children of a task with five turns left hold ten
+  between them, and an explicit budget written by a worker sidesteps it.
 - **Rely on the 32-hop cap for loop safety.** It is a real bound and it stays.
   Rejected as sufficient: it counts messages in one conversation, so a chain
   that creates tasks and starts fresh conversations walks past it, and 32
@@ -281,7 +359,8 @@ What is explicitly not claimed:
 ## Rollback
 
 Every piece is inert without enrolled workers. With none, no delivery is
-queued by the new rule, `begin_turn` never runs, no budget is derived, and the
-bus behaves exactly as it does in M6 and M5. Rolling back M7 is removing the
-workers; rolling back the store change is reverting one transaction's extra
-insert, which the M4 tier — untouched by design — will show is safe.
+queued by the new rule, `begin_turn` never runs, no root allowance is charged,
+and the bus behaves exactly as it does in M6 and M5. Rolling back M7 is
+removing the workers; rolling back the store change is reverting one
+transaction's extra insert, which the M4 tier — untouched by design — will
+show is safe.

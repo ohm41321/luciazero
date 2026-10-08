@@ -17,7 +17,7 @@ become the reason to keep building:
 > If that evidence does not exist, the release decision is "stop at the pull
 > beta"; "it feels used" is not a gate.
 
-## Where the gate stands (2026-09-04)
+## Where the gate stands (2026-09-04, counts updated to 2026-09-09)
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
@@ -55,9 +55,33 @@ Three ways out, and this is the user's decision:
 Until one of those is recorded, M7 has no baseline: it would extend managed
 dispatch on evidence that the decision gate does not accept.
 
+## Decision (2026-10-08): the evidence is accepted late, the order is amended
+
+Recorded at the user's direction on 2026-10-08.
+
+The evidence the gate asks for now exists: seven distinct real workflows by
+2026-09-07, two of them with a retro that names the user-started turn as the
+blocking cost with the wait measured by 2026-09-09, and no open M3 safety
+finding. What the gate also asked -- that this be recorded before M5 started
+-- did not happen and cannot be made to have happened: M5 and M6 shipped
+first.
+
+So this is not one of the three ways out as written. It is the evidence the
+gate asked for, not the machinery evidence of the second way, and it was met
+late rather than now. The user accepts it as the baseline for M7 and amends
+the gate's "before M5 starts" condition for that purpose. The reason: every
+count the gate names was reached on real work, and three more workflows would
+not change the order in which things happened. No replacement workflows were
+run, and the demo is not counted.
+
+What this does not do: it does not accept ADR 0007, which stays proposed, and
+it does not authorise implementing M7, running its live slice, or spending
+quota. Each of those is its own decision. The sections above and the ledger
+below keep the missed ordering on the record as it was written at the time.
+
 ## Ledger: real workflows on the pull beta
 
-Empty. A row is added by doing real work on the bus and exporting its records:
+A row is added by doing real work on the bus and exporting its records:
 
 ```bash
 ./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --list

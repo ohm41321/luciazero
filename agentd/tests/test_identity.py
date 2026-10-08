@@ -1146,9 +1146,12 @@ class RunSetupSignals(unittest.TestCase):
         previous = signal.signal(signal.SIGTERM, default)
         self.addCleanup(signal.signal, signal.SIGTERM, previous)
         real = getattr(target, name)
+        fired: list[bool] = []
 
         def terminated(*args: object, **kwargs: object) -> object:
-            signal.raise_signal(signal.SIGTERM)
+            if not fired:
+                fired.append(True)
+                signal.raise_signal(signal.SIGTERM)
             return real(*args, **kwargs)
 
         made: list[str] = []
@@ -1158,9 +1161,14 @@ class RunSetupSignals(unittest.TestCase):
             made.append(mkdtemp(*args, dir=str(self.root), **kwargs))  # type: ignore[arg-type]
             return made[-1]
 
-        with mock.patch.object(target, name, terminated), \
-                mock.patch.object(tempfile, "mkdtemp", workspace), \
-                contextlib.redirect_stderr(io.StringIO()):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(target, name, terminated))
+            stack.enter_context(mock.patch.object(tempfile, "mkdtemp", workspace))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            if (target, name) != (cli.nudge, "usable"):
+                # From a terminal `run` would take the pty path; the classic
+                # one is what this drives, whoever runs the suite.
+                stack.enter_context(mock.patch.object(cli.nudge, "usable", lambda: False))
             code = cli.main(["run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
                              "--state-dir", str(self.state), "--", sys.executable, "-c", "pass"])
         self.assertIs(default, signal.getsignal(signal.SIGTERM), "run must give the handler back")
@@ -1187,6 +1195,20 @@ class RunSetupSignals(unittest.TestCase):
                 bindings = self.bindings()
                 self.assertTrue(bindings)
                 self.assertEqual({"revoked"}, {b["state"] for b in bindings}, "a binding outlived run")
+
+    def test_a_sigterm_during_the_cleanup_does_not_cut_it_short(self) -> None:
+        """Review finding: the cleanup counted as done before it had done
+        anything, so a SIGTERM inside it left the rest undone for good."""
+        from luciazero_agentd import __main__ as cli
+
+        with mock.patch.object(cli, "create_private", side_effect=OSError("no space left on device")):
+            code, made = self.interrupted_at(shutil, "rmtree")
+        self.assertEqual(130, code)
+        self.assertEqual(1, len(made))
+        self.assertFalse(Path(made[0]).exists(), "the provider's configuration outlived run")
+        bindings = self.bindings()
+        self.assertEqual(1, len(bindings))
+        self.assertEqual("revoked", bindings[0]["state"], "the binding outlived run")
 
 
 if __name__ == "__main__":

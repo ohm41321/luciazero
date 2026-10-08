@@ -1085,20 +1085,21 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
 
     def _cleanup(reason: str) -> None:
         """A credential must never outlive this command, however it ends.
-        Once: an interrupt that already cleaned up still reaches cmd_run."""
+        Marked done only once it is: a signal that cuts it short still
+        reaches cmd_run, which runs it again, and a finished one is not
+        repeated."""
         if cleaned:
             return
-        cleaned.append(reason)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
         closer = _open_store("run", state_dir)
-        if closer is None:
-            return
-        with closer:
-            try:
-                closer.revoke_binding(binding["id"], by=f"human:{getpass.getuser()}", reason=reason)
-            except StoreError:
-                pass
+        if closer is not None:
+            with closer:
+                try:
+                    closer.revoke_binding(binding["id"], by=f"human:{getpass.getuser()}", reason=reason)
+                except StoreError:
+                    pass
+        cleaned.append(reason)
 
     cleanups.append(_cleanup)
     try:

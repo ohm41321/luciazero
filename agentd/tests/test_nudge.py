@@ -1252,5 +1252,59 @@ class RunTests(unittest.TestCase):
             pass
 
 
+@on_a_pty
+class RunWatcherOrder(unittest.TestCase):
+    """Review finding: RunTests wait for the provider's pid, which `run`
+    wrote before the watcher existed as much as after it, so they pass
+    whichever comes first. This holds the order itself, on both of `run`'s
+    terminals: the watcher is made before the provider is started."""
+
+    def started(self, run: object, owner: object) -> list[str]:
+        import contextlib
+        import io
+        import tempfile
+        import types
+        from unittest import mock
+
+        from luciazero_agentd import __main__ as cli
+
+        order: list[str] = []
+
+        def watcher(*_: object, **__: object) -> None:
+            order.append("watcher")
+
+        def spawn(*_: object, **__: object) -> None:
+            order.append("spawn")
+            raise OSError("not started")
+
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-watcher-order-")
+        self.addCleanup(tmp.cleanup)
+        ended: list[str] = []
+        with mock.patch.object(cli.nudge, "Watcher", watcher), mock.patch.object(owner, "spawn", spawn), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = run(types.SimpleNamespace(max_nudges=1), ["provider"], {},  # type: ignore[operator]
+                       {"id": "bind_x", "agent_id": "codex-architect"}, Path(tmp.name), ended.append)
+        self.assertEqual(2, code)
+        self.assertEqual(["spawn failed"], ended)
+        return order
+
+    def test_on_a_pty(self) -> None:
+        from luciazero_agentd import __main__ as cli
+
+        self.assertEqual(["watcher", "spawn"], self.started(cli._run_on_a_pty, cli.nudge))
+
+    def test_on_a_console(self) -> None:
+        import types
+        from unittest import mock
+
+        import luciazero_agentd
+        from luciazero_agentd import __main__ as cli
+
+        conpty = types.SimpleNamespace(spawn=None)
+        with mock.patch.dict(sys.modules, {"luciazero_agentd.conpty": conpty}), \
+                mock.patch.object(luciazero_agentd, "conpty", conpty, create=True):
+            self.assertEqual(["watcher", "spawn"], self.started(cli._run_on_a_console, conpty))
+
+
 if __name__ == "__main__":
     unittest.main()

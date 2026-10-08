@@ -46,10 +46,10 @@ The container path remains untested; see [the pinned evidence](docs/publishing.m
 The decision log stands at 7 of 3 workflows and 2 of 2 qualifying retros.
 This is not approval for a new release or for npm distribution of Agent Bus.
 
-M7's six managed-dispatch live tasks are not part of v2.5.0. The M4 decision
-gate in front of them was resolved by amendment on 2026-10-08 (see the
-decision log); ADR 0007 stays proposed, and the live slice still waits for its
-offline gate and a separate quota approval.
+M7's managed-dispatch live slice (at most six provider attempts) is not part
+of v2.5.0. The M4 decision gate in front of it was resolved by amendment on
+2026-10-08 (see the decision log); ADR 0007 stays proposed, and the live slice
+still waits for its offline gate and a separate quota approval.
 M8 currently has five of eight work areas evidenced: full suite;
 configuration-preserving install/uninstall on the first machine; opt-in CLI
 with no ordinary-install daemon start; documented limitations/storage/cleanup;

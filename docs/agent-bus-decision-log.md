@@ -59,12 +59,12 @@ dispatch on evidence that the decision gate does not accept.
 
 Recorded at the user's direction on 2026-10-08.
 
-The evidence the gate asks for now exists: seven distinct real workflows by
-2026-09-07, two of them with a retro that names the user-started turn as the
-blocking cost with the wait measured by 2026-09-09, and no open M3 safety
-finding. What the gate also asked -- that this be recorded before M5 started
--- did not happen and cannot be made to have happened: M5 and M6 shipped
-first.
+The evidence the gate asks for now exists: seven distinct real workflows and
+two retros that name the user-started turn as the blocking cost with the wait
+measured, all recorded by 2026-09-09 (the third workflow on 2026-09-07), and
+no open M3 safety finding as the criterion 3 section below records it. What
+the gate also asked -- that this be recorded before M5 started -- did not
+happen and cannot be made to have happened: M5 and M6 shipped first.
 
 So this is not one of the three ways out as written. It is the evidence the
 gate asked for, not the machinery evidence of the second way, and it was met
@@ -644,6 +644,11 @@ it.
 
 ## Next decision
 
-The user decides between the three options above. M7 (the managed-dispatch
-vertical slice: several agents, several turns, recovery in the middle) should
-start from whichever of them is recorded here, and this log is its baseline.
+Made on 2026-10-08; see "Decision (2026-10-08)" above. Until then this
+section read: the user decides between the three options above, and M7 (the
+managed-dispatch vertical slice: several agents, several turns, recovery in
+the middle) starts from whichever of them is recorded here, with this log as
+its baseline.
+
+Still open, each a separate decision: accepting ADR 0007, which is proposed;
+implementing M7; and approving quota for its live slice.

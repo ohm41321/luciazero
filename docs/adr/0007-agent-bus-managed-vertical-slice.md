@@ -46,10 +46,10 @@ There is also a precondition that is not technical. The decision log
 (`docs/agent-bus-decision-log.md`) records that the M4 decision gate was passed
 by rather than met: M5 and M6 shipped before its evidence existed, and until
 one of its three ways out was recorded, M7 had no baseline. The evidence was
-recorded later -- seven workflows by 2026-09-07 and the second qualifying
-retro on 2026-09-09 -- and on 2026-10-08 the user accepted it as M7's
-baseline and amended the gate's "before M5 starts" condition rather than
-counting it as met. This ADR designs M7; it does not authorise starting it.
+recorded later -- the third workflow on 2026-09-07, and seven workflows with
+two qualifying retros by 2026-09-09 -- and on 2026-10-08 the user accepted it
+as M7's baseline and amended the gate's "before M5 starts" condition rather
+than counting it as met. This ADR designs M7; it does not authorise starting it.
 The section "What must be true before the live slice runs" states the order.
 
 ## Decision
@@ -62,11 +62,13 @@ Completing a task already opens the tasks waiting on it (`_settle_dependents`,
 invisible to it. Under managed dispatch the M5 task graph is therefore inert —
 the graph knows the flow's shape and the dispatcher cannot see it.
 
-The fix is one rule: **when a task becomes claimable and its assignee is an
-enabled managed worker, the daemon queues a `task` delivery to that assignee,
-in the same transaction that made it claimable.** That covers both entries into
+The fix is one rule: **when a task becomes claimable, its assignee is an
+enabled managed worker, and the task belongs to a managed flow with a root
+allowance (below), the daemon queues a `task` delivery to that assignee, in
+the same transaction that made it claimable.** That covers both entries into
 claimable — a dependent unblocked by `_settle_dependents`, and a task created
-already `open` with an assignee.
+already `open` with an assignee. A task with no root starts no chain, whoever
+it is assigned to.
 
 - The delivery is the daemon's own: sender is the daemon, `trust` is `system`
   (ADR 0006), and the payload carries the task id and nothing else. It is not
@@ -169,8 +171,9 @@ one allowance per flow.
 
 - **A managed flow has one budget root, and it is finite.** Each flow enrolled
   in chaining gets a root assigned by the host, with an explicit turn
-  allowance; a flow without one is not chained. Pull-beta and M6 behaviour
-  outside this opt-in is unchanged.
+  allowance; a flow without one is not chained. Outside this opt-in the pull
+  beta is unchanged, and so is M6 apart from `begin_turn` counting the turns
+  it starts, above.
 - **Every descendant keeps that root.** Worker-created tasks with explicit
   budgets, tasks in new conversations, graph fan-out and retries all draw on
   the same root. The host derives the association from the authenticated
@@ -235,15 +238,24 @@ In order, and none of them is a technical step:
    project's own gate does not accept is the failure mode the gate exists to
    prevent.
 
-   Resolved 2026-10-08. When this ADR was recorded the ledger read 1 of 3
-   workflows and 0 of 2 retros. It reached 7 workflows by 2026-09-07 and 2
-   qualifying retros on 2026-09-09, with no open M3 finding, but only after M5
-   and M6 had shipped. The user accepted that evidence as M7's baseline and
-   amended the "before M5 starts" condition, with the date and the reason, in
-   the decision log. The gate's ordering was missed and the log still says
-   so; no replacement workflows were run, and the demo is not counted.
-2. The offline gate is green on native Windows, macOS and Linux. Against
-   model-free rehearsal workers it shows that:
+   When this ADR was recorded it said: as of 2026-09-05 the ledger reads 1
+   of 3 workflows and 0 of 2 retros. The first workflow closed its loop that
+   day -- its result delivery was acknowledged and completed by its
+   recipient -- which changes nothing here: the decision log already records
+   that this first workflow can never supply a retro, because its waits were
+   reconstructed afterwards rather than noted as they happened.
+
+   Resolved 2026-10-08. The ledger reached its third workflow on 2026-09-07,
+   and seven workflows with two qualifying retros by 2026-09-09, but only
+   after M5 and M6 had shipped. The user accepted that evidence as M7's
+   baseline and amended the "before M5 starts" condition, with the date and
+   the reason, in the decision log. The gate's ordering was missed and the
+   log still says so; no replacement workflows were run, and the demo is not
+   counted.
+2. The offline gate is green on every platform the daemon supports when the
+   gate is built: macOS, Linux and WSL2 under ADR 0002 today, and native
+   Windows as well if native Windows support has been accepted into ADR 0002
+   by then. Against model-free rehearsal workers it shows that:
    - three agents carry the six-turn flow to the end from bus records alone,
      and a fresh provider session midway costs efficiency, not correctness;
    - a task that becomes claimable for an enabled managed worker queues one
@@ -262,8 +274,8 @@ In order, and none of them is a technical step:
      clock, and a task's own limit can stop it before the root does;
    - a stalled, human-blocked, cancelled, exhausted or failed flow is shown as
      what it is, stall detection starts no repair turn, and a human cancel
-     stops the admitted provider tree through the platform's existing
-     mechanism.
+     stops the admitted provider tree through the existing mechanism for
+     that platform.
 3. Quota approval is a human act with a number attached: at most six provider
    attempts across the two providers, the providers and billing mode written
    down, the root's allowance and deadline set before the run, no automatic
@@ -272,9 +284,9 @@ In order, and none of them is a technical step:
 
 ## Consequences
 
-- New behaviour in the store: a claimable task assigned to an enabled managed
-  worker queues a `task` delivery in the transaction that made it claimable,
-  once per readiness.
+- New behaviour in the store: a claimable task in a managed flow with a root
+  allowance, assigned to an enabled managed worker, queues a `task` delivery
+  in the transaction that made it claimable, once per readiness.
 - Turn accounting moves: `begin_turn` counts a dispatched turn; `send_message`
   counts only an undispatched one. Existing per-task budgets change meaning for
   managed work — they now bound turns actually run — and the M5 tests that
@@ -286,7 +298,7 @@ In order, and none of them is a technical step:
 - `bus status` gains stalled flows. No new command: restarting a flow stays a
   human act through the existing cancel and re-queue path.
 - A new gate tier `./test.sh --agent-bus-managed`, offline, in `--full`, run on
-  native Windows, macOS and Linux, to be added by this work: `test.sh` today
+  every platform the daemon supports, to be added by this work: `test.sh` today
   offers `--agent-bus-spike|store|mcp|security|e2e|workflow|dispatch|chat|live`
   and nothing named `managed`. The M4 tier and its assertions are untouched,
   which is the point of scoping the new delivery to enrolled workers.
@@ -361,6 +373,9 @@ What is explicitly not claimed:
 Every piece is inert without enrolled workers. With none, no delivery is
 queued by the new rule, `begin_turn` never runs, no root allowance is charged,
 and the bus behaves exactly as it does in M6 and M5. Rolling back M7 is
-removing the workers; rolling back the store change is reverting one
-transaction's extra insert, which the M4 tier — untouched by design — will
-show is safe.
+removing the workers. Rolling back the trigger is reverting one transaction's
+extra insert, which the M4 tier — untouched by design — will show is safe. The
+root allowance is not that small: its fields, each task's link to its root
+and the charge in `begin_turn` arrive with a schema migration, and how that
+migration is reversed is part of specifying those fields before
+implementation, proved by the managed gate rather than the M4 tier.

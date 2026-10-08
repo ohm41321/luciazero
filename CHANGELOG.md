@@ -59,6 +59,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blocked) is refused. Stopping already dead-lettered the queued ones, yet a
   new one, including the very send the budget had refused, was queued as live
   work. Other kinds may still name the task.
+- The verify hook no longer treats a `.txt` write as documentation, so editing
+  `requirements.txt` or `CMakeLists.txt` after a green run arms the stop nudge
+  like any code edit. `.md`, `.markdown` and `.rst` writes still leave the
+  verify state alone; `LUCIAZERO_DOC_REGEX` in your own settings restores the
+  old set.
 
 ### Fixed
 

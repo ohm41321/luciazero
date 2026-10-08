@@ -76,7 +76,10 @@ const ALL_KNOBS = ["LUCIAZERO_VERIFY_CMD", "LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_
 // --report, which only reads the samples kept so far; that case is carved out
 // of the default below and is no concern of a regex somebody set themselves.
 const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timings\\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)";
-const DEFAULT_DOC_RE = "\\.(md|markdown|rst|txt)$";
+// .txt is not on it: requirements.txt, CMakeLists.txt and constraints.txt
+// are build inputs, and a nudge after editing notes.txt costs less than none
+// after editing requirements.txt.
+const DEFAULT_DOC_RE = "\\.(md|markdown|rst)$";
 const NUDGE_TEXT = "Doctrine rule 1: edits were made but no verify command has run since the last edit. Run the repo's verify command and quote its decisive line — or finish anyway and say plainly that the change is unverified. (This nudge fires once.)";
 
 function home() {

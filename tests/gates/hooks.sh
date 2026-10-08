@@ -38,6 +38,18 @@ RC=0; echo "${HJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" 
 SL="$(echo '{"model":{"display_name":"M"},"workspace":{"current_dir":"/hook/test/proj"}}' \
   | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-statusline.cjs")"
 grep -q '✅ verify' <<<"${SL}" || { rm -rf "${HT}"; fail "statusline missed green verify state: ${SL}"; }
+# Markdown is documentation; a .txt file may be a build input
+# (requirements.txt, CMakeLists.txt) and re-arms like code.
+DJ='{"cwd":"/hook/test/docs"}'
+for DOC in README.md requirements.txt CMakeLists.txt; do
+  echo '{"cwd":"/hook/test/docs","tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}}' \
+    | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+  printf '{"cwd":"/hook/test/docs","tool_input":{"file_path":"/hook/test/docs/%s"}}\n' "${DOC}" \
+    | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+  RC=0; echo "${DJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
+  if [ "${DOC}" = README.md ]; then WANT=0; else WANT=2; fi
+  [ "${RC}" = "${WANT}" ] || { rm -rf "${HT}"; fail "stop hook after a write to ${DOC} following green verify: rc=${RC}, want ${WANT}"; }
+done
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'

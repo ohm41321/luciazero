@@ -291,6 +291,37 @@ assert "\\d+\\.\\d+\\.\\d+" in gate_block, \
 stage = release_workflow.find("scripts/stage-npm-package.sh")
 npm_publish = release_workflow.find('npm publish "${PACKAGE_DIR}"')
 assert 0 <= stage < npm_publish, "npm release must publish the English-README staging package"
+assert "uses: ./.github/workflows/ci.yml" in release_workflow and "\n    needs: ci\n" in release_workflow, \
+    "release must run the whole CI workflow, Windows suites included, before it publishes"
+assert "\n  workflow_call:\n" in open(os.path.join(root, ".github/workflows/ci.yml")).read(), \
+    "ci.yml must be callable from the release workflow"
+on_main = release_workflow.find("git merge-base --is-ancestor HEAD refs/remotes/origin/main")
+assert 0 <= on_main < publish, "release must refuse a tag that is not on main before it publishes"
+publish_block = release_workflow[publish:release_workflow.find("\n  npm-publish:", publish)]
+assert "scripts/release-zip-unchanged.py" in publish_block and "--clobber" not in publish_block, \
+    "a rerun must refuse to replace a published ZIP with a different one"
+import subprocess, tempfile, zipfile
+compare = os.path.join(root, "scripts/release-zip-unchanged.py")
+with tempfile.TemporaryDirectory() as tmp:
+    def build(name, files):
+        path = os.path.join(tmp, name)
+        with zipfile.ZipFile(path, "w") as bundle:
+            for entry, (data, mode) in files.items():
+                info = zipfile.ZipInfo(entry)
+                info.external_attr = mode << 16
+                bundle.writestr(info, data)
+        return path
+    base = {"luciazero/a.txt": ("a\n", 0o100644), "luciazero/run.sh": ("#!/bin/sh\n", 0o100755)}
+    published = build("published.zip", base)
+    def verdict(files, name):
+        return subprocess.run([sys.executable, compare, published, build(name, files)],
+                              capture_output=True).returncode
+    assert verdict(base, "same.zip") == 0, "release ZIP check refuses an identical rebuild"
+    for change, files in (("content", {**base, "luciazero/a.txt": ("b\n", 0o100644)}),
+                          ("mode", {**base, "luciazero/run.sh": ("#!/bin/sh\n", 0o100644)}),
+                          ("added", {**base, "luciazero/new.txt": ("n\n", 0o100644)}),
+                          ("removed", {"luciazero/a.txt": ("a\n", 0o100644)})):
+        assert verdict(files, f"{change}.zip") == 1, f"release ZIP check accepts a ZIP whose {change} changed"
 show = open(os.path.join(root, "skills/show/SKILL.md")).read()
 for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
     assert contract in show, f"show skill missing output contract: {contract}"

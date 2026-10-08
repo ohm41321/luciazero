@@ -62,6 +62,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Release: the workflow publishes only after the whole CI workflow passes at
+  the tag, the native Windows suites included, and only for a commit on
+  `main`; it ran the Linux suite alone and released any tagged commit. A
+  rerun for a tag whose release already has its ZIP no longer replaces it:
+  npm skips a version that is already live, so a tag moved since the first
+  run shipped a ZIP and an npm package from different commits. It now stops
+  unless the new build matches, entry for entry
+  (`scripts/release-zip-unchanged.py`).
 - Eval graders: `relay-transfer` scores a string `verification` entry as a
   failed criterion; it crashed with no `SCORE` line, so `run.sh` dropped a
   wrong answer as invalid. `archive-security` restores two levels down and

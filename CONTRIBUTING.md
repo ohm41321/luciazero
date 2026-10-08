@@ -97,9 +97,13 @@ declined:
 2. Run `scripts/test-timings.sh --full` on the final release tree, commit the
    release preparation, push `main`, and require CI to pass on that commit.
 3. Tag that commit with `git tag vX.Y.Z`, then push only the intended tag with
-   `git push origin vX.Y.Z`. The release workflow verifies version agreement
-   and the full suite, builds the source ZIP, publishes a GitHub Release, then
-   publishes the staged npm package through OIDC.
+   `git push origin vX.Y.Z`. The release workflow runs the whole CI workflow
+   at the tag (the native Windows suites included), refuses a tag that is not
+   on `main`, verifies version agreement and the full suite, builds the source
+   ZIP, publishes a GitHub Release, then publishes the staged npm package
+   through OIDC. A rerun for a tag whose release already has its ZIP refuses
+   to go on if the tag now builds a different one: move nothing, publish a
+   new version.
 4. Confirm both workflow jobs succeeded and npm serves the intended version.
    A tag or GitHub Release alone is not proof of npm publication. See
    [the publishing checklist](docs/publishing.md).

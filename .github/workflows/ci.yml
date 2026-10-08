@@ -6,6 +6,9 @@ on:
     # from this list then.
     branches: [main, windows-native]
   pull_request:
+  # release.yml runs this whole workflow at the tagged commit before it
+  # publishes anything.
+  workflow_call:
 
 # This workflow gates a package that writes into contributors' ~/.claude, so it
 # takes the narrowest token and pins every action to a commit — a moved tag must

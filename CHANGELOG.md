@@ -71,6 +71,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   verify run in any session still covers every edit made before it started.
   An unverified edit recorded before the update still nudges every session
   once, and a session still running an older copy keeps its old behaviour.
+- The verify hook records overlapping verify runs by when they started: a run
+  that started before the recorded one and finishes after it no longer
+  replaces it. It used to move the verified point back, so an edit the later
+  run had covered nudged again, and its red replaced a green for newer code.
+  A run whose start was never recorded is still recorded when it finishes.
 
 ### Fixed
 

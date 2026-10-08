@@ -114,6 +114,24 @@ sess_hook P edit "${SESS_EDIT}"
 sess_stop C 2 "an older copy's edit made while a verify ran was not nudged"
 sess_hook N bash "${SESS_RUN}"',"tool_response":{"exit_code":0}'
 sess_stop C 0 "a verify run that started before an older copy's edit re-armed the nudge that edit had caused"
+# Overlapping verify runs finish in any order. The one that started last
+# tested the newest code, so one that started earlier and finishes later
+# does not take its place: neither its green nor its red un-covers an edit
+# the later run covered.
+SESS_CWD=/hook/test/sessions-overlap
+SESS_EARLY=',"tool_use_id":"verify-early","tool_input":{"command":"./test.sh"}'
+SESS_LATE=',"tool_use_id":"verify-late","tool_input":{"command":"./test.sh"}'
+for ENDED in '"tool_response":{"exit_code":0}' '"tool_response":{"exit_code":1}'; do
+  sess_hook A bash-start "${SESS_EARLY}"
+  sess_hook A edit "${SESS_EDIT}"
+  sess_hook B bash-start "${SESS_LATE}"
+  sess_hook B bash "${SESS_LATE}"',"tool_response":{"exit_code":0}'
+  sess_hook A bash "${SESS_EARLY},${ENDED}"
+  sess_stop A 0 "a verify run that started first and ended last un-covered an edit a later green covered (${ENDED})"
+  if [ "$(cat "$(sess_state)/last_verify")" != ok ]; then
+    rm -rf "${HT}"; fail "a verify run that started first and ended last replaced a later green (${ENDED})"
+  fi
+done
 # The released hook itself (v2.6.0, byte for byte) beside this one on one
 # project, as when a session started before an update keeps the old copy:
 # neither copy's nudge silences the other's, an edit under either arms both,

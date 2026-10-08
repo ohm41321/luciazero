@@ -184,6 +184,23 @@ function stampAt(file, ms) {
   } catch {}
 }
 
+// Overlapping verify runs finish in any order, and the one that started
+// last tested the newest code. A run that started before the recorded one
+// is not written over it: moving last_verify back to the earlier start
+// would un-cover an edit the later run covered, and its red would replace
+// a green for newer code. Returns whether the run was recorded.
+function recordVerify(state, status, startMs, command) {
+  const file = path.join(state, "last_verify");
+  const recorded = mtime(file);
+  if (recorded !== null && startMs !== null && startMs < Math.round(recorded)) return false;
+  write(file, status + "\n");
+  if (startMs !== null) stampAt(file, startMs);
+  // Keep only an opaque digest for strict-gate equality; raw commands may
+  // contain paths or secrets and must never persist in shared state.
+  write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
+  return true;
+}
+
 function readTrimmed(file) {
   try {
     return fs.readFileSync(file, "utf8").trim();
@@ -946,12 +963,8 @@ function main(argv) {
             touch(path.join(telemetry, "redundant_green", toolKey));
           }
         }
-        write(path.join(state, "last_verify"), (status || "ran") + "\n");
-        if (/^\d+$/.test(startMs) && nowMs >= Number(startMs)) stampAt(path.join(state, "last_verify"), Number(startMs));
-        // Keep only an opaque digest for strict-gate equality; raw commands may
-        // contain paths or secrets and must never persist in shared state.
-        write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
-        settleNudged(state);
+        const started = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : null;
+        if (recordVerify(state, status || "ran", started, command)) settleNudged(state);
       }
       return 0;
     }
@@ -990,19 +1003,14 @@ function main(argv) {
         }
         if (outcome.verdict === "ok") {
           recordStrictTelemetry(startMs);
-          write(path.join(state, "last_verify"), "ok\n");
-          stampAt(path.join(state, "last_verify"), startMs);
-          write(path.join(state, "last_verify_cmd_hash"), sha256(strict, 64) + "\n");
-          settleNudged(state);
+          if (recordVerify(state, "ok", startMs, strict)) settleNudged(state);
           statLog("stop-clean", ctx);
           endTurn();
           return 0;
         }
         if (outcome.verdict === "red") {
           recordStrictTelemetry(startMs);
-          write(path.join(state, "last_verify"), "fail\n");
-          stampAt(path.join(state, "last_verify"), startMs);
-          write(path.join(state, "last_verify_cmd_hash"), sha256(strict, 64) + "\n");
+          recordVerify(state, "fail", startMs, strict);
           statLog("strict-block", ctx);
           process.stderr.write(`Strict verify gate: '${strict}' is RED. Fix it before finishing — or say plainly that you are handing back a red state. Failing output:\n`);
           process.stderr.write("\n" + outcome.tail + "\n");

@@ -965,6 +965,28 @@ def cmd_attach(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Stop:
+    """`run`'s handler for SIGTERM, SIGINT and, on Windows, Ctrl+Break: one
+    per run, shared by every place that takes these signals over.
+
+    The first signal ends the run by raising KeyboardInterrupt, and the way
+    out cleans up. The ones after it are let go. Raised as well, a second one
+    landed in that cleanup and cut it short: the binding stayed live until
+    its TTL and, before the workspace was removed, the provider's
+    configuration stayed on disk. No signal is blocked, so this is the same
+    on Windows, where there is no mask to block one with. Only signals with
+    a handler are covered: SIGKILL, or a process ended by force, still ends
+    `run` without its cleanup."""
+
+    def __init__(self) -> None:
+        self.stopping = False
+
+    def __call__(self, *_: object) -> None:
+        if not self.stopping:
+            self.stopping = True
+            raise KeyboardInterrupt
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Start a provider with the binding already in place. The credential
     reaches the child through its own configuration and never through this
@@ -1012,21 +1034,23 @@ def cmd_run(args: argparse.Namespace) -> int:
               "provider yourself and use `attach` from a terminal that can.", file=sys.stderr)
         return 2
 
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
     # Taken over before the binding is minted. Left at the default until the
     # provider was started, a SIGTERM -- or on Windows a Ctrl+Break -- while
     # the binding was minted, its configuration written or the provider
     # spawned ended this process without its cleanup: the credential stayed
     # valid until its TTL, its configuration stayed on disk, and the agent's
-    # next `run` was refused as a live session.
+    # next `run` was refused as a live session. Ctrl+C too, while it is still
+    # Python's own handler, which raised again in the cleanup.
+    stop = _Stop()
     cleanups: list[Callable[[str], None]] = []
-    previous = signal.signal(signal.SIGTERM, _stop_run)
-    previous_break = signal.signal(signal.SIGBREAK, _stop_run) if proctree.WINDOWS else None
+    previous = signal.signal(signal.SIGTERM, stop)
+    previous_break = signal.signal(signal.SIGBREAK, stop) if proctree.WINDOWS else None
+    previous_int = (signal.signal(signal.SIGINT, stop)
+                    if signal.getsignal(signal.SIGINT) is signal.default_int_handler else None)
     try:
-        return _run_bound(args, state_dir, command, provider, endpoint, cleanups)
+        return _run_bound(args, state_dir, command, provider, endpoint, cleanups, stop)
     except KeyboardInterrupt:
+        stop.stopping = True  # for an interrupt that did not come through `stop`
         for cleanup in cleanups:
             cleanup("run interrupted")
         return 130
@@ -1034,13 +1058,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGTERM, previous)
         if previous_break is not None:
             signal.signal(signal.SIGBREAK, previous_break)
+        if previous_int is not None:
+            signal.signal(signal.SIGINT, previous_int)
 
 
 def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], provider: str,
-               endpoint: dict[str, Any], cleanups: list[Callable[[str], None]]) -> int:
+               endpoint: dict[str, Any], cleanups: list[Callable[[str], None]], stop: _Stop) -> int:
     """`run` from the binding on: mint it, configure the provider, start it.
     The cleanup goes in `cleanups` before the binding is minted, for an
-    interrupt that lands where nothing below catches it."""
+    interrupt that lands where nothing below catches it. `stop` is the
+    run's signal handler, for every place below that takes a signal over."""
     env = dict(os.environ)
     url = endpoint["url"]
     workspace: Optional[Path] = None
@@ -1143,7 +1170,7 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
     # pipe, a dispatched turn -- there is nothing to type into and nothing to
     # proxy, so the child simply inherits this process's streams as before.
     if getattr(args, "nudge", True) and nudge.usable():
-        return _run_on_a_pty(args, argv, env, binding, state_dir, _cleanup)
+        return _run_on_a_pty(args, argv, env, binding, state_dir, _cleanup, stop)
     if getattr(args, "nudge", True) and not nudge.AVAILABLE and sys.stdin.isatty():
         print("run: this platform has no pty to hold, so nothing will be typed at the session's prompt; "
               "deliveries wait until it checks its bus inbox", file=sys.stderr)
@@ -1160,18 +1187,15 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
         _cleanup("spawn failed")
         print(f"run: cannot start {clean(command[0])}: {clean(exc)}", file=sys.stderr)
         return 2
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
     # Without this a SIGTERM to `run` skips the cleanup below and leaves an
     # orphaned provider holding a live credential until its TTL expires. It
     # comes before the bind, which a SIGTERM can land in too.
-    previous = signal.signal(signal.SIGTERM, _stop_run)
+    previous = signal.signal(signal.SIGTERM, stop)
     # Windows: the provider shares this console, so a Ctrl+C reaches it
     # directly and is its to handle -- Claude Code and Codex use it to stop a
     # turn, not to exit. This process ignores it rather than ending the
     # session; Ctrl+Break still ends both.
-    previous_windows = ((signal.signal(signal.SIGINT, signal.SIG_IGN), signal.signal(signal.SIGBREAK, _stop_run))
+    previous_windows = ((signal.signal(signal.SIGINT, signal.SIG_IGN), signal.signal(signal.SIGBREAK, stop))
                         if proctree.WINDOWS else None)
     try:
         store = _open_store("run", state_dir)
@@ -1225,10 +1249,12 @@ def _watcher_for(args: argparse.Namespace, binding: dict[str, Any], state_dir: P
 
 def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str],
                   binding: dict[str, Any], state_dir: Path,
-                  cleanup: Callable[[str], None]) -> int:
+                  cleanup: Callable[[str], None], stop: Optional[_Stop] = None) -> int:
     """`run`, holding the provider's terminal so the bus can knock on it."""
+    if stop is None:
+        stop = _Stop()
     if proctree.WINDOWS:
-        return _run_on_a_console(args, argv, env, binding, state_dir, cleanup)
+        return _run_on_a_console(args, argv, env, binding, state_dir, cleanup, stop)
     watcher = _watcher_for(args, binding, state_dir)
     try:
         pid, master = nudge.spawn(argv, env)
@@ -1237,14 +1263,10 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
     previous = signal.getsignal(signal.SIGTERM)
-
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
     try:
         # First, so that a SIGTERM during the setup below still ends the
         # provider and the binding.
-        signal.signal(signal.SIGTERM, _stop_run)
+        signal.signal(signal.SIGTERM, stop)
         store = _open_store("run", state_dir)
         if store is not None:
             with store:
@@ -1287,10 +1309,12 @@ def _end_pty_child(pid: int, grace: float = 10.0) -> None:
 
 def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, str],
                       binding: dict[str, Any], state_dir: Path,
-                      cleanup: Callable[[str], None]) -> int:
+                      cleanup: Callable[[str], None], stop: Optional[_Stop] = None) -> int:
     """`run` on Windows: the provider on a pseudo console this process holds,
     as `_run_on_a_pty` holds a pty."""
     from . import conpty
+    if stop is None:
+        stop = _Stop()
     watcher = _watcher_for(args, binding, state_dir)
     try:
         session = conpty.spawn(proctree.argv_for(argv, env), env)
@@ -1303,10 +1327,6 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
     previous = signal.getsignal(signal.SIGBREAK)
-
-    def _stop_run(*_: object) -> None:
-        raise KeyboardInterrupt
-
     # Everything after the spawn sits inside the try, as on a pty: whatever
     # fails on the way to the proxy, the binding still dies with this run.
     try:
@@ -1314,7 +1334,7 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
         # Ctrl+Break, or one that lands before the console is raw, ends the
         # session, and the proxy ends the provider's job on its way out. It
         # is taken over first, so one during the setup below does too.
-        signal.signal(signal.SIGBREAK, _stop_run)
+        signal.signal(signal.SIGBREAK, stop)
         store = _open_store("run", state_dir)
         if store is not None:
             with store:

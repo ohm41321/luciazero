@@ -1254,6 +1254,144 @@ class RunSetupSignals(unittest.TestCase):
         self.assertEqual(1, len(bindings))
         self.assertEqual("revoked", bindings[0]["state"], "the binding outlived run")
 
+    def signalled(self, sig: int, *at: tuple[object, str, int]) -> tuple[object, list[str], list[tuple[int, object]]]:
+        """`run`, with `sig` raised just before the nth call of each
+        `target.name` in `at`, counting from 1. Returns its exit code -- or
+        "escaped" for a KeyboardInterrupt that escaped it, rather than
+        ending the suite -- the workspaces it made, and for each wait on the
+        provider what it returned and SIGINT's handler during it.
+
+        The provider takes whatever configuration `run` puts on its command
+        line and exits 0, so a run nothing interrupts returns on its own,
+        cleanly."""
+        import contextlib
+        import io
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        class Escaped(Exception):
+            pass
+
+        def default(*_: object) -> None:
+            raise Escaped
+
+        previous = signal.signal(signal.SIGTERM, default)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        interrupt = signal.getsignal(signal.SIGINT)
+        provider = fake_cli(self.root / "provider", "raise SystemExit(0)\n")
+        calls: dict[tuple[int, str], int] = {}
+
+        def counted(target: object, name: str, real: object) -> object:
+            def call(*args: object, **kwargs: object) -> object:
+                calls[(id(target), name)] = calls.get((id(target), name), 0) + 1
+                if (target, name, calls[(id(target), name)]) in at:
+                    signal.raise_signal(sig)
+                return real(*args, **kwargs)  # type: ignore[operator]
+            return call
+
+        made: list[str] = []
+        mkdtemp = tempfile.mkdtemp
+
+        def workspace(*args: object, **kwargs: object) -> str:
+            made.append(mkdtemp(*args, dir=str(self.root), **kwargs))  # type: ignore[arg-type]
+            return made[-1]
+
+        waits: list[tuple[int, object]] = []
+        wait_for = cli.adapters.wait_for
+
+        def waited(*args: object, **kwargs: object) -> int:
+            handler = signal.getsignal(signal.SIGINT)
+            waits.append((wait_for(*args, **kwargs), handler))  # type: ignore[arg-type]
+            return waits[-1][0]
+
+        with contextlib.ExitStack() as stack:
+            for target, name in {(target, name): None for target, name, _ in at}:
+                stack.enter_context(mock.patch.object(target, name, counted(target, name, getattr(target, name))))
+            stack.enter_context(mock.patch.object(tempfile, "mkdtemp", workspace))
+            stack.enter_context(mock.patch.object(cli.adapters, "wait_for", waited))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            stack.enter_context(mock.patch.object(cli.nudge, "usable", lambda: False))
+            try:
+                code: object = cli.main(["run", "--no-autostart", "--agent", "claude-reviewer",
+                                         "--provider", "claude", "--state-dir", str(self.state),
+                                         "--", provider])
+            except KeyboardInterrupt:
+                code = "escaped"
+        self.assertIs(default, signal.getsignal(signal.SIGTERM), "run must give SIGTERM's handler back")
+        self.assertIs(interrupt, signal.getsignal(signal.SIGINT), "run must give SIGINT's handler back")
+        return code, made, waits
+
+    def test_a_second_signal_during_the_cleanup_does_not_cut_it_short(self) -> None:
+        """Review finding: after a first signal `cmd_run` ran the cleanup
+        again, and a second one inside that pass escaped `run` with the
+        binding live until its TTL and, before the workspace was removed,
+        the provider's configuration on disk. Both orders are covered: a
+        first signal while the provider is being started, and a first one
+        in the cleanup after the provider exited 0 on its own."""
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        signals = {"SIGTERM": signal.SIGTERM, "SIGINT": signal.SIGINT}
+        if WINDOWS:
+            signals["SIGBREAK"] = signal.SIGBREAK  # Ctrl+Break
+        paths = {
+            "while starting, then in the removal": ((cli.proctree, "start", 1), (shutil, "rmtree", 1)),
+            "while starting, then in the revoke": ((cli.proctree, "start", 1), (Store, "revoke_binding", 1)),
+            "after the provider exited, then in the removal": ((shutil, "rmtree", 1), (shutil, "rmtree", 2)),
+            "after the provider exited, then in the revoke": ((shutil, "rmtree", 1), (Store, "revoke_binding", 1)),
+        }
+        for label, sig in signals.items():
+            for path, at in paths.items():
+                with self.subTest(signal=label, path=path):
+                    with Store.open(self.state / "bus.sqlite3") as store:
+                        for binding in store.list_bindings(states=("active",), alive=None):
+                            store.revoke_binding(binding["id"], by="human:test", reason="between subtests")
+                    before = {b["id"] for b in self.bindings()}
+                    code, made, waits = self.signalled(sig, *at)
+                    self.assertEqual(1, len(made))
+                    left = {"exit": code, "provider exits": [exit for exit, _ in waits],
+                            "configuration on disk": Path(made[0]).exists(),
+                            "bindings": [b["state"] for b in self.bindings() if b["id"] not in before]}
+                    self.assertEqual({"exit": 130, "provider exits": [0] if path.startswith("after") else [],
+                                      "configuration on disk": False, "bindings": ["revoked"]}, left)
+
+    def test_run_takes_ctrl_c_over_only_from_pythons_own_handler(self) -> None:
+        """A job that its shell started with Ctrl+C ignored keeps ignoring
+        it, and a handler someone else installed stays theirs; both are
+        given back. On Windows Ctrl+C is the provider's while `run` waits
+        for it, as before."""
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        def theirs(*_: object) -> None:
+            pass
+
+        for label, handler in (("Python's own", signal.default_int_handler),
+                               ("ignored", signal.SIG_IGN), ("someone else's", theirs)):
+            with self.subTest(handler=label):
+                previous = signal.signal(signal.SIGINT, handler)
+                self.addCleanup(signal.signal, signal.SIGINT, previous)
+                seen: list[object] = []
+                start = cli.proctree.start
+
+                def started(*args: object, **kwargs: object) -> object:
+                    seen.append(signal.getsignal(signal.SIGINT))
+                    return start(*args, **kwargs)
+
+                with mock.patch.object(cli.proctree, "start", started):
+                    code, _, waits = self.signalled(signal.SIGTERM)  # nothing raised
+                self.assertEqual(0, code)
+                self.assertEqual(1, len(seen))
+                if handler is signal.default_int_handler:
+                    self.assertIsInstance(seen[0], cli._Stop)
+                else:
+                    self.assertIs(handler, seen[0])
+                self.assertEqual(1, len(waits))
+                self.assertEqual(0, waits[0][0])
+                self.assertIs(signal.SIG_IGN if WINDOWS else seen[0], waits[0][1])
 
 if __name__ == "__main__":
     unittest.main()

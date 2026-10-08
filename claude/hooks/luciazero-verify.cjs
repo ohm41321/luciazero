@@ -189,12 +189,25 @@ function stampAt(file, ms) {
 // is not written over it: moving last_verify back to the earlier start
 // would un-cover an edit the later run covered, and its red would replace
 // a green for newer code. Returns whether the run was recorded.
+//
+// The recorded mtime is a start only when last_verify_start, written beside
+// it, says so. The released copy and a run with no recorded start stamp the
+// finish, and a later start that overlapped that finish tested newer code.
+// A start in the future is a clock that stepped back, not a run.
 function recordVerify(state, status, startMs, command) {
   const file = path.join(state, "last_verify");
+  const startFile = path.join(state, "last_verify_start");
   const recorded = mtime(file);
-  if (recorded !== null && startMs !== null && startMs < Math.round(recorded)) return false;
+  const recordedStart = recorded === null ? null : Math.round(recorded);
+  if (startMs !== null && recordedStart !== null && startMs < recordedStart
+      && recordedStart <= Date.now() && readTrimmed(startFile) === String(recordedStart)) return false;
   write(file, status + "\n");
-  if (startMs !== null) stampAt(file, startMs);
+  if (startMs !== null) {
+    stampAt(file, startMs);
+    write(startFile, startMs + "\n");
+  } else {
+    removeFile(startFile);
+  }
   // Keep only an opaque digest for strict-gate equality; raw commands may
   // contain paths or secrets and must never persist in shared state.
   write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");

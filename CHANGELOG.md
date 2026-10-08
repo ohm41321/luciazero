@@ -75,7 +75,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that started before the recorded one and finishes after it no longer
   replaces it. It used to move the verified point back, so an edit the later
   run had covered nudged again, and its red replaced a green for newer code.
-  A run whose start was never recorded is still recorded when it finishes.
+  This holds only for a result whose start the hook recorded itself
+  (`last_verify_start`). A result written by an older copy of the hook, or
+  by a run whose start was never recorded, is timed by when it finished, and
+  any run that ends after it replaces it, as before.
 
 ### Fixed
 

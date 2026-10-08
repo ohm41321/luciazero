@@ -132,6 +132,15 @@ for ENDED in '"tool_response":{"exit_code":0}' '"tool_response":{"exit_code":1}'
     rm -rf "${HT}"; fail "a verify run that started first and ended last replaced a later green (${ENDED})"
   fi
 done
+# A recorded start in the future means the clock stepped back; it must not
+# hold off every result until the wall clock passes it.
+python3 -c 'import os,sys; t=1893456000; open(sys.argv[2],"w").write("%d000\n" % t); os.utime(sys.argv[1], (t, t))' \
+  "$(sess_state)/last_verify" "$(sess_state)/last_verify_start"
+sess_hook A bash-start "${SESS_EARLY}"
+sess_hook A bash "${SESS_EARLY}"',"tool_response":{"exit_code":1}'
+if [ "$(cat "$(sess_state)/last_verify")" != fail ]; then
+  rm -rf "${HT}"; fail "a recorded start in the future held off a later red"
+fi
 # The released hook itself (v2.6.0, byte for byte) beside this one on one
 # project, as when a session started before an update keeps the old copy:
 # neither copy's nudge silences the other's, an edit under either arms both,
@@ -155,6 +164,8 @@ old_stop O 2 "this copy's nudge used up the released copy's"
 old_stop O 0 "the released copy's nudge is not one-shot beside this copy"
 sess_hook N edit "${SESS_EDIT}"
 old_stop O 2 "an edit under this copy did not re-arm the released copy's nudge"
+sess_stop N 2 "the released copy's nudge used up this copy's"
+sess_hook N edit "${SESS_EDIT}"
 old_hook O bash "${SESS_GREEN}"
 sess_stop N 0 "a green run under the released copy did not cover this copy's edit"
 old_hook O edit "${SESS_EDIT}"
@@ -162,6 +173,18 @@ sess_hook N bash "${SESS_GREEN}"
 old_stop O 0 "a green run under this copy did not cover the released copy's edit"
 sess_hook N edit "${SESS_EDIT}"
 old_stop O 2 "an edit under this copy after a green run did not arm the released copy"
+# The released copy stamps last_verify when its run finishes, so a run on
+# this copy that started before that finish tested newer code: its result
+# is recorded, red or green.
+for ENDS in '0 1 fail' '1 0 ok'; do
+  read -r OLD_EXIT NEW_EXIT WANT <<<"${ENDS}"
+  sess_hook N bash-start "${SESS_LATE}"
+  old_hook O bash ',"tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":'"${OLD_EXIT}"'}'
+  sess_hook N bash "${SESS_LATE}"',"tool_response":{"exit_code":'"${NEW_EXIT}"'}'
+  if [ "$(cat "$(sess_state)/last_verify")" != "${WANT}" ]; then
+    rm -rf "${HT}"; fail "a run that started before the released copy's run finished was not recorded (want ${WANT})"
+  fi
+done
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'

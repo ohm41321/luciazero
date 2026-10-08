@@ -39,10 +39,11 @@ fi
 # a hit reads as none. How many lines follow the match decides it, not the
 # output's size, so no site is safe by being short. Capture the output, then
 # match from a here-string: `grep -q PATTERN <<<"${OUT}"`. Any stage counts,
-# `|&` too; so do egrep and fgrep, a `command`, `env` or VAR=value prefix,
-# and -q (in any option group), --quiet or --silent anywhere before the next
-# `|`, `;`, `&` or `)`. A command continued with `\` or a trailing `|` is
-# read as one line. Comment lines may name the bad form.
+# `|&` too; so do egrep and fgrep, a `command` or `env` prefix (with flags,
+# and `env -u NAME`) and a VAR=value prefix. -q in an option group of letters
+# and digits, --quiet or --silent counts anywhere before the stage ends at a
+# `|`, `;`, `&` or `)` outside quotes. A command continued with `\` or a
+# trailing `|` is read as one line. Comment lines may name the bad form.
 PIPED_GREP="$(cd "${ROOT}" && awk '
   FNR == 1 { line = "" }
   {
@@ -56,7 +57,7 @@ PIPED_GREP="$(cd "${ROOT}" && awk '
     line = line text " "
     if (more) next
     gsub(/[|][|]/, ";", line)
-    if (line ~ /[|]&?[[:space:]]*((command|env)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[ef]?grep[[:space:]]([^|;&)]*[[:space:]])?(-[a-zA-Z]*q[a-zA-Z]*|--quiet|--silent)([[:space:]]|$)/)
+    if (line ~ /[|]&?[[:space:]]*((command|env)([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]*))*[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[ef]?grep[[:space:]](([^|;&)\047"]|\047[^\047]*\047|"[^"]*")*[[:space:]])?(-[a-zA-Z0-9]*q[a-zA-Z0-9]*|--quiet|--silent)([[:space:]]|[|;&)]|$)/)
       print FILENAME ":" start ": " line
     line = ""
   }' "${SCRIPTS[@]}")"

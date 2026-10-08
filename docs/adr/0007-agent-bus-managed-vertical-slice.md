@@ -253,10 +253,10 @@ In order, and none of them is a technical step:
    log still says so; no replacement workflows were run, and the demo is not
    counted.
 2. The offline gate is green on native Windows, macOS and Linux. Native
-   Windows depends on ADR 0002's native Windows amendment, which is in review
-   with the Windows port and not yet on `main`, where ADR 0002 still scopes
-   the daemon to macOS, Linux and WSL2. Against model-free rehearsal workers
-   the gate shows that:
+   Windows requires ADR 0002's native Windows amendment and the Windows port
+   in PR #12; that support must be on the implementation base before the
+   managed gate can be satisfied. Against model-free rehearsal workers the
+   gate shows that:
    - three agents carry the six-turn flow to the end from bus records alone,
      and a fresh provider session midway costs efficiency, not correctness;
    - a claimable task in a managed flow with a root allowance, assigned to

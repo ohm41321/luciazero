@@ -173,9 +173,9 @@ sess_hook N bash "${SESS_GREEN}"
 old_stop O 0 "a green run under this copy did not cover the released copy's edit"
 sess_hook N edit "${SESS_EDIT}"
 old_stop O 2 "an edit under this copy after a green run did not arm the released copy"
-# The released copy stamps last_verify when its run finishes, so a run on
-# this copy that started before that finish tested newer code: its result
-# is recorded, red or green.
+# The released copy stamps last_verify when its run finishes and records no
+# start, so which run saw newer code is unknown and the overlap guard stands
+# aside: a run on this copy that finishes after it is recorded, red or green.
 for ENDS in '0 1 fail' '1 0 ok'; do
   read -r OLD_EXIT NEW_EXIT WANT <<<"${ENDS}"
   sess_hook N bash-start "${SESS_LATE}"

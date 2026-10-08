@@ -192,8 +192,11 @@ function stampAt(file, ms) {
 //
 // The recorded mtime is a start only when last_verify_start, written beside
 // it, says so. The released copy and a run with no recorded start stamp the
-// finish, and a later start that overlapped that finish tested newer code.
-// A start in the future is a clock that stepped back, not a run.
+// finish, and when one start is unknown the order of the runs is too, so
+// the guard stands aside and the run that finishes later wins, as it always
+// did. That can let a red for older code replace a released copy's green
+// for newer code: an extra nudge, never a false green. A start in the
+// future is a clock that stepped back, not a run.
 function recordVerify(state, status, startMs, command) {
   const file = path.join(state, "last_verify");
   const startFile = path.join(state, "last_verify_start");

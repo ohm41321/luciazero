@@ -78,7 +78,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   This holds only for a result whose start the hook recorded itself
   (`last_verify_start`). A result written by an older copy of the hook, or
   by a run whose start was never recorded, is timed by when it finished, and
-  any run that ends after it replaces it, as before.
+  any run that ends after it replaces it, as before. So a red for code older
+  than an older copy's green can still replace that green when its run ends
+  later: an extra nudge, never a false green.
 
 ### Fixed
 

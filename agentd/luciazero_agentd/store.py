@@ -1776,6 +1776,7 @@ class Store:
         ownership: str = "human",
         ttl_seconds: int = BINDING_TTL_SECONDS,
         replace_live_human: bool = False,
+        binding_id: Optional[str] = None,
     ) -> tuple[dict[str, Any], str]:
         """Human channel only (never an MCP tool): bind one terminal to one
         agent and mint the session credential that proves it. Only the hash
@@ -1797,8 +1798,14 @@ class Store:
         shorter: with the roster and the daemon started for you, two windows
         running the same command is the ordinary case rather than a mistake,
         and the second one must not end the first one's session in silence.
+
+        `binding_id` lets the caller name the binding before it exists. The
+        binding is committed before this returns, so a caller interrupted in
+        between knows which one to revoke only if it chose the id itself.
         """
         _check_id(agent_id, "agent id", self._redactor)
+        if binding_id is not None:
+            _check_id(binding_id, "binding id", self._redactor)
         _check_enum(provider, PROVIDERS, "provider")
         _check_enum(ownership, OWNERSHIPS, "ownership")
         _check_text(by, "by", 128)
@@ -1831,7 +1838,8 @@ class Store:
             return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=tty, pid=pid,
                                               process_started_at=process_started_at, cwd=cwd,
                                               replace_live_human=replace_live_human,
-                                              ownership=ownership, ttl_seconds=ttl_seconds, checked=True)
+                                              ownership=ownership, ttl_seconds=ttl_seconds, checked=True,
+                                              binding_id=binding_id)
 
     def _bind_terminal_locked(
         self,
@@ -1847,6 +1855,7 @@ class Store:
         ttl_seconds: int = BINDING_TTL_SECONDS,
         checked: bool = False,
         replace_live_human: bool = False,
+        binding_id: Optional[str] = None,
     ) -> tuple[dict[str, Any], str]:
         """The body of `bind_terminal`, inside a transaction the caller owns:
         `decide_claim` binds as part of approving, and a second transaction
@@ -1859,7 +1868,8 @@ class Store:
             _check_int(ttl_seconds, 60, 86_400, "ttl_seconds")
         credential = CREDENTIAL_PREFIX + secrets.token_hex(16)
         digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
-        binding_id = new_id("bind")
+        if binding_id is None:
+            binding_id = new_id("bind")
         self._require_agent(agent_id)
         # ADR 0001: a human-owned session is out of the dispatcher's reach.
         # Binding replaces whatever the agent had, so without this the

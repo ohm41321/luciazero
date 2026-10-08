@@ -74,7 +74,7 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def clean(value: Any) -> str:
     """Never print a peer-supplied string to a terminal unfiltered."""
     return CONTROL_CHARS.sub("?", str(value))
-from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, ConflictError, NotFound, Store, StoreError, utcnow
+from .store import APPROVAL_POLICIES, APPROVAL_TTL_SECONDS, BINDING_TTL_SECONDS, LEASE_TTL_SECONDS, SENSITIVE_OPERATIONS, ConflictError, NotFound, Store, StoreError, new_id, utcnow
 
 TOKEN_ENV = "LUCIAZERO_AGENT_BUS_TOKEN"
 SERVER_NAME = "luciazero-bus"
@@ -1039,8 +1039,37 @@ def cmd_run(args: argparse.Namespace) -> int:
 def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], provider: str,
                endpoint: dict[str, Any], cleanups: list[Callable[[str], None]]) -> int:
     """`run` from the binding on: mint it, configure the provider, start it.
-    The cleanup goes in `cleanups` as soon as there is one, for an interrupt
-    that lands where nothing below catches it."""
+    The cleanup goes in `cleanups` before the binding is minted, for an
+    interrupt that lands where nothing below catches it."""
+    env = dict(os.environ)
+    url = endpoint["url"]
+    workspace: Optional[Path] = None
+    cleaned: list[str] = []
+    # Named here, not by the store: the binding is committed inside
+    # `bind_terminal`, before it returns, so an interrupt between the two
+    # left a live binding whose id nobody had to revoke it by.
+    binding_id = new_id("bind")
+
+    def _cleanup(reason: str) -> None:
+        """A credential must never outlive this command, however it ends.
+        Marked done only once it is: a signal that cuts it short still
+        reaches cmd_run, which runs it again, and a finished one is not
+        repeated. A binding that was never committed is not found, which is
+        the same outcome."""
+        if cleaned:
+            return
+        if workspace is not None:
+            shutil.rmtree(workspace, ignore_errors=True)
+        closer = _open_store("run", state_dir)
+        if closer is not None:
+            with closer:
+                try:
+                    closer.revoke_binding(binding_id, by=f"human:{getpass.getuser()}", reason=reason)
+                except StoreError:
+                    pass
+        cleaned.append(reason)
+
+    cleanups.append(_cleanup)
     store = _open_store("run", state_dir)
     if store is None:
         return 2
@@ -1049,7 +1078,7 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
             try:
                 binding, credential = store.bind_terminal(
                     args.agent, provider=provider, by=f"human:{getpass.getuser()}",
-                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl,
+                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl, binding_id=binding_id,
                 )
             except NotFound:
                 # `roster add` before a first session exists so that peers can
@@ -1062,7 +1091,7 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
                 print(f"run: added {clean(args.agent)} to the roster ({provider}, {clean(role)})", file=sys.stderr)
                 binding, credential = store.bind_terminal(
                     args.agent, provider=provider, by=f"human:{getpass.getuser()}",
-                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl,
+                    tty=_own_tty(), cwd=os.getcwd(), ttl_seconds=args.ttl, binding_id=binding_id,
                 )
     except NotFound as exc:
         print(f"run: {clean(exc)}", file=sys.stderr)
@@ -1078,30 +1107,6 @@ def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], pr
             print(f"run: give this window its own name: {FRONT_NAME} {provider} --as reviewer",
                   file=sys.stderr)
         return 1
-    env = dict(os.environ)
-    url = endpoint["url"]
-    workspace: Optional[Path] = None
-    cleaned: list[str] = []
-
-    def _cleanup(reason: str) -> None:
-        """A credential must never outlive this command, however it ends.
-        Marked done only once it is: a signal that cuts it short still
-        reaches cmd_run, which runs it again, and a finished one is not
-        repeated."""
-        if cleaned:
-            return
-        if workspace is not None:
-            shutil.rmtree(workspace, ignore_errors=True)
-        closer = _open_store("run", state_dir)
-        if closer is not None:
-            with closer:
-                try:
-                    closer.revoke_binding(binding["id"], by=f"human:{getpass.getuser()}", reason=reason)
-                except StoreError:
-                    pass
-        cleaned.append(reason)
-
-    cleanups.append(_cleanup)
     try:
         workspace = Path(tempfile.mkdtemp(prefix="luciazero-bind-"))
         restrict(workspace)

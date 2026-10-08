@@ -119,9 +119,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exits 130. It used to end `run` without its cleanup, leaving the credential
   valid until its TTL and the agent's next `run` refused as a live session.
   Ctrl+Break is taken over at the same point on Windows, which has not been
-  tried on a Windows machine. A signal that lands after the binding is
-  committed but before `run` registers its cleanup, a few statements later,
-  can still leave the binding live.
+  tried on a Windows machine. `run` names the binding itself and registers
+  its cleanup before the store commits it, so a signal between that commit
+  and `bind_terminal` returning, on a first run that adds the agent to the
+  roster too, revokes it as well.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

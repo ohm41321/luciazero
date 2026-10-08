@@ -1107,7 +1107,7 @@ class HumanCommands(unittest.TestCase):
 
 
 class RunSetupSignals(unittest.TestCase):
-    """Review finding (R16): `run` took SIGTERM over only once the provider
+    """Review finding: `run` took SIGTERM over only once the provider
     was started, so one that landed while the binding was minted, its
     configuration written or the provider spawned met the default action,
     which ends the process without its cleanup. The credential stayed valid
@@ -1129,8 +1129,11 @@ class RunSetupSignals(unittest.TestCase):
             store.register_agent("claude-reviewer", provider="claude", role="reviewer")
         write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
 
-    def interrupted_at(self, target: object, name: str) -> tuple[int, list[str]]:
-        """`run`, with a SIGTERM raised as `target.name` is called."""
+    def interrupted_at(self, target: object, name: str, *, after: bool = False,
+                       agent: str = "claude-reviewer") -> tuple[int, list[str]]:
+        """`run`, with a SIGTERM raised as `target.name` is called, or with
+        `after` once its first call has returned and before the caller sees
+        what it returned."""
         import contextlib
         import io
         import signal
@@ -1149,10 +1152,14 @@ class RunSetupSignals(unittest.TestCase):
         fired: list[bool] = []
 
         def terminated(*args: object, **kwargs: object) -> object:
-            if not fired:
+            if not fired and not after:
                 fired.append(True)
                 signal.raise_signal(signal.SIGTERM)
-            return real(*args, **kwargs)
+            result = real(*args, **kwargs)
+            if not fired and after:
+                fired.append(True)
+                signal.raise_signal(signal.SIGTERM)
+            return result
 
         made: list[str] = []
         mkdtemp = tempfile.mkdtemp
@@ -1169,7 +1176,7 @@ class RunSetupSignals(unittest.TestCase):
                 # From a terminal `run` would take the pty path; the classic
                 # one is what this drives, whoever runs the suite.
                 stack.enter_context(mock.patch.object(cli.nudge, "usable", lambda: False))
-            code = cli.main(["run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
+            code = cli.main(["run", "--no-autostart", "--agent", agent, "--provider", "claude",
                              "--state-dir", str(self.state), "--", sys.executable, "-c", "pass"])
         self.assertIs(default, signal.getsignal(signal.SIGTERM), "run must give the handler back")
         return code, made
@@ -1182,6 +1189,25 @@ class RunSetupSignals(unittest.TestCase):
         code, _ = self.interrupted_at(Store, "bind_terminal")
         self.assertEqual(130, code)
         self.assertEqual([], self.bindings())
+
+    def test_a_sigterm_as_the_binding_is_committed_ends_it(self) -> None:
+        """Review finding: the binding is committed inside `bind_terminal`,
+        and `run` learnt its id only from what that returned, so a SIGTERM
+        between the commit and the return left a live binding that nothing
+        knew to revoke. The same holds where `run` puts a new agent on the
+        roster first."""
+        with self.subTest(at="inside the transaction"):
+            code, made = self.interrupted_at(Store, "_bind_terminal_locked", after=True)
+            self.assertEqual(130, code)
+            self.assertEqual([], made)
+            self.assertEqual([], self.bindings(), "a binding that never committed outlived run")
+        for agent in ("claude-reviewer", "claude-newcomer"):
+            with self.subTest(at="after the commit", agent=agent):
+                code, made = self.interrupted_at(Store, "bind_terminal", after=True, agent=agent)
+                self.assertEqual(130, code)
+                self.assertEqual([], made)
+                mine = [b for b in self.bindings() if b["agent_id"] == agent]
+                self.assertEqual(["revoked"], [b["state"] for b in mine], "a binding outlived run")
 
     def test_a_sigterm_after_the_binding_ends_it_and_its_configuration(self) -> None:
         from luciazero_agentd import __main__ as cli

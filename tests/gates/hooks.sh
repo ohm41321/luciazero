@@ -114,6 +114,36 @@ sess_hook P edit "${SESS_EDIT}"
 sess_stop C 2 "an older copy's edit made while a verify ran was not nudged"
 sess_hook N bash "${SESS_RUN}"',"tool_response":{"exit_code":0}'
 sess_stop C 0 "a verify run that started before an older copy's edit re-armed the nudge that edit had caused"
+# The released hook itself (v2.6.0, byte for byte) beside this one on one
+# project, as when a session started before an update keeps the old copy:
+# neither copy's nudge silences the other's, an edit under either arms both,
+# and a green run under either covers both.
+mkdir -p "${HT}/released-config"
+old_hook() { # old_hook <session> <mode> [extra-json-fields]: exit code in OH_RC
+  OH_RC=0
+  printf '{"cwd":"%s","session_id":"%s"%s}\n' "${SESS_CWD}" "$1" "${3:-}" \
+    | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${HT}/released-config" \
+      bash "${ROOT}/tests/fixtures/legacy-luciazero-verify.sh" "$2" 2>/dev/null || OH_RC=$?
+}
+old_stop() { # old_stop <session> <want rc> <failure message>
+  old_hook "$1" stop
+  [ "${OH_RC}" = "$2" ] || { rm -rf "${HT}"; fail "$3 (released copy, session $1 stop: rc=${OH_RC}, want $2)"; }
+}
+SESS_CWD=/hook/test/sessions-released
+old_hook O edit "${SESS_EDIT}"
+sess_stop N 2 "an edit the released copy recorded did not nudge a session on this copy"
+sess_stop N 0 "the nudge for the released copy's edit is not one-shot"
+old_stop O 2 "this copy's nudge used up the released copy's"
+old_stop O 0 "the released copy's nudge is not one-shot beside this copy"
+sess_hook N edit "${SESS_EDIT}"
+old_stop O 2 "an edit under this copy did not re-arm the released copy's nudge"
+old_hook O bash "${SESS_GREEN}"
+sess_stop N 0 "a green run under the released copy did not cover this copy's edit"
+old_hook O edit "${SESS_EDIT}"
+sess_hook N bash "${SESS_GREEN}"
+old_stop O 0 "a green run under this copy did not cover the released copy's edit"
+sess_hook N edit "${SESS_EDIT}"
+old_stop O 2 "an edit under this copy after a green run did not arm the released copy"
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'

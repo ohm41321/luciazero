@@ -89,7 +89,11 @@ and `Get-ExecutionPolicy -List`.
 - [ ] The status line shows the model, the branch and the verify state in a
       repo whose path contains Thai characters and a space.
 - [ ] A `git.exe` copied into the project is never the one the status line
-      runs. Repeat with `node.exe`.
+      runs. Repeat with `node.exe`, for the hooks too. Record the Claude Code
+      version: 2.1.293 sets `NoDefaultCurrentDirectoryInExePath=1` for itself
+      and everything it starts, which should keep a project's own `node.exe`
+      out of the hooks' bare `node`. If a copy runs, the hooks need an
+      absolute Node path (review finding G-s1, `docs/lessons.md`).
 - [ ] A hook does not slow down an ordinary tool call noticeably. Record the
       time with and without the hooks.
 - [ ] Run the verify command as a background Bash call (`run_in_background`):

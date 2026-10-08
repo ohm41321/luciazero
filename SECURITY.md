@@ -123,9 +123,13 @@ values untouched (fail open).
 The search is **project scope only**. It covers the session directory and its
 ancestors, because Claude Code merges project settings from the repository root
 and a session's cwd is often a subdirectory — but it stops at the repository
-root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. A global
-`~/.claude/settings.json` and the gitignored `.claude/settings.local.json` are
-the user's scope and keep configuring the hook.
+root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. Inside
+`CLAUDE_PROJECT_DIR` a nested repository (a submodule, a nested checkout) does
+not end the walk: it goes on up to the project root. On Windows, where
+environment names ignore case, a key is refused in any case
+(`luciazero_strict_verify_cmd` too). A global `~/.claude/settings.json` and
+the gitignored `.claude/settings.local.json` are the user's scope and keep
+configuring the hook.
 
 Only the **default** `~/.claude` counts as that user scope. Honouring
 `CLAUDE_CONFIG_DIR` here would be self-defeating: pointed at `<repo>/.claude`,

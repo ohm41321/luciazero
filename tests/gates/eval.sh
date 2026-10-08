@@ -122,6 +122,16 @@ OUT="$(TMPDIR="${GW}/tmp" "${AS}/grade.sh" "${GW}/as" 2>&1 || true)"
 if ! grep -q '^CRIT no-path-escape fail$' <<<"${OUT}"; then
   fail "archive-security grader passes a restore that writes outside its destination before refusing: ${OUT}"
 fi
+# ...and one that refuses nothing must not pass because the destination's
+# parent was missing: an OSError from creating it is no refusal.
+mkdir "${GW}/as-np"
+cp -R "${AS}/project/." "${GW}/as-np/"
+printf 'import zipfile\nfrom pathlib import Path\n\n\ndef restore(zip_path, destination):\n    destination = Path(destination)\n    destination.mkdir(exist_ok=True)\n    with zipfile.ZipFile(zip_path) as bundle:\n        bundle.extractall(destination)\n' \
+  >"${GW}/as-np/archive_store.py"
+OUT="$(TMPDIR="${GW}/tmp" "${AS}/grade.sh" "${GW}/as-np" 2>&1 || true)"
+if ! grep -q '^CRIT no-path-escape fail$' <<<"${OUT}"; then
+  fail "archive-security grader passes a restore that refuses nothing when the destination's parent is missing: ${OUT}"
+fi
 # archive-security, schema-migration, paginated-sync: a suite that is red
 # before the probe fails on the probe too, whatever the implementation.
 for TN in archive-security schema-migration paginated-sync; do

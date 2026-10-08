@@ -25,8 +25,11 @@ cases = ["../../outside.txt", "/absolute.txt", "..\\outside.txt", "C:/drive.txt"
 for name in cases:
     with tempfile.TemporaryDirectory() as tmp:
         # Two levels down, so that the deepest escape a case names still
-        # lands inside the directory this check searches.
+        # lands inside the directory this check searches. Only the
+        # destination itself is missing, as in the other checks: an OSError
+        # from a missing parent would pass for a refusal.
         root = Path(tmp); archive = root / "x.zip"; output = root / "deep" / "out"
+        output.parent.mkdir()
         with zipfile.ZipFile(archive, "w") as bundle:
             bundle.writestr(name, "bad")
         try:

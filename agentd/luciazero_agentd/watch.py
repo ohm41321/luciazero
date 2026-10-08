@@ -30,6 +30,7 @@ import re
 import shlex
 import shutil
 import sqlite3
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -373,6 +374,27 @@ class Renderer:
 PROVIDER_COMMAND = {"codex": "codex", "claude": "claude"}
 
 
+#: Every command printed for a human is for the shell they type into:
+#: PowerShell on Windows, a POSIX shell everywhere else.
+WINDOWS = sys.platform == "win32"
+
+
+def shell_quote(value: Any) -> str:
+    """One argument, quoted for that shell. PowerShell's single quotes take
+    everything literally except a single quote, which is doubled."""
+    if WINDOWS:
+        return "'" + str(value).replace("'", "''") + "'"
+    return shlex.quote(str(value))
+
+
+def in_directory(path: Any, command: str) -> str:
+    """`command`, run from `path`, and not run at all when the directory
+    cannot be entered."""
+    if WINDOWS:
+        return f"Set-Location -LiteralPath {shell_quote(path)} -ErrorAction Stop; {command}"
+    return f"cd {shlex.quote(str(path))} && {command}"
+
+
 #: The name install.sh puts on PATH. Everything printed for a human to run
 #: prefers it, and falls back to the module form when it is not installed --
 #: a printed command that does not run is worse than a long one.
@@ -413,14 +435,14 @@ def launcher_in(checkout: Any, which: Optional[Callable[[str], Optional[str]]] =
     """
     found = installed_launcher(which)
     if found is not None:
-        return f"cd {shlex.quote(str(checkout))} && {found}"
+        return in_directory(checkout, found)
     return module_launcher(checkout)
 
 
 def module_launcher(checkout: Any) -> str:
     """The fallback form: no installed executable, so the package is imported
     from the checkout by being the working directory."""
-    return f"cd {shlex.quote(str(Path(checkout) / 'agentd'))} && python3 -m luciazero_agentd"
+    return in_directory(Path(checkout) / "agentd", ("python" if WINDOWS else "python3") + " -m luciazero_agentd")
 
 
 def roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -476,7 +498,7 @@ def conversation_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     reader is handed depends on whether `./install.sh` has run, so a caller
     that has to know cannot be left reading this process's PATH.
     """
-    where = f" --state-dir {state_dir}" if state_dir is not None else ""
+    where = f" --state-dir {shell_quote(state_dir)}" if state_dir is not None else ""
     known = {str(a["id"]): a for a in agents}
     run = launcher(which)
     plan = [("optional - watch the conversation",
@@ -505,7 +527,7 @@ def auto_turn_plan(agents: list[dict[str, Any]], first: str, second: str, *,
     the user's own credentials, so the decision to spend that is the user's and
     has to be made in front of the commands, not behind them.
     """
-    where = f" --state-dir {state_dir}" if state_dir is not None else ""
+    where = f" --state-dir {shell_quote(state_dir)}" if state_dir is not None else ""
     run = launcher()
     known = {str(a["id"]): a for a in agents}
     plan: list[tuple[str, str]] = []
@@ -513,7 +535,9 @@ def auto_turn_plan(agents: list[dict[str, Any]], first: str, second: str, *,
         agent = known.get(agent_id, {})
         provider = str(agent.get("provider") or "other")
         command = PROVIDER_COMMAND.get(provider, f"<your {provider} command>")
-        cwd = agent.get("worktree") or f"<{agent_id}'s own worktree>"
+        # A worktree is a path an agent chose: quoted, it stays one argument
+        # in the line the user copies. The placeholder is left to be replaced.
+        cwd = shell_quote(agent["worktree"]) if agent.get("worktree") else f"<{agent_id}'s own worktree>"
         plan.append((f"enrol {agent_id} as a managed worker (its own worktree, workspace approvals)",
                      f"{run} worker add {agent_id} {provider} --cwd {cwd} "
                      f"--approve workspace --max-attempts 1{where} -- {command}"))

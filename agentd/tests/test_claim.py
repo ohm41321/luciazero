@@ -27,13 +27,16 @@ import io
 import re
 import json
 import os
+import signal
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from unittest import mock
 
 from luciazero_agentd import approval, procinfo
 from luciazero_agentd.__main__ import main
@@ -401,6 +404,36 @@ class ThroughTheDaemonTests(ClaimCase):
         self.assertEqual([e["payload"]["trust"] for e in sent], ["bound"])
 
 
+class RestartTests(ClaimCase):
+    def test_a_restarted_daemon_frees_the_identities_its_sessions_were_given(self) -> None:
+        """MCP sessions live in the daemon's memory, so a restart ends every
+        one of them, and a client that reconnects gets a new session id. The
+        claim bindings they held have no pid for the reaper to check: left
+        alone they stay active for their whole TTL, and the session that comes
+        back cannot ask for its agent again."""
+        decided = self.approve(self.ask()["id"])
+        terminal, _credential = self.store.bind_terminal(ARCHITECT, provider="codex", by="human:test",
+                                                         tty="ttys001", pid=os.getpid())
+
+        def stop_at_once(server: BusServer) -> None:
+            server._httpd.server_close()
+            raise KeyboardInterrupt
+
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", None)) if sig is not None}
+        try:
+            with mock.patch.object(BusServer, "serve_forever", autospec=True, side_effect=stop_at_once), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["serve", "--state-dir", str(self.state_dir), "--port", "0"]), 0)
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        self.assertEqual(self.store.get_binding(str(decided["binding_id"]))["state"], "revoked")
+        self.assertIsNone(self.store.claim_binding(self.key()))
+        self.assertEqual(self.store.get_binding(str(terminal["id"]))["state"], "active",
+                         "a terminal binding is checked by its pid, and survives the restart")
+        self.assertEqual(self.ask(session="session-after-restart")["state"], "open")
+
+
 class OnScreenTests(ClaimCase):
     """M7d: the same decision, asked somewhere that costs the user nothing.
 
@@ -460,10 +493,22 @@ class OnScreenTests(ClaimCase):
         time.sleep(0.05)
         return client, asked, console.getvalue()
 
+    def decided(self, claim_id: str) -> str:
+        """The claim's state once the dialog's answer is written. The answer
+        is recorded on the dialog's thread after the dialog returns, so a slow
+        machine can still show "open" for a moment after it was asked."""
+        state = "open"
+        for _ in range(1000):
+            state = self.store.get_claim(claim_id)["state"]
+            if state != "open":
+                break
+            time.sleep(0.01)
+        return state
+
     def test_clicking_allow_verifies_the_session_with_nothing_typed(self) -> None:
         server = self.server_with("button returned:Allow\n")
         client, asked, console = self.claim_through(server)
-        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "approved")
+        self.assertEqual(self.decided(asked["claim_id"]), "approved")
         who = client.call("agent_whoami", {})["structuredContent"]
         self.assertTrue(who["verified"])
         self.assertEqual(who["agent_id"], REVIEWER)
@@ -482,8 +527,47 @@ class OnScreenTests(ClaimCase):
     def test_clicking_deny_leaves_it_unverified(self) -> None:
         server = self.server_with("button returned:Deny\n")
         client, asked, _ = self.claim_through(server)
-        self.assertEqual(self.store.get_claim(asked["claim_id"])["state"], "denied")
+        self.assertEqual(self.decided(asked["claim_id"]), "denied")
         self.assertFalse(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_asking_again_while_the_dialog_is_up_reuses_it(self) -> None:
+        """Review finding: a second agent_claim_begin superseded the request
+        whose dialog was still on screen, so Allow on it failed silently and
+        the session stayed unverified."""
+        release = threading.Event()
+
+        class Result:
+            returncode, stdout = 0, "button returned:Allow\n"
+
+        def run(argv: list[str], timeout: int) -> Result:
+            self.asked.append(argv)
+            release.wait(10)
+            return Result()
+
+        server = BusServer(self.db, TOKEN, port=0, allow_unattributed=False, approve_with="dialog",
+                           dialog_seconds=10, has_console=True, dialog_runner=run).start()
+        self.addCleanup(server.stop)
+        self.addCleanup(release.set)
+        client, first, _ = self.claim_through(server)
+        with redirect_stdout(io.StringIO()):
+            second = client.call("agent_claim_begin", {"agent_id": REVIEWER})["structuredContent"]
+        self.assertEqual(second["claim_id"], first["claim_id"])
+        release.set()
+        self.assertEqual(self.decided(first["claim_id"]), "approved")
+        self.assertEqual(len(self.asked), 1, "a second dialog was raised")
+        self.assertTrue(client.call("agent_whoami", {})["structuredContent"]["verified"])
+
+    def test_asking_again_after_the_dialog_closed_unanswered_asks_again(self) -> None:
+        server = self.server_with("gave up:true\n")
+        client, first, _ = self.claim_through(server)
+        for _ in range(200):
+            with redirect_stdout(io.StringIO()):
+                second = client.call("agent_claim_begin", {"agent_id": REVIEWER})["structuredContent"]
+            if second["claim_id"] != first["claim_id"]:
+                break
+            time.sleep(0.01)
+        self.assertNotEqual(second["claim_id"], first["claim_id"])
+        self.assertEqual(self.store.get_claim(first["claim_id"])["state"], "superseded")
 
     def test_a_dialog_nobody_answers_decides_nothing(self) -> None:
         server = self.server_with("gave up:true\n")

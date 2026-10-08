@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from . import proctree
 from .runlog import RunLog
 
 RPC_TIMEOUT = 60
@@ -110,26 +111,37 @@ class AppServer:
         self.answered: list[dict[str, Any]] = []
         self._log = log
         try:
-            self._process = subprocess.Popen(
-                argv, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, bufsize=1,
-                start_new_session=True,  # its own process group: see `close`
+            self._process = proctree.start(  # its own process group: see `close`
+                proctree.argv_for(argv, env), env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
         except (OSError, ValueError) as exc:
             raise AppServerError(f"cannot start {argv[0]!r}: {exc}", permanent=True) from exc
-        if on_process is not None:
-            on_process(self._process.pid)
         self._next_id = 1
         self._lines: queue.Queue[Optional[str]] = queue.Queue()
+        self._gate = threading.Lock()
+        self._closed = False
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
+        if on_process is not None:
+            try:
+                on_process(self._process.pid)
+            except BaseException:
+                # Nobody will hold this server to close it: end it here.
+                self.close()
+                raise
 
     # ------------------------------------------------------------- plumbing
     def _read(self) -> None:
         assert self._process.stdout is not None
         for line in self._process.stdout:
-            self._log.write(line)
-            self._lines.put(line)
+            with self._gate:
+                if self._closed:
+                    # a child that left the group still holds the pipe:
+                    # drain and drop, the run log is closed by now
+                    continue
+                self._log.write(line)
+                self._lines.put(line)
         self._lines.put(None)
 
     def _write(self, payload: dict[str, Any]) -> None:
@@ -267,14 +279,22 @@ class AppServer:
         """Stop the child and everything it started. Codex spawns its own
         children, so the signal goes to the process group; killing only the
         parent would leave those behind."""
-        if self._process.poll() is None:
-            _terminate_group(self._process)
+        # Even once the server itself has exited: what it left running still
+        # holds the turn's credential, and may hold its output pipe.
+        _terminate_group(self._process, group=None if proctree.WINDOWS else self._process.pid)
+        proctree.release(self._process.pid)
+        self._reader.join(timeout=TERMINATE_GRACE_SECONDS)
+        with self._gate:
+            self._closed = True
         for stream in (self._process.stdin, self._process.stdout):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+            # Never the pipe a reader is still blocked on: closing it would
+            # wait for that read, however long whatever holds the other end runs.
+            if stream is None or (stream is self._process.stdout and self._reader.is_alive()):
+                continue
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def __enter__(self) -> "AppServer":
         return self
@@ -283,24 +303,40 @@ class AppServer:
         self.close()
 
 
-def _terminate_group(process: "subprocess.Popen[str]") -> None:
-    """SIGTERM the child's process group, then SIGKILL what is left."""
-    try:
-        group = os.getpgid(process.pid)
-    except (OSError, ProcessLookupError):
-        group = None
+def _terminate_group(process: "subprocess.Popen[str]", group: Optional[int] = None) -> None:
+    """SIGTERM the child's process group, then SIGKILL what is left, until
+    the group is empty and not only its leader gone; on Windows, end the
+    child's process tree.
+
+    `group` is for a caller that started the child as a group leader and
+    may call after it exited, when its group can no longer be looked up.
+    Otherwise the group is signalled only when the child leads it: a group
+    it shares with someone else is not ours to sweep."""
+    if proctree.WINDOWS:
+        if process.poll() is None:
+            proctree.end_tree(process.pid, proctree.wait_gone(lambda: process.poll() is None))
+        return
+    if group is None:
+        try:
+            group = os.getpgid(process.pid)
+        except OSError:
+            group = None
+        if group != process.pid:
+            group = None
+
+    def left() -> bool:
+        return process.poll() is None or (group is not None and proctree.group_alive(group))
+
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        if process.poll() is not None:
+        if not left():
             return
         try:
             if group is not None:
                 os.killpg(group, sig)
             else:
                 process.send_signal(sig)
-        except (OSError, ProcessLookupError):
+        except OSError:
             return
-        try:
-            process.wait(timeout=TERMINATE_GRACE_SECONDS)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+        deadline = time.monotonic() + TERMINATE_GRACE_SECONDS
+        while left() and time.monotonic() < deadline:
+            time.sleep(0.05)

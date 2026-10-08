@@ -30,6 +30,10 @@ try:
     raw = open(path).read()
 except OSError as e:
     sys.exit(f"INVALID: cannot read result log ({e})")
+if not raw.strip():
+    # nothing to classify: a run that printed nothing is not plain-text
+    # output that happens to carry no error signal
+    sys.exit("INVALID: agent log has no output")
 
 def clip(v):
     return str(v)[:120]

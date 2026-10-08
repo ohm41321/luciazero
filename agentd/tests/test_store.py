@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, StoreError, ValidationError
 from luciazero_agentd import migrations
@@ -138,6 +139,30 @@ class MigrationTests(StoreCase):
         self.assertIn("depends_on", columns)
         columns = {r[1] for r in self.store._conn.execute("PRAGMA table_info(sessions)")}
         self.assertIn("generation", columns)
+
+
+class OpenTests(unittest.TestCase):
+    def test_a_file_that_is_not_a_database_is_refused_and_left_closed(self) -> None:
+        """A watcher retries a broken bus on every poll; a connection left
+        open by each refusal is a handle leaked per poll, and on Windows an
+        open handle keeps the file from ever being replaced or deleted."""
+        with tempfile.TemporaryDirectory(prefix="agentd-store-") as tmp:
+            path = Path(tmp) / "bus.sqlite3"
+            path.write_bytes(b"not a database, and long enough to have a header" * 4)
+            opened: list[sqlite3.Connection] = []
+            real = sqlite3.connect
+
+            def connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+                opened.append(real(*args, **kwargs))  # type: ignore[arg-type]
+                return opened[-1]
+
+            with mock.patch("luciazero_agentd.store.sqlite3.connect", connect):
+                with self.assertRaises(sqlite3.DatabaseError):
+                    Store.open(str(path))
+            self.assertEqual(len(opened), 1)
+            with self.assertRaises(sqlite3.ProgrammingError):
+                opened[0].execute("SELECT 1")
+            path.unlink()
 
 
 class AgentTests(StoreCase):

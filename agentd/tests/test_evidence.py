@@ -28,16 +28,16 @@ ARCHITECT, REVIEWER = "codex-architect", "claude-reviewer"
 class EvidenceCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-evidence-")
+        # Last-added cleanup runs first: each read connection, then the store,
+        # then the directory, which Windows will not delete while either is open.
+        self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.store = Store.open(str(self.root / "bus.sqlite3"))
+        self.addCleanup(self.store.close)
         self.store.migrate()
         self.store.trust = "bound"
         self.store.register_agent(ARCHITECT, provider="codex", role="architect")
         self.store.register_agent(REVIEWER, provider="claude", role="reviewer")
-
-    def tearDown(self) -> None:
-        self.store.close()
-        self._tmp.cleanup()
 
     def conversation(self, title: str) -> tuple[str, str]:
         """One task and the message that carries it, answered once."""
@@ -53,7 +53,10 @@ class EvidenceCase(unittest.TestCase):
         return str(opened["correlation_id"] or opened["id"]), str(task["id"])
 
     def connect(self) -> sqlite3.Connection:
-        return evidence.connect(self.root)
+        # `with conn:` commits; it does not close.
+        conn = evidence.connect(self.root)
+        self.addCleanup(conn.close)
+        return conn
 
 
 class ExportTests(EvidenceCase):

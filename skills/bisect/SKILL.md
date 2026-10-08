@@ -13,8 +13,8 @@ untestable. A missing executable is an infrastructure error.
 
 ## 2. Run in a throwaway worktree
 
-```bash
-<this-skill-dir>/scripts/safe-bisect.sh --good <good-rev> --bad <bad-rev> -- <verify-command> [args...]
+```
+node <this-skill-dir>/scripts/safe-bisect.cjs --good <good-rev> --bad <bad-rev> -- <verify-command> [args...]
 ```
 
 The helper repeats each endpoint twice, uses a detached temporary worktree,

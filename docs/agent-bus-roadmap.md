@@ -1035,7 +1035,8 @@ ADR 0002 still scopes the daemon itself to macOS, Linux and WSL2; the Windows
 backend here is the dialog, not a claim that the daemon runs natively on
 Windows. `procinfo` (`ps`, `lsof`), the tty/pid identity checks and the
 process-group termination in M6 are what a real Windows port has to answer,
-and that is its own milestone.
+and that is its own milestone. (2026-10-07: that port is done; see ADR 0002's
+native Windows amendment.)
 
 ### M7e — A public command, and a daemon that outlives the window (done 2026-09-04)
 

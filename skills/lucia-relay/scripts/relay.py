@@ -35,7 +35,7 @@ MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024
 MAX_UNTRACKED_BYTES = 64 * 1024 * 1024
 SHA_RE = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -58,13 +58,36 @@ HOME_PATH = re.compile(r"(?<![A-Za-z0-9])(?:~|\$HOME|%USERPROFILE%)[\\/][^\s\"'`
 FILE_URI_PATH = re.compile(r"\bfile:[^\s\"'`<>]+", re.IGNORECASE)
 
 
+def git_program() -> Optional[str]:
+    """git by its full path on Windows, where a bare name is looked for in
+    the working directory -- the repository being relayed -- before PATH.
+    Only PATH's absolute entries are searched, and only for a program: a
+    batch file would need cmd.exe, which searches the working directory too."""
+    if sys.platform != "win32":
+        return "git"
+    exts = [ext for ext in (os.environ.get("PATHEXT") or ".COM;.EXE").split(";")
+            if ext.lower() in (".com", ".exe")]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not os.path.splitdrive(entry)[0] or not os.path.isabs(entry):
+            continue
+        for ext in exts:
+            candidate = os.path.join(entry, "git" + ext)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def git(root: Path, *args: str) -> tuple[int, str]:
+    program = git_program()
+    if program is None:
+        return 127, ""
     git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     git_env["GIT_TERMINAL_PROMPT"] = "0"
     with tempfile.TemporaryFile() as output:
         try:
             proc = subprocess.run(
-                ["git", "-C", str(root), *args],
+                [program, "-C", str(root), *args],
                 stdin=subprocess.DEVNULL,
                 stdout=output,
                 stderr=subprocess.DEVNULL,
@@ -96,18 +119,23 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
     snapshot_errors: list[str] = []
     head_rc, head = git(repo, "rev-parse", "HEAD")
     _, branch = git(repo, "branch", "--show-current")
-    exclusions = (
-        "--", ".", f":(exclude){MANIFEST}", f":(exclude){HUMAN}",
-        f":(exclude){RECEIPT}",
-    )
+    # the relay's own files sit in --root, which may be below the top level;
+    # paths below are the top level's, as git prints them from there
+    try:
+        prefix = root.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        prefix = "."
+    own = tuple(name if prefix == "." else f"{prefix}/{name}" for name in (MANIFEST, HUMAN, RECEIPT))
+    exclusions = ("--", ".", *(f":(exclude,literal){name}" for name in own))
+    # --no-renames: a rename lists the name it left as well as the one it took
     if head_rc == 0:
-        modified_rc, raw_modified = git(repo, "diff", "--name-only", "-z", "HEAD", *exclusions)
+        modified_rc, raw_modified = git(repo, "diff", "--name-only", "--no-renames", "-z", "HEAD", *exclusions)
         diff_rc, diff = git(repo, "diff", "--binary", "HEAD", *exclusions)
         if modified_rc != 0 or diff_rc != 0:
             snapshot_errors.append("Git diff failed, timed out, or exceeded its output budget")
     else:
-        staged_names_rc, raw_staged = git(repo, "diff", "--cached", "--name-only", "-z", *exclusions)
-        unstaged_names_rc, raw_unstaged = git(repo, "diff", "--name-only", "-z", *exclusions)
+        staged_names_rc, raw_staged = git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z", *exclusions)
+        unstaged_names_rc, raw_unstaged = git(repo, "diff", "--name-only", "--no-renames", "-z", *exclusions)
         raw_modified = raw_staged + raw_unstaged
         staged_diff_rc, staged_diff = git(repo, "diff", "--cached", "--binary", "--root", *exclusions)
         unstaged_diff_rc, unstaged_diff = git(repo, "diff", "--binary", *exclusions)
@@ -120,7 +148,7 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
     modified = sorted(set(item for item in raw_modified.split("\0") if item))
     untracked = [
         item for item in raw_untracked.split("\0")
-        if item and item not in (MANIFEST, HUMAN, RECEIPT)
+        if item and item not in own
     ]
     digest = hashlib.sha256(diff.encode("utf-8", errors="surrogateescape"))
     untracked_bytes = 0
@@ -494,14 +522,15 @@ def repo_pointer(value: Any) -> Optional[str]:
 
 
 def safe_command_argv(value: Any) -> Optional[list[str]]:
-    if not nonempty(value):
+    if not nonempty(value) or any(char in str(value) for char in "\r\n"):
         return None
     try:
         argv = shlex.split(str(value))
     except ValueError:
         return None
-    shell_tokens = {"|", "||", "&&", ";", ">", ">>", "<", "2>", "&"}
-    if not argv or any(token in shell_tokens for token in argv):
+    # an operator glued to a word (`test;id`, `$(id)`, `>out`) is still one a
+    # shell would act on, so any token holding one is refused
+    if not argv or any(char in token for token in argv for char in ";|&<>`$"):
         return None
     executable = PurePosixPath(argv[0].replace("\\", "/")).name.casefold()
     if executable in {"sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh", "env", "xargs"}:

@@ -13,10 +13,12 @@ The latest release only.
 
 ## Design guarantees
 
-This project installs no third-party packages. It uses Bash for installers and
-hooks, Node.js 18+ for the CLI/report, and Python 3 for hook JSON handling and
-Lucia Relay. The guarantees below are enforced by `test.sh` on every push — a
-way around any of them is a reportable vulnerability, not expected behavior:
+This project installs no third-party packages. It uses Bash for the installers
+on macOS and Linux and their Node port on Windows, Node.js 18+ for the
+CLI/report, hooks and skill helpers, and Python 3 for Lucia Relay (3.10+ for
+the opt-in Agent Bus daemon). The guarantees below are enforced by `test.sh`
+on every push — a way around any of them is a reportable vulnerability, not
+expected behavior:
 
 - **Core operation is offline.** Installers, hooks, same-machine Relay/report
   helpers, and eval graders never phone home. Cross-machine Relay drafting is
@@ -50,11 +52,17 @@ way around any of them is a reportable vulnerability, not expected behavior:
   hooks, the Python, Git, and SSH executables resolved from the operator's OS
   environment must be trusted; a compromised local `PATH` is outside Relay's
   artifact/remote threat model. Relay strips `GIT_*` overrides and rejects Git
-  transport config overrides it can inspect.
+  transport config overrides it can inspect. On Windows, where a bare name is
+  looked up in the working directory first, every program Luciazero starts by
+  name (Git, Node, npm, Python, a provider CLI, PowerShell, `schtasks`) is
+  looked up in `PATH`'s full-path entries alone, and a missing one is never
+  looked for in the working directory. A verify command you configure still
+  runs as your own shell would run it.
 - **Nothing runs at npm install time.** The npm package has zero lifecycle
   scripts (`preinstall`/`install`/`postinstall`/`prepare` are all forbidden
-  and checked); `npx luciazero` only launches the same audited bash
-  installers a git clone would.
+  and checked); `npx luciazero` only launches the same audited installers a
+  git clone would: the Bash ones on macOS and Linux, and on Windows their
+  Node port, which a parity gate holds to the Bash ones.
 - **Nothing auto-updates classic/Codex installs.** Update checks and writes
   happen only after the user runs `check-update` or `update`. `update` refuses
   to create a fresh install, overwrite a recognized newer version, or proceed
@@ -71,15 +79,22 @@ way around any of them is a reportable vulnerability, not expected behavior:
   also writes Bus launchers under `LUCIAZERO_BIN_DIR` (default
   `~/.claude/bin`); explicit service installation uses the per-user service
   location. Explicit `global-install` uses `~/.local/npm` and, with approval,
-  a managed PATH block in the user's shell startup file. These are separate,
-  documented destinations, not a guarantee that all commands write only config.
-- **Hook state stays in `$TMPDIR`**, except the documented, size-capped
-  `luciazero-stats.log` in the config dir. Stats are local JSONL and identify
-  a repository by a truncated SHA-256 plus basename, never its absolute path
-  or verify command. Hook scratch state uses a user-owned `0700` base and
-  per-session telemetry directories. Schema-3 rows store aggregate turn, merged
-  Bash and verify wall-clock milliseconds, Bash/verify/skill counts, and
-  redundant-green counts; the report also reads schema 2 and legacy rows.
+  a managed PATH block in the user's shell startup file; on Windows it uses
+  npm's own global prefix (`%APPDATA%\npm` unless moved) and edits no startup
+  file. These are separate, documented destinations, not a guarantee that all
+  commands write only config.
+- **Hook state stays in the per-user temporary directory** (`$TMPDIR`, else
+  `/tmp`; on Windows, Node's `os.tmpdir()`, normally `%TEMP%`), except the
+  documented, size-capped `luciazero-stats.log` in the config dir. Stats are
+  local JSONL and identify a repository by a truncated SHA-256 plus
+  basename, never its absolute path or verify command. On POSIX, hook
+  scratch state uses a user-owned `0700` base; on Windows the base must be a
+  real directory, not a symlink or junction, but its owner and ACL are not
+  checked: privacy rests on the temporary directory being per user, as it is
+  by default. Telemetry uses per-session directories. Schema-3 rows store
+  aggregate turn, merged Bash and verify wall-clock milliseconds,
+  Bash/verify/skill counts, and redundant-green counts; the report also
+  reads schema 2 and legacy rows.
   Raw commands, skill names, and absolute paths are not persisted by telemetry.
   With the explicit `LUCIAZERO_EDIT_DIAG=1` opt-in, `edit-diag.log` additionally
   records timestamps, mode, tool name, an opaque tool key, path presence,
@@ -108,9 +123,13 @@ values untouched (fail open).
 The search is **project scope only**. It covers the session directory and its
 ancestors, because Claude Code merges project settings from the repository root
 and a session's cwd is often a subdirectory — but it stops at the repository
-root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. A global
-`~/.claude/settings.json` and the gitignored `.claude/settings.local.json` are
-the user's scope and keep configuring the hook.
+root (a `.git` entry), at `CLAUDE_PROJECT_DIR`, and at `$HOME`. Inside
+`CLAUDE_PROJECT_DIR` a nested repository (a submodule, a nested checkout) does
+not end the walk: it goes on up to the project root. On Windows, where
+environment names ignore case, a key is refused in any case
+(`luciazero_strict_verify_cmd` too). A global `~/.claude/settings.json` and
+the gitignored `.claude/settings.local.json` are the user's scope and keep
+configuring the hook.
 
 Only the **default** `~/.claude` counts as that user scope. Honouring
 `CLAUDE_CONFIG_DIR` here would be self-defeating: pointed at `<repo>/.claude`,

@@ -7,26 +7,19 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-# 1b. The hooks run under whatever /bin/bash the user has — bash 3.2 on stock
-# macOS. Verified against a real 3.2: a here-document inside a command
-# substitution whose command also carries a quoted expansion and a trailing
-# redirection breaks its parser, and it fails the WHOLE file at load time with
-# an error pointing at some unrelated later line. A modern `bash -n` accepts
-# it, so the hooks simply must not contain the construct at all.
-for S in claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh; do
-  if grep -qE '\$\([^)]*<<' "${ROOT}/${S}"; then
-    fail "${S} has a here-document inside \$( ) — bash 3.2 fails to parse the file"
-  fi
-done
-# and when a real bash 3.2 is available (LZ_BASH32=/path/to/bash-3.2), parse
-# every script with it instead of trusting the textual rule
+# 1b. The shell scripts run under whatever /bin/bash the user has -- bash 3.2
+# on stock macOS, whose parser fails some constructs a modern `bash -n`
+# accepts (a here-document inside a command substitution with a quoted
+# expansion and a trailing redirection fails the WHOLE file at load time).
+# When a real bash 3.2 is available (LZ_BASH32=/path/to/bash-3.2), parse every
+# script with it. The hooks themselves are Node programs now.
 if [ -n "${LZ_BASH32:-}" ] && [ -x "${LZ_BASH32}" ]; then
   for S in "${SCRIPTS[@]}"; do
     "${LZ_BASH32}" -n "${ROOT}/${S}" || fail "${S} does not parse under ${LZ_BASH32}"
   done
   echo "ok  bash 3.2 parse (${LZ_BASH32})"
 else
-  echo "ok  hooks free of here-documents inside \$( ) (bash 3.2; set LZ_BASH32 to parse for real)"
+  echo "skip bash 3.2 parse (set LZ_BASH32 to parse every script with a real bash 3.2)"
 fi
 
 # 2. shellcheck: required where it must run (CI, or LZ_REQUIRE_LINT=1), because
@@ -39,6 +32,57 @@ elif [ -n "${CI:-}" ] || [ -n "${LZ_REQUIRE_LINT:-}" ]; then
 else
   echo "skip shellcheck (not installed — local only; CI fails without it)"
 fi
+
+# 2b. Never pipe into `grep -q`. grep exits at the first match; under
+# pipefail the writer's next write then meets a closed pipe and the match
+# reads as a failure (CI, `printf: write error: Broken pipe`), or, in an `if`,
+# a hit reads as none. How many lines follow the match decides it, not the
+# output's size, so no site is safe by being short. Capture the output, then
+# match from a here-string: `grep -q PATTERN <<<"${OUT}"`. Any stage counts,
+# `|&` too; so do egrep and fgrep, a `command` or `env` prefix (with flags,
+# and `env -u NAME`) and a VAR=value prefix. -q in an option group of letters
+# and digits, --quiet or --silent counts anywhere before the stage ends at a
+# `|`, `;`, `&` or `)` outside quotes. A command continued with `\` or a
+# trailing `|` is read as one line. Comment lines may name the bad form.
+PIPED_GREP="$(cd "${ROOT}" && awk '
+  FNR == 1 { line = "" }
+  {
+    text = $0
+    if (line == "") {
+      if (text ~ /^[[:space:]]*#/) next
+      start = FNR
+    }
+    more = text ~ /\\$/ || (text ~ /[|][[:space:]]*$/ && text !~ /[|][|][[:space:]]*$/)
+    sub(/\\$/, "", text)
+    line = line text " "
+    if (more) next
+    gsub(/[|][|]/, ";", line)
+    if (line ~ /[|]&?[[:space:]]*((command|env)([[:space:]]+(-u[[:space:]]+[^[:space:]]+|-[^[:space:]]*))*[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[ef]?grep[[:space:]](([^|;&)\047"]|\047[^\047]*\047|"[^"]*")*[[:space:]])?(-[a-zA-Z0-9]*q[a-zA-Z0-9]*|--quiet|--silent)([[:space:]]|[|;&)]|$)/)
+      print FILENAME ":" start ": " line
+    line = ""
+  }' "${SCRIPTS[@]}")"
+[ -z "${PIPED_GREP}" ] \
+  || fail "output piped into grep -q; capture it and match from a here-string:
+${PIPED_GREP}"
+echo "ok  nothing piped into grep -q"
+
+# 2c. tests/node/*.test.js is named file by file twice -- the parity gate
+# and the Windows CI job (Node 18 takes no glob) -- so a new test file named
+# in neither would run nowhere, and green would say nothing about it. Only
+# a `node --test` command counts (continued with `\`, read as one line);
+# a comment or a message naming the file runs nothing.
+NODE_TESTS="$(cd "${ROOT}" && for T in tests/node/*.test.js; do echo "${T}"; done | sort)"
+[ -n "${NODE_TESTS}" ] || fail "no tests/node/*.test.js found"
+for LIST in .github/workflows/ci.yml tests/gates/parity.sh; do
+  NAMED="$(awk '
+    { text = $0; more = text ~ /\\$/; sub(/\\$/, "", text); line = line text " " }
+    !more { if (line !~ /^[[:space:]]*#/ && line ~ /node --test /) print line; line = "" }
+  ' "${ROOT}/${LIST}" | grep -oE 'tests/node/[A-Za-z0-9_.-]+[.]test[.]js' | sort -u || true)"
+  [ "${NAMED}" = "${NODE_TESTS}" ] \
+    || fail "${LIST} does not run exactly the node tests in tests/node:
+$(diff <(echo "${NODE_TESTS}") <(echo "${NAMED}") || true)"
+done
+echo "ok  every tests/node suite runs in parity and in the Windows CI job"
 
 # 2a. ambient LUCIAZERO_* must not change this suite's outcome. A tiny child
 # sources the same sanitation helper under every poisoned knob; the test
@@ -77,7 +121,7 @@ echo "ok  ambient LUCIAZERO_* sanitation"
 # 2b. detect.sh runs green against this repo and finds the CI verify command
 OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${ROOT}")" \
   || fail "detect.sh exited non-zero"
-echo "${OUT}" | grep -q 'test.sh' || fail "detect.sh did not surface test.sh from CI config"
+grep -q 'test.sh' <<<"${OUT}" || fail "detect.sh did not surface test.sh from CI config"
 echo "ok  detect.sh smoke run"
 
 # 2c. detect.sh must also match the '- run:' list form, the most common
@@ -88,7 +132,7 @@ printf 'jobs:\n  t:\n    steps:\n      - run: npm run canary-cmd\n' > "${FX}/.gi
 # capture, then grep: grep -q on a pipe would SIGPIPE detect.sh under pipefail
 OUT="$("${ROOT}/skills/ready/scripts/detect.sh" "${FX}")" \
   || { rm -rf "${FX}"; fail "detect.sh exited non-zero on the fixture"; }
-echo "${OUT}" | grep -q 'canary-cmd' \
+grep -q 'canary-cmd' <<<"${OUT}" \
   || { rm -rf "${FX}"; fail "detect.sh missed the '- run:' CI form"; }
 rm -rf "${FX}"
 echo "ok  detect.sh '- run:' form"

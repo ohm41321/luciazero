@@ -52,7 +52,8 @@ if isinstance(data, dict) and human_path.is_file():
         and result.get("warnings") == []
         and data.get("kind") == "luciazero-relay"
         and data.get("schema") == 2
-        and data.get("route", {}).get("recipient") == "same-machine"
+        and isinstance(data.get("route"), dict)
+        and data["route"].get("recipient") == "same-machine"
     )
 
 if isinstance(data, dict):
@@ -81,6 +82,7 @@ if isinstance(data, dict):
     criteria["exact_verification"] = (
         isinstance(verification, list)
         and len(verification) == 1
+        and isinstance(verification[0], dict)
         and verification[0].get("command") == "./verify.sh"
         and verification[0].get("exit_code") == 1
         and verification[0].get("decisive_line") == expected_line

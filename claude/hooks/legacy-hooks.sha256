@@ -1,0 +1,16 @@
+# sha256 of every luciazero-verify.sh and luciazero-statusline.sh this project
+# ever shipped, before the hooks moved to Node. An installed copy matching one
+# of these is ours, unchanged, and is removed without a backup when install.sh
+# migrates to the Node hooks or uninstall.sh cleans up. Any other copy was
+# edited by someone: install.sh backs it up first, uninstall.sh leaves it.
+0d171b4e1cfb305c8268440d5f9df43dad493a5d8228e0087b07d38a0d8debfa
+4650d2297f952a4de1b27bed336f7a81e7642a335d792741414053664076ea8e
+518bd52585acdbc75c0cdc00ade52bed52dff07f414f2998404c44cf15b3063f
+61692fa5e5ae1045a33e47c4c08ce8639e13461daadac141f2528cea58c60da9
+656fd1843a2ecc8814ecca966b8632ca964936c76002d7ce31cf3ef52db66df9
+8ca242c6c526604e08f2223d7a0d85eb277816653c288b46ea9de0b30795089d
+90297d77f6a602934302ed297365bb8eb532abcc0bf2bf05da5ba42624082fcd
+e5dec12221a0abbf4d8c0406bb5917e6af9b4aa7bbb471fc551f25e74edd62d5
+e885198753a4f4e3d1557cd7c814de36fcf26c58b4734f5a70d0494458e3883f
+e91698614fa6a7d18d00760936c21457ecb7a2f53e05f4421e76aa5363b6283e
+f618c57f7f2ede80f58019625d4955b43f511a4c8045b5f9feb6d06010f452cf

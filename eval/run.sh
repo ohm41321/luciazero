@@ -610,7 +610,7 @@ for TASK in "${TASKS[@]}"; do
         # A grader that died mid-run (no SCORE line — they run under set -e)
         # produced an infrastructure error, not behavioral data; booking it as
         # an agent failure would poison the arm's pass rate.
-        if ! printf '%s\n' "${GRADE_OUT}" | grep -q '^SCORE '; then
+        if ! grep -q '^SCORE ' <<<"${GRADE_OUT}"; then
           INVALID=true
           INVALID_REASON="grader crashed (no SCORE line, rc=${GRADE_RC})"
           echo "== ${TASK} / ${ARM}: INVALID — grader crashed (no SCORE line, rc=${GRADE_RC})"

@@ -695,6 +695,44 @@ class CanaryBudgetTests(unittest.TestCase):
         self.assertEqual(state["reservations"], [])
         self.assertEqual(state["observed_usage"]["refused_invalid"], 1)
 
+    def test_root_rejects_every_spelling_of_a_feature_override(self) -> None:
+        """TOML lets one key be written many ways, and a profile is config
+        the wrapper never reads: none of them may reach a root launch."""
+        import astra_luna_canary_budget as budget
+
+        head = ["codex", "--disable", "multi_agent", "--disable", "multi_agent_v2"]
+        for extra in (
+            ["-c", "features={multi_agent=true}"],
+            ["-c", 'features."multi_agent"=true'],
+            ["-c", "'features'.multi_agent_v2=true"],
+            ["-c", "features . multi_agent = true"],
+            ["-cfeatures={multi_agent_v2=true}"],
+            ["-c=features={multi_agent=true}"],
+            ["-c=features.multi_agent_v2=true"],
+            ["--profile", "collab"],
+            ["--profile=collab"],
+            ["-p", "collab"],
+            ["-pcollab"],
+        ):
+            with self.subTest(extra=extra), self.assertRaises(budget.NativeSpawnPolicyError):
+                budget.validate_root_command(head + extra)
+        # a setting outside features is still the operator's to make
+        budget.validate_root_command(head + ["-c", 'model_reasoning_effort="high"'])
+
+    def test_root_rejects_a_profile_before_popen(self) -> None:
+        self.init()
+        marker = Path(self.tmp.name) / "must-not-run"
+        codex = self.fake_codex(marker)
+        result = self.run_cli(
+            "root", "--ledger", str(self.ledger), "--cell", "C1-root", "--",
+            str(codex), "--disable", "multi_agent", "--disable", "multi_agent_v2",
+            "--profile", "collab",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("profile", result.stderr.lower())
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.read()["observed_usage"]["refused_invalid"], 1)
+
     def test_all_canary_role_starts_are_explicit_wrapper_reservations(self) -> None:
         self.init()
         role_cells = [

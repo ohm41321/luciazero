@@ -40,8 +40,26 @@ printf '%s\n' 'leak /Users/not-a-real-home/file' >> "${ADAPTER_GUARD_TMP}/docs/a
 ADAPTER_RC=0
 python3 "${ROOT}/scripts/check-astra-luna-adapter.py" --root "${ADAPTER_GUARD_TMP}" >/dev/null 2>&1 \
   || ADAPTER_RC=$?
+[ "${ADAPTER_RC}" -ne 0 ] \
+  || { rm -rf "${ADAPTER_GUARD_TMP}"; fail "Slice 0 guard missed a document path leak"; }
+# every pinned section compares exactly, so the one place unreviewed
+# material could ride along is a top-level field the checker never reads
+cp "${ROOT}/docs/astra-luna-adapter.md" "${ADAPTER_GUARD_TMP}/docs/astra-luna-adapter.md"
+python3 - "${ADAPTER_GUARD_TMP}" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1]) / "docs/assets/astra-luna-adapter-baseline.json"
+data = json.loads(path.read_text())
+data["notes"] = "an unpinned field"
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+ADAPTER_RC=0
+python3 "${ROOT}/scripts/check-astra-luna-adapter.py" --root "${ADAPTER_GUARD_TMP}" >/dev/null 2>&1 \
+  || ADAPTER_RC=$?
 rm -rf "${ADAPTER_GUARD_TMP}"
-[ "${ADAPTER_RC}" -ne 0 ] || fail "Slice 0 guard missed a document path leak"
+[ "${ADAPTER_RC}" -ne 0 ] || fail "Slice 0 guard accepted an unpinned top-level baseline field"
 echo "ok  Astra/Luna Slice 0 mutation guards"
 
 python3 "${ROOT}/scripts/check-astra-luna-adapter-slice1.py" >/dev/null \

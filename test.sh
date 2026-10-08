@@ -126,8 +126,10 @@ agent_bus_store() {
     || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status failed against a running daemon"; }
   printf '%s' "${BUS_JSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["queued_deliveries"] == 0 and d["server"]["name"] == "luciazero-agentd", d' \
     || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status returned an unexpected summary"; }
-  LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status | grep -q "queued deliveries: 0" \
-    || { kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status human output drift"; }
+  if ! BUS_HUMAN="$(LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status)" \
+    || ! grep -q "queued deliveries: 0" <<<"${BUS_HUMAN}"; then
+    kill "${BUS_PID}" 2>/dev/null; rm -rf "${BUS_STATE}"; fail "luciazero bus status human output drift"
+  fi
   kill "${BUS_PID}" 2>/dev/null; wait "${BUS_PID}" 2>/dev/null || true
   LUCIAZERO_AGENT_BUS_HOME="${BUS_STATE}" node "${ROOT}/bin/luciazero.js" bus status >/dev/null 2>&1 \
     && { rm -rf "${BUS_STATE}"; fail "luciazero bus status must fail once the daemon is gone"; }
@@ -221,12 +223,12 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          scripts/agent-bus-evidence.sh
          docs/assets/agent-bus-demo.sh
          scripts/stage-npm-package.sh
+         scripts/gate-linux-container.sh
          docs/assets/statusline-demo.sh
          docs/assets/relay-demo.sh
          skills/ready/scripts/detect.sh
          skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
-         claude/hooks/luciazero-verify.sh claude/hooks/luciazero-statusline.sh
          eval/run.sh eval/report.sh eval/check-result.sh)
 # every task grader, auto-discovered — a new task cannot skip the lint net
 for G in "${ROOT}"/eval/tasks/*/grade.sh; do SCRIPTS+=("${G#"${ROOT}"/}"); done
@@ -251,7 +253,7 @@ FAST_GATES=(tests/gates/agentd.sh tests/gates/relay.sh tests/gates/bisect.sh
             tests/gates/evidence.sh tests/gates/astra-luna.sh)
 FULL_GATES=(tests/gates/tiers.sh tests/gates/agent-bus.sh tests/gates/eval.sh
             tests/gates/packaging.sh tests/gates/install.sh
-            tests/gates/codex-install.sh)
+            tests/gates/codex-install.sh tests/gates/parity.sh)
 SCRIPTS+=("${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}")
 gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
   # The bash SECONDS counter: no process, nothing added to what it measures,
@@ -294,16 +296,16 @@ fi
 
 # The full-only gates. agent-bus runs first and alone: it writes
 # agentd/.last-store-run.log like the agentd gate and must never overlap
-# another writer. Then tiers, eval, packaging, install and codex-install run
-# at once — each owns its sandboxes and only reads the checkout (the suite
-# proves each is green in a clean subshell). Every one of the six runs as a
+# another writer. Then tiers, eval, packaging, install, codex-install and
+# parity run at once — each owns its sandboxes and only reads the checkout (the suite
+# proves each is green in a clean subshell). Every one of the seven runs as a
 # background subshell that is waited for: a subshell in a || list would lose
 # errexit for its whole body. In the parallel run each gate's stdout and
 # stderr land in a buffer and are replayed in the original order once all are
 # done, so both streams are the serial run's byte for byte; a red gate keeps
 # its own FAIL line and the summary names every red gate. LZ_TEST_PARALLEL=0
 # runs the same subshells one at a time, unbuffered.
-FULL_ORDER=(tiers agent-bus eval packaging install codex-install)
+FULL_ORDER=(tiers agent-bus eval packaging install codex-install parity)
 gate_sub() { # gate_sub <name>: run a gate in this subshell, which does not run
   # the parent's EXIT trap; it arms its own over an empty list, so the gate's
   # mktmp directories go when the gate ends and the parent's stay until the run does
@@ -319,6 +321,28 @@ gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
   fi
   GATE_PID=$!
 }
+stop_gates() { # stop_gates <pid>...: each one and every process under it
+  local P C
+  for P in "$@"; do
+    for C in $(pgrep -P "${P}" 2>/dev/null || true); do stop_gates "${C}"; done
+    kill "${P}" 2>/dev/null || true
+  done
+}
+# A non-interactive shell starts its background jobs with SIGINT ignored, so
+# Ctrl-C would end only this shell -- whose EXIT trap deletes the sandbox and
+# the output buffers -- while the gates it started ran on for minutes. Stop
+# them first, children before parents so none is orphaned out of reach.
+GATE_PID=""
+PIDS=()
+on_signal() { # on_signal <exit code>
+  trap - INT TERM
+  stop_gates ${GATE_PID:+"${GATE_PID}"} ${PIDS[@]+"${PIDS[@]}"}
+  wait 2>/dev/null || true
+  echo "interrupted: stopped the running gates" >&2
+  exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 RED=""
 if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then
   for G in "${FULL_ORDER[@]}"; do
@@ -329,8 +353,7 @@ else
   mktmp BUF
   gate_bg agent-bus "${BUF}/agent-bus.out" "${BUF}/agent-bus.err"
   wait "${GATE_PID}" || RED="${RED} agent-bus"
-  PARALLEL=(tiers eval packaging install codex-install)
-  PIDS=()
+  PARALLEL=(tiers eval packaging install codex-install parity)
   for G in "${PARALLEL[@]}"; do
     gate_bg "${G}" "${BUF}/${G}.out" "${BUF}/${G}.err"
     PIDS+=("${GATE_PID}")

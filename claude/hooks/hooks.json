@@ -3,22 +3,22 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh prompt" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "prompt"] }
         ]
       }
     ],
     "UserPromptExpansion": [
       {
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh skill-prompt" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "skill-prompt"] }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash-start" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "bash-start"] }
         ]
       }
     ],
@@ -26,42 +26,42 @@
       {
         "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh edit" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "edit"] }
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "bash"] }
         ]
       },
       {
         "matcher": "Skill",
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh skill" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "skill"] }
         ]
       }
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh bash-failure" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "bash-failure"] }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh stop" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "stop"] }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh session" },
-          { "type": "command", "command": "LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.sh doctrine" }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "session"] },
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs", "doctrine"] }
         ]
       }
     ]

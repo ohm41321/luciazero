@@ -40,19 +40,143 @@ skill_inventory() {
   catalog "${SRC}/skills/aliases.txt"
 }
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed, written into or replaced (roadmap R24). So a name is never tested
+# and then written. It is taken by one call that fails when anything at all is
+# there, a dangling symlink included, and that neither follows nor enters what
+# it finds: `mkdir` for a directory, `link` (link(2)) for a file, and for a
+# symlink a tool shown, on a scratch directory first, to make the link at
+# exactly the name it is given. Plain `ln` puts the link inside a directory it
+# finds, and `ln -f` replaces what is inside, so it is never trusted with an
+# unchecked name. Everything else is written relative to a directory this
+# helper made and then entered, and only once what it entered passes
+# `bc_enter`; from then on a swap of the name cannot redirect the writes.
+# Paths and link targets are kept byte for byte, a trailing newline included.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+#
+# bc_raw <var> <command...>: the command's output, whole, into <var>. `$( )`
+# deletes every trailing newline, and a file name or link target may end in
+# one, so only the one newline the command itself ends with is taken off.
+bc_raw() {
+  BC_OUT="$(shift; "$@" && printf x)" || return 1
+  BC_OUT="${BC_OUT%x}"
+  printf -v "$1" '%s' "${BC_OUT%$'\n'}"
+}
+
+# The physical path of directory $1, for bc_raw.
+bc_physical() {
+  CDPATH='' cd -P -- "$1" && pwd -P
+}
+
+bc_symlink() {
+  case "$1" in
+    ln) ln -sT -- "$2" "$3" ;;
+    perl) perl -e 'symlink($ARGV[0], $ARGV[1]) or exit 1' -- "$2" "$3" ;;
+    node) node -e 'try { require("fs").symlinkSync(process.argv[1], process.argv[2]) } catch (e) { process.exit(1) }' -- "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Enter $1, an absolute physical path to a directory bakcopy made, and succeed
+# only when what was entered is a directory owned by this user, empty, and at
+# that physical path, reached without a symlink. Empty is a listing that
+# succeeded and printed nothing at all, so an entry named only by newlines
+# counts. Not an inode identity check: it shuts out other users' directories
+# and planted symlinks, not this user's own processes, and it holds only
+# while other users cannot rename entries in the directory above.
+bc_enter() {
+  cd "$1" 2>/dev/null && [ -O . ] && bc_raw BC_LS ls -A . && [ -z "${BC_LS}" ] \
+    && [ "$(pwd -P; printf x)" = "$1"$'\n'x ]
+}
+
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_Q=""; BC_RC=0
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND="link"
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND="tree"
+  else
+    BC_KIND="file"
+  fi
+  case "${BC_SRC}" in /*) ;; *) BC_SRC="${PWD}/${BC_SRC}" ;; esac
+  if ! { bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}"; }; then
+    echo "FAIL: could not back up ${BC_SRC}" >&2; return 1
+  fi
+  if [ "${BC_KIND}" = link ]; then
+    # `readlink -n`, whole: macOS adds no newline after a target that already
+    # ends in one, so taking one off would cut the target.
+    BC_TO="$(readlink -n "${BC_SRC}" && printf x)" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    BC_TO="${BC_TO%x}"
+    BC_SL=""
+    BC_P="$(mktemp -d)" || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    for BC_T in ln perl node; do
+      command -v "${BC_T}" >/dev/null 2>&1 || continue
+      rm -rf "${BC_P}/t"
+      if ! { mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
+        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g"; }; then
+        break
+      fi
+      if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
+        && [ "$(readlink "${BC_P}/t/n")" = x ] \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/s" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/g" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/r" 2>/dev/null \
+        && [ "$(ls -A "${BC_P}/t/d")" = c ] && [ ! -e "${BC_P}/t/nowhere" ] \
+        && [ ! -L "${BC_P}/t/nowhere" ] && [ ! -L "${BC_P}/t/r" ] \
+        && [ "$(cat "${BC_P}/t/r")" = k ]; then
+        BC_SL="${BC_T}"; break
+      fi
+    done
+    rm -rf "${BC_P}"
+    if [ -z "${BC_SL}" ]; then
+      echo "FAIL: could not back up the symlink ${BC_SRC}, so it was left as it is: no tool here makes a symlink at exactly a given name (needs GNU ln -T, perl or node)" >&2
+      return 1
+    fi
+  elif [ "${BC_KIND}" = file ]; then
+    BC_Q="$(mktemp -d "${BC_DIR}/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  fi
+  (
+    if [ "${BC_KIND}" = file ]; then
+      bc_enter "${BC_Q}" && cp -p "${BC_SRC}" f || exit 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=0
+    while :; do
+      BC_AT="${BC_DIR}/${BC_DST##*/}"
+      case "${BC_KIND}" in
+        tree) mkdir "${BC_AT}" 2>/dev/null && break ;;
+        link) bc_symlink "${BC_SL}" "${BC_TO}" "${BC_AT}" 2>/dev/null && break ;;
+        file) link f "${BC_AT}" 2>/dev/null && break ;;
+      esac
+      # Taken is the only reason to try the next name; anything else would
+      # loop over a failure that every name shares.
+      if { [ ! -e "${BC_AT}" ] && [ ! -L "${BC_AT}" ]; } || [ "${BC_N}" -ge 100 ]; then
+        echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+        exit 1
+      fi
+      BC_N=$((BC_N+1)); BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"
+    done
+    case "${BC_KIND}" in
+      tree) bc_enter "${BC_AT}" && cp -RP "${BC_SRC}/." . || exit 1 ;;
+      file) rm -f f ;;
+    esac
+    printf '%s' "${BC_DST}"
+  ) || BC_RC=1
+  # The private directory goes only when it passes the same owner and path
+  # check as before it was written; anything else at its name stays.
+  if [ -n "${BC_Q}" ]; then
+    if ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
+      && rm -f f ); then
+      rmdir "${BC_Q}" 2>/dev/null || :
+    fi
+  fi
+  [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }
 
 same_tree() {
@@ -145,7 +269,15 @@ rmdir "${MANAGED_DIR}/skills" "${MANAGED_DIR}/agents" "${MANAGED_DIR}" 2>/dev/nu
 # the marker is another program that happens to share the name.
 AGENTD_MARKER="luciazero-managed: agentd-launcher"
 AGENTD_SERVICE_MARKER="luciazero-managed: agentd-service"
-AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+# Where install.sh put them: LUCIAZERO_BIN_DIR, else the directory an install
+# given it recorded, else the default.
+AGENTD_BIN_FILE="${CLAUDE_DIR}/.luciazero-agentd-bin"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-}"
+if [ -z "${AGENTD_BIN_DIR}" ] && [ -f "${AGENTD_BIN_FILE}" ]; then
+  AGENTD_BIN_DIR="$(head -n 1 "${AGENTD_BIN_FILE}" 2>/dev/null || true)"
+  case "${AGENTD_BIN_DIR}" in /*) ;; *) AGENTD_BIN_DIR="" ;; esac
+fi
+AGENTD_BIN_DIR="${AGENTD_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
 # Both names install.sh writes. The long one is kept in its own variable
 # because the service is stopped through it before either is removed.
@@ -168,8 +300,10 @@ for AGENTD_SVC in "${AGENTD_SERVICE_ROOT}/Library/LaunchAgents/com.luciazero.age
   fi
   if [ -n "${AGENTD_RUN}" ] && "${AGENTD_RUN}" service uninstall >/dev/null 2>&1; then
     echo "  ok  agent bus service stopped and removed"
+  # Run from the package, so `-m` cannot find a luciazero_agentd in whatever
+  # directory the uninstaller was started from.
   elif [ -d "${SRC}/agentd/luciazero_agentd" ] && command -v python3 >/dev/null 2>&1 \
-    && PYTHONPATH="${SRC}/agentd" python3 -m luciazero_agentd service uninstall >/dev/null 2>&1; then
+    && (cd "${SRC}/agentd" && PYTHONPATH="${SRC}/agentd" python3 -m luciazero_agentd service uninstall) >/dev/null 2>&1; then
     echo "  ok  agent bus service stopped and removed"
   else
     echo "  !!  the Agent Bus service is still installed (${AGENTD_SVC})" >&2
@@ -197,7 +331,7 @@ if [ "${AGENTD_KEEP}" = 0 ]; then
   done
   # Only once both are gone, and only if it is empty.
   rmdir "${AGENTD_BIN_DIR}" 2>/dev/null || true
-  rm -f "${CLAUDE_DIR}/.luciazero-agentd-home"
+  rm -f "${CLAUDE_DIR}/.luciazero-agentd-home" "${AGENTD_BIN_FILE}"
 fi
 
 LEGACY_HANDOFF="${CLAUDE_DIR}/skills/handoff"
@@ -216,149 +350,25 @@ fi
 # files we just deleted.
 SETTINGS="${CLAUDE_DIR}/settings.json"
 HOOKS_CLEAN=1
-# No `grep` gate. The installer quotes the path it writes, so a config
-# directory whose name contains an apostrophe is stored as
-# `'/home/config with '"'"' quote/hooks/luciazero-verify.sh' edit` -- the bare
-# path is not a substring of that, and a grep for it answered "nothing of ours
-# here" while the hook files were deleted anyway, leaving settings.json
-# pointing at files that no longer exist. Only the parser knows what is ours,
-# so the parser is asked whenever there is a file to ask about. It reports
-# three separate outcomes and never writes a backup it did not need:
+# No `grep` gate. A hook path can be stored quoted (the Bash-era installer
+# shell-quoted it), as an exec-form argument, or base64 inside the status
+# line's command, so the bare path is not always a substring of what is
+# there, and a grep that answered "nothing of ours" would let the hook files
+# be deleted under entries still pointing at them. Only the parser knows what
+# is ours, so the parser is asked whenever there is a file to ask about --
+# bin/lib/settings-wiring.js, the module that wrote them. It reports three
+# separate outcomes and never writes a backup it did not need:
 #   0  nothing of ours -- settings.json untouched
-#   10 ours found and removed -- backup written first
+#   10 ours found and removed -- backup written first (O_EXCL, never through
+#      a planted name)
 #   *  read, parse or write failed -- settings.json is left exactly as it was
 if [ -f "${SETTINGS}" ]; then
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1 \
+    && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' 2>/dev/null; then
     HOOKS_RC=0
     # exact-path matching only: never touch a user's own hook that merely
     # shares a basename with ours
-    python3 - "${SETTINGS}" "${CLAUDE_DIR}" <<'PY' || HOOKS_RC=$?
-import json, os, shlex, shutil, sys, time
-
-path, claude_dir = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f:
-        settings = json.load(f)
-except (OSError, ValueError) as exc:
-    print("      " + str(exc), file=sys.stderr)
-    raise SystemExit(1)
-
-# settings.json is the user's file and may hold any JSON at all. A shape this
-# cannot walk is not "nothing of ours": it is a file we cannot prove clean, so
-# it stays as it is and the hook files stay with it.
-if not isinstance(settings, dict) or not isinstance(settings.get("hooks", {}), dict):
-    print("      settings.json is valid JSON but not the shape hooks live in",
-          file=sys.stderr)
-    raise SystemExit(1)
-
-MARKERS = (
-    os.path.join(claude_dir, "hooks", "luciazero-verify.sh"),
-    os.path.join(claude_dir, "hooks", "luciazero-statusline.sh"),
-)
-def ours(cmd):
-    """Both spellings of our own command, and nothing else.
-
-    The installer quotes the path now, so the bytes no longer start with it;
-    matching only the bare prefix would leave every entry it wrote behind,
-    still pointing at files this script is about to delete. The bare form
-    stays recognised because older installs wrote it -- including the broken
-    bare form with a space in it, which `shlex` cannot parse back.
-    """
-    if any(cmd == m or cmd.startswith(m + " ") for m in MARKERS):
-        return True
-    try:
-        parts = shlex.split(cmd)
-    except ValueError:
-        return False
-    return bool(parts) and parts[0] in MARKERS
-
-changed = False
-hooks = settings.get("hooks") or {}
-for event in list(hooks):
-    kept = []
-    for entry in hooks[event]:
-        inner = [h for h in entry.get("hooks", []) if not ours(h.get("command", ""))]
-        if inner != entry.get("hooks", []):
-            changed = True
-            if inner:
-                entry = dict(entry)
-                entry["hooks"] = inner
-                kept.append(entry)
-            # entry emptied by removal -> dropped
-        else:
-            kept.append(entry)
-    if kept:
-        hooks[event] = kept
-    elif hooks[event] != kept:
-        del hooks[event]
-        changed = True
-
-sl = settings.get("statusLine") or {}
-if isinstance(sl, dict) and ours(sl.get("command", "")):
-    del settings["statusLine"]
-    changed = True
-
-if not changed:
-    raise SystemExit(0)
-
-# The user's file changes only once the new content is known, and only after a
-# complete copy of the old one exists beside it, under a name nothing else
-# holds.
-#
-# "Nothing else holds" cannot be asked with os.path.exists: it follows the
-# name, and answers False for a symlink whose target is missing. A dangling
-# symlink planted at the name this was about to take therefore read as free,
-# and the copy then followed it -- writing the user's settings outside the
-# config directory, under a name the planter chose, while the config directory
-# was left with no backup at all. O_CREAT|O_EXCL is the question that cannot
-# be fooled: the kernel refuses the open if anything is at the name, a
-# dangling symlink included, and refuses without following it. The name is
-# ours only once that open has returned, so the bytes go through that
-# descriptor and the name is never resolved a second time.
-stamp = time.strftime("%Y%m%d%H%M%S")
-backup, fd, n = path + ".bak." + stamp, None, 1
-while fd is None:
-    try:
-        fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        if n > 100:
-            print("      no free backup name beside " + os.path.basename(path),
-                  file=sys.stderr)
-            raise SystemExit(1)
-        backup = path + ".bak." + stamp + "." + str(n)
-        n += 1
-    except OSError as exc:
-        print("      " + str(exc), file=sys.stderr)
-        raise SystemExit(1)
-
-# A backup that is not complete is not a backup. If any part of making one
-# fails, the reserved file goes and settings.json is never opened for writing
-# -- which is the outcome that keeps the hook files, upstairs.
-try:
-    with open(path, "rb") as src, os.fdopen(fd, "wb") as dst:
-        fd = None  # fdopen owns it now, and closing it twice is an error
-        shutil.copyfileobj(src, dst)
-    shutil.copystat(path, backup)  # mode and times, the half copy2 adds
-except OSError as exc:
-    if fd is not None:
-        os.close(fd)
-    try:
-        os.unlink(backup)
-    except OSError:
-        pass
-    print("      " + str(exc), file=sys.stderr)
-    raise SystemExit(1)
-
-try:
-    with open(path, "w") as f:
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-except OSError as exc:
-    print("      " + str(exc), file=sys.stderr)
-    raise SystemExit(1)
-print("  ok  backup: " + os.path.basename(backup))
-raise SystemExit(10)
-PY
+    node "${SRC}/bin/lib/settings-wiring.js" clean "${SETTINGS}" "${CLAUDE_DIR}" || HOOKS_RC=$?
     case "${HOOKS_RC}" in
       0)
         echo "  ok  no enforcement-pack entries in settings.json"
@@ -368,18 +378,18 @@ PY
         ;;
       *)
         HOOKS_CLEAN=0
-        echo "  !!  could not clean settings.json (invalid JSON?) — hook files kept so nothing dangles; remove the luciazero-* entries manually, then delete ${CLAUDE_DIR}/hooks/luciazero-*.sh" >&2
+        echo "  !!  could not clean settings.json (invalid JSON?) — hook files kept so nothing dangles; remove the luciazero-* entries manually, then delete ${CLAUDE_DIR}/hooks/luciazero-*" >&2
         ;;
     esac
   else
     HOOKS_CLEAN=0
-    echo "  !!  python3 not found — settings.json untouched; hook files kept so nothing dangles" >&2
+    echo "  !!  Node 18+ not found — settings.json untouched; hook files kept so nothing dangles" >&2
   fi
 else
   echo "  ok  no settings.json to clean"
 fi
 if [ "${HOOKS_CLEAN}" = 1 ]; then
-  for H in luciazero-verify.sh luciazero-statusline.sh; do
+  for H in luciazero-verify.cjs luciazero-statusline.cjs; do
     F="${CLAUDE_DIR}/hooks/${H}"
     if [ -f "${F}" ]; then
       if cmp -s "${F}" "${SRC}/claude/hooks/${H}" 2>/dev/null; then
@@ -390,11 +400,24 @@ if [ "${HOOKS_CLEAN}" = 1 ]; then
       fi
     fi
   done
+  # The Bash hooks of an install made before the move to Node: removed when
+  # they are exactly as some release shipped them, kept when edited.
+  for H in luciazero-verify.sh luciazero-statusline.sh; do
+    F="${CLAUDE_DIR}/hooks/${H}"
+    if [ -f "${F}" ]; then
+      SUM="$(sha_of "${F}")"
+      if [ -n "${SUM}" ] && grep -qx "${SUM}" "${SRC}/claude/hooks/legacy-hooks.sha256" 2>/dev/null; then
+        rm -f "${F}"
+        echo "  ok  hooks/${H}"
+      else
+        echo "  !!  hooks/${H} differs from every shipped version (customized?) — left in place" >&2
+      fi
+    fi
+  done
 fi
 
 if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
-  BACKUP="$(bakpath "${GLOBAL_MD}")"
-  cp -p "${GLOBAL_MD}" "${BACKUP}"
+  BACKUP="$(bakcopy -L "${GLOBAL_MD}" "${GLOBAL_MD}")"
   # `install.sh` appends the import line to an existing CLAUDE.md as
   # `printf '\n%s\n'` — a blank separator and then the line — so removing only
   # the line leaves the separator behind and every install-and-uninstall cycle
@@ -438,8 +461,15 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
     grep -vxF "${IMPORT_LINE}" "${BACKUP}" > "${MD_TMP}" || [ $? -eq 1 ]
   fi
   if cmp -s "${BACKUP}" "${GLOBAL_MD}"; then
-    mv "${MD_TMP}" "${GLOBAL_MD}"
-    [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
+    if [ -L "${GLOBAL_MD}" ]; then
+      # a link -- into a dotfiles checkout, say -- stays a link: the result
+      # goes through it to the file it names, as the install's append did
+      cat "${MD_TMP}" > "${GLOBAL_MD}"
+      rm -f "${MD_TMP}"
+    else
+      mv "${MD_TMP}" "${GLOBAL_MD}"
+      [ -s "${GLOBAL_MD}" ] || rm -f "${GLOBAL_MD}"
+    fi
     IMPORT_REWRITTEN=1
   else
     rm -f "${MD_TMP}"

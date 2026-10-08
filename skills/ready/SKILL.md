@@ -14,7 +14,7 @@ the stack; do not assume it. Run every artifact you add.
 Run the bundled scan first:
 
 ```
-<this-skill-dir>/scripts/detect.sh <repo-root>
+node <this-skill-dir>/scripts/detect.cjs <repo-root>
 ```
 
 It finds candidates, not truth; open flagged files and interpret CI matrices or

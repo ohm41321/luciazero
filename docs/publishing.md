@@ -57,7 +57,8 @@ To get listed in Anthropic's catalogs (†):
 - Review criteria they state: valid manifest, no file access outside the
   plugin dir, clear skill instructions, adequate README. Note for the
   submission: our hooks keep verify-state under a user-owned
-  `$TMPDIR/luciazero-verify-state-<uid>` directory (never the repo), and the
+  `$TMPDIR/luciazero-verify-state-<uid>` directory (on Windows,
+  `%TEMP%\luciazero-verify-state-<user>`; never the repo), and the
   strict gate only runs a command the *user* set via
   `LUCIAZERO_STRICT_VERIFY_CMD`.
 

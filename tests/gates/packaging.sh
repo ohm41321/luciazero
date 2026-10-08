@@ -57,30 +57,30 @@ cp -R "${ROOT}/site/." "${SITE_FX}/"
 sed '/rel="canonical"/d' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a page without its canonical link"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: canonical must be exactly' \
+grep -q '^FAIL: index.html: canonical must be exactly' <<<"${SITE_OUT}" \
   || fail "site check failed the canonical fixture for another reason: ${SITE_OUT}"
 # The count a search result shows is the meta description's, not the body's.
 sed '/name="description"/s/13 skills/12 skills/' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a stale skill count in the meta description"
-printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: states \['12', '13'\] skills" \
+grep -q "^FAIL: index.html: states \['12', '13'\] skills" <<<"${SITE_OUT}" \
   || fail "site check failed the skill-count fixture for another reason: ${SITE_OUT}"
 # Search Console re-reads its verification tag; a deploy without it unverifies the site.
 sed '/name="google-site-verification"/d' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a home page without its Search Console verification tag"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: home page needs one google-site-verification' \
+grep -q '^FAIL: index.html: home page needs one google-site-verification' <<<"${SITE_OUT}" \
   || fail "site check failed the verification fixture for another reason: ${SITE_OUT}"
 sed 's#poster="intro-poster.jpg"#poster="missing.jpg"#' "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a video poster that is not in the site"
-printf '%s\n' "${SITE_OUT}" | grep -q '^FAIL: index.html: missing.jpg does not resolve' \
+grep -q '^FAIL: index.html: missing.jpg does not resolve' <<<"${SITE_OUT}" \
   || fail "site check failed the video poster fixture for another reason: ${SITE_OUT}"
 sed 's#"contentUrl": "https://ohm41321.github.io/luciazero/intro.mp4"#"contentUrl": "https://ohm41321.github.io/luciazero/missing.mp4"#' \
   "${ROOT}/site/index.html" > "${SITE_FX}/index.html"
 SITE_OUT="$(python3 "${ROOT}/scripts/check-site.py" "${SITE_FX}" 2>&1)" \
   && fail "site check accepted a JSON-LD contentUrl that is not in the site"
-printf '%s\n' "${SITE_OUT}" | grep -q "^FAIL: index.html: JSON-LD contentUrl 'https://ohm41321.github.io/luciazero/missing.mp4'" \
+grep -q "^FAIL: index.html: JSON-LD contentUrl 'https://ohm41321.github.io/luciazero/missing.mp4'" <<<"${SITE_OUT}" \
   || fail "site check failed the contentUrl fixture for another reason: ${SITE_OUT}"
 grep -qF '(https://ohm41321.github.io/luciazero/)' "${ROOT}/README.md" \
   || fail "README.md lost its link to the website"
@@ -117,28 +117,37 @@ assert mkt["name"] == "luciazero" and mkt["owner"]["name"], "marketplace name/ow
 assert mkt["plugins"][0]["name"] == "luciazero", "marketplace plugin entry"
 assert mkt["plugins"][0]["source"] == "./", "marketplace plugin source"
 hooks = json.load(open(os.path.join(root, "claude", "hooks", "hooks.json")))
-cmds = [h["command"]
-        for entries in hooks["hooks"].values()
-        for e in entries for h in e["hooks"]]
+# exec form everywhere: `node` plus the script and subcommand as arguments, so
+# no shell ever parses the plugin path (Windows runs shell-form hooks through
+# Git Bash or PowerShell, whichever is there)
+script = "${CLAUDE_PLUGIN_ROOT}/claude/hooks/luciazero-verify.cjs"
+wired = [(event, e.get("matcher"), h)
+         for event, entries in hooks["hooks"].items()
+         for e in entries for h in e["hooks"]]
 for sub in ("prompt", "skill-prompt", "bash-start", "edit", "bash",
             "bash-failure", "skill", "stop", "session", "doctrine"):
-    assert any(c.endswith("luciazero-verify.sh " + sub) for c in cmds), f"hooks.json missing {sub} wiring"
-for c in cmds:
-    assert c.startswith("LUCIAZERO_CHANNEL=plugin ${CLAUDE_PLUGIN_ROOT}/"), \
-        f"hook command must carry the plugin channel marker (double-install dedupe depends on it): {c}"
-    rel = c.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rsplit(" ", 1)[0]
-    assert os.access(os.path.join(root, rel), os.X_OK), f"hook script not executable: {rel}"
+    assert sum(h.get("args") == [script, sub] for _, _, h in wired) == 1, \
+        f"hooks.json must wire {sub} exactly once"
+for event, matcher, h in wired:
+    assert h.get("type") == "command" and h.get("command") == "node" \
+        and isinstance(h.get("args"), list) and len(h["args"]) == 2, \
+        f"hook must be exec form (command node, args [script, sub]): {h}"
+    rel = h["args"][0].split("${CLAUDE_PLUGIN_ROOT}/", 1)[1]
+    assert os.path.isfile(os.path.join(root, rel)), f"hook script missing: {rel}"
+    # PowerShell is the shell tool on Windows; a Bash-only matcher never fires there
+    if h["args"][1] in ("bash-start", "bash", "bash-failure"):
+        assert matcher == "Bash|PowerShell", f"{h['args'][1]} must match Bash|PowerShell, not {matcher!r}"
 PY
 echo "ok  plugin manifests valid + wired"
 
 # 4g. plugin doctrine mode: emits the doctrine once, never twice
 DCT="$(mktemp -d)"
-OUT="$(CLAUDE_CONFIG_DIR="${DCT}" "${ROOT}/claude/hooks/luciazero-verify.sh" doctrine </dev/null)" \
+OUT="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
   || fail "doctrine mode exited non-zero"
 [ "${OUT}" = "$(cat "${ROOT}/claude/luciazero.md")" ] \
   || fail "doctrine mode output does not match claude/luciazero.md"
 touch "${DCT}/luciazero.md"
-OUT2="$(CLAUDE_CONFIG_DIR="${DCT}" "${ROOT}/claude/hooks/luciazero-verify.sh" doctrine </dev/null)" \
+OUT2="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
   || fail "doctrine mode (classic install present) exited non-zero"
 [ -z "${OUT2}" ] || fail "doctrine mode must stay silent when a classic install exists (double-load)"
 rm -rf "${DCT}"
@@ -149,18 +158,18 @@ echo "ok  plugin doctrine session context"
 DD="$(mktemp -d)"
 DTMP="$(mktemp -d)"
 mkdir -p "${DD}/hooks"
-cp "${ROOT}/claude/hooks/luciazero-verify.sh" "${DD}/hooks/luciazero-verify.sh"
-printf '{"hooks": {"x": "%s/hooks/luciazero-verify.sh"}}\n' "${DD}" > "${DD}/settings.json"
+cp "${ROOT}/claude/hooks/luciazero-verify.cjs" "${DD}/hooks/luciazero-verify.cjs"
+printf '{"hooks": {"x": "%s/hooks/luciazero-verify.cjs"}}\n' "${DD}" > "${DD}/settings.json"
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${DD}" "${DD}" \
   | env TMPDIR="${DTMP}" CLAUDE_CONFIG_DIR="${DD}" LUCIAZERO_CHANNEL=plugin \
-    "${ROOT}/claude/hooks/luciazero-verify.sh" edit \
+    node "${ROOT}/claude/hooks/luciazero-verify.cjs" edit \
   || fail "deduped plugin edit exited non-zero"
 [ -z "$(ls -A "${DTMP}" 2>/dev/null)" ] \
   || fail "plugin copy must stand down when classic wiring exists (state was written)"
 rm -f "${DD}/settings.json"
 printf '{"cwd": "%s", "tool_input": {"file_path": "%s/a.py"}}' "${DD}" "${DD}" \
   | env TMPDIR="${DTMP}" CLAUDE_CONFIG_DIR="${DD}" LUCIAZERO_CHANNEL=plugin \
-    "${ROOT}/claude/hooks/luciazero-verify.sh" edit \
+    node "${ROOT}/claude/hooks/luciazero-verify.cjs" edit \
   || fail "plugin edit (no classic wiring) exited non-zero"
 [ -n "$(ls -A "${DTMP}" 2>/dev/null)" ] \
   || fail "plugin copy must run normally when classic wiring is absent"
@@ -177,11 +186,11 @@ OUT_C="$(CODEX_HOME="${AR}/cx2" bash "${ROOT}/uninstall-codex.sh" -q 2>&1)"; RC_
 set -e
 { [ "${RC_A}" -ne 0 ] && [ ! -e "${AR}/cx" ]; } \
   || fail "install-codex.sh must reject unknown options without installing (rc=${RC_A})"
-printf '%s\n' "${OUT_A}" | grep -q 'unknown option' || fail "install-codex.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_A}" || fail "install-codex.sh rejection message missing"
 [ "${RC_B}" -ne 0 ] || fail "uninstall.sh must reject unknown options (rc=${RC_B})"
-printf '%s\n' "${OUT_B}" | grep -q 'unknown option' || fail "uninstall.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_B}" || fail "uninstall.sh rejection message missing"
 [ "${RC_C}" -ne 0 ] || fail "uninstall-codex.sh must reject unknown options (rc=${RC_C})"
-printf '%s\n' "${OUT_C}" | grep -q 'unknown option' || fail "uninstall-codex.sh rejection message missing"
+grep -q 'unknown option' <<<"${OUT_C}" || fail "uninstall-codex.sh rejection message missing"
 rm -rf "${AR}"
 echo "ok  installers reject unknown options"
 
@@ -223,6 +232,21 @@ assert not any(line.lstrip().startswith("cd ") for line in head.splitlines()), \
     "the launcher must not change the caller's directory (attach records it)"
 assert not any(re.match(r"\s*(export\s+)?PYTHONPATH=", line) for line in head.splitlines()), \
     "PYTHONPATH is colon-separated: a checkout path containing ':' would split into two entries"
+# The Windows launcher: same contract, plus what cmd.exe needs. It is checked
+# out LF like every file here, and cmd.exe can misread labels in an LF batch
+# file; it reads the file in the console's code page, so it stays ASCII.
+with open(os.path.join(root, "bin", "luciazero-agentd.cmd"), "rb") as f:
+    raw = f.read()
+assert raw.isascii(), "the Windows launcher must be ASCII: cmd.exe reads it in the console code page"
+cmd = raw.decode("ascii")
+assert "luciazero-managed: agentd-launcher" in cmd, "the Windows launcher must carry its ownership marker"
+cmd_lines = [line.strip().lower() for line in cmd.splitlines() if not line.lstrip().lower().startswith("rem")]
+assert not any(line.startswith(":") or re.search(r"\bgoto\b|\bcall\s+:", line) for line in cmd_lines), \
+    "the Windows launcher is LF, where cmd.exe can misread labels: no label, goto or call :label"
+assert not any(re.match(r"(cd|chdir|pushd)\b", line) for line in cmd_lines), \
+    "the Windows launcher must not change the caller's directory (attach records it)"
+assert not any(re.search(r"\bset\s+\"?pythonpath=", line) for line in cmd_lines), \
+    "the Windows launcher passes the package in its own variable, not PYTHONPATH"
 def catalog(rel):
     return [x.strip() for x in open(os.path.join(root, rel)) if x.strip() and not x.lstrip().startswith("#")]
 skills = catalog("skills/catalog.txt")
@@ -267,6 +291,37 @@ assert "\\d+\\.\\d+\\.\\d+" in gate_block, \
 stage = release_workflow.find("scripts/stage-npm-package.sh")
 npm_publish = release_workflow.find('npm publish "${PACKAGE_DIR}"')
 assert 0 <= stage < npm_publish, "npm release must publish the English-README staging package"
+assert "uses: ./.github/workflows/ci.yml" in release_workflow and "\n    needs: ci\n" in release_workflow, \
+    "release must run the whole CI workflow, Windows suites included, before it publishes"
+assert "\n  workflow_call:\n" in open(os.path.join(root, ".github/workflows/ci.yml")).read(), \
+    "ci.yml must be callable from the release workflow"
+on_main = release_workflow.find("git merge-base --is-ancestor HEAD refs/remotes/origin/main")
+assert 0 <= on_main < publish, "release must refuse a tag that is not on main before it publishes"
+publish_block = release_workflow[publish:release_workflow.find("\n  npm-publish:", publish)]
+assert "scripts/release-zip-unchanged.py" in publish_block and "--clobber" not in publish_block, \
+    "a rerun must refuse to replace a published ZIP with a different one"
+import subprocess, tempfile, zipfile
+compare = os.path.join(root, "scripts/release-zip-unchanged.py")
+with tempfile.TemporaryDirectory() as tmp:
+    def build(name, files):
+        path = os.path.join(tmp, name)
+        with zipfile.ZipFile(path, "w") as bundle:
+            for entry, (data, mode) in files.items():
+                info = zipfile.ZipInfo(entry)
+                info.external_attr = mode << 16
+                bundle.writestr(info, data)
+        return path
+    base = {"luciazero/a.txt": ("a\n", 0o100644), "luciazero/run.sh": ("#!/bin/sh\n", 0o100755)}
+    published = build("published.zip", base)
+    def verdict(files, name):
+        return subprocess.run([sys.executable, compare, published, build(name, files)],
+                              capture_output=True).returncode
+    assert verdict(base, "same.zip") == 0, "release ZIP check refuses an identical rebuild"
+    for change, files in (("content", {**base, "luciazero/a.txt": ("b\n", 0o100644)}),
+                          ("mode", {**base, "luciazero/run.sh": ("#!/bin/sh\n", 0o100644)}),
+                          ("added", {**base, "luciazero/new.txt": ("n\n", 0o100644)}),
+                          ("removed", {"luciazero/a.txt": ("a\n", 0o100644)})):
+        assert verdict(files, f"{change}.zip") == 1, f"release ZIP check accepts a ZIP whose {change} changed"
 show = open(os.path.join(root, "skills/show/SKILL.md")).read()
 for contract in ("What connects to what?", "What changed?", "What proves it?", "exit code", "Unknowns"):
     assert contract in show, f"show skill missing output contract: {contract}"
@@ -305,8 +360,10 @@ readmes = [path for path in paths if os.path.basename(path).upper().startswith("
 assert readmes == ["README.md"], f"staged npm README selection is ambiguous: {readmes}"
 assert "README.th.md" not in paths, "Thai README leaked into staged npm package"
 assert "CHANGELOG.md" not in paths, "changelog leaked into staged npm package"
-for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "install.sh",
-                 "install-codex.sh", "claude/luciazero.md"):
+for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "bin/luciazero-agentd.cmd", "bin/lib/installer.js",
+                 "bin/lib/settings-wiring.js", "install.sh", "install-codex.sh", "claude/luciazero.md",
+                 "skills/ready/scripts/detect.cjs", "skills/done/scripts/revert-probe.cjs",
+                 "skills/bisect/scripts/safe-bisect.cjs"):
     assert required in paths, f"staged npm package lost {required}"
 ' || { rm -rf "${NP_STAGE}" "${NP_CACHE}"; fail "staged npm payload contract failed"; }
   NP_VERSION="$(node -p "require('${NP_DIR}/package.json').version")"
@@ -331,7 +388,9 @@ for required in ("bin/luciazero.js", "bin/global.js", "bin/luciazero-agentd", "i
   NRC=$?
   set -e
   [ "${NRC}" -eq 1 ] || fail "npx wrapper --status on empty config dir: want rc 1, got ${NRC}"
-  printf '%s\n' "${NOUT}" | grep -q 'MISS' || fail "npx wrapper --status lost install.sh's MISS output"
+  # a here-string, not printf into grep -q: grep stops reading at the first
+  # match, and under pipefail printf's EPIPE (141) would fail a passing check
+  grep -q 'MISS' <<<"${NOUT}" || fail "npx wrapper --status lost install.sh's MISS output"
   rm -rf "${NB}"
 
   # An explicit global install uses only a user-owned prefix and leaves a
@@ -376,7 +435,7 @@ SH
     || { rm -rf "${GI}"; fail "global-install duplicated or changed its PATH block on reinstall"; }
   GSTATUS="$(HOME="${GI}/home" SHELL=/bin/zsh node "${ROOT}/bin/luciazero.js" global-status)" \
     || { rm -rf "${GI}"; fail "global-status rejected the installed command"; }
-  printf '%s\n' "${GSTATUS}" | grep -qF 'luciazero is installed globally' \
+  grep -qF 'luciazero is installed globally' <<<"${GSTATUS}" \
     || { rm -rf "${GI}"; fail "global-status omitted the installed state"; }
   HOME="${GI}/home" SHELL=/bin/zsh LUCIAZERO_TEST_NPM_LOG="${GI}/npm.log" \
     PATH="${GI}/bin:${PATH}" node "${ROOT}/bin/luciazero.js" global-uninstall --yes >/dev/null \
@@ -578,15 +637,57 @@ const err = [];
   });
   assert.strictEqual(legacyRc, 0, "legacy installs without a sidecar must remain updatable");
   assert.strictEqual(legacySpawnCount, 1);
+
+  // Windows has no Bash: the update runs the Node installer there, with the
+  // same hook mode, and Bash everywhere else.
+  const runs = [];
+  for (const [platform, channel, hooks] of [["win32", "claude-classic", true], ["win32", "codex", false],
+    ["darwin", "claude-classic", true], ["linux", "codex", false]]) {
+    const rc = updater.runUpdate([], {
+      detectInstallations: () => [{channel, configDir: fixture, installedVersion: null, versionFilePresent: false, hooks}],
+      platform,
+      spawnSync: (command, args) => { runs.push([platform, command, args.map((arg) => path.relative(root, arg))]); return {status: 0}; },
+      stdout: {write: () => {}},
+      stderr: {write: () => {}},
+    });
+    assert.strictEqual(rc, 0, `update on ${platform} failed`);
+  }
+  assert.deepStrictEqual(runs, [
+    ["win32", process.execPath, [path.join("bin", "lib", "installer.js"), "claude", "--with-hooks"]],
+    ["win32", process.execPath, [path.join("bin", "lib", "installer.js"), "codex"]],
+    ["darwin", "bash", ["install.sh", "--with-hooks"]],
+    ["linux", "bash", ["install-codex.sh"]],
+  ]);
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
 JS
-  node "${ROOT}/bin/luciazero.js" check-update --help | grep -q 'never changes files' \
-    || { rm -rf "${UC}"; fail "check-update CLI route/help missing"; }
-  node "${ROOT}/bin/luciazero.js" update --help | grep -q 'preserves Claude hook mode' \
-    || { rm -rf "${UC}"; fail "update CLI route/help missing"; }
+  if ! UC_HELP="$(node "${ROOT}/bin/luciazero.js" check-update --help)" \
+    || ! grep -q 'never changes files' <<<"${UC_HELP}"; then
+    rm -rf "${UC}"; fail "check-update CLI route/help missing"
+  fi
+  if ! UC_HELP="$(node "${ROOT}/bin/luciazero.js" update --help)" \
+    || ! grep -q 'preserves Claude hook mode' <<<"${UC_HELP}"; then
+    rm -rf "${UC}"; fail "update CLI route/help missing"
+  fi
+  # On Windows the installer routes run the Node installer, not a Bash guard.
+  # The route is taken in a process that reports win32; the installer it
+  # starts is a separate process, so it runs as on this host.
+  mkdir -p "${UC}/win-cfg"
+  UC_WIN_RC=0
+  UC_WIN="$(CLAUDE_CONFIG_DIR="${UC}/win-cfg" node - "${ROOT}/bin/luciazero.js" <<'JS' 2>&1
+const router = process.argv[2];
+Object.defineProperty(process, "platform", {value: "win32"});
+process.argv = [process.execPath, router, "--status"];
+require(router);
+JS
+)" || UC_WIN_RC=$?
+  if [ "${UC_WIN_RC}" != 1 ] || ! grep -q 'not installed\|MISS' <<<"${UC_WIN}" \
+    || grep -qi 'wsl\|need bash' <<<"${UC_WIN}"; then
+    rm -rf "${UC}"; fail "the win32 install route did not run the Node installer (rc=${UC_WIN_RC}): ${UC_WIN}"
+  fi
+  [ -z "$(ls -A "${UC}/win-cfg")" ] || { rm -rf "${UC}"; fail "the win32 --status route wrote files"; }
   rm -rf "${UC}"
 
   # The updater repairs every detected channel, preserves both possible
@@ -610,20 +711,20 @@ JS
   CODEX_HOME="${UU}/codex" "${ROOT}/install-codex.sh" >/dev/null
   printf '1.0.0\n' > "${UU}/hooks/.luciazero-version"
   printf '1.0.0\n' > "${UU}/codex/.luciazero-version"
-  printf '# stale hook\n' >> "${UU}/hooks/hooks/luciazero-verify.sh"
+  printf '# stale hook\n' >> "${UU}/hooks/hooks/luciazero-verify.cjs"
   UOUT="$(CLAUDE_CONFIG_DIR="${UU}/hooks" CODEX_HOME="${UU}/codex" \
     node "${ROOT}/bin/luciazero.js" update)" \
     || { rm -rf "${UU}"; fail "multi-channel update failed"; }
-  cmp -s "${UU}/hooks/hooks/luciazero-verify.sh" "${ROOT}/claude/hooks/luciazero-verify.sh" \
+  cmp -s "${UU}/hooks/hooks/luciazero-verify.cjs" "${ROOT}/claude/hooks/luciazero-verify.cjs" \
     || { rm -rf "${UU}"; fail "update did not refresh a stale hook"; }
   PV="$(node -p "require('${ROOT}/package.json').version")"
   [ "$(cat "${UU}/hooks/.luciazero-version")" = "${PV}" ] \
     || { rm -rf "${UU}"; fail "Claude update did not refresh version sidecar"; }
   [ "$(cat "${UU}/codex/.luciazero-version")" = "${PV}" ] \
     || { rm -rf "${UU}"; fail "Codex update did not refresh version sidecar"; }
-  printf '%s\n' "${UOUT}" | grep -q 'Claude classic + hooks' \
+  grep -q 'Claude classic + hooks' <<<"${UOUT}" \
     || { rm -rf "${UU}"; fail "update output omitted detected hook mode"; }
-  printf '%s\n' "${UOUT}" | grep -q 'Codex' \
+  grep -q 'Codex' <<<"${UOUT}" \
     || { rm -rf "${UU}"; fail "update output omitted detected Codex install"; }
   RC=0
   CLAUDE_CONFIG_DIR="${UU}/empty-claude" CODEX_HOME="${UU}/empty-codex" \

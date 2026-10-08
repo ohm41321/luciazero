@@ -15,15 +15,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, Sequence
 
+from . import proctree
 from .appserver import RPC_TIMEOUT, AppServer, AppServerError, _terminate_group
 from .runlog import RunLog
+from .statedir import create_private
 
 SERVER_NAME = "luciazero-bus"
 URL_ENV = "LUCIAZERO_AGENT_BUS_URL"
@@ -32,6 +37,37 @@ PROMPT_ENV = "LUCIAZERO_AGENT_BUS_PROMPT"
 AGENT_ENV = "LUCIAZERO_AGENT_BUS_AGENT"
 SESSION_ENV = "LUCIAZERO_AGENT_BUS_SESSION"
 TERMINATE_GRACE_SECONDS = 5.0
+# What a provider's session id looks like. One read off a turn's output, which
+# carries the model's own text, has to match or it could reach the next
+# turn's command line as an option: `--last`, or worse.
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
+def session_id(value: Any) -> Optional[str]:
+    """`value` if it has the shape of a session id, else None."""
+    return value if isinstance(value, str) and SESSION_ID.fullmatch(value) else None
+WINDOWS = sys.platform == "win32"
+#: How often a wait for the provider comes back to the interpreter on Windows.
+WAIT_SLICE_SECONDS = 0.25
+
+
+def wait_for(child: subprocess.Popen, timeout: Optional[float]) -> int:
+    """`child.wait(timeout)`, in slices on Windows.
+
+    A wait there is one WaitForSingleObject that no signal interrupts, so a
+    Ctrl+Break asking `dispatch` to stop would sit until the turn ended --
+    with the turn's credential live all that time -- before its handler ran.
+    Coming back to the interpreter between slices lets the handler run."""
+    if not WINDOWS:
+        return child.wait(timeout=timeout)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        left = WAIT_SLICE_SECONDS if deadline is None else min(WAIT_SLICE_SECONDS, max(0.0, deadline - time.monotonic()))
+        try:
+            return child.wait(timeout=left)
+        except subprocess.TimeoutExpired:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(child.args, timeout) from None
 
 #: Flags a managed turn owns, per provider. They carry the bus, bound what the
 #: turn may touch, or decide what it may do without asking -- so a worker
@@ -234,13 +270,15 @@ class ProcessAdapter:
 
     def _spawn(self, request: TurnRequest, *, resuming: bool) -> TurnResult:
         argv = self.argv(request, resuming=resuming)
+        env = self.environment(request, resuming=resuming)
         try:
-            child = subprocess.Popen(
-                argv, cwd=request.cwd, env=self.environment(request, resuming=resuming),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                # Its own process group, so `cancel` reaches the children the
-                # provider starts and not just the provider.
-                start_new_session=True,
+            # Its own process group (and on Windows its own job), so `cancel`
+            # reaches the children the provider starts and not just the
+            # provider.
+            child = proctree.start(
+                proctree.argv_for(argv, env), cwd=request.cwd, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
             )
         except (OSError, ValueError) as exc:
             # A command that cannot start will not start on the next attempt
@@ -248,27 +286,47 @@ class ProcessAdapter:
             return TurnResult(ok=False, exit_state="spawn_failed", error=f"cannot start {argv[0]!r}: {exc}", permanent=True)
         with self._lock:
             self._child = child
-        if request.on_process is not None:
-            request.on_process(child.pid)
+
+        # A child that left the provider's group can hold the pipe past the
+        # turn. Its reader then drains and drops: the run log is closed by
+        # then, and the tail belongs to the next turn.
+        ended = threading.Event()
+        gate = threading.Lock()
 
         def pump() -> None:
             assert child.stdout is not None
             for line in child.stdout:
-                request.log.write(line)
-                self._tail.append(line)
+                with gate:
+                    if ended.is_set():
+                        continue
+                    request.log.write(line)
+                    self._tail.append(line)
 
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
         timed_out = False
         try:
-            code = child.wait(timeout=request.timeout_seconds)
+            # Inside the try: if this raises, the provider is ended below
+            # rather than left running with nothing waiting on it.
+            if request.on_process is not None:
+                request.on_process(child.pid)
+            code = wait_for(child, request.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
             self.cancel()
             code = child.returncode if child.returncode is not None else -1
         finally:
+            # What the provider left running ends with the turn, as it does
+            # when Windows lets go of the job: it holds the turn's credential,
+            # and while it holds the output pipe the reader cannot finish.
+            # The child led its own group (`proctree.start`), so the group is
+            # known even after the child has gone.
+            _terminate_group(child, group=None if proctree.WINDOWS else child.pid)
+            proctree.release(child.pid)
             reader.join(timeout=TERMINATE_GRACE_SECONDS)
-            if child.stdout is not None:
+            with gate:
+                ended.set()
+            if child.stdout is not None and not reader.is_alive():
                 child.stdout.close()
             with self._lock:
                 self._child = None
@@ -302,7 +360,7 @@ class ClaudeAdapter(ProcessAdapter):
     def prepare(self, request: TurnRequest, *, resuming: bool) -> None:
         path = self.config_path(request)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        handle = create_private(path)
         try:
             os.write(handle, json.dumps({"mcpServers": {SERVER_NAME: {
                 "type": "http", "url": request.url,
@@ -336,7 +394,7 @@ class ClaudeAdapter(ProcessAdapter):
         user's own flags go early, where they cannot break that pairing."""
         base = list(request.command) or ["claude"]
         argv = base[:1] + ["-p"] + base[1:]
-        if resuming and request.provider_session_id:
+        if resuming and session_id(request.provider_session_id):
             argv += ["--resume", request.provider_session_id]
         argv += ["--mcp-config", str(self.config_path(request)), "--strict-mcp-config",
                  "--allowedTools", self.ALLOWED_TOOLS,
@@ -353,7 +411,7 @@ class ClaudeAdapter(ProcessAdapter):
                 message = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(message, dict) and isinstance(message.get("session_id"), str):
+            if isinstance(message, dict) and session_id(message.get("session_id")):
                 return message["session_id"]
         return request.provider_session_id
 
@@ -498,7 +556,7 @@ class _CodexExecAdapter(ProcessAdapter):
         base = list(request.command) or ["codex", "exec"]
         extra = [part for part in base[1:] if part != "exec"]
         argv = [base[0], "exec"]
-        if resuming and request.provider_session_id:
+        if resuming and session_id(request.provider_session_id):
             argv += ["resume", request.provider_session_id]
         for override in CodexAdapter.overrides(request):
             argv += ["-c", override]
@@ -514,7 +572,7 @@ class _CodexExecAdapter(ProcessAdapter):
                 continue
             if isinstance(message, dict):
                 for key in ("thread_id", "threadId", "session_id"):
-                    if isinstance(message.get(key), str):
+                    if session_id(message.get(key)):
                         return message[key]
         return request.provider_session_id
 

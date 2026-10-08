@@ -18,6 +18,7 @@ import hashlib
 import json
 import math
 import secrets
+import socket
 import sqlite3
 import sys
 import threading
@@ -32,6 +33,8 @@ from . import approval, procinfo
 from .redact import CREDENTIAL_PREFIX, Redactor
 from .watch import launcher
 from .store import CLAIM_DIALOG_SECONDS, ARTIFACT_KINDS, MAX_DEPENDENCIES, MAX_GRAPH_NODES, MESSAGE_KINDS, PENDING_DELIVERY_STATES, PROVIDERS, SENSITIVE_OPERATIONS, TASK_OUTCOMES, TASK_STATES, IdentityMismatch, Store, StoreError
+
+WINDOWS = sys.platform == "win32"
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "luciazero-agentd", "version": __version__}
@@ -256,7 +259,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "agent_register", "title": "Register agent", "description": "Register or refresh a stable agent identity on the bus. Idempotent upsert.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "provider": {"type": "string", "enum": list(PROVIDERS)}, "role": {"type": "string", "minLength": 1, "maxLength": 128}, "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 64}, "ttl_seconds": {"type": "integer", "minimum": 1, "maximum": 86400}}, ["agent_id", "provider", "role"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_agent_register},
     {"name": "agent_list", "title": "List agents", "description": "List registered agents with their last heartbeat.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_list},
     {"name": "agent_heartbeat", "title": "Heartbeat", "description": "Refresh an agent's last-seen time.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_agent_heartbeat},
-    {"name": "message_send", "title": "Send message", "description": "Send one typed message to another agent. Large content goes into an artifact; payload is capped at 64 KiB. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"sender": ID_SCHEMA, "recipient": ID_SCHEMA, "kind": {"type": "string", "enum": list(MESSAGE_KINDS)}, "payload": OBJECT_SCHEMA, "correlation_id": ID_SCHEMA, "reply_to": ID_SCHEMA, "idempotency_key": ID_SCHEMA}, ["sender", "recipient", "kind", "payload"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_send},
+    {"name": "message_send", "title": "Send message", "description": "Send one typed message to another agent. Large content goes into an artifact; payload is capped at 64 KiB. A payload.task_id spends a turn of that task's budget when you created the task or it is assigned to you, and a task message naming a stopped task is refused. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"sender": ID_SCHEMA, "recipient": ID_SCHEMA, "kind": {"type": "string", "enum": list(MESSAGE_KINDS)}, "payload": OBJECT_SCHEMA, "correlation_id": ID_SCHEMA, "reply_to": ID_SCHEMA, "idempotency_key": ID_SCHEMA}, ["sender", "recipient", "kind", "payload"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_send},
     {"name": "message_inbox", "title": "Read inbox", "description": "List deliveries addressed to an agent in stable order. Unread work by default, which includes a delivery a dispatcher has started a turn for. Pass the returned next_after back as after to page.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "states": {"type": "array", "items": {"type": "string", "enum": list(DELIVERY_STATES)}, "maxItems": 8}, "limit": LIMIT_SCHEMA, "after": AFTER_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_message_inbox},
     {"name": "message_ack", "title": "Acknowledge delivery", "description": "Move a delivery from queued to acknowledged (read), or from acknowledged to completed (handled). Only the recipient may do this.", "inputSchema": _schema({"delivery_id": ID_SCHEMA, "agent_id": ID_SCHEMA, "outcome": {"type": "string", "enum": ["acknowledged", "completed"]}}, ["delivery_id", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_message_ack},
     {"name": "task_create", "title": "Create task", "description": "Create a task, optionally pre-assigned. depends_on names tasks that already exist; a task with an unfinished prerequisite starts waiting and the daemon opens it when the last prerequisite completes. budget sets per-task limits (seconds, turns, tokens, cost_usd) the daemon stops the task on. Pass idempotency_key to make retries safe.", "inputSchema": _schema({"title": {"type": "string", "minLength": 1, "maxLength": 500}, "created_by": ID_SCHEMA, "payload": OBJECT_SCHEMA, "assigned_to": ID_SCHEMA, "priority": {"type": "integer", "minimum": -100, "maximum": 100}, "idempotency_key": ID_SCHEMA, "requires_worktree": {"type": "boolean"}, "depends_on": DEPENDS_SCHEMA, "budget": BUDGET_SCHEMA}, ["title", "created_by"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_task_create},
@@ -272,7 +275,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "worktree_bind", "title": "Bind worktree", "description": "Record the one git worktree this agent writes in (absolute path). The daemon reads repository, branch, HEAD and dirty state itself; a worktree held by another agent is refused. Required before claiming tasks that need a worktree and before publishing artifacts.", "inputSchema": _schema({"agent_id": ID_SCHEMA, "path": {"type": "string", "minLength": 1, "maxLength": 1024}, "base": {"type": "string", "minLength": 1, "maxLength": 256}}, ["agent_id", "path"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": _t_worktree_bind},
     {"name": "worktree_get", "title": "Get worktree", "description": "Show the worktree record bound to an agent.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": True}, "handler": _t_worktree_get},
     {"name": "agent_whoami", "title": "Who am I", "description": "Ask the daemon which agent this session is bound to. Returns verified false and no agent id when the session presented no terminal credential; it never guesses. The user binds a terminal with `luciazero-agentd attach` or starts it with `luciazero-agentd run`.", "inputSchema": _schema({}, []), "annotations": {"readOnlyHint": True}, "handler": _t_agent_whoami},
-    {"name": "agent_claim_begin", "title": "Ask to be an agent", "description": "Ask the user to bind this session to an agent id that is already on the roster. Returns a request id and the exact command the user runs IN ANOTHER TERMINAL to approve it; this session cannot approve its own request, and nothing changes until the user does. Poll agent_whoami afterwards: an approved request makes this session verified without reconnecting. Use it when agent_whoami answers verified false.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True}, "handler": None},
+    {"name": "agent_claim_begin", "title": "Ask to be an agent", "description": "Ask the user to bind this session to an agent id that is already on the roster. Returns a request id and the exact command the user runs IN ANOTHER TERMINAL to approve it; this session cannot approve its own request, and nothing changes until the user does. Poll agent_whoami afterwards: an approved request makes this session verified without reconnecting. Use it when agent_whoami answers verified false.", "inputSchema": _schema({"agent_id": ID_SCHEMA}, ["agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": None},
     {"name": "approval_consume", "title": "Consume approval", "description": "Spend a single-use human approval nonce for a sensitive operation on a task you hold. Nonces come only from the user's terminal (luciazero-agentd approve), never from another agent; no bus tool can create one.", "inputSchema": _schema({"task_id": ID_SCHEMA, "operation": {"type": "string", "enum": list(SENSITIVE_OPERATIONS)}, "nonce": NONCE_SCHEMA, "agent_id": ID_SCHEMA}, ["task_id", "operation", "nonce", "agent_id"]), "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}, "handler": _t_approval_consume},
 ]
 TOOL_INDEX: dict[str, dict[str, Any]] = {t["name"]: t for t in TOOLS}
@@ -375,6 +378,11 @@ class BusServer:
         # outside the lock (see _evict_sessions_locked).
         self._ended: list[str] = []
         self._lock = threading.Lock()
+        # Claim dialogs still on screen, by (session hash, agent id): asking
+        # again while one is up is answered with it, not with a second window
+        # that would supersede the one the user is about to click.
+        self._on_screen: dict[tuple[str, str], str] = {}
+        self._claim_lock = threading.Lock()
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         bus = self
 
@@ -847,6 +855,17 @@ class BusServer:
                 self._ok(rpc_id, tool_result(value))
 
         class QuietServer(ThreadingHTTPServer):
+            # On Windows SO_REUSEADDR lets a second socket bind the same port
+            # and take its connections, so another user's process could sit
+            # on the daemon's endpoint and read every bearer token sent to
+            # it. There the port is held exclusively instead.
+            allow_reuse_address = not WINDOWS
+
+            def server_bind(self) -> None:
+                if WINDOWS:
+                    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                super().server_bind()
+
             def handle_error(self, request: Any, client_address: Any) -> None:
                 # A client that resets or drops a keep-alive connection is
                 # routine (the Codex MCP client does it); socketserver would
@@ -901,7 +920,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.resolve_credential(credential)
-        except (StoreError, procinfo.ProcessError, OSError):
+        except (StoreError, procinfo.ProcessError, OSError, sqlite3.Error):
             # An unreadable store or process table means the terminal cannot
             # be verified: the request is refused, never admitted unnamed.
             return None
@@ -917,7 +936,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.claim_binding(session_key(session_id))
-        except (StoreError, procinfo.ProcessError, OSError):
+        except (StoreError, procinfo.ProcessError, OSError, sqlite3.Error):
             return None
 
     def _console_available(self) -> bool:
@@ -942,7 +961,7 @@ class BusServer:
             return "dialog"
         return "console" if self._console_available() else "none"
 
-    def _ask_on_screen(self, request: dict[str, Any], code: str, channel: str) -> bool:
+    def _ask_on_screen(self, request: dict[str, Any], code: str, channel: str, session_hash: str) -> bool:
         """Put the claim on screen, if that is how this daemon asks.
 
         The channel is decided once, by the caller, and passed in. Asking
@@ -953,6 +972,12 @@ class BusServer:
         """
         if channel != "dialog":
             return False
+        key = (session_hash, str(request["agent_id"]))
+
+        def closed() -> None:
+            with self._lock:
+                if self._on_screen.get(key) == request["id"]:
+                    del self._on_screen[key]
 
         def decided(allow: bool) -> None:
             try:
@@ -964,8 +989,10 @@ class BusServer:
             except StoreError:
                 pass  # expired, superseded, or already decided: all fine
 
+        with self._lock:
+            self._on_screen[key] = str(request["id"])
         approval.prompt(request, decide=decided, seconds=self.dialog_seconds,
-                        runner=self.dialog_runner)
+                        runner=self.dialog_runner, on_close=closed)
         return True
 
     def open_claim(self, session_id: str, agent_id: str, provider: str, client: Optional[str],
@@ -979,15 +1006,24 @@ class BusServer:
         goes to this process's stdout and nowhere else: not into the tool
         result, not into the store in the clear, not into a file.
         """
-        with Store.open(self.db_path, redact_literals=(self.token,)) as store:
-            store.migrate()
-            store.trust = "asserted"  # the session is asking, not proving
-            request, code = store.open_claim(agent_id, session_hash=session_key(session_id),
-                                             provider=provider, client=client)
-        if self._ask_on_screen(request, code, channel or self.approval_channel()):
-            print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
-                  f"Asked on screen; answer the dialog.\n", flush=True)
-            return request
+        session_hash = session_key(session_id)
+        channel = channel or self.approval_channel()
+        with self._claim_lock:
+            with self._lock:
+                showing = self._on_screen.get((session_hash, agent_id)) if channel == "dialog" else None
+            with Store.open(self.db_path, redact_literals=(self.token,)) as store:
+                store.migrate()
+                if showing is not None:
+                    request = store.get_claim(showing)
+                    if request["state"] == "open":
+                        return request
+                store.trust = "asserted"  # the session is asking, not proving
+                request, code = store.open_claim(agent_id, session_hash=session_hash,
+                                                 provider=provider, client=client)
+            if self._ask_on_screen(request, code, channel, session_hash):
+                print(f"\n[claim] a {provider} session asks to be {agent_id!r} (request {request['id']}). "
+                      f"Asked on screen; answer the dialog.\n", flush=True)
+                return request
         print(f"\n[claim] a {provider} session asks to be {agent_id!r} "
               f"(request {request['id']}, until {request['expires_at']}).\n"
               f"        If that was you, approve it from a terminal of your own:\n"
@@ -1009,7 +1045,7 @@ class BusServer:
                 store.migrate()
                 store.trust = "system"
                 store.end_claim_session(session_key(session_id))
-        except (StoreError, OSError):
+        except (StoreError, OSError, sqlite3.Error):
             pass
 
     def pending_claim(self, session_id: str) -> Optional[dict[str, Any]]:
@@ -1017,7 +1053,7 @@ class BusServer:
             with Store.open(self.db_path, redact_literals=(self.token,)) as store:
                 store.migrate()
                 return store.pending_claim(session_key(session_id))
-        except (StoreError, OSError):
+        except (StoreError, OSError, sqlite3.Error):
             return None
 
     def discovery(self) -> list[dict[str, Any]]:

@@ -28,6 +28,9 @@ from luciazero_agentd.statedir import write_endpoint
 from tests.test_nudge import make_store
 
 PACKAGE_ROOT = str(Path(__file__).resolve().parents[1])
+# Windows reads its process table from the Win32 API, not from a command a
+# PATH can deny; test_windows.ProcessFacts covers an unreadable one there.
+reads_ps = unittest.skipIf(sys.platform == "win32", "Windows has no ps to deny")
 
 
 def deny(*commands: str) -> tuple[str, tempfile.TemporaryDirectory]:
@@ -47,6 +50,7 @@ def deny(*commands: str) -> tuple[str, tempfile.TemporaryDirectory]:
     return tmp.name, tmp
 
 
+@reads_ps
 class ConversionTests(unittest.TestCase):
     def test_a_denied_command_is_a_process_error_like_a_missing_one(self) -> None:
         path, tmp = deny("ps")
@@ -59,6 +63,7 @@ class ConversionTests(unittest.TestCase):
         self.assertIn("ps", str(caught.exception))
 
 
+@reads_ps
 class CommandTests(unittest.TestCase):
     """The commands, run as commands: a denied `ps` must reach the user as a
     sentence and an exit code, never as a traceback."""

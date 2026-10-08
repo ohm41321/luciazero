@@ -35,19 +35,143 @@ version_of() {
     "${SRC}/package.json" 2>/dev/null || true
 }
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed, written into or replaced (roadmap R24). So a name is never tested
+# and then written. It is taken by one call that fails when anything at all is
+# there, a dangling symlink included, and that neither follows nor enters what
+# it finds: `mkdir` for a directory, `link` (link(2)) for a file, and for a
+# symlink a tool shown, on a scratch directory first, to make the link at
+# exactly the name it is given. Plain `ln` puts the link inside a directory it
+# finds, and `ln -f` replaces what is inside, so it is never trusted with an
+# unchecked name. Everything else is written relative to a directory this
+# helper made and then entered, and only once what it entered passes
+# `bc_enter`; from then on a swap of the name cannot redirect the writes.
+# Paths and link targets are kept byte for byte, a trailing newline included.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+#
+# bc_raw <var> <command...>: the command's output, whole, into <var>. `$( )`
+# deletes every trailing newline, and a file name or link target may end in
+# one, so only the one newline the command itself ends with is taken off.
+bc_raw() {
+  BC_OUT="$(shift; "$@" && printf x)" || return 1
+  BC_OUT="${BC_OUT%x}"
+  printf -v "$1" '%s' "${BC_OUT%$'\n'}"
+}
+
+# The physical path of directory $1, for bc_raw.
+bc_physical() {
+  CDPATH='' cd -P -- "$1" && pwd -P
+}
+
+bc_symlink() {
+  case "$1" in
+    ln) ln -sT -- "$2" "$3" ;;
+    perl) perl -e 'symlink($ARGV[0], $ARGV[1]) or exit 1' -- "$2" "$3" ;;
+    node) node -e 'try { require("fs").symlinkSync(process.argv[1], process.argv[2]) } catch (e) { process.exit(1) }' -- "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Enter $1, an absolute physical path to a directory bakcopy made, and succeed
+# only when what was entered is a directory owned by this user, empty, and at
+# that physical path, reached without a symlink. Empty is a listing that
+# succeeded and printed nothing at all, so an entry named only by newlines
+# counts. Not an inode identity check: it shuts out other users' directories
+# and planted symlinks, not this user's own processes, and it holds only
+# while other users cannot rename entries in the directory above.
+bc_enter() {
+  cd "$1" 2>/dev/null && [ -O . ] && bc_raw BC_LS ls -A . && [ -z "${BC_LS}" ] \
+    && [ "$(pwd -P; printf x)" = "$1"$'\n'x ]
+}
+
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_Q=""; BC_RC=0
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND="link"
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND="tree"
+  else
+    BC_KIND="file"
+  fi
+  case "${BC_SRC}" in /*) ;; *) BC_SRC="${PWD}/${BC_SRC}" ;; esac
+  if ! { bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}"; }; then
+    echo "FAIL: could not back up ${BC_SRC}" >&2; return 1
+  fi
+  if [ "${BC_KIND}" = link ]; then
+    # `readlink -n`, whole: macOS adds no newline after a target that already
+    # ends in one, so taking one off would cut the target.
+    BC_TO="$(readlink -n "${BC_SRC}" && printf x)" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    BC_TO="${BC_TO%x}"
+    BC_SL=""
+    BC_P="$(mktemp -d)" || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    for BC_T in ln perl node; do
+      command -v "${BC_T}" >/dev/null 2>&1 || continue
+      rm -rf "${BC_P}/t"
+      if ! { mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
+        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g"; }; then
+        break
+      fi
+      if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
+        && [ "$(readlink "${BC_P}/t/n")" = x ] \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/s" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/g" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/r" 2>/dev/null \
+        && [ "$(ls -A "${BC_P}/t/d")" = c ] && [ ! -e "${BC_P}/t/nowhere" ] \
+        && [ ! -L "${BC_P}/t/nowhere" ] && [ ! -L "${BC_P}/t/r" ] \
+        && [ "$(cat "${BC_P}/t/r")" = k ]; then
+        BC_SL="${BC_T}"; break
+      fi
+    done
+    rm -rf "${BC_P}"
+    if [ -z "${BC_SL}" ]; then
+      echo "FAIL: could not back up the symlink ${BC_SRC}, so it was left as it is: no tool here makes a symlink at exactly a given name (needs GNU ln -T, perl or node)" >&2
+      return 1
+    fi
+  elif [ "${BC_KIND}" = file ]; then
+    BC_Q="$(mktemp -d "${BC_DIR}/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  fi
+  (
+    if [ "${BC_KIND}" = file ]; then
+      bc_enter "${BC_Q}" && cp -p "${BC_SRC}" f || exit 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=0
+    while :; do
+      BC_AT="${BC_DIR}/${BC_DST##*/}"
+      case "${BC_KIND}" in
+        tree) mkdir "${BC_AT}" 2>/dev/null && break ;;
+        link) bc_symlink "${BC_SL}" "${BC_TO}" "${BC_AT}" 2>/dev/null && break ;;
+        file) link f "${BC_AT}" 2>/dev/null && break ;;
+      esac
+      # Taken is the only reason to try the next name; anything else would
+      # loop over a failure that every name shares.
+      if { [ ! -e "${BC_AT}" ] && [ ! -L "${BC_AT}" ]; } || [ "${BC_N}" -ge 100 ]; then
+        echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+        exit 1
+      fi
+      BC_N=$((BC_N+1)); BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"
+    done
+    case "${BC_KIND}" in
+      tree) bc_enter "${BC_AT}" && cp -RP "${BC_SRC}/." . || exit 1 ;;
+      file) rm -f f ;;
+    esac
+    printf '%s' "${BC_DST}"
+  ) || BC_RC=1
+  # The private directory goes only when it passes the same owner and path
+  # check as before it was written; anything else at its name stays.
+  if [ -n "${BC_Q}" ]; then
+    if ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
+      && rm -f f ); then
+      rmdir "${BC_Q}" 2>/dev/null || :
+    fi
+  fi
+  [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }
 
 same_tree() {
@@ -59,8 +183,7 @@ backup_tree() {
   BT_SRC="$1"; BT_LABEL="$2"
   BT_BASE="${BACKUP_DIR}/${BT_LABEL}"
   mkdir -p "$(dirname "${BT_BASE}")"
-  BT_DST="$(bakpath "${BT_BASE}")"
-  cp -RP "${BT_SRC}" "${BT_DST}"
+  BT_DST="$(bakcopy -P "${BT_SRC}" "${BT_BASE}")"
   echo "  ok  backed up existing ${BT_LABEL} -> ${BT_DST#"${CODEX_DIR}/"}"
 }
 
@@ -188,7 +311,7 @@ mkdir -p "${CODEX_DIR}/skills"
 # the same place, for the same reason.
 TMP="$(mktemp)"
 if [ -f "${AGENTS_MD}" ]; then
-  cp "${AGENTS_MD}" "$(bakpath "${AGENTS_MD}")"
+  bakcopy -L "${AGENTS_MD}" "${AGENTS_MD}" >/dev/null
   strip_marker_block "${AGENTS_MD}" > "${TMP}"
 fi
 # A start marker counts only on a line of its own, so content whose last line

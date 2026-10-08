@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -157,8 +156,10 @@ if any(Path(row["path"]).is_absolute() or ".." in Path(row["path"]).parts for ro
     fail("pinned input inventory contains a non-relative path")
 if any(not re.fullmatch(r"[0-9a-f]{64}", row["sha256"]) for row in data["files"]):
     fail("pinned input inventory contains an invalid SHA-256")
-if not hashlib.sha256(baseline.read_bytes()).hexdigest():
-    fail("baseline hash calculation failed")
+# Every section above compares exactly; a field none of them reads would be
+# published evidence nothing reviewed.
+if set(data) != {"schema_version", "source", "runtime", "precedence", "files"}:
+    fail("structural baseline has fields outside the pinned contract")
 
 print("ASTRA_LUNA_SLICE0_EVIDENCE=PASS")
 print(f"source_commit={data['source']['commit']}")

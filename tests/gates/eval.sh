@@ -32,7 +32,7 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" \
     || { rm -rf "${EWORK}"; fail "eval grader ${TN} rejects its own reference solution: ${OUT}"; }
   rm -rf "${EWORK}"
-  echo "${OUT}" | grep -q '^SCORE ' || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
+  grep -q '^SCORE ' <<<"${OUT}" || fail "eval grader ${TN} breaks the CRIT/SCORE output contract: ${OUT}"
   EWORK="$(mktemp -d)"
   cp -R "${TDIR}project/." "${EWORK}/"
   if [ -x "${TDIR}setup.sh" ]; then
@@ -67,6 +67,90 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
   echo "ok  eval grader ${TN} red/green/anti-gamed"
 done
 
+# 4d1a. graders score a wrong answer instead of crashing on it, judge what was
+# written as well as what was refused, and award regression-red only on a
+# green suite. Each grader runs with its temp files inside GW.
+GW="$(mktemp -d)"
+mkdir "${GW}/tmp"
+# relay-transfer: a string where a verification object belongs. A grader
+# crash prints no SCORE, and run.sh drops the run as INVALID instead of
+# counting it as failed.
+RT="${ROOT}/eval/tasks/relay-transfer"
+mkdir "${GW}/rt"
+cp -R "${RT}/project/." "${GW}/rt/"
+"${RT}/setup.sh" "${GW}/rt"
+cp -R "${RT}/reference/." "${GW}/rt/"
+python3 - "${GW}/rt/LUCIA_RELAY.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["verification"] = ["./verify.sh exited 1: FAIL quoted separator"]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle)
+PY
+RC=0
+OUT="$(TMPDIR="${GW}/tmp" "${RT}/grade.sh" "${GW}/rt" 2>&1)" || RC=$?
+if [ "${RC}" != 1 ] || ! grep -q '^CRIT exact_verification fail$' <<<"${OUT}" || ! grep -q '^SCORE ' <<<"${OUT}"; then
+  fail "relay-transfer grader does not score a string verification entry as a failure (rc=${RC}): ${OUT}"
+fi
+# archive-security: an implementation that writes an escaping member and
+# only then refuses the archive has already escaped.
+AS="${ROOT}/eval/tasks/archive-security"
+mkdir "${GW}/as"
+cp -R "${AS}/project/." "${GW}/as/"
+cp -R "${AS}/reference/." "${GW}/as/"
+python3 - "${GW}/as/archive_store.py" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
+anchor = "def restore(zip_path, destination):\n    destination = Path(destination)\n"
+leak = anchor + (
+    "    with zipfile.ZipFile(zip_path) as bundle:\n"
+    "        for info in bundle.infolist():\n"
+    "            if info.filename == '../../outside.txt':\n"
+    "                naive = destination / info.filename\n"
+    "                naive.parent.mkdir(parents=True, exist_ok=True)\n"
+    "                naive.write_bytes(bundle.read(info))\n"
+)
+assert text.count(anchor) == 1
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text.replace(anchor, leak))
+PY
+OUT="$(TMPDIR="${GW}/tmp" "${AS}/grade.sh" "${GW}/as" 2>&1 || true)"
+if ! grep -q '^CRIT no-path-escape fail$' <<<"${OUT}"; then
+  fail "archive-security grader passes a restore that writes outside its destination before refusing: ${OUT}"
+fi
+# ...and one that refuses nothing must not pass because the destination's
+# parent was missing: an OSError from creating it is no refusal.
+mkdir "${GW}/as-np"
+cp -R "${AS}/project/." "${GW}/as-np/"
+printf 'import zipfile\nfrom pathlib import Path\n\n\ndef restore(zip_path, destination):\n    destination = Path(destination)\n    destination.mkdir(exist_ok=True)\n    with zipfile.ZipFile(zip_path) as bundle:\n        bundle.extractall(destination)\n' \
+  >"${GW}/as-np/archive_store.py"
+OUT="$(TMPDIR="${GW}/tmp" "${AS}/grade.sh" "${GW}/as-np" 2>&1 || true)"
+if ! grep -q '^CRIT no-path-escape fail$' <<<"${OUT}"; then
+  fail "archive-security grader passes a restore that refuses nothing when the destination's parent is missing: ${OUT}"
+fi
+# archive-security, schema-migration, paginated-sync: a suite that is red
+# before the probe fails on the probe too, whatever the implementation.
+for TN in archive-security schema-migration paginated-sync; do
+  mkdir "${GW}/${TN}"
+  cp -R "${ROOT}/eval/tasks/${TN}/project/." "${GW}/${TN}/"
+  cp -R "${ROOT}/eval/tasks/${TN}/reference/." "${GW}/${TN}/"
+  printf 'import unittest\n\n\nclass Red(unittest.TestCase):\n    def test_red(self):\n        self.fail("red before the probe")\n' \
+    >"${GW}/${TN}/test_zz_red.py"
+  OUT="$(TMPDIR="${GW}/tmp" "${ROOT}/eval/tasks/${TN}/grade.sh" "${GW}/${TN}" 2>&1 || true)"
+  if ! grep -q '^CRIT suite-green fail$' <<<"${OUT}" || ! grep -q '^CRIT regression-red fail$' <<<"${OUT}"; then
+    fail "${TN} grader awards regression-red to a suite that was already red: ${OUT}"
+  fi
+done
+if [ -n "$(ls -A "${GW}/tmp")" ]; then
+  fail "an eval grader left files behind in its temp directory: $(ls -A "${GW}/tmp")"
+fi
+rm -rf "${GW}"
+echo "ok  graders score a malformed relay, a written-then-refused escape and an already-red suite as failures"
+
 # 4d1b. regression-history: the fixture's premise is a history whose first bad
 # commit is the planted refactor and whose suite was green at every commit
 # since the good tag — prove both from the replayed repository, not from the
@@ -82,7 +166,7 @@ cp -R "${RH}/project/." "${RHW}/"
 [ -z "$(git -C "${RHW}" status --porcelain)" ] || fail "regression-history: setup.sh leaves the work copy dirty"
 PLANTED="refactor: track the running line length instead of re-joining"
 RHLOG="$(git -C "${RHW}" log --format=%s)"
-printf '%s\n' "${RHLOG}" | grep -qxF "${PLANTED}" || fail "regression-history: planted commit missing from the log"
+grep -qxF "${PLANTED}" <<<"${RHLOG}" || fail "regression-history: planted commit missing from the log"
 mktmp RHC
 for SHA in $(git -C "${RHW}" rev-list --reverse "v1.0^..HEAD"); do
   rm -rf "${RHC:?}"/* "${RHC}"/.[!.]* 2>/dev/null || true
@@ -105,9 +189,9 @@ FOUND="$(git -C "${RHW}" rev-parse --verify -q refs/bisect/bad 2>/dev/null || tr
 # red on repo-clean-state, and the line names why
 cp -R "${RH}/reference/." "${RHW}/"
 OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT repo-clean-state fail' \
+grep -qx 'CRIT repo-clean-state fail' <<<"${OUT}" \
   || fail "regression-history: a bisect left in progress is not graded red: ${OUT}"
-echo "${OUT}" | grep -q 'bisect-in-progress' || fail "regression-history: leftover bisect not named: ${OUT}"
+grep -q 'bisect-in-progress' <<<"${OUT}" || fail "regression-history: leftover bisect not named: ${OUT}"
 git -C "${RHW}" checkout -q -- .
 git -C "${RHW}" bisect reset >/dev/null 2>&1 || fail "regression-history: git bisect reset failed"
 cp -R "${RH}/reference/." "${RHW}/"
@@ -116,7 +200,7 @@ git -C "${RHW}" checkout -q -- .
 git -C "${RHW}" checkout -q --detach v1.1
 cp -R "${RH}/reference/." "${RHW}/"
 OUT="$("${RH}/grade.sh" "${RHW}" 2>&1 || true)"
-echo "${OUT}" | grep -q 'detached-HEAD' || fail "regression-history: detached HEAD not graded red: ${OUT}"
+grep -q 'detached-HEAD' <<<"${OUT}" || fail "regression-history: detached HEAD not graded red: ${OUT}"
 echo "ok  regression-history history premises + leftover bisect graded red"
 
 # 4d1c. no-verify: the grader finds a verify command by convention, and
@@ -146,7 +230,7 @@ rm "${NVW}/test_versions.py"
 OUT="$("${NV}/grade.sh" "${NVW}" 2>&1)" || fail "no-verify: tests/ without __init__.py not discovered: ${OUT}"
 printf 'import unittest\n' > "${NVW}/tests/test_versions.py"
 OUT="$("${NV}/grade.sh" "${NVW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+grep -qx 'CRIT verify-green fail' <<<"${OUT}" \
   || fail "no-verify: a test module that runs no tests counts as green: ${OUT}"
 nv_tree NVW
 cp "${NV}/reference/versions.py" "${NVW}/versions.py"
@@ -215,7 +299,7 @@ OUT="$(PYTHONPATH="${NVSTUB}" LZ_PYTEST_STUB_MARK="${NVSTUB}/ran" "${NV}/grade.s
 [ -f "${NVSTUB}/ran" ] || fail "no-verify: the pytest branch did not run the pytest command"
 printf 'import unittest\n' > "${NVW}/test_versions.py"
 OUT="$(PYTHONPATH="${NVSTUB}" "${NV}/grade.sh" "${NVW}" 2>&1 || true)"
-echo "${OUT}" | grep -qx 'CRIT verify-green fail' \
+grep -qx 'CRIT verify-green fail' <<<"${OUT}" \
   || fail "no-verify: a pytest run that reports no tests counts as green: ${OUT}"
 echo "ok  no-verify discovery: tests/, bash verify.sh, module-named docs, pytest stub, zero-test runs red"
 
@@ -323,8 +407,10 @@ printf '%s\n' \
   '{"task":"t","arm":"doctrine","run":2,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"other"}]}}' \
   '{"task":"t","arm":"doctrine","run":3,"invalid":false,"criteria":{"ok":true},"score":"1/1","duration_s":1,"skill_use":{"status":"observed","names":["debug"],"evidence":[{"channel":"Skill","name":"debug","path":"skills/debug/","source":"unresolved"}]}}' \
   > "${RPT}"
-"${ROOT}/eval/report.sh" "${RPT}" 2>/dev/null | grep -q '^skill use (trace evidence, valid runs): doctrine observed 3/3 (debug x1, debug x2\*)$' \
-  || { rm -f "${RPT}"; fail "report.sh pooled sandbox and untied observations of one name: $("${ROOT}/eval/report.sh" "${RPT}" 2>&1 | grep '^skill use')"; }
+if ! RPT_OUT="$("${ROOT}/eval/report.sh" "${RPT}" 2>/dev/null)" \
+  || ! grep -q '^skill use (trace evidence, valid runs): doctrine observed 3/3 (debug x1, debug x2\*)$' <<<"${RPT_OUT}"; then
+  rm -f "${RPT}"; fail "report.sh pooled sandbox and untied observations of one name: $("${ROOT}/eval/report.sh" "${RPT}" 2>&1 | grep '^skill use')"
+fi
 rm -f "${RPT}"
 echo "ok  eval report fixture + malformed input"
 
@@ -352,7 +438,7 @@ printf '%s\n' \
   > "${CRF}/codex-bad-usage.jsonl"
 RC=0; OUT="$("${CR}" "${CRF}/notlogged.json" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "check-result rejection lost the reason: ${OUT}"; }
 RC=0; "${CR}" "${CRF}/sneaky.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a login error without is_error"; }
 "${CR}" "${CRF}/good.json" >/dev/null 2>&1 || { rm -rf "${CRF}"; fail "check-result rejected a healthy result"; }
@@ -367,6 +453,15 @@ RC=0; "${CR}" --provider codex "${CRF}/codex-bad-usage.jsonl" >/dev/null 2>&1 ||
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted malformed Codex usage"; }
 RC=0; "${CR}" "${CRF}/absent.json" >/dev/null 2>&1 || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a missing log"; }
+# a run that printed nothing has no output to call plain text: an empty or
+# blank log is a run that never happened, not one nothing refutes
+: > "${CRF}/empty.log"
+printf ' \n\t\n' > "${CRF}/blank.log"
+for f in empty.log blank.log; do
+  RC=0; OUT="$("${CR}" "${CRF}/${f}" 2>&1)" || RC=$?
+  [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a log with no output (${f})"; }
+  grep -q 'no output' <<<"${OUT}" || { rm -rf "${CRF}"; fail "check-result empty-log rejection lost the reason: ${OUT}"; }
+done
 # --output-format stream-json writes one event per line and the result
 # object last; the same acceptance and rejection rules apply to that final
 # event, and a stream that never reached it is a run that died mid-way
@@ -388,10 +483,10 @@ printf '%s\n' \
   || { rm -rf "${CRF}"; fail "check-result rejected a healthy stream-json log"; }
 RC=0; OUT="$("${CR}" "${CRF}/stream-notlogged.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a not-logged-in stream-json result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "stream-json rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "stream-json rejection lost the reason: ${OUT}"; }
 RC=0; OUT="$("${CR}" "${CRF}/stream-noresult.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result accepted a stream-json log with no result event"; }
-echo "${OUT}" | grep -q 'no result event' || { rm -rf "${CRF}"; fail "stream-json no-result rejection lost the reason: ${OUT}"; }
+grep -q 'no result event' <<<"${OUT}" || { rm -rf "${CRF}"; fail "stream-json no-result rejection lost the reason: ${OUT}"; }
 # a stray non-JSON line between two events (a warning on the same
 # descriptor) does not turn the stream into "plain text": the result event
 # after it is still read, and still refused
@@ -402,7 +497,7 @@ printf '%s\n' \
   > "${CRF}/stream-noise.jsonl"
 RC=0; OUT="$("${CR}" "${CRF}/stream-noise.jsonl" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${CRF}"; fail "check-result read a stream with a stray line as plain text and accepted an error result"; }
-echo "${OUT}" | grep -q 'Not logged in' || { rm -rf "${CRF}"; fail "noisy stream rejection lost the reason: ${OUT}"; }
+grep -q 'Not logged in' <<<"${OUT}" || { rm -rf "${CRF}"; fail "noisy stream rejection lost the reason: ${OUT}"; }
 rm -rf "${CRF}"
 echo "ok  check-result rejects error payloads behind exit 0"
 
@@ -759,8 +854,10 @@ if "${ROOT}/eval/run.sh" --discard-work --offline --resume --seed resume-seed \
 fi
 [ "$(wc -l < "${OFJ}/order-drift.jsonl" | tr -d ' ')" = 1 ] \
   || { rm -rf "${OFJ}"; fail "arm-order drift appended before preflight"; }
-"${ROOT}/eval/report.sh" "${OFJ}/r.jsonl" | grep -q 'SYNTHETIC OFFLINE SMOKE' \
-  || { rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"; }
+if ! SMOKE_OUT="$("${ROOT}/eval/report.sh" "${OFJ}/r.jsonl")" \
+  || ! grep -q 'SYNTHETIC OFFLINE SMOKE' <<<"${SMOKE_OUT}"; then
+  rm -rf "${OFJ}"; fail "report.sh did not brand offline rows SYNTHETIC"
+fi
 "${ROOT}/eval/report.sh" "${ROOT}/eval/testdata/sample-results-offline.jsonl" > "${OFJ}/off.md" \
   || { rm -rf "${OFJ}"; fail "report.sh failed on the offline fixture"; }
 cmp -s "${OFJ}/off.md" "${ROOT}/eval/testdata/sample-report-offline.md" \
@@ -907,6 +1004,11 @@ printf '%s\n' \
   '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cat \"/sb/skills/done/SKILL.md\"; PROBE=/sb/skills/done/scripts/revert-probe.sh; bash $PROBE\n/sb/skills/ready/scripts/detect.sh .; ls /x/myskills/plan/"}}]}}' \
   '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
   > "${SUF}/paths.jsonl"
+# the Node helpers, as the skills now name them, are evidence the same way
+printf '%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"node /sb/skills/done/scripts/revert-probe.cjs \"npm test\" && node /sb/skills/bisect/scripts/safe-bisect.cjs --good v1 --bad HEAD -- npm test"}}]}}' \
+  '{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}' \
+  > "${SUF}/node-helpers.jsonl"
 # the sandbox reached through a symlink still resolves to the sandbox
 mkdir -p "${SUF}/real/skills/done"
 ln -s "${SUF}/real" "${SUF}/link"
@@ -970,6 +1072,10 @@ assert r["status"] == "observed" and r["names"] == ["done", "ready"], r
 assert r["evidence"] == [ev("Bash", "done", "skills/done/SKILL.md", "sandbox"),
                          ev("Bash", "done", "skills/done/scripts/revert-probe.sh", "sandbox"),
                          ev("Bash", "ready", "skills/ready/scripts/detect.sh", "sandbox")], r'
+su_check node-helpers claude "${SUF}/node-helpers.jsonl" '
+assert r["status"] == "observed" and r["names"] == ["bisect", "done"], r
+assert r["evidence"] == [ev("Bash", "done", "skills/done/scripts/revert-probe.cjs", "sandbox"),
+                         ev("Bash", "bisect", "skills/bisect/scripts/safe-bisect.cjs", "sandbox")], r'
 SU_SKILLS_DIR="${SUF}/link/skills" su_check symlink claude "${SUF}/symlink.jsonl" '
 assert r["status"] == "observed", r
 assert r["evidence"] == [ev("Read", "done", "skills/done/SKILL.md", "sandbox")], r'
@@ -1163,7 +1269,7 @@ cp -R "${RPX}/bites" "${RPX}/bothred"
 ST1="$(cd "${RPX}/bites" && git status --porcelain)"
 RC=0; OUT="$(cd "${RPX}/bites" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a biting test: ${OUT}"; }
-echo "${OUT}" | grep -q '^PASS' || { rm -rf "${RPX}"; fail "revert-probe did not print PASS: ${OUT}"; }
+grep -q '^PASS' <<<"${OUT}" || { rm -rf "${RPX}"; fail "revert-probe did not print PASS: ${OUT}"; }
 ST2="$(cd "${RPX}/bites" && git status --porcelain)"
 [ "${ST1}" = "${ST2}" ] || { rm -rf "${RPX}"; fail "revert-probe touched the caller's working tree"; }
 [ "$(cd "${RPX}/bites" && git worktree list | wc -l | tr -d ' ')" = 1 ] \
@@ -1176,12 +1282,12 @@ ST2="$(cd "${RPX}/bites" && git status --porcelain)"
 )
 RC=0; OUT="$(cd "${RPX}/vacuous" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 1 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a vacuous test (want 1): ${OUT}"; }
-echo "${OUT}" | grep -q 'stay green' || { rm -rf "${RPX}"; fail "vacuous-test verdict wrong: ${OUT}"; }
+grep -q 'stay green' <<<"${OUT}" || { rm -rf "${RPX}"; fail "vacuous-test verdict wrong: ${OUT}"; }
 # (iii) not a git repo -> UNASSESSABLE, exit 2
 mkdir -p "${RPX}/nogit"
 RC=0; OUT="$(cd "${RPX}/nogit" && "${RP}" 'true')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} outside git (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q '^UNASSESSABLE' || { rm -rf "${RPX}"; fail "missing UNASSESSABLE marker: ${OUT}"; }
+grep -q '^UNASSESSABLE' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing UNASSESSABLE marker: ${OUT}"; }
 # (iv) a non-ASCII test filename (C-quoted in git's plain output, raw with
 # -z) must still be collected — regression: it was silently dropped
 mkdir -p "${RPX}/uni/tests"
@@ -1220,7 +1326,7 @@ RC=0; OUT="$(cd "${RPX}/root-script" && "${RP}" './test.sh')" || RC=$?
 )
 RC=0; OUT="$(cd "${RPX}/nocmd" && "${RP}" 'luciazero-not-a-real-command tests/test_calc.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a missing command (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'exit 127' || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
+grep -q 'exit 127' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing-command verdict wrong: ${OUT}"; }
 # (vii) the old tree cannot import a module the change adds — a red run that
 # proves the file is new, not that the test asserts anything -> UNASSESSABLE
 mkdir -p "${RPX}/newmod/tests"
@@ -1235,7 +1341,7 @@ mkdir -p "${RPX}/newmod/tests"
 )
 RC=0; OUT="$(cd "${RPX}/newmod" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_helper.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on a parent-only import failure (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
+grep -q 'never loaded the tests' <<<"${OUT}" || { rm -rf "${RPX}"; fail "import-failure verdict wrong: ${OUT}"; }
 # (viii) a test that is red on the old code AND on the current code proves
 # nothing about the change -> UNASSESSABLE
 (
@@ -1245,7 +1351,7 @@ echo "${OUT}" | grep -q 'never loaded the tests' || { rm -rf "${RPX}"; fail "imp
 )
 RC=0; OUT="$(cd "${RPX}/bothred" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'PYTHONPATH=. python3 tests/test_calc.py')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} when current code fails too (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'also fails on the current code' \
+grep -q 'also fails on the current code' <<<"${OUT}" \
   || { rm -rf "${RPX}"; fail "current-code control verdict wrong: ${OUT}"; }
 # (ix) a whole-suite verify whose failure belongs to an unrelated broken test
 # is not attributable to the changed tests -> UNASSESSABLE
@@ -1263,7 +1369,7 @@ mkdir -p "${RPX}/unrelated/tests"
 )
 RC=0; OUT="$(cd "${RPX}/unrelated" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an unrelated failure (want 2): ${OUT}"; }
-echo "${OUT}" | grep -q 'cannot be attributed' \
+grep -q 'cannot be attributed' <<<"${OUT}" \
   || { rm -rf "${RPX}"; fail "attribution verdict wrong: ${OUT}"; }
 # (x) an untargeted suite still passes when the failure output names the
 # changed test, and says so
@@ -1280,7 +1386,7 @@ mkdir -p "${RPX}/suite/tests"
 )
 RC=0; OUT="$(cd "${RPX}/suite" && PYTHONDONTWRITEBYTECODE=1 "${RP}" 'sh run-all.sh')" || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${RPX}"; fail "revert-probe rc=${RC} on an untargeted but attributable suite: ${OUT}"; }
-echo "${OUT}" | grep -q 'not targeted' || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
+grep -q 'not targeted' <<<"${OUT}" || { rm -rf "${RPX}"; fail "missing untargeted note: ${OUT}"; }
 rm -rf "${RPX}"
 echo "ok  revert-probe bites/vacuous/unassessable"
 
@@ -1294,7 +1400,7 @@ DT="$(mktemp -d)"
 RC=0
 GOUT="$("${ROOT}/eval/tasks/slugify/grade.sh" "${DT}/demo" 2>&1)" || RC=$?
 [ "${RC}" -ne 0 ] || { rm -rf "${DT}"; fail "grader passed the untouched demo target: ${GOUT}"; }
-echo "${GOUT}" | grep -q ' fail' \
+grep -q ' fail' <<<"${GOUT}" \
   || { rm -rf "${DT}"; fail "grader exit ${RC} but no CRIT fail line in output: ${GOUT}"; }
 # a symlinked path into the repo must not slip past the in-repo refusal
 ln -s "${ROOT}" "${DT}/repolink"

@@ -14,17 +14,20 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from luciazero_agentd import Store
-from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS
+from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS, utcnow
 from luciazero_agentd import procinfo
 from luciazero_agentd.redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX, DEFAULT as DEFAULT_REDACTOR
 from luciazero_agentd.server import ACTOR_FIELDS, TOOL_INDEX, BusServer, tool_contract
-from luciazero_agentd.store import ConflictError, NotFound, UnsafeReference
+from luciazero_agentd.store import ConflictError, NotFound, UnsafeReference, ValidationError
+from tests.fixtures import WINDOWS, fake_cli, kill_pid, pid_running
 from tests.test_mcp import TOKEN, Http
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +61,24 @@ class Bindings(StoreCase):
         row = self.store._conn.execute("SELECT credential_hash FROM bindings WHERE id = ?", (binding["id"],)).fetchone()
         self.assertNotIn(credential, str(row["credential_hash"]))
         self.assertEqual(self.store.resolve_credential(credential, alive=ALIVE)["agent_id"], "claude-reviewer")
+
+    def test_a_binding_named_by_its_caller_keeps_that_name_and_is_checked(self) -> None:
+        """`run` names its binding before the store commits it, so that an
+        interrupt between the commit and the return still knows what to
+        revoke. A name from outside is checked like every other id, on the
+        path that binds inside a caller's transaction too."""
+        binding, _ = self.bind(tty="ttys130", pid=os.getpid(), binding_id="bind_chosen")
+        self.assertEqual("bind_chosen", binding["id"])
+        for bad in ("bind chosen", "", "x" * 200):
+            with self.subTest(binding_id=bad):
+                with self.assertRaises(ValidationError):
+                    self.bind("codex-architect", provider="codex", binding_id=bad)
+                with self.assertRaises(ValidationError):
+                    with self.store._tx("test"):
+                        self.store._bind_terminal_locked("codex-architect", provider="codex",
+                                                         by="human:test", binding_id=bad)
+        self.assertEqual([], [b for b in self.store.list_bindings(states=("active", "revoked", "stale"), alive=None)
+                              if b["agent_id"] == "codex-architect"])
 
     def test_unknown_and_malformed_credentials_resolve_to_nobody(self) -> None:
         for value in (None, 42, "", "bearer", CREDENTIAL_PREFIX + "0" * 32, CREDENTIAL_PREFIX + "zz", "lzap_" + "0" * 32):
@@ -217,6 +238,63 @@ class Bindings(StoreCase):
         self.store._conn.execute("UPDATE bindings SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (binding["id"],))
         self.assertIsNone(self.store.resolve_credential(credential, alive=ALIVE))
 
+    def test_renewals_landing_out_of_order_never_shorten_a_binding(self) -> None:
+        """Two requests can each read the row before either renews it. The
+        one that read it later computes the later expiry; if it commits first,
+        the earlier one must not pull the expiry back behind it (roadmap R16)."""
+        binding, _credential = self.bind(tty="ttys124", pid=os.getpid(), ttl_seconds=3600)
+        moment = datetime.now(timezone.utc)
+        soon = (moment + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        snapshot = dict(self.store._conn.execute("SELECT * FROM bindings WHERE id = ?", (binding["id"],)).fetchone())
+        earlier = moment.isoformat(timespec="microseconds")
+        later = (moment + timedelta(seconds=30)).isoformat(timespec="microseconds")
+        landed = self.store._renew_binding(dict(snapshot), now=later)
+        self.assertIsNotNone(landed)
+        self.assertIsNone(self.store._renew_binding(dict(snapshot), now=earlier))
+        self.assertEqual(self.store.get_binding(binding["id"])["expires_at"], landed)
+        renewals = [e for e in self.store.events(limit=200) if e["kind"] == "binding.renewed"]
+        self.assertEqual(len(renewals), 1)
+
+    def test_a_binding_ended_after_it_was_read_is_never_reported_renewed(self) -> None:
+        """The UPDATE already refuses a row that is no longer active; the event
+        and the return value have to say the same, or the log records a
+        renewal of a credential that was revoked (roadmap R16)."""
+        binding, _credential = self.bind(tty="ttys125", pid=os.getpid(), ttl_seconds=3600)
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="microseconds")
+        self.store._conn.execute("UPDATE bindings SET expires_at = ? WHERE id = ?", (soon, binding["id"]))
+        snapshot = dict(self.store._conn.execute("SELECT * FROM bindings WHERE id = ?", (binding["id"],)).fetchone())
+        self.store.revoke_binding(binding["id"], by="human:test")
+        self.assertIsNone(self.store._renew_binding(snapshot, now=utcnow()))
+        revoked = self.store.get_binding(binding["id"])
+        self.assertEqual((revoked["state"], revoked["expires_at"]), ("revoked", soon))
+        self.assertNotIn("binding.renewed", [e["kind"] for e in self.store.events(limit=200)])
+
+    def test_a_managed_bind_never_asks_the_process_table_inside_its_transaction(self) -> None:
+        """`ps` can take seconds; `BEGIN IMMEDIATE` holds the write lock for
+        every other session while it does. Liveness is settled before the
+        transaction opens, and inside it only rows are read (roadmap R17)."""
+        self.bind(tty="ttys126", pid=os.getpid(), process_started_at="then")
+        probes: list[bool] = []
+
+        def owned(_pid: int) -> bool:
+            probes.append(self.store._conn.in_transaction)
+            return True
+
+        with mock.patch.object(procinfo, "owned", owned), \
+                mock.patch.object(procinfo, "started_at", lambda *_a, **_k: "then"):
+            with self.assertRaises(ConflictError):
+                self.bind(by="dispatch:1", ownership="managed")
+        self.assertTrue(probes, "the managed bind never checked whether the human session is alive")
+        self.assertNotIn(True, probes)
+
+    def test_a_managed_bind_still_replaces_a_human_binding_whose_process_is_gone(self) -> None:
+        human, _ = self.bind(tty="ttys127", pid=os.getpid(), process_started_at="then")
+        with mock.patch.object(procinfo, "owned", lambda _pid: False):
+            managed, _ = self.bind(by="dispatch:1", ownership="managed")
+        self.assertNotEqual(self.store.get_binding(human["id"])["state"], "active")
+        self.assertEqual(self.store.get_binding(managed["id"])["state"], "active")
+
     def test_an_expired_credential_is_refused_even_while_the_process_lives(self) -> None:
         binding, credential = self.bind(tty="ttys106", pid=os.getpid(), ttl_seconds=60)
         self.store._conn.execute("UPDATE bindings SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (binding["id"],))
@@ -235,7 +313,7 @@ class Bindings(StoreCase):
     def test_process_identity_is_filled_in_once(self) -> None:
         binding, _ = self.bind(tty="ttys108")
         self.assertIsNone(binding["pid"])
-        filled = self.store.bind_process(binding["id"], pid=os.getpid(), process_started_at="t0", cwd="/tmp")
+        filled = self.store.bind_process(binding["id"], pid=os.getpid(), process_started_at="t0", cwd=os.getcwd())
         self.assertEqual(filled["pid"], os.getpid())
         with self.assertRaises(ConflictError):
             self.store.bind_process(binding["id"], pid=1, process_started_at="t1")
@@ -534,12 +612,13 @@ class HumanCommands(unittest.TestCase):
             self.assertEqual(store.get_binding(binding["id"])["state"], "revoked")
         self.assertEqual(self.cli("detach", "--agent", "claude-reviewer").returncode, 2)
 
-    def _sleeper(self) -> Path:
+    def _sleeper(self) -> str:
         """A provider stand-in that ignores the flags `run` adds."""
-        script = self.state / "sleeper.sh"
-        script.write_text("#!/bin/sh\nexec sleep 30\n")
-        script.chmod(0o755)
-        return script
+        return fake_cli(self.state / "sleeper", "import time\ntime.sleep(30)\n")
+
+    def _echo(self) -> str:
+        """`echo`, as a provider stand-in every platform can start."""
+        return fake_cli(self.state / "echo", "import sys\nprint(' '.join(sys.argv[1:]))\n")
 
     def _bindings(self, states=("active", "revoked", "stale")) -> list[dict]:
         with Store.open(self.state / "bus.sqlite3") as store:
@@ -552,10 +631,20 @@ class HumanCommands(unittest.TestCase):
         endpoint = read_endpoint(self.state if state is None else state)
         if endpoint is None or not isinstance(endpoint.get("pid"), int):
             return
-        try:
-            os.kill(endpoint["pid"], __import__("signal").SIGTERM)
-        except OSError:
-            pass
+        if WINDOWS:
+            # An autostarted daemon there has no console to send Ctrl+Break
+            # to. Wait for it to be gone: Windows will not delete the state
+            # directory while it still holds the log and the database open.
+            kill_pid(endpoint["pid"])
+        else:
+            try:
+                os.kill(endpoint["pid"], __import__("signal").SIGTERM)
+            except OSError:
+                pass
+        for _ in range(200):
+            if not pid_running(endpoint["pid"]):
+                return
+            __import__("time").sleep(0.05)
 
     def test_run_starts_the_daemon_a_first_terminal_does_not_have(self) -> None:
         """Setup step one is "start the daemon in a terminal you can leave
@@ -566,7 +655,7 @@ class HumanCommands(unittest.TestCase):
         self.addCleanup(self._stop_daemon)
         self.assertIsNone(read_endpoint(self.state))
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         endpoint = read_endpoint(self.state)
         self.assertIsNotNone(endpoint, done.stderr)
@@ -576,7 +665,7 @@ class HumanCommands(unittest.TestCase):
         """Automation that wants to know a daemon was already running keeps
         the answer it had."""
         done = self.cli("run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 2, done.stdout)
         self.assertIn("no running daemon", done.stderr)
 
@@ -595,7 +684,7 @@ class HumanCommands(unittest.TestCase):
 
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         endpoint = read_endpoint(self.state)
         self.assertIsNotNone(endpoint, done.stderr)
@@ -609,7 +698,7 @@ class HumanCommands(unittest.TestCase):
             store.trust = "human"
             store.register_agent("claude-reviewer", provider="claude", role="reviewer")
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(second), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(second), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         other = read_endpoint(second)
         self.assertIsNotNone(other, done.stderr)
@@ -627,7 +716,7 @@ class HumanCommands(unittest.TestCase):
         (broken / "bus.sqlite3").mkdir()  # sqlite cannot open a directory
         started = _time.monotonic()
         done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
-                        "--state-dir", str(broken), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(broken), "--", self._echo(), "hello", raw=True)
         waited = _time.monotonic() - started
         self.assertEqual(done.returncode, 2, done.stdout)
         self.assertLess(waited, 10, "a dead child is not worth a twenty second wait")
@@ -655,12 +744,180 @@ class HumanCommands(unittest.TestCase):
 
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--agent", "claude-newcomer", "--provider", "claude",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         with Store.open(self.state / "bus.sqlite3") as store:
             store.migrate()
             self.assertEqual(store.get_agent("claude-newcomer")["provider"], "claude")
         self.assertIn("claude-newcomer", done.stderr + done.stdout)
+
+    def _run_watching_restrict(self, *, refuse: bool) -> tuple[subprocess.CompletedProcess, Path]:
+        """`run` in a child whose `restrict` says, for mcp.json, how many bytes
+        the file already held -- or refuses it, as a DACL that cannot be set
+        would. Returns the result and the directory its temp files went to."""
+        temp = self.state / "tmp"
+        temp.mkdir()
+        spy = (
+            "import os, sys\n"
+            "from luciazero_agentd import __main__ as cli, statedir\n"
+            "real = statedir.restrict\n"
+            "def restrict(path):\n"
+            "    if os.path.basename(path) == 'mcp.json':\n"
+            "        print(f'restrict: mcp.json held {os.path.getsize(path)} bytes', file=sys.stderr)\n"
+            f"        if {refuse!r}:\n"
+            "            raise PermissionError(13, 'injected: cannot restrict', str(path))\n"
+            "    return real(path)\n"
+            "statedir.restrict = cli.restrict = restrict\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._echo(), "hello"],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state),
+                 "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)},
+        )
+        return done, temp
+
+    def test_the_credential_file_is_private_before_it_holds_the_credential(self) -> None:
+        """On Windows a new file takes whatever its directory hands down, so
+        restricting mcp.json after writing it leaves the credential readable
+        for a moment; it is made private while still empty."""
+        self.addCleanup(self._stop_daemon)
+        done, _ = self._run_watching_restrict(refuse=False)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("hello", done.stdout)
+        held = [line for line in done.stderr.splitlines() if line.startswith("restrict: mcp.json")]
+        self.assertEqual(["restrict: mcp.json held 0 bytes"], held, done.stderr)
+
+    def test_a_session_whose_credential_file_cannot_be_made_private_leaves_nothing(self) -> None:
+        """The binding is minted before its configuration is written. If the
+        file cannot be made private, the credential must not stay valid for
+        the rest of its TTL, nor sit in a temp directory, nor reach a
+        provider."""
+        self.addCleanup(self._stop_daemon)
+        done, temp = self._run_watching_restrict(refuse=True)
+        self.assertEqual(done.returncode, 2, done.stderr + done.stdout)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertIn("cannot prepare the session's bus configuration", done.stderr)
+        self.assertNotIn("hello", done.stdout, "the provider must not be started")
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+        self.assertEqual([], [p.name for p in temp.iterdir() if p.name.startswith("luciazero-bind-")])
+
+    @unittest.skipIf(WINDOWS, "the pty path; Windows holds a console, which catches this already")
+    def test_a_process_table_that_fails_at_bind_leaves_no_credential_live(self) -> None:
+        """Review finding: binding the provider's pid on the pty path caught
+        StoreError alone, outside the cleanup, so a process table that failed
+        right then left the session's credential valid for its whole TTL."""
+        self.addCleanup(self._stop_daemon)
+        spy = (
+            "import os, subprocess, sys\n"
+            "from luciazero_agentd import __main__ as cli, procinfo\n"
+            "children = set()\n"
+            "def spawn(argv, env):\n"
+            "    child = subprocess.Popen(argv, env=env)\n"
+            "    children.add(child.pid)\n"
+            "    return child.pid, os.open(os.devnull, os.O_RDONLY)\n"
+            "def proxy(pid, master, **_):\n"
+            "    os.close(master)\n"
+            "    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])\n"
+            "real = procinfo.started_at\n"
+            "def started_at(pid, **kw):\n"
+            "    if pid in children:\n"
+            "        raise procinfo.ProcessError('injected: the process table is unreadable')\n"
+            "    return real(pid, **kw)\n"
+            "cli.nudge.usable, cli.nudge.spawn, cli.nudge.proxy = (lambda: True), spawn, proxy\n"
+            "procinfo.started_at = started_at\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._echo(), "hello"],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+        )
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn("hello", done.stdout)
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+
+    def _run_signalled_at_bind(self, *, pty: bool) -> tuple[subprocess.CompletedProcess, int]:
+        """`run` with a sleeping provider, sent SIGTERM while it binds the
+        provider's pid -- after the spawn, before the session is proxied.
+        Returns the result and the provider's pid."""
+        spy = (
+            "import os, signal, subprocess, sys\n"
+            "from luciazero_agentd import __main__ as cli, procinfo\n"
+            "def spawn(argv, env):\n"
+            "    return subprocess.Popen(argv, env=env).pid, os.open(os.devnull, os.O_RDONLY)\n"
+            "def proxy(pid, master, **_):\n"
+            "    os.close(master)\n"
+            "    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])\n"
+            "real = procinfo.started_at\n"
+            "def started_at(pid, **kw):\n"
+            "    if pid != os.getpid():\n"
+            "        print(f'provider pid {pid}', file=sys.stderr, flush=True)\n"
+            "        os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    return real(pid, **kw)\n"
+            f"if {pty!r}:\n"
+            "    cli.nudge.usable, cli.nudge.spawn, cli.nudge.proxy = (lambda: True), spawn, proxy\n"
+            "procinfo.started_at = started_at\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._sleeper()],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+        )
+        pids = [int(line.split()[-1]) for line in done.stderr.splitlines() if line.startswith("provider pid ")]
+        self.assertEqual(1, len(pids), done.stderr)
+        self.addCleanup(kill_pid, pids[0])
+        return done, pids[0]
+
+    def _assert_stopped_cleanly(self, done: subprocess.CompletedProcess, provider: int) -> None:
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(done.returncode, 130, done.stderr + done.stdout)
+        self.assertFalse(pid_running(provider), "the provider outlived run")
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+
+    @unittest.skipIf(WINDOWS, "SIGTERM; Windows ends the process at once, with no handler to run")
+    def test_a_sigterm_while_run_binds_its_provider_still_ends_both(self) -> None:
+        """Review finding: `run` took SIGTERM over only once the provider's pid
+        was bound, so a SIGTERM in that moment ended `run` alone and left the
+        provider running with a live credential until its TTL."""
+        self.addCleanup(self._stop_daemon)
+        self._assert_stopped_cleanly(*self._run_signalled_at_bind(pty=False))
+
+    @unittest.skipIf(WINDOWS, "the pty path, and SIGTERM")
+    def test_a_sigterm_while_run_binds_its_pty_provider_still_ends_both(self) -> None:
+        """The same moment on the pty path, which took SIGTERM over only
+        after the bind and the delivery watcher were set up."""
+        self.addCleanup(self._stop_daemon)
+        self._assert_stopped_cleanly(*self._run_signalled_at_bind(pty=True))
+
+    @unittest.skipIf(WINDOWS, "the pty path; Windows ends the console's tree instead")
+    def test_a_provider_that_ignores_sigterm_does_not_hold_run_open(self) -> None:
+        """Review finding: stopping `run` on a pty sent SIGTERM and then waited
+        for the provider with no limit, so SIGKILL was never reached."""
+        from luciazero_agentd import __main__ as cli
+        ready = self.state / "stubborn.ready"
+        child = subprocess.Popen([sys.executable, "-c", (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "open(sys.argv[1], 'w').write('ready')\n"
+            "time.sleep(60)\n"), str(ready)])
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        began = time.monotonic()
+        cli._end_pty_child(child.pid, grace=0.5)
+        self.assertLess(time.monotonic() - began, 30, "run waited on a provider that ignored SIGTERM")
+        self.assertFalse(pid_running(child.pid))
 
     def _front(self, *args: str, home: Optional[Path] = None) -> subprocess.CompletedProcess:
         """`lucia claude` with a stand-in on PATH for the provider itself.
@@ -671,12 +928,11 @@ class HumanCommands(unittest.TestCase):
         bin_dir = self.state / "front bin"
         bin_dir.mkdir(exist_ok=True)
         for name in ("claude", "codex"):
-            fake = bin_dir / name
-            fake.write_text(f'#!/bin/sh\nprintf "%s started: %s\\n" {name} "$*"\n')
-            fake.chmod(0o755)
-        env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+            fake_cli(bin_dir / name, f"import sys\nprint({name!r} + ' started: ' + ' '.join(sys.argv[1:]))\n")
+        env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
         if home is not None:
             env["HOME"] = str(home)
+            env["USERPROFILE"] = str(home)  # what Windows calls home
         return self.cli(*args, "--state-dir", str(self.state), raw=True, env=env)
 
     def test_the_provider_is_the_verb_and_its_name_is_the_agent(self) -> None:
@@ -738,7 +994,7 @@ class HumanCommands(unittest.TestCase):
         a refusal that only one of them makes is half a refusal."""
         self.addCleanup(self._stop_daemon)
         done = self.cli("run", "--strict", "--agent", "codex-architect", "--provider", "codex",
-                        "--state-dir", str(self.state), "--", "/bin/echo", "hello", raw=True)
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
         self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
         self.assertIn("--strict is only supported by claude", done.stderr)
         self.assertNotIn("hello", done.stdout)
@@ -802,24 +1058,35 @@ class HumanCommands(unittest.TestCase):
         from luciazero_agentd.statedir import write_endpoint
 
         write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
+        # Windows has no SIGTERM to send; Ctrl+Break to a process group of
+        # its own is the request to stop there.
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
         cli = subprocess.Popen(
             [sys.executable, "-m", "luciazero_agentd", "run", "--agent", "claude-reviewer",
-             "--provider", "claude", "--state-dir", str(self.state), "--", str(self._sleeper())],
+             "--provider", "claude", "--state-dir", str(self.state), "--", self._sleeper()],
             cwd=str(PACKAGE_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+            **group,
         )
         self.addCleanup(cli.kill)
         for stream in (cli.stdout, cli.stderr):
             self.addCleanup(stream.close)
         child_pid = None
-        for _ in range(100):  # wait for the binding to name its process
+        # Wait for the binding to name its process. Two interpreters start
+        # before it does, which takes seconds on a busy Windows runner; a run
+        # that exits first says why instead of leaving the wait to time out.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and cli.poll() is None:
             live = [b for b in self._bindings(states=("active",)) if b["pid"]]
             if live:
                 child_pid = int(live[0]["pid"])
                 break
             time.sleep(0.05)
-        self.assertIsNotNone(child_pid, "run never recorded its child")
-        cli.send_signal(signal.SIGTERM)
+        if child_pid is None:
+            cli.kill()
+            _, err = cli.communicate(timeout=30)
+            self.fail(f"run never recorded its child (exit {cli.returncode}): {err}")
+        cli.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
         cli.wait(timeout=30)
         bindings = self._bindings()
         self.assertEqual([b["state"] for b in bindings], ["revoked"], "SIGTERM must not leave a live credential")
@@ -838,7 +1105,7 @@ class HumanCommands(unittest.TestCase):
         # placed after it, so the state directory has to come first.
         done = self.cli(
             "run", "--agent", "claude-reviewer", "--provider", "claude", "--state-dir", str(self.state),
-            "--", "/bin/echo", "started", raw=True,
+            "--", self._echo(), "started", raw=True,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
         # the child was handed a path, never the secret itself: argv is
@@ -855,6 +1122,137 @@ class HumanCommands(unittest.TestCase):
         self.assertEqual(len(bindings), 1)
         self.assertEqual(bindings[0]["state"], "revoked")
         self.assertEqual(bindings[0]["ended_reason"], "run exited")
+
+
+class RunSetupSignals(unittest.TestCase):
+    """Review finding: `run` took SIGTERM over only once the provider
+    was started, so one that landed while the binding was minted, its
+    configuration written or the provider spawned met the default action,
+    which ends the process without its cleanup. The credential stayed valid
+    until its TTL and the agent's next `run` was refused as a live session.
+
+    Here the handler `run` finds raises instead of ending the process, so a
+    signal that escapes `run` is seen rather than fatal."""
+
+    def setUp(self) -> None:
+        from luciazero_agentd.statedir import write_endpoint
+
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-run-signal-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(os.path.realpath(tmp.name))
+        self.state = self.root / "state"
+        self.state.mkdir()
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            store.register_agent("claude-reviewer", provider="claude", role="reviewer")
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
+
+    def interrupted_at(self, target: object, name: str, *, after: bool = False,
+                       agent: str = "claude-reviewer") -> tuple[int, list[str]]:
+        """`run`, with a SIGTERM raised as `target.name` is called, or with
+        `after` once its first call has returned and before the caller sees
+        what it returned."""
+        import contextlib
+        import io
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        class Escaped(Exception):
+            pass
+
+        def default(*_: object) -> None:
+            raise Escaped
+
+        previous = signal.signal(signal.SIGTERM, default)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        real = getattr(target, name)
+        fired: list[bool] = []
+
+        def terminated(*args: object, **kwargs: object) -> object:
+            if not fired and not after:
+                fired.append(True)
+                signal.raise_signal(signal.SIGTERM)
+            result = real(*args, **kwargs)
+            if not fired and after:
+                fired.append(True)
+                signal.raise_signal(signal.SIGTERM)
+            return result
+
+        made: list[str] = []
+        mkdtemp = tempfile.mkdtemp
+
+        def workspace(*args: object, **kwargs: object) -> str:
+            made.append(mkdtemp(*args, dir=str(self.root), **kwargs))  # type: ignore[arg-type]
+            return made[-1]
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(target, name, terminated))
+            stack.enter_context(mock.patch.object(tempfile, "mkdtemp", workspace))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            if (target, name) != (cli.nudge, "usable"):
+                # From a terminal `run` would take the pty path; the classic
+                # one is what this drives, whoever runs the suite.
+                stack.enter_context(mock.patch.object(cli.nudge, "usable", lambda: False))
+            code = cli.main(["run", "--no-autostart", "--agent", agent, "--provider", "claude",
+                             "--state-dir", str(self.state), "--", sys.executable, "-c", "pass"])
+        self.assertIs(default, signal.getsignal(signal.SIGTERM), "run must give the handler back")
+        return code, made
+
+    def bindings(self) -> list[dict]:
+        with Store.open(self.state / "bus.sqlite3") as store:
+            return store.list_bindings(states=("active", "revoked", "stale"), alive=None)
+
+    def test_a_sigterm_while_the_binding_is_minted_leaves_none(self) -> None:
+        code, _ = self.interrupted_at(Store, "bind_terminal")
+        self.assertEqual(130, code)
+        self.assertEqual([], self.bindings())
+
+    def test_a_sigterm_as_the_binding_is_committed_ends_it(self) -> None:
+        """Review finding: the binding is committed inside `bind_terminal`,
+        and `run` learnt its id only from what that returned, so a SIGTERM
+        between the commit and the return left a live binding that nothing
+        knew to revoke. The same holds where `run` puts a new agent on the
+        roster first."""
+        with self.subTest(at="inside the transaction"):
+            code, made = self.interrupted_at(Store, "_bind_terminal_locked", after=True)
+            self.assertEqual(130, code)
+            self.assertEqual([], made)
+            self.assertEqual([], self.bindings(), "a binding that never committed outlived run")
+        for agent in ("claude-reviewer", "claude-newcomer"):
+            with self.subTest(at="after the commit", agent=agent):
+                code, made = self.interrupted_at(Store, "bind_terminal", after=True, agent=agent)
+                self.assertEqual(130, code)
+                self.assertEqual([], made)
+                mine = [b for b in self.bindings() if b["agent_id"] == agent]
+                self.assertEqual(["revoked"], [b["state"] for b in mine], "a binding outlived run")
+
+    def test_a_sigterm_after_the_binding_ends_it_and_its_configuration(self) -> None:
+        from luciazero_agentd import __main__ as cli
+
+        for target, name in ((cli, "create_private"), (cli.nudge, "usable"), (cli.proctree, "start")):
+            with self.subTest(at=name):
+                code, made = self.interrupted_at(target, name)
+                self.assertEqual(130, code)
+                self.assertEqual(1, len(made), "run made its workspace before the signal")
+                self.assertFalse(Path(made[0]).exists(), "the provider's configuration outlived run")
+                bindings = self.bindings()
+                self.assertTrue(bindings)
+                self.assertEqual({"revoked"}, {b["state"] for b in bindings}, "a binding outlived run")
+
+    def test_a_sigterm_during_the_cleanup_does_not_cut_it_short(self) -> None:
+        """Review finding: the cleanup counted as done before it had done
+        anything, so a SIGTERM inside it left the rest undone for good."""
+        from luciazero_agentd import __main__ as cli
+
+        with mock.patch.object(cli, "create_private", side_effect=OSError("no space left on device")):
+            code, made = self.interrupted_at(shutil, "rmtree")
+        self.assertEqual(130, code)
+        self.assertEqual(1, len(made))
+        self.assertFalse(Path(made[0]).exists(), "the provider's configuration outlived run")
+        bindings = self.bindings()
+        self.assertEqual(1, len(bindings))
+        self.assertEqual("revoked", bindings[0]["state"], "the binding outlived run")
 
 
 if __name__ == "__main__":

@@ -23,8 +23,14 @@ different trees. `scripts/test-timings.sh --report` lists revisions and warns
 when they are mixed.
 
 CI runs `./test.sh` directly. Gates live in `tests/gates/`; full-only `tiers`,
-`eval`, `packaging`, `install`, and `codex-install` run in isolated subshells
-with buffered output replayed in order. Use `LZ_TEST_PARALLEL=0` for a serial
+`eval`, `packaging`, `install`, `codex-install` and `parity` run in isolated
+subshells with buffered output replayed in order. `parity` plays every
+scenario in `tests/installer_parity.py` through the Bash installers and
+through `bin/lib/installer.js`, the Node port that Windows runs, and fails on
+any difference in exit status, output or the resulting tree. The native
+Windows jobs run on an administrator account with no one at the desktop;
+what only a real machine can show is listed in
+[docs/windows-field-test.md](docs/windows-field-test.md). Use `LZ_TEST_PARALLEL=0` for a serial
 diagnostic run. Real behavioral eval runs are separate and manual:
 they invoke the selected Claude or Codex CLI and consume API credit or
 subscription quota.
@@ -55,12 +61,13 @@ declined:
   separate destinations documented in `SECURITY.md`.
 - **Example hooks ship inert.** Nothing in `examples/` may execute
   anything as shipped.
-- **The hooks must parse under bash 3.2** — the `/bin/bash` on stock macOS.
-  Never put a here-document inside a command substitution there: 3.2 rejects
-  the whole file at load time and blames an unrelated later line, so the pack
-  fails silently instead of loudly. `test.sh` blocks the construct in the
-  hooks, and `LZ_BASH32=/path/to/bash-3.2 ./test.sh` parses every script with
-  the real interpreter.
+- **Shipped shell scripts must parse under bash 3.2** — the `/bin/bash` on
+  stock macOS. (The hooks themselves are Node.) Never put a here-document
+  inside a command substitution: 3.2 rejects the whole file at load time and
+  blames an unrelated later line, so a script fails silently instead of
+  loudly. CI parses every `.sh` with a real bash 3.2; locally
+  `LZ_BASH32=/path/to/bash-3.2 ./test.sh` does the same (on macOS,
+  `LZ_BASH32=/bin/bash`), and without it the suite prints `skip`.
 - **Real hooks are opt-in and fail open.** The enforcement pack installs
   only via an explicit `--with-hooks`, must never block work when broken,
   and its settings.json edits must be additive, idempotent, and fully
@@ -81,13 +88,22 @@ declined:
 
 1. Update `CHANGELOG.md` (move entries from Unreleased, set the date) AND
    bump `.claude-plugin/plugin.json` + `package.json` to the same version —
-   `./test.sh` fails on any mismatch, and the release workflow runs it.
+   `./test.sh` fails on any mismatch, and the release workflow runs it. Drop
+   the "unreleased" notes in both READMEs (the version paragraph near the
+   top and the bullets that point to it) for what this release ships, and
+   bring the site's JSON-LD `operatingSystem` in both pages into line: it
+   describes the published version, so it says "Windows (WSL)" until native
+   Windows ships.
 2. Run `scripts/test-timings.sh --full` on the final release tree, commit the
    release preparation, push `main`, and require CI to pass on that commit.
 3. Tag that commit with `git tag vX.Y.Z`, then push only the intended tag with
-   `git push origin vX.Y.Z`. The release workflow verifies version agreement
-   and the full suite, builds the source ZIP, publishes a GitHub Release, then
-   publishes the staged npm package through OIDC.
+   `git push origin vX.Y.Z`. The release workflow runs the whole CI workflow
+   at the tag (the native Windows suites included), refuses a tag that is not
+   on `main`, verifies version agreement and the full suite, builds the source
+   ZIP, publishes a GitHub Release, then publishes the staged npm package
+   through OIDC. A rerun for a tag whose release already has its ZIP refuses
+   to go on if the tag now builds a different one: move nothing, publish a
+   new version.
 4. Confirm both workflow jobs succeeded and npm serves the intended version.
    A tag or GitHub Release alone is not proof of npm publication. See
    [the publishing checklist](docs/publishing.md).

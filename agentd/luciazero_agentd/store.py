@@ -22,6 +22,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -37,6 +38,7 @@ from .redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX
 from .redact import DEFAULT as DEFAULT_REDACTOR
 from .redact import NONCE_PATTERN, NONCE_PREFIX, Redactor, find_credential_url
 
+WINDOWS = sys.platform == "win32"
 MESSAGE_KINDS = ("task", "question", "finding", "decision", "artifact", "result")
 ARTIFACT_KINDS = ("commit", "patch", "report", "log", "relay")
 PATH_ARTIFACT_KINDS = ("patch", "report", "log", "relay")
@@ -286,9 +288,25 @@ def _check_path_arg(value: Any) -> str:
         raise ValidationError(f"path must be a non-empty string of at most {MAX_PATH_LENGTH} chars")
     if CONTROL_CHARS.search(value):
         raise ValidationError("path must not contain control characters")
-    if not os.path.isabs(os.path.expanduser(value)):
+    if not _absolute(os.path.expanduser(value)):
         raise ValidationError("path must be absolute")
     return os.path.expanduser(value)
+
+
+def _absolute(path: str) -> bool:
+    """Absolute on every Python. Before 3.13, Windows called `\\x` absolute
+    although it names a different place on each drive; a drive is required
+    there, as 3.13 itself requires one."""
+    return os.path.isabs(path) and (not WINDOWS or bool(os.path.splitdrive(path)[0]))
+
+
+def _inside(path: str, root: str) -> bool:
+    """`path` is `root` or below it. Two Windows drives share no prefix at
+    all, and commonpath says so by raising rather than answering."""
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
 
 
 def _same_path(a: str, b: str) -> bool:
@@ -307,7 +325,10 @@ def _contained_file(toplevel: str, ref: str, expected_sha256: Optional[str], *, 
     directory, a regular file under the size cap whose content carries no
     strict secret shape. Returns the size and sha256; a caller-supplied digest
     must match the file."""
-    if os.path.isabs(ref) or ref.startswith("~"):
+    # On Windows a colon is a drive -- "C:x" is relative to that drive's own
+    # current directory -- or an alternate data stream; neither is a file in
+    # the worktree, and no Windows file name may contain one otherwise.
+    if os.path.isabs(ref) or ref.startswith("~") or (WINDOWS and ":" in ref):
         raise UnsafeReference("artifact paths are relative to the bound worktree")
     parts = ref.replace("\\", "/").split("/")
     if any(part in ("", ".", "..") for part in parts):
@@ -322,9 +343,9 @@ def _contained_file(toplevel: str, ref: str, expected_sha256: Optional[str], *, 
         if any(_same_path(current, git_dir) for git_dir in git_dirs):
             raise UnsafeReference("artifact paths must not point into .git")
     real = os.path.realpath(current)
-    if os.path.commonpath([real, toplevel]) != toplevel:
+    if not _inside(real, toplevel):
         raise UnsafeReference("artifact path escapes the bound worktree")
-    if any(os.path.commonpath([real, git_dir]) == git_dir for git_dir in git_dirs):
+    if any(_inside(real, git_dir) for git_dir in git_dirs):
         raise UnsafeReference("artifact paths must not point into .git")
     if not os.path.isfile(current):
         raise UnsafeReference("artifact path is not a regular file in the bound worktree")
@@ -468,12 +489,19 @@ class Store:
         own bearer token) that must never be stored or echoed."""
         _check_int(busy_timeout_ms, 1, 60_000, "busy_timeout_ms")
         conn = sqlite3.connect(str(path), isolation_level=None, timeout=busy_timeout_ms / 1000)
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA synchronous = FULL")
-        cls._ensure_wal(conn)
-        return cls(conn, str(path), crash_hook, Redactor(redact_literals))
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA synchronous = FULL")
+            cls._ensure_wal(conn)
+            return cls(conn, str(path), crash_hook, Redactor(redact_literals))
+        except BaseException:
+            # A file that is not a database fails here, and a watcher retries
+            # it every poll: each refusal would otherwise leak a handle, and
+            # on Windows an open handle pins the file in place.
+            conn.close()
+            raise
 
     def redact(self, text: str) -> str:
         """Scrub a string with this store's redactor (patterns plus literals)."""
@@ -590,6 +618,9 @@ class Store:
         result is size-capped. Returns the encoding and the redaction count."""
         if not isinstance(value, dict):
             raise ValidationError(f"{what} must be a JSON object")
+        # The cap first: what is refused anyway is not worth scrubbing, and a
+        # peer must not hold a thread with the redactor on a megabyte.
+        _check_json_object(value, what)
         hit = find_credential_url(value)
         if hit is not None:
             raise UnsafeReference(f"{what} carries a credential-bearing URL; peers fetch repositories with their own credentials")
@@ -763,11 +794,26 @@ class Store:
                                    f"conversation {conversation!r} is older than its {CONVERSATION_TTL_SECONDS}s time to live; start a new one with a fresh correlation_id",
                                    {"age_seconds": round(age, 3), "ttl_seconds": CONVERSATION_TTL_SECONDS, "sender": sender, "recipient": recipient})
                 task_row = None
+                party = False
                 if refusal is None and isinstance(payload, dict) and isinstance(payload.get("task_id"), str):
                     task_row = self._conn.execute("SELECT * FROM tasks WHERE id = ?", (payload["task_id"],)).fetchone()
+                    if task_row is not None and kind == "task" and task_row["state"] in STOPPED_TASK_STATES:
+                        # Stopping dead-letters a task's queued task messages;
+                        # a new one, the refused send retried included, would
+                        # be the same dead work queued again.
+                        over = self._decode(task_row["result"])
+                        if task_row["state"] == "exhausted" and "dimension" in over:
+                            raise BudgetExceeded(self._budget_message(str(task_row["id"]), over))
+                        raise ConflictError(f"task {task_row['id']!r} is {task_row['state']}; it takes no more task "
+                                            "messages, and a human continues the work by creating a new task")
+                    # A passed deadline or a budget already spent stops the
+                    # task whoever names it. Only the task's own parties
+                    # spend a turn: anyone else naming it could otherwise
+                    # stop another agent's work.
+                    party = task_row is not None and sender in (task_row["created_by_agent_id"], task_row["assigned_agent_id"])
                     if task_row is not None:
                         stopped = self._over_budget(task_row, now)
-                        if stopped is None and task_row["state"] in LIVE_TASK_STATES:
+                        if stopped is None and party and task_row["state"] in LIVE_TASK_STATES:
                             budget = self._decode(task_row["budget"])
                             spent = self._decode(task_row["spent"])
                             turns = int(spent.get("turns", 0)) + 1
@@ -791,7 +837,7 @@ class Store:
                         "INSERT INTO deliveries (id, message_id, recipient_agent_id, state, updated_at) VALUES (?, ?, ?, 'queued', ?)",
                         (delivery_id, message_id, recipient, now),
                     )
-                    if task_row is not None and task_row["state"] in LIVE_TASK_STATES:
+                    if party and task_row["state"] in LIVE_TASK_STATES:
                         spent = self._decode(task_row["spent"])
                         spent["turns"] = int(spent.get("turns", 0)) + 1
                         self._conn.execute("UPDATE tasks SET spent = ?, updated_at = ? WHERE id = ?", (json.dumps(spent, sort_keys=True), now, task_row["id"]))
@@ -1049,8 +1095,9 @@ class Store:
         A node's ``depends_on`` names either another node's ``key`` in the same
         batch or a task that already exists. A batch with a cycle is refused
         whole, so a half-built graph is never committed. With an
-        ``idempotency_key`` each node replays under ``<key>:<node key>``, so a
-        retried batch returns the same tasks instead of a second graph."""
+        ``idempotency_key`` the batch replays as a whole, and each node under
+        ``<key>:<node key>``: a retried batch returns the same tasks instead
+        of a second graph, and one that adds or drops a node is refused."""
         _check_id(created_by, "created_by", self._redactor)
         if idempotency_key is not None:
             _check_id(idempotency_key, "idempotency key", self._redactor)
@@ -1079,13 +1126,22 @@ class Store:
                 )
                 for key, item in prepared.items()
             }
+            batch = _fingerprint("create_task_graph", nodes=fingerprints)
+            batch_seen = self._replay(created_by, idempotency_key, "create_task_graph", batch) is not None
+            node_keys = {key: (f"{idempotency_key}:{key}" if idempotency_key is not None else None) for key in order}
+            existing = {key: self._replay(created_by, node_keys[key], "create_task", fingerprints[key]) for key in order}
+            seen = [key for key in order if existing[key] is not None]
+            if seen and len(seen) < len(order):
+                # some of these nodes were created under this key before, so
+                # this is that batch retried with a node more (or a graph
+                # made before batches were remembered whole, grown since)
+                raise IdempotencyConflict(f"idempotency key {idempotency_key!r} was already used by {created_by!r} for a different request")
             now = utcnow()
             for key in order:
                 item = prepared[key]
-                node_key = f"{idempotency_key}:{key}" if idempotency_key is not None else None
-                existing = self._replay(created_by, node_key, "create_task", fingerprints[key])
-                if existing is not None:
-                    created[key] = existing
+                node_key = node_keys[key]
+                if existing[key] is not None:
+                    created[key] = existing[key]
                     continue
                 if item["assigned_to"] is not None:
                     self._require_agent(item["assigned_to"])
@@ -1098,7 +1154,10 @@ class Store:
                 self._insert_task(item, created_by=created_by, task_id=task_id, now=now, dep_states=dep_states)
                 self._remember(created_by, node_key, "create_task", fingerprints[key], "task", task_id)
                 created[key] = task_id
-            self._event(created_by, "task_graph.created", "task", created[order[0]], {"nodes": [created[key] for key in order], "keys": list(order)})
+            if not seen:
+                self._event(created_by, "task_graph.created", "task", created[order[0]], {"nodes": [created[key] for key in order], "keys": list(order)})
+            if not batch_seen:
+                self._remember(created_by, idempotency_key, "create_task_graph", batch, "task", created[order[0]])
         return [self.get_task(created[key]) for key in order]
 
     def get_task(self, task_id: str) -> dict[str, Any]:
@@ -1717,6 +1776,7 @@ class Store:
         ownership: str = "human",
         ttl_seconds: int = BINDING_TTL_SECONDS,
         replace_live_human: bool = False,
+        binding_id: Optional[str] = None,
     ) -> tuple[dict[str, Any], str]:
         """Human channel only (never an MCP tool): bind one terminal to one
         agent and mint the session credential that proves it. Only the hash
@@ -1738,8 +1798,14 @@ class Store:
         shorter: with the roster and the daemon started for you, two windows
         running the same command is the ordinary case rather than a mistake,
         and the second one must not end the first one's session in silence.
+
+        `binding_id` lets the caller name the binding before it exists. The
+        binding is committed before this returns, so a caller interrupted in
+        between knows which one to revoke only if it chose the id itself.
         """
         _check_id(agent_id, "agent id", self._redactor)
+        if binding_id is not None:
+            _check_id(binding_id, "binding id", self._redactor)
         _check_enum(provider, PROVIDERS, "provider")
         _check_enum(ownership, OWNERSHIPS, "ownership")
         _check_text(by, "by", 128)
@@ -1756,7 +1822,7 @@ class Store:
             cwd = _check_path_arg(cwd)
             if self._redactor.scan(cwd):
                 raise UnsafeReference("cwd carries a secret shape")
-        if ownership == "human" and not replace_live_human:
+        if ownership == "managed" or not replace_live_human:
             # Outside the transaction on purpose. Deciding whether a binding
             # is still live means asking the process table, `procinfo` gives
             # `ps` ten seconds, and `BEGIN IMMEDIATE` is not a place to spend
@@ -1765,13 +1831,15 @@ class Store:
             # each in its own transaction, so the check inside reads rows and
             # not guesses. Two launchers may both reap and both find the id
             # free; the transaction is what makes the second one see the
-            # first's binding and refuse.
+            # first's binding and refuse. A managed launcher needs the same
+            # answer for the human-ownership check, so it reaps here too.
             self.list_bindings()
         with self._tx("bind_terminal"):
             return self._bind_terminal_locked(agent_id, provider=provider, by=by, tty=tty, pid=pid,
                                               process_started_at=process_started_at, cwd=cwd,
                                               replace_live_human=replace_live_human,
-                                              ownership=ownership, ttl_seconds=ttl_seconds, checked=True)
+                                              ownership=ownership, ttl_seconds=ttl_seconds, checked=True,
+                                              binding_id=binding_id)
 
     def _bind_terminal_locked(
         self,
@@ -1787,6 +1855,7 @@ class Store:
         ttl_seconds: int = BINDING_TTL_SECONDS,
         checked: bool = False,
         replace_live_human: bool = False,
+        binding_id: Optional[str] = None,
     ) -> tuple[dict[str, Any], str]:
         """The body of `bind_terminal`, inside a transaction the caller owns:
         `decide_claim` binds as part of approving, and a second transaction
@@ -1797,16 +1866,21 @@ class Store:
             _check_enum(ownership, OWNERSHIPS, "ownership")
             _check_text(by, "by", 128)
             _check_int(ttl_seconds, 60, 86_400, "ttl_seconds")
+            if binding_id is not None:
+                _check_id(binding_id, "binding id", self._redactor)
         credential = CREDENTIAL_PREFIX + secrets.token_hex(16)
         digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
-        binding_id = new_id("bind")
+        if binding_id is None:
+            binding_id = new_id("bind")
         self._require_agent(agent_id)
         # ADR 0001: a human-owned session is out of the dispatcher's reach.
         # Binding replaces whatever the agent had, so without this the
         # dispatcher could take an agent away from the terminal the user is
         # sitting in front of, which is the one thing ownership promises.
         if ownership == "managed":
-            current = self.binding_of(agent_id)
+            # Rows only, like the human check below: the caller reaped
+            # before this transaction opened (roadmap R17).
+            current = self.binding_of(agent_id, alive=None)
             if current is not None and current["ownership"] == "human":
                 raise ConflictError(
                     f"agent {agent_id!r} is bound to a human terminal ({current['tty'] or 'no tty'}); "
@@ -1964,10 +2038,17 @@ class Store:
         expires = target.isoformat(timespec="microseconds")
         try:
             with self._tx("renew_binding"):
-                self._conn.execute(
-                    "UPDATE bindings SET expires_at = ?, updated_at = ? WHERE id = ? AND state = 'active'",
-                    (expires, now, row["id"]),
-                )
+                # `row` was read before this transaction, so the stored row may
+                # since have ended or been renewed further by a request that
+                # read it later. Only move the expiry forward, and only report
+                # a renewal that the row actually received.
+                written = self._conn.execute(
+                    "UPDATE bindings SET expires_at = ?, updated_at = ? "
+                    "WHERE id = ? AND state = 'active' AND expires_at < ?",
+                    (expires, now, row["id"], expires),
+                ).rowcount
+                if written != 1:
+                    return None
                 self._event("daemon", "binding.renewed", "binding", str(row["id"]),
                             {"agent_id": row["agent_id"], "expires_at": expires, "ttl_seconds": window})
         except sqlite3.Error:
@@ -2260,6 +2341,25 @@ class Store:
                 return None
             self._end_binding(str(record["binding_id"]), state="revoked", by=by, reason=reason, now=utcnow())
             return str(record["binding_id"])
+
+    def end_orphaned_claims(self, *, by: str = "daemon", reason: str = "daemon restarted") -> list[str]:
+        """A daemon starting up ends every identity a claim gave out.
+
+        The MCP sessions those claims were approved for lived in the previous
+        daemon's memory and died with it; a client that reconnects gets a new
+        session id and has to ask again. Their bindings have no pid for the
+        reaper to check, so without this they would stay active for their
+        whole TTL and refuse that new ask.
+        """
+        with self._tx("end_orphaned_claims"):
+            rows = self._conn.execute(
+                "SELECT DISTINCT b.id FROM claim_requests c JOIN bindings b ON b.id = c.binding_id "
+                "WHERE c.state = 'approved' AND b.state = 'active' ORDER BY b.id").fetchall()
+            ended = [str(row["id"]) for row in rows]
+            now = utcnow()
+            for binding_id in ended:
+                self._end_binding(binding_id, state="revoked", by=by, reason=reason, now=now)
+        return ended
 
     def pending_claim(self, session_hash: str) -> Optional[dict[str, Any]]:
         """The request this session is waiting on, for `agent_whoami` to name."""
@@ -2951,15 +3051,18 @@ class Store:
             self._event("bus", "turn.nudged", "agent", agent_id, payload)
 
     def record_nudge_deferred(self, agent_id: str, *, delivery_seq: Optional[int] = None,
-                              provider_quiet_for: Optional[float] = None) -> None:
+                              provider_quiet_for: Optional[float] = None,
+                              human_typed_ago: Optional[float] = None) -> None:
         """A knock the bus decided not to type yet, because the pane was still
-        printing and a keystroke sent into a busy TUI is not a turn.
+        printing and a keystroke sent into a busy TUI is not a turn, or because
+        a person had just typed and its return would submit their line.
 
         Recorded because the alternative is indistinguishable from silence. A
         provider that never stops printing would hold every knock forever, and
         without this the records would look exactly like a bus with nothing to
         deliver. The delivery is not lost -- it knocks as soon as the pane goes
-        quiet, and `held_for` on that nudge says how long it waited.
+        quiet and the keyboard idle, and `held_for` on that nudge says how
+        long it waited.
         """
         _check_id(agent_id, "agent id", self._redactor)
         payload: dict[str, Any] = {}
@@ -2967,6 +3070,8 @@ class Store:
             payload["delivery_seq"] = _check_int(delivery_seq, 0, 2**62, "delivery_seq")
         if provider_quiet_for is not None:
             payload["provider_quiet_for"] = _check_seconds(provider_quiet_for, "provider_quiet_for")
+        if human_typed_ago is not None:
+            payload["human_typed_ago"] = _check_seconds(human_typed_ago, "human_typed_ago")
         with self._tx("record_nudge_deferred"):
             self._event("bus", "turn.nudge_deferred", "agent", agent_id, payload)
 

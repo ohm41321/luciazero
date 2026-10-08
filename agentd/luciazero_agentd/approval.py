@@ -175,6 +175,24 @@ def dialog_available() -> bool:
     return pick() is not None
 
 
+def _run(argv: list[str], timeout: int) -> Any:
+    if sys.platform == "win32":
+        # By its full path: CreateProcess would look for `powershell` in the
+        # daemon's working directory first, and a stand-in there that exits
+        # 0 and prints nothing would read as "allow". Never a batch file,
+        # whose arguments cmd.exe would read a second time.
+        from . import proctree
+        program = proctree.find(argv[0], only=proctree.PROGRAMS)
+        if program is None:
+            raise FileNotFoundError(f"{argv[0]} is not on PATH")
+        argv = [program, *argv[1:]]
+        # under the service's pythonw.exe a console program gets a window of
+        # its own; closing it would kill the dialog with the question unanswered
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False,
+                              **proctree.NO_WINDOW)
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+
+
 def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
         seconds: int = 120, runner: Optional[Callable[[list[str], int], Any]] = None,
         backend: Optional[Backend] = None) -> Optional[bool]:
@@ -184,8 +202,7 @@ def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
     if backend is None and runner is None:
         return None
     backend = backend or BACKENDS[0]
-    run = runner or (lambda argv, timeout: subprocess.run(
-        argv, capture_output=True, text=True, timeout=timeout, check=False))
+    run = runner or _run
     try:
         result = run(backend.argv(title, body, allow, deny, seconds), seconds + DIALOG_TIMEOUT_MARGIN)
     except (subprocess.TimeoutExpired, OSError):
@@ -208,7 +225,8 @@ def ask(title: str, body: str, *, allow: str = "Allow", deny: str = "Deny",
 
 def prompt(request: dict[str, Any], *, decide: Callable[[bool], None], seconds: int,
            runner: Optional[Callable[[list[str], int], Any]] = None,
-           on_error: Optional[Callable[[BaseException], None]] = None) -> threading.Thread:
+           on_error: Optional[Callable[[BaseException], None]] = None,
+           on_close: Optional[Callable[[], None]] = None) -> threading.Thread:
     """Ask about one claim, off the request thread.
 
     The daemon must keep answering while the dialog is up: a modal window is
@@ -231,6 +249,10 @@ def prompt(request: dict[str, Any], *, decide: Callable[[bool], None], seconds: 
         except BaseException as exc:  # noqa: BLE001 - a background thread must not die silently
             if on_error is not None:
                 on_error(exc)
+        finally:
+            # answered, given up on or failed: the window is gone either way
+            if on_close is not None:
+                on_close()
 
     thread = threading.Thread(target=run, name="claim-dialog", daemon=True)
     thread.start()

@@ -32,10 +32,12 @@ OUT="$(tier_gates --fast)" || fail "fast tier over stub gates exited red"
 [ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna" ] \
   || fail "fast tier sources the wrong gates: ${OUT}"
 OUT="$(tier_gates --full)" || fail "full tier over stub gates exited red"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "full tier sources the wrong gates: ${OUT}"
-(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline) | grep -q '^PASS  discipline checks green$' \
-  || fail "discipline tier over stub gates printed no PASS line"
+if ! DOUT="$(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline)" \
+  || ! grep -q '^PASS  discipline checks green$' <<<"${DOUT}"; then
+  fail "discipline tier over stub gates printed no PASS line"
+fi
 # (c) LZ_TEST_TIMINGS: unset or 0, stdout and stderr are exactly as before;
 # 1, one `TIMING gate=<name> seconds=<n>` line per sourced gate on stderr, in
 # order, with stdout unchanged. The hooks stub sleeps a second for that run
@@ -91,7 +93,7 @@ expect_red() { # expect_red <label> <failure line the discipline tier must print
   ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
     PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
   [ "${RC}" = 1 ] || { rm -rf "${TM}"; fail "$1: discipline tier exited ${RC}, want 1"; }
-  printf '%s\n' "${ERR}" | grep -qF "$2" \
+  grep -qF "$2" <<<"${ERR}" \
     || { rm -rf "${TM}"; fail "$1: discipline tier went red for another reason: $(printf '%s\n' "${ERR}" | grep '^FAIL' | head -1)"; }
   no_leftovers "$1"
 }
@@ -104,11 +106,11 @@ no_leftovers "a green discipline run"
 # hook: a prompt inside an open turn must not reset the turn (4c5). The
 # literal is the hook's own line, expansions and all.
 # shellcheck disable=SC2016
-mutate claude/hooks/luciazero-verify.sh \
-  '    [ -f "${TELEMETRY}/turn_open" ] && exit 0
+mutate claude/hooks/luciazero-verify.cjs \
+  '      if (isFile(path.join(telemetry, "turn_open"))) return 0;
 ' ''
 expect_red "hook mutation" "FAIL: a prompt inside an open turn reset turn_start_ms"
-restore claude/hooks/luciazero-verify.sh
+restore claude/hooks/luciazero-verify.cjs
 # report: the schema-3 aggregate must be summed, not dropped (4c5b)
 mutate bin/discipline-report.js \
   'telemetry.redundant_green_count += row.telemetry.redundant_green_count;' \
@@ -150,22 +152,24 @@ grep -q '^exit=3$' "${LAST}" || fail "the red run's meta does not record exit=3"
 grep -q '^tier=fast$' "${LAST}" || fail "the meta does not record the tier"
 grep -qx 'ok  stub' "${LAST%.meta}.out" || fail "the sample kept no stdout"
 REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
-echo "${REPORT}" | grep -qE '^fast +hooks +3 +20 +30 +10 +30$' \
+grep -qE '^fast +hooks +3 +20 +30 +10 +30$' <<<"${REPORT}" \
   || fail "test-timings.sh --report ranks wrong (want fast hooks n=3 median=20 p95=30 min=10 max=30): ${REPORT}"
-echo "${REPORT}" | grep -q '^skipped 1 red run(s)$' || fail "the report did not skip the red run: ${REPORT}"
+grep -q '^skipped 1 red run(s)$' <<<"${REPORT}" || fail "the report did not skip the red run: ${REPORT}"
 # the samples' commits are named; the stub repo has no git, so all say unknown
-echo "${REPORT}" | grep -q '^fast: commits unknown x3$' || fail "the report does not name the samples' commit: ${REPORT}"
-echo "${REPORT}" | grep -q '^warning:' && fail "the report warned about mixed revisions over one: ${REPORT}"
+grep -q '^fast: commits unknown x3$' <<<"${REPORT}" || fail "the report does not name the samples' commit: ${REPORT}"
+grep -q '^warning:' <<<"${REPORT}" && fail "the report warned about mixed revisions over one: ${REPORT}"
 # one sample from another revision (a green one; the red run is skipped anyway)
 FIRST="$(find "${TS}/samples" -name '*-fast.meta' | sort | head -1)"
 sed 's/^commit=.*/commit=abc1234+dirty/' "${FIRST}" > "${FIRST}.new" && mv "${FIRST}.new" "${FIRST}"
 REPORT="$(LZ_TEST_TIMINGS_DIR="${TS}/samples" "${ROOT}/scripts/test-timings.sh" --report)"
-echo "${REPORT}" | grep -q '^fast: commits unknown x2, abc1234+dirty x1$' \
+grep -q '^fast: commits unknown x2, abc1234+dirty x1$' <<<"${REPORT}" \
   || fail "the report does not list every commit with its count: ${REPORT}"
-echo "${REPORT}" | grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' \
+grep -q '^warning: fast samples span 2 revisions -- split them before reading a baseline' <<<"${REPORT}" \
   || fail "the report did not warn that the samples span two revisions: ${REPORT}"
-LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report | grep -q '^no samples under ' \
-  || fail "the report over no samples is not the one-line notice"
+if ! NONE="$(LZ_TEST_TIMINGS_DIR="${TS}/none" "${ROOT}/scripts/test-timings.sh" --report)" \
+  || ! grep -q '^no samples under ' <<<"${NONE}"; then
+  fail "the report over no samples is not the one-line notice"
+fi
 rm -rf "${TS}"
 echo "ok  test-timings.sh keeps a sample per run, ranks gates by median and p95, and names the revisions"
 
@@ -190,7 +194,7 @@ stub() { # stub <gate>: a gate body that writes both streams and takes a mktmp d
   # shellcheck disable=SC2016
   printf 'echo "gate %s"\necho "err %s" >&2\nmktmp STUB\necho "${STUB}" >> "%s/paths.log"\n' "$1" "$1" "${TP}"
 }
-for G in tiers agent-bus eval packaging install codex-install; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
+for G in tiers agent-bus eval packaging install codex-install parity; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
 for G in tiers eval install; do echo 'sleep 2' >> "${TP}/repo/tests/gates/${G}.sh"; done
 par_full() { # par_full <label> [env assignments...]: run the stub full tier, keep both streams
   local LABEL="$1"; shift
@@ -198,9 +202,9 @@ par_full() { # par_full <label> [env assignments...]: run the stub full tier, ke
   (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
     >"${TP}/${LABEL}.out" 2>"${TP}/${LABEL}.err")
 }
-gone_with_gates() { # gone_with_gates <label>: all six stubs took a directory under the private TMPDIR; none is left
-  [ "$(wc -l < "${TP}/paths.log" | tr -d ' ')" = 6 ] \
-    || fail "$1: $(wc -l < "${TP}/paths.log" | tr -d ' ') stub directories recorded, want 6"
+gone_with_gates() { # gone_with_gates <label>: all seven stubs took a directory under the private TMPDIR; none is left
+  [ "$(wc -l < "${TP}/paths.log" | tr -d ' ')" = 7 ] \
+    || fail "$1: $(wc -l < "${TP}/paths.log" | tr -d ' ') stub directories recorded, want 7"
   while IFS= read -r P; do
     case "${P}" in "${TP}/tmp/"*) ;; *) fail "$1: a stub's mktmp directory landed outside the private TMPDIR: ${P}" ;; esac
   done < "${TP}/paths.log"
@@ -215,17 +219,17 @@ gone_with_gates "a green serial run"
 cmp -s "${TP}/parallel.out" "${TP}/serial.out" || fail "parallel gates changed stdout: $(diff "${TP}/serial.out" "${TP}/parallel.out" | head -3)"
 cmp -s "${TP}/parallel.err" "${TP}/serial.err" || fail "parallel gates changed stderr: $(diff "${TP}/serial.err" "${TP}/parallel.err" | head -3)"
 OUT="$(sed -n 's/^gate //p' "${TP}/parallel.out" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier replayed stdout out of order: ${OUT}"
 OUT="$(sed -n 's/^err //p' "${TP}/parallel.err" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier replayed stderr out of order: ${OUT}"
 [ "${PAR_WALL}" -lt 6 ] \
   || fail "three stub gates sleeping 2 s each took ${PAR_WALL} s in parallel, want under the 6 s they add up to"
 # timing lines: one per gate, still in order, still named right
 par_full timed LZ_TEST_TIMINGS=1 || fail "stub full tier exited red with LZ_TEST_TIMINGS=1"
 OUT="$(sed -n 's/^TIMING gate=\([a-z-]*\) seconds=[0-9]*$/\1/p' "${TP}/timed.err" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier printed the wrong timing lines: ${OUT}"
 grep -qE '^TIMING gate=eval seconds=[2-9]$' "${TP}/timed.err" \
   || fail "the eval stub slept 2 s but its timing line disagrees: $(grep 'gate=eval' "${TP}/timed.err")"
@@ -241,5 +245,27 @@ grep -q 'ran past a failing command' "${TP}/red.err" && fail "set -e did not sto
 grep -q '^gate codex-install$' "${TP}/red.out" || fail "a green gate's output was dropped because another gate was red"
 grep -q '^PASS' "${TP}/red.out" && fail "a red parallel run still printed PASS"
 gone_with_gates "a red parallel run"
+# interrupted: a signal to the dispatcher stops the parallel gates and what
+# they started before its EXIT trap removes their sandbox. Background jobs of
+# this shell start with SIGINT ignored, so the run is sent SIGTERM, which
+# the dispatcher handles the same way.
+for G in tiers agent-bus eval packaging install codex-install parity; do stub "${G}" > "${TP}/repo/tests/gates/${G}.sh"; done
+{ stub eval; printf 'touch "%s/started"\nsh -c '"'"'sleep 3; touch "%s/ran-on"'"'"'\n' "${TP}" "${TP}"; } \
+  > "${TP}/repo/tests/gates/eval.sh"
+rm -f "${TP}/started" "${TP}/ran-on"
+(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" ./test.sh --full \
+  >"${TP}/int.out" 2>"${TP}/int.err") &
+INT_PID=$!
+I=0
+while [ ! -e "${TP}/started" ] && [ "${I}" -lt 300 ]; do sleep 0.1; I=$((I + 1)); done
+[ -e "${TP}/started" ] || fail "the run to interrupt never started its eval stub"
+kill -TERM "${INT_PID}"
+RC=0; wait "${INT_PID}" || RC=$?
+[ "${RC}" = 143 ] || fail "an interrupted full tier exited ${RC}, want 143"
+sleep 4
+[ ! -e "${TP}/ran-on" ] || fail "a gate's child ran on after the dispatcher was interrupted"
+grep -q '^interrupted: stopped the running gates$' "${TP}/int.err" \
+  || fail "an interrupted run did not say it stopped the gates: $(tail -3 "${TP}/int.err")"
+[ -z "$(ls -A "${TP}/tmp")" ] || fail "an interrupted run left directories behind: $(ls "${TP}/tmp")"
 rm -rf "${TP}"
-echo "ok  full-only gates run in parallel with serial-identical output; red gates are all named; no gate's temp directory outlives it"
+echo "ok  full-only gates run in parallel with serial-identical output; red gates are all named; an interrupt stops them; no gate's temp directory outlives it"

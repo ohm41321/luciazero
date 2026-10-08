@@ -3,15 +3,16 @@
 Every test here drives a real pty and a real store. What it never does is
 start a provider: the child is `cat`, which echoes what it is typed, so the
 assertion "the nudge reached the terminal" is the bytes coming back out.
+
+Windows has no pty. What decides when to knock runs there as everywhere;
+the terminal half is a pseudo console, driven by test_windows instead.
 """
 
 from __future__ import annotations
 
 import os
-import pty
 import signal
 import sys
-import termios
 import threading
 import time
 import unittest
@@ -22,6 +23,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from luciazero_agentd import nudge  # noqa: E402
 from luciazero_agentd.store import Store, utcnow  # noqa: E402
+
+try:
+    import pty
+    import termios
+except ImportError:  # Windows
+    pty = termios = None  # type: ignore[assignment]
+
+on_a_pty = unittest.skipIf(pty is None, "no pty on Windows; test_windows drives its pseudo console "
+                                        "(PseudoConsole, RunOnAConsole)")
 
 
 def make_store(path: Path) -> Store:
@@ -91,6 +101,23 @@ class WatcherTests(unittest.TestCase):
         self.seen()
         self.assertFalse(watcher.due())
 
+    def test_a_backlog_longer_than_a_page_neither_knocks_nor_hides_what_comes_next(self) -> None:
+        """Review finding: only the oldest 500 queued deliveries were read, so
+        behind a longer backlog a new arrival was never seen at all -- and a
+        start that saw only that page would have knocked for the rest of the
+        backlog as if it were new."""
+        with make_store(self.db) as store:
+            for n in range(501):
+                store.send_message(sender="claude-implementer", recipient="codex-architect",
+                                   kind="finding", payload={"message": f"waiting {n}"})
+        watcher = self.watcher()
+        self.seen()
+        self.assertFalse(watcher.due(), "the backlog is not a nudge, however long it is")
+        self.send("new")
+        arrival = watcher.due()
+        self.assertIsNotNone(arrival, "an arrival behind a long backlog never knocked")
+        self.assertEqual(arrival.text, "new")
+
     def test_one_delivery_is_one_nudge(self) -> None:
         watcher = self.watcher()
         self.seen()
@@ -140,6 +167,7 @@ class WatcherTests(unittest.TestCase):
         self.send("two")
         self.assertFalse(watcher.due())
         watcher.human_typed()
+        self.now += nudge.TYPING_SECONDS  # ...and stopped typing
         self.assertTrue(watcher.due(), "a person typed; the loop is theirs again")
 
     def test_the_cap_counts_consecutive_nudges_not_a_day_s_worth(self) -> None:
@@ -151,6 +179,7 @@ class WatcherTests(unittest.TestCase):
             self.send(f"message {n}")
             self.assertTrue(watcher.due(), f"message {n} was refused")
             watcher.human_typed()
+            self.now += nudge.TYPING_SECONDS
 
     def test_a_delivery_held_back_by_the_cap_is_not_forgotten(self) -> None:
         """The cap stops the typing, not the delivery: once a person is back,
@@ -162,6 +191,7 @@ class WatcherTests(unittest.TestCase):
         self.send("arrived while capped")
         self.assertFalse(watcher.due())
         watcher.human_typed()
+        self.now += nudge.TYPING_SECONDS
         self.assertTrue(watcher.due())
 
     def test_a_nudge_is_recorded_as_the_moment_the_turn_started(self) -> None:
@@ -189,12 +219,12 @@ class WatcherTests(unittest.TestCase):
         watcher.saw_output()          # the provider printed
         self.now += 30.0
         watcher.human_typed()         # ...and 30s later a person typed
-        self.now += 5.0
+        self.now += nudge.TYPING_SECONDS + 5.0
         self.send()
         self.assertTrue(watcher.due())
         payload = self.nudges()[0]["payload"]
-        self.assertAlmostEqual(35.0, payload["provider_quiet_for"], places=3)
-        self.assertAlmostEqual(5.0, payload["human_typed_ago"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 35.0, payload["provider_quiet_for"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 5.0, payload["human_typed_ago"], places=3)
 
     def test_a_knock_is_not_typed_into_a_pane_that_is_still_printing(self) -> None:
         """The lost nudge of workflow 2, in one place.
@@ -254,6 +284,31 @@ class WatcherTests(unittest.TestCase):
         self.assertIsNone(watcher.last_nudge)
         self.now += nudge.QUIET_SECONDS + 0.5
         self.assertTrue(watcher.due())
+
+    def test_a_knock_waits_for_a_person_who_is_typing(self) -> None:
+        """A knock is a line and a return. Typed while somebody is composing a
+        prompt, the return submits their half-written line with the literal
+        stuck to its end. The pane's echo only holds it for `QUIET_SECONDS`,
+        and a person pauses longer than that between words; so a keystroke
+        holds it too, for `TYPING_SECONDS`, held rather than lost."""
+        watcher = self.watcher()
+        self.seen()
+        watcher.human_typed()
+        self.now += nudge.QUIET_SECONDS + 1.0     # the echo is long over
+        self.send()
+        self.assertIsNone(watcher.due(), "the bus typed into a prompt somebody was writing")
+        self.now += nudge.TYPING_SECONDS - nudge.QUIET_SECONDS - 1.5
+        self.assertIsNone(watcher.due())
+        self.assertEqual([], self.nudges())
+        held = self.events_of("turn.nudge_deferred")
+        self.assertEqual(1, len(held), "one record per delivery held, not one per poll")
+        self.assertAlmostEqual(nudge.QUIET_SECONDS + 1.0, held[0]["payload"]["human_typed_ago"], places=3)
+        self.assertEqual(0, watcher.unattended)
+        self.now += 1.0
+        self.assertTrue(watcher.due(), "the keyboard went idle and the delivery was still there")
+        payload = self.nudges()[0]["payload"]
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 0.5, payload["human_typed_ago"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS - nudge.QUIET_SECONDS - 0.5, payload["held_for"], places=3)
 
     def test_a_terminal_nobody_watched_records_no_guess(self) -> None:
         """`due()` is callable without a proxy behind it. Never observed is a
@@ -545,6 +600,7 @@ class TypistTests(unittest.TestCase):
         self.assertEqual(b"".join(self.written), nudge.TEXT.encode() + b"\r")
 
 
+@on_a_pty
 class ProxyTests(unittest.TestCase):
     """The pty half, with `cat` standing in for a provider.
 
@@ -820,6 +876,93 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(before, self.settings(self.slave))
 
 
+@on_a_pty
+class PasteTests(unittest.TestCase):
+    def test_a_large_paste_into_a_provider_that_echoes_does_not_freeze_the_proxy(self) -> None:
+        """Review finding: keystrokes went to the pty in one blocking write.
+        A provider that answers input with output -- an echo, a redraw --
+        fills the pty's output side while the proxy, stuck in that write, is
+        not reading it; the provider stops reading input, and both wait for
+        ever.
+
+        Pipes stand in for the user's terminal: closing a pty that still
+        holds output waits for it to drain, so a fixture built on one would
+        hang in its own cleanup when this test fails."""
+        size = 200_000
+        provider = (
+            "import os, tty\n"
+            "tty.setraw(0)\n"
+            "os.write(1, b'READY')\n"
+            "n = 0\n"
+            f"while n < {size}:\n"
+            "    chunk = os.read(0, 4096)\n"
+            "    n += len(chunk)\n"
+            "    os.write(1, chunk)\n"
+            "os.write(1, b'DONE')\n"
+        )
+        keyboard, typed = os.pipe()
+        screen, shown = os.pipe()
+        pid, master = nudge.spawn([sys.executable, "-c", provider], dict(os.environ))
+        seen = bytearray()
+        stop = threading.Event()
+
+        def watch() -> None:
+            while not stop.is_set():
+                try:
+                    chunk = os.read(screen, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                seen.extend(chunk)
+
+        def wait_for(needle: bytes, seconds: float) -> bool:
+            deadline = time.monotonic() + seconds
+            while needle not in seen:
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.05)
+            return True
+
+        def paste() -> None:
+            left = size
+            while left > 0 and not stop.is_set():
+                try:
+                    left -= os.write(typed, b"x" * min(left, 4096))
+                except OSError:
+                    return
+
+        code: list[int] = []
+        proxy = threading.Thread(target=lambda: code.append(nudge.proxy(pid, master, stdin=keyboard, stdout=shown)),
+                                 daemon=True)
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        proxy.start()
+
+        def end() -> None:
+            stop.set()
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proxy.join(5)
+            for fd in (typed, keyboard, shown):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            watcher.join(5)
+            os.close(screen)
+
+        self.addCleanup(end)
+        self.assertTrue(wait_for(b"READY", 30), bytes(seen[-200:]))
+        threading.Thread(target=paste, daemon=True).start()
+        self.assertTrue(wait_for(b"DONE", 60), "the proxy froze mid-paste")
+        proxy.join(15)
+        self.assertEqual([0], code)
+
+
+@on_a_pty
 class RunTests(unittest.TestCase):
     """`run` end to end, under a pty, with a delivery arriving mid-session.
 
@@ -846,6 +989,36 @@ class RunTests(unittest.TestCase):
         self.provider = self.state / "provider.sh"
         self.provider.write_text("#!/bin/sh\nexec cat\n")
         self.provider.chmod(0o755)
+
+    def _wait_for_the_provider(self, master: int, seen: bytearray, seconds: float = 30.0) -> None:
+        """Until `run` has recorded the provider's pid, reading its terminal
+        meanwhile.
+
+        "bound as" is printed before the delivery watcher exists, so a
+        heartbeat or a delivery sent on that line alone could reach the bus
+        first on a loaded host: a heartbeat from before the session opened
+        does not count, a delivery from before is backlog, and nothing ever
+        knocked. The watcher is made before the spawn and the pid written
+        after it, so once the pid is there both are behind this test."""
+        import select
+
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            with make_store(self.db) as store:
+                binding = store.binding_of("codex-architect", alive=None)
+            if binding is not None and binding["pid"] is not None:
+                return
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen.extend(chunk)
+        self.fail(f"run never recorded the provider it started: {bytes(seen)!r}")
 
     def test_a_delivery_knocks_on_a_session_that_is_doing_nothing(self) -> None:
         package_root = str(Path(__file__).resolve().parents[1])
@@ -876,9 +1049,9 @@ class RunTests(unittest.TestCase):
             return False
 
         self.assertTrue(wait_for(b"bound as"), bytes(seen))
+        self._wait_for_the_provider(master, seen)
         # The session reaches the bus, as the skill does at its first turn;
         # until it has, a nudge could land in a dialog nobody read.
-        time.sleep(0.05)
         with make_store(self.db) as store:
             store.heartbeat("codex-architect")
             store.send_message(sender="claude-implementer", recipient="codex-architect",
@@ -944,7 +1117,7 @@ class RunTests(unittest.TestCase):
             return needle in seen
 
         self.assertTrue(wait_for(b"bound as"), bytes(seen))
-        time.sleep(0.05)
+        self._wait_for_the_provider(master, seen)
         with make_store(self.db) as store:
             store.heartbeat("codex-architect")
             store.send_message(sender="claude-implementer", recipient="codex-architect",
@@ -1077,6 +1250,60 @@ class RunTests(unittest.TestCase):
             os.close(master)
         except OSError:
             pass
+
+
+@on_a_pty
+class RunWatcherOrder(unittest.TestCase):
+    """Review finding: RunTests wait for the provider's pid, which `run`
+    wrote before the watcher existed as much as after it, so they pass
+    whichever comes first. This holds the order itself, on both of `run`'s
+    terminals: the watcher is made before the provider is started."""
+
+    def started(self, run: object, owner: object) -> list[str]:
+        import contextlib
+        import io
+        import tempfile
+        import types
+        from unittest import mock
+
+        from luciazero_agentd import __main__ as cli
+
+        order: list[str] = []
+
+        def watcher(*_: object, **__: object) -> None:
+            order.append("watcher")
+
+        def spawn(*_: object, **__: object) -> None:
+            order.append("spawn")
+            raise OSError("not started")
+
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-watcher-order-")
+        self.addCleanup(tmp.cleanup)
+        ended: list[str] = []
+        with mock.patch.object(cli.nudge, "Watcher", watcher), mock.patch.object(owner, "spawn", spawn), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = run(types.SimpleNamespace(max_nudges=1), ["provider"], {},  # type: ignore[operator]
+                       {"id": "bind_x", "agent_id": "codex-architect"}, Path(tmp.name), ended.append)
+        self.assertEqual(2, code)
+        self.assertEqual(["spawn failed"], ended)
+        return order
+
+    def test_on_a_pty(self) -> None:
+        from luciazero_agentd import __main__ as cli
+
+        self.assertEqual(["watcher", "spawn"], self.started(cli._run_on_a_pty, cli.nudge))
+
+    def test_on_a_console(self) -> None:
+        import types
+        from unittest import mock
+
+        import luciazero_agentd
+        from luciazero_agentd import __main__ as cli
+
+        conpty = types.SimpleNamespace(spawn=None)
+        with mock.patch.dict(sys.modules, {"luciazero_agentd.conpty": conpty}), \
+                mock.patch.object(luciazero_agentd, "conpty", conpty, create=True):
+            self.assertEqual(["watcher", "spawn"], self.started(cli._run_on_a_console, conpty))
 
 
 if __name__ == "__main__":

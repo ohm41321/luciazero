@@ -25,11 +25,13 @@ import subprocess
 import sys
 import time
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-from luciazero_agentd import procinfo
+from luciazero_agentd import dispatcher as dispatcher_mod, procinfo
 from luciazero_agentd import ConflictError, NotFound, Store, ValidationError
 from luciazero_agentd.adapters import ProcessAdapter, TurnRequest
 from luciazero_agentd.dispatcher import DispatchError, Dispatcher
@@ -37,6 +39,7 @@ from luciazero_agentd.runlog import RunLog
 from luciazero_agentd.statedir import pid_alive as _pid_alive
 from luciazero_agentd.statedir import write_endpoint
 from luciazero_agentd.__main__ import main
+from tests.fixtures import WINDOWS, kill_pid, pid_running, private_problem
 from luciazero_agentd.store import (
     LEASE_TTL_SECONDS,
     GenerationFenced,
@@ -52,19 +55,14 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 def _running(pid: int) -> bool:
     """Is this pid still around? Polled, because a signal is not instant."""
     for _ in range(100):
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not pid_running(pid):
             return False
         time.sleep(0.05)
     return True
 
 
 def _reap_pid(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    kill_pid(pid)
 
 
 def _reap(process: subprocess.Popen) -> None:
@@ -368,7 +366,7 @@ class RunLogTests(DispatchCase):
         self.assertNotIn(credential, body)
         self.assertNotIn("shared-token-value", body)
         self.assertIn("bytes dropped", body)
-        self.assertEqual(oct(os.stat(ref).st_mode)[-3:], "600")
+        self.assertIsNone(private_problem(ref))
 
 
 class WrappedSecretTests(DispatchCase):
@@ -394,6 +392,27 @@ class WrappedSecretTests(DispatchCase):
         log.write("token=" + credential[:20] + "\n" + credential[20:] + "\n")
         body = Path(log.close()).read_text(encoding="utf-8")
         self.assertNotIn(credential, "".join(body.split()))
+
+    def test_a_secret_across_the_head_and_tail_is_scrubbed_when_nothing_was_dropped(self) -> None:
+        """Review finding: under the cap, head and tail were scrubbed one at a
+        time, so a secret that crossed from one into the other matched in
+        neither and reached the disk whole."""
+        for secret, literals in (("lzsc_" + "e" * 32, ("lzsc_" + "e" * 32,)),
+                                 ("shared-token-value", ("shared-token-value",)),
+                                 ("ghp_" + "A" * 36, ())):
+            with self.subTest(secret=secret[:5]):
+                log = RunLog(self.root / "runs" / "s.log", literals=literals, max_bytes=1024)
+                log.write("x" * (log.half - 8) + " " + secret + " end\n")
+                body = Path(log.close()).read_text(encoding="utf-8")
+                self.assertEqual(log.dropped, 0)
+                self.assertNotIn(secret, body)
+                (self.root / "runs" / "s.log").unlink()
+
+    def test_a_character_across_the_head_and_tail_is_kept_when_nothing_was_dropped(self) -> None:
+        log = RunLog(self.root / "runs" / "u.log", max_bytes=1024)
+        log.write("x" * (log.half - 1) + "\u0e01 end\n")
+        body = Path(log.close()).read_text(encoding="utf-8")
+        self.assertIn("\u0e01 end", body)
 
     def test_the_cap_drops_a_margin_so_a_split_secret_loses_a_half(self) -> None:
         log, credential, _ = self.log(max_bytes=2048)
@@ -687,6 +706,29 @@ class DispatcherTests(DispatchCase):
         run = self.store.list_runs(agent_id="claude-reviewer")[0]
         self.assertIsNotNone(run["provider_pid"])
 
+    def test_a_process_table_that_cannot_be_read_still_lets_the_turn_run(self) -> None:
+        """Review finding: `started_at` raising escaped the callback, which
+        left the provider running with nothing waiting on it while the run was
+        settled as failed. The pid is still worth recording without a start
+        time; recovery refuses to signal a process it cannot check."""
+        self.worker(command=[sys.executable, "-c", "print('turn')"])
+        self.queued()
+        engine = self.engine()
+        real = procinfo.started_at
+
+        def unreadable(pid: int, **kwargs: object) -> str:
+            if pid == os.getpid():
+                return real(pid, **kwargs)  # the dispatcher's own record
+            raise procinfo.ProcessError("ps timed out")
+
+        with mock.patch.object(dispatcher_mod.procinfo, "started_at", side_effect=unreadable):
+            summaries = engine.tick()
+        # The turn ran to its end, not "error": this worker never touches its inbox.
+        self.assertEqual([s["outcome"] for s in summaries], ["failed"])
+        run = self.store.list_runs(agent_id="claude-reviewer")[0]
+        self.assertIsNotNone(run["provider_pid"])
+        self.assertIsNone(run["provider_started_at"])
+
     def test_recovery_revokes_the_credential_an_orphaned_provider_still_holds(self) -> None:
         """A killed dispatcher skips its own cleanup, so the child it started
         keeps a working credential until somebody takes it away."""
@@ -746,6 +788,42 @@ class DispatcherTests(DispatchCase):
         provider.wait(timeout=10)
         self.assertFalse(_running(grandchild), "the orphan's own child outlived recovery")
 
+    @unittest.skipIf(WINDOWS, "a process group is POSIX; Windows ends the tree instead")
+    def test_stopping_an_orphan_does_not_stop_at_its_leader(self) -> None:
+        """Review finding: `stop_group` returned as soon as the recorded pid
+        was gone, so a group member that ignores SIGTERM was never killed."""
+        ready = self.root / "stubborn.pid"
+        stubborn_py = self.root / "stubborn.py"
+        stubborn_py.write_text(
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "time.sleep(120)\n", encoding="utf-8")
+        provider = subprocess.Popen(
+            [sys.executable, "-c",
+             "import subprocess, sys, time\n"
+             f"subprocess.Popen([sys.executable, {str(stubborn_py)!r}, {str(ready)!r}])\n"
+             "time.sleep(120)\n"],
+            start_new_session=True,
+        )
+        self.addCleanup(_reap, provider)
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.read_text(encoding="utf-8")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        stubborn = int(ready.read_text(encoding="utf-8"))
+        self.addCleanup(_reap_pid, stubborn)
+        started_at = procinfo.started_at(provider.pid)
+        # An orphan's parent is gone, so it is reaped the moment it exits;
+        # without this waiter it would linger here as a zombie and look alive.
+        threading.Thread(target=provider.wait, daemon=True).start()
+        with mock.patch.object(dispatcher_mod, "TERMINATE_GRACE_SECONDS", 0.5):
+            Dispatcher(self.root).stop_group(provider.pid, started_at)
+        provider.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while _running(stubborn) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(_running(stubborn), "a group member that ignored SIGTERM outlived the stop")
+
     def test_a_sigterm_leaves_no_live_credential_and_no_running_provider(self) -> None:
         """Review finding: `run` installs a SIGTERM handler for exactly this
         reason and `dispatch` did not, so `kill <pid>` left the turn's
@@ -753,9 +831,12 @@ class DispatcherTests(DispatchCase):
         self.worker(command=[sys.executable, "-c", "import time; time.sleep(120)"], turn_timeout_seconds=120)
         self.queued()
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT))
+        # Windows has no SIGTERM to send another process; Ctrl+Break, to a
+        # child in a process group of its own, is the request to stop there.
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
         child = subprocess.Popen(
             [sys.executable, "-m", "luciazero_agentd", "dispatch", "--watch", "--state-dir", str(self.root)],
-            cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **group,
         )
         try:
             def in_flight() -> dict | None:
@@ -771,7 +852,7 @@ class DispatcherTests(DispatchCase):
             assert run is not None
             provider_pid = int(run["provider_pid"])
             self.assertEqual(self.store.get_binding(str(run["binding_id"]))["state"], "active")
-            child.terminate()  # SIGTERM, what `kill <pid>` sends
+            child.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)  # what `kill <pid>` sends
             self.assertEqual(child.wait(timeout=30), 0)
         finally:
             if child.poll() is None:

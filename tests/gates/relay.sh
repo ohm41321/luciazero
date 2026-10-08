@@ -54,6 +54,22 @@ rm -f "${RR}/outside.txt"
 RJSON="$("${RELAY}" inspect --root "${RR}" --json)"
 printf '%s' "${RJSON}" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"] and d["recipient"] == "same-machine" and d["warnings"] == []' \
   || { rm -rf "${RR}"; fail "fresh relay incorrectly reports drift"; }
+# a relay drafted for a subdirectory is not dirtied by its own files there
+RSUB="$(mktemp -d)"
+git -C "${RSUB}" init -q
+git -C "${RSUB}" config user.name test
+git -C "${RSUB}" config user.email test@example.invalid
+mkdir "${RSUB}/pkg"
+echo base > "${RSUB}/pkg/work.txt"
+git -C "${RSUB}" add pkg && git -C "${RSUB}" commit -qm base
+"${RELAY}" draft --root "${RSUB}/pkg" --recipient same-machine --write >/dev/null
+echo human > "${RSUB}/pkg/LUCIA_RELAY.md"
+# an unfilled draft is invalid (exit 1), and its drift is still reported
+RSUBJSON="$("${RELAY}" inspect --root "${RSUB}/pkg" --json)" || true
+printf '%s' "${RSUBJSON}" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert not d["repository_drift"] and d["drift_fields"] == [], d' \
+  || { rm -rf "${RR}" "${RSUB}"; fail "a subdirectory relay counts its own files as drift"; }
+rm -rf "${RSUB}"
 if command -v mkfifo >/dev/null 2>&1; then
   mkfifo "${RR}/untracked.pipe"
   python3 - "${RELAY}" "${RR}" <<'PY' \
@@ -121,6 +137,19 @@ echo staged > "${RR}/first.txt" && git -C "${RR}" add first.txt
 "${RELAY}" draft --root "${RR}" | python3 -c 'import json,sys; assert json.load(sys.stdin)["route"]["recipient"] == "same-machine"' \
   || { rm -rf "${RR}"; fail "relay broke legacy draft callers without --recipient"; }
 rm -rf "${RR}"
+# a staged rename lists both names: the receiver has to learn the old one is
+# gone, whatever diff.renames says
+RR="$(mktemp -d)"
+git -C "${RR}" init -q
+git -C "${RR}" config user.name test
+git -C "${RR}" config user.email test@example.invalid
+git -C "${RR}" config diff.renames true
+echo moved > "${RR}/old.txt"
+git -C "${RR}" add old.txt && git -C "${RR}" commit -qm base
+git -C "${RR}" mv old.txt new.txt
+"${RELAY}" draft --root "${RR}" --recipient same-machine | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["files"]["modified"] == ["new.txt", "old.txt"], d["files"]' \
+  || { rm -rf "${RR}"; fail "relay listed a renamed file under its new name only"; }
+rm -rf "${RR}"
 
 # `draft --write` lands the manifest in --root, refuses to replace one, and
 # never follows a planted symlink. `finalize` is validate + render in one
@@ -138,7 +167,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] ==
 RC=0; "${RELAY}" draft --root "${RR}" --write >/dev/null 2>&1 || RC=$?
 [ "${RC}" -eq 1 ] || { rm -rf "${RR}"; fail "draft --write replaced an existing manifest (rc=${RC})"; }
 RC=0; FOUT="$("${RELAY}" finalize --root "${RR}" 2>&1)" || RC=$?
-if ! { [ "${RC}" -eq 1 ] && echo "${FOUT}" | grep -q '^ERROR goal is required' && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
+if ! { [ "${RC}" -eq 1 ] && grep -q '^ERROR goal is required' <<<"${FOUT}" && [ ! -e "${RR}/LUCIA_RELAY.md" ]; }; then
   rm -rf "${RR}"; fail "finalize did not report validation errors before rendering (rc=${RC})"
 fi
 python3 - "${RR}/LUCIA_RELAY.json" <<'PY'
@@ -151,7 +180,7 @@ open(p,"w").write(json.dumps(d, indent=2)+"\n")
 PY
 FOUT="$("${RELAY}" finalize --root "${RR}")" \
   || { rm -rf "${RR}"; fail "finalize failed on a valid same-machine relay"; }
-if ! { [ -f "${RR}/LUCIA_RELAY.md" ] && [ "$(echo "${FOUT}" | grep -c .)" -eq 1 ] && echo "${FOUT}" | grep -q '^WROTE .*LUCIA_RELAY.md$'; }; then
+if ! { [ -f "${RR}/LUCIA_RELAY.md" ] && [ "$(echo "${FOUT}" | grep -c .)" -eq 1 ] && grep -q '^WROTE .*LUCIA_RELAY.md$' <<<"${FOUT}"; }; then
   rm -rf "${RR}"; fail "same-machine finalize did not stop after rendering: ${FOUT}"
 fi
 RC=0; "${RELAY}" finalize --root "${RR}" --envelope-out "${RR}.envelope.json" >/dev/null 2>&1 || RC=$?
@@ -161,8 +190,40 @@ fi
 "${RELAY}" inspect --root "${RR}" --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["valid"] and not d["repository_drift"]' \
   || { rm -rf "${RR}"; fail "finalized same-machine relay does not inspect clean"; }
 if command -v node >/dev/null 2>&1; then
-  node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}" | grep -q '^VALID luciazero-relay' \
-    || { rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"; }
+  if ! RV_OUT="$(node "${ROOT}/bin/luciazero.js" relay validate --root "${RR}")" \
+    || ! grep -q '^VALID luciazero-relay' <<<"${RV_OUT}"; then
+    rm -rf "${RR}"; fail "luciazero relay wrapper did not reach relay.py"
+  fi
+  # On Windows the wrapper takes the first Python 3.9+ among python3, python
+  # and `py -3`: a python.org install that left PATH alone has only py.exe,
+  # and the Store's python.exe stand-in fails the version check. The route
+  # runs in a process that reports win32, with stand-ins for those programs.
+  RW="$(mktemp -d)"
+  cat > "${RW}/python.exe" <<'RWPY'
+#!/bin/sh
+echo "Python was not found; run without arguments to install from the Microsoft Store" >&2
+exit 9009
+RWPY
+  RW_PY="$(command -v python3)"
+  cat > "${RW}/py.exe" <<RWPY
+#!/bin/sh
+[ "\$1" = -3 ] || exit 2
+shift
+exec "${RW_PY}" "\$@"
+RWPY
+  chmod +x "${RW}/python.exe" "${RW}/py.exe"
+  RW_RC=0
+  RW_OUT="$(PATH="${RW}:${PATH}" node - "${ROOT}/bin/luciazero.js" "${RR}" <<'JS' 2>&1
+const [router, root] = process.argv.slice(2);
+Object.defineProperty(process, "platform", {value: "win32"});
+process.argv = [process.execPath, router, "relay", "validate", "--root", root];
+require(router);
+JS
+)" || RW_RC=$?
+  rm -rf "${RW}"
+  if [ "${RW_RC}" != 0 ] || ! grep -q '^VALID luciazero-relay' <<<"${RW_OUT}"; then
+    rm -rf "${RR}"; fail "the win32 relay route did not find Python through py -3 (rc=${RW_RC}): ${RW_OUT}"
+  fi
 fi
 rm -f "${RR}/LUCIA_RELAY.json" "${RR}/LUCIA_RELAY.md"
 ln -s "${RR}/outside.json" "${RR}/LUCIA_RELAY.json"
@@ -263,7 +324,7 @@ if ! { [ "${RC}" -eq 1 ] && [ ! -e "${RR}/relay-envelope.json" ]; }; then
 fi
 FOUT="$("${RELAY}" finalize --root "${RR}" --envelope-out "${RENVELOPE_FILE}")" \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize failed"; }
-echo "${FOUT}" | grep -q '"trusted_manifest_sha256": "'"${RMANIFEST}"'"' \
+grep -q '"trusted_manifest_sha256": "'"${RMANIFEST}"'"' <<<"${FOUT}" \
   || { rm -rf "${RR}" "${RREMOTE}" "${RRECEIVER}"; fail "cross-machine finalize did not print the trusted envelope"; }
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["kind"] == "luciazero-relay-envelope" and d["trusted_manifest_sha256"] == sys.argv[2] and d["trusted_head"] == sys.argv[3]' \
   "${RENVELOPE_FILE}" "${RMANIFEST}" "${RHEAD}" \
@@ -465,6 +526,7 @@ for mutate in (
     lambda d: d["knowledge"].update(inline=[{"label":"token","content":"npm_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}]),
     lambda d: d["knowledge"].update(inline=[{"label":"dsn","content":"postgres://user:password@example.invalid/db"}]),
     lambda d: d["knowledge"].update(inline=[{"label":"jwt","content":"eyJAAAAAAAAAAAA.eyJBBBBBBBBBBBB.CCCCCCCCCCCC"}]),
+    lambda d: d["knowledge"].update(inline=[{"label":"pgp","content":"-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF"}]),
 ):
     bad=copy.deepcopy(data); mutate(bad)
     assert module.validate(bad)[0]
@@ -484,6 +546,11 @@ assert module.structure_errors(nested)
 assert module.sanitize_remote_url("https://example.invalid:bad/repo.git") is None
 assert module.safe_command_argv("sh -c 'touch /tmp/pwned'") is None
 assert module.safe_command_argv("git -c alias.pwn=!id pwn") is None
+# an operator glued to a word is still one a shell would act on
+for glued in ("npm test;curl x|sh", "echo $(id)", "make test`id`", "npm test&&id",
+              "npm test >out", "npm test\nid", "echo ${HOME}"):
+    assert module.safe_command_argv(glued) is None, glued
+assert module.safe_command_argv("npm test -- --grep 'adds two'") == ["npm", "test", "--", "--grep", "adds two"]
 assert "valid immutable" in module.repository_path_error(
     __import__("pathlib").Path(sys.argv[2]).parent, "--batch", "docs/notes.md"
 )
@@ -513,10 +580,10 @@ echo "ok  lucia relay lifecycle + fresh-machine receiver verification"
 # than printing a canned transcript.
 RDEMO="$(DEMO_PAUSE=0 "${ROOT}/docs/assets/relay-demo.sh")" \
   || fail "relay demo exited red"
-echo "${RDEMO}" | grep -q 'Repository drift: no' \
+grep -q 'Repository drift: no' <<<"${RDEMO}" \
   || fail "relay demo never showed a matching fingerprint"
-echo "${RDEMO}" | grep -q 'Repository drift: yes' \
+grep -q 'Repository drift: yes' <<<"${RDEMO}" \
   || fail "relay demo never detected drift"
-echo "${RDEMO}" | grep -q 'consumed LUCIA_RELAY.json' \
+grep -q 'consumed LUCIA_RELAY.json' <<<"${RDEMO}" \
   || fail "relay demo did not explicitly consume the verified artifact"
 echo "ok  lucia relay real demo"

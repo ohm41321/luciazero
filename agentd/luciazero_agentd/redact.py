@@ -55,23 +55,32 @@ class Rule(NamedTuple):
     strict: bool
 
 
+# A token shape glued to a word is still that token (`my_ghp_...`,
+# `__lzap_...__` in Markdown bold): `\b` sees no boundary between two word
+# characters, so the edges are letters and digits only.
+START = r"(?<![A-Za-z0-9])"
+END = r"(?![A-Za-z0-9])"
+
 # Applied in this order. Every quantifier that could run over hyphenated or
 # repetitive text is bounded, so a 64 KiB payload stays linear.
 RULES: tuple[Rule, ...] = (
-    Rule("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[redacted:private-key]", True),
+    # A key cut off before its END line is scrubbed to the end of the text.
+    # That alternative also keeps a run of BEGIN lines linear: the first one
+    # takes the rest, instead of each one scanning on for an END.
+    Rule("private-key", re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:.*?-----END [A-Z ]{0,40}PRIVATE KEY(?: BLOCK)?-----|.*)", re.S), "[redacted:private-key]", True),
     # In header context every value after "Bearer" is a credential, digits or
     # not. Outside it ("the bearer credentials keep users out") the value
     # must carry a digit; an all-letter opaque token pasted bare is the one
     # accepted false negative, stated in ADR 0003.
     Rule("bearer", re.compile(r"(?i)\bauthorization\s*[:=]\s*bearer\s+[A-Za-z0-9._~+/=-]{8,}"), "Authorization: Bearer [redacted]", True),
     Rule("bearer", re.compile(r"(?i)\bbearer\s+(?=[A-Za-z0-9._~+/=-]{0,256}\d)[A-Za-z0-9._~+/=-]{8,}"), "Bearer [redacted]", True),
-    Rule("approval-nonce", re.compile(r"\blzap_[A-Za-z0-9_-]{16,}"), "[redacted:approval-nonce]", True),
-    Rule("session-credential", re.compile(r"\blzsc_[A-Za-z0-9_-]{16,}"), "[redacted:session-credential]", True),
-    Rule("aws-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[redacted:aws-key]", True),
-    Rule("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "[redacted:github-token]", True),
-    Rule("github-token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[redacted:github-token]", True),
-    Rule("api-key", re.compile(r"\bsk-(?=[A-Za-z0-9_-]{0,256}\d)[A-Za-z0-9_-]{20,}\b"), "[redacted:api-key]", True),
-    Rule("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"), "[redacted:slack-token]", True),
+    Rule("approval-nonce", re.compile(r"lzap_[A-Za-z0-9_-]{16,}"), "[redacted:approval-nonce]", True),
+    Rule("session-credential", re.compile(r"lzsc_[A-Za-z0-9_-]{16,}"), "[redacted:session-credential]", True),
+    Rule("aws-key", re.compile(START + r"AKIA[0-9A-Z]{16}" + END), "[redacted:aws-key]", True),
+    Rule("github-token", re.compile(START + r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"), "[redacted:github-token]", True),
+    Rule("github-token", re.compile(START + r"github_pat_[A-Za-z0-9_]{20,}"), "[redacted:github-token]", True),
+    Rule("api-key", re.compile(START + r"sk-(?=[A-Za-z0-9_-]{0,256}\d)[A-Za-z0-9_-]{20,}"), "[redacted:api-key]", True),
+    Rule("slack-token", re.compile(START + r"xox[abprs]-[A-Za-z0-9-]{10,}"), "[redacted:slack-token]", True),
     Rule("url-credential", re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^/\s@:]{0,256}:[^/\s@]{1,1024}@"), r"\1[redacted]@", True),
     Rule("secret-assignment", re.compile(rf"(?i)\b([A-Za-z0-9_-]{{0,40}}?{SECRET_WORD}[A-Za-z0-9_-]{{0,20}})(\s*[=:]\s*)(['\"]?)(?=[^\s'\"]{{0,256}}\d)([^\s'\"]{{8,}})"), r"\1\2\3[redacted]", False),
 )
@@ -135,7 +144,11 @@ class Redactor:
                     scrubbed, n = "[redacted]", 1
                 else:
                     scrubbed, n = self.json(item)
-                out_dict[clean_key] = scrubbed
+                # two keys that scrub to the same text keep both values
+                taken, suffix = clean_key, 2
+                while taken in out_dict:
+                    taken, suffix = f"{clean_key} ({suffix})", suffix + 1
+                out_dict[taken] = scrubbed
                 total += n
             return out_dict, total
         return value, 0

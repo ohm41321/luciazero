@@ -12,10 +12,8 @@ import inspect
 import io
 import json
 import os
-import pty
 import re
 import select
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -38,7 +36,7 @@ from luciazero_agentd import store as store_module
 from luciazero_agentd.redact import Redactor, find_credential_url
 import luciazero_agentd.server as server_module
 from luciazero_agentd.server import TOOLS, BusServer
-from tests.fixtures import commit_file, git, make_repo
+from tests.fixtures import WINDOWS, OnConsole, commit_file, git, make_repo, remove_tree
 from tests.test_mcp import Http
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +96,7 @@ class WorktreeIsolation(SecurityCase):
             self.store.bind_worktree("claude-reviewer", self.repo_a)
         self.assertIn("owned by 'codex-architect'", str(ctx.exception))
         link = self.tmp / "link-to-a"
-        os.symlink(self.repo_a, link)
+        os.symlink(self.repo_a, link, target_is_directory=True)  # Windows makes a file link otherwise
         with self.assertRaises(ConflictError):
             self.store.bind_worktree("claude-reviewer", str(link))  # resolves to the same toplevel
         with self.assertRaises(ConflictError):
@@ -126,7 +124,7 @@ class WorktreeIsolation(SecurityCase):
         self.store.bind_worktree("claude-reviewer", self.repo_a)
         task = self.store.create_task(title="write", created_by="codex-architect", requires_worktree=True)
         self.store.claim_task(task["id"], "claude-reviewer")
-        shutil.rmtree(self.repo_a)
+        remove_tree(self.repo_a)
         with self.assertRaises(WorktreeMismatch) as ctx:
             self.store.publish_artifact(kind="report", ref="reports/x.md", produced_by="claude-reviewer", task_id=task["id"])
         self.assertIn("unusable", str(ctx.exception))
@@ -136,7 +134,7 @@ class WorktreeIsolation(SecurityCase):
     def test_repository_identity_change_at_the_same_path_is_refused(self) -> None:
         self.store.bind_worktree("claude-reviewer", self.repo_a)
         task = self.store.create_task(title="write", created_by="codex-architect", requires_worktree=True)
-        shutil.rmtree(self.repo_a)
+        remove_tree(self.repo_a)
         make_repo(self.repo_a)  # same path, same branch name, different root commit
         with self.assertRaises(WorktreeMismatch) as ctx:
             self.store.claim_task(task["id"], "claude-reviewer")
@@ -218,7 +216,7 @@ class ArtifactContainment(SecurityCase):
         elsewhere = self.tmp / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / "secret.txt").write_text("s\n", encoding="utf-8")
-        os.symlink(elsewhere, repo / "ext")
+        os.symlink(elsewhere, repo / "ext", target_is_directory=True)
         with self.assertRaises(UnsafeReference):
             self.publish("ext/secret.txt")
 
@@ -448,8 +446,23 @@ class ApprovalProvenance(SecurityCase):
         self.assertEqual(self.store.pending_approvals(), [])
 
 
+#: End of input typed at a terminal: Ctrl-D, or on a Windows console a Ctrl-Z
+#: on a line of its own.
+EOF_KEYS = "\x1a\n" if WINDOWS else "\x04"
+
+
 def run_in_pty(args: list[str], answer: str, env: dict[str, str], timeout: float = 60) -> tuple[int, str]:
-    """Run ``args`` on a pseudo-terminal, type ``answer``, return (exit, output)."""
+    """Run ``args`` on a terminal, type ``answer``, return (exit, output).
+
+    A pseudo-terminal, or on Windows a pseudo console, where Enter is a
+    carriage return."""
+    if WINDOWS:
+        console = OnConsole(args, env)
+        console.type(answer.replace("\n", "\r"))
+        code = console.finish(timeout)
+        return (-1 if code is None else code), console.screen()
+    import pty
+
     master, slave = pty.openpty()
     proc = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=env, cwd=PACKAGE_ROOT, close_fds=True)
     os.close(slave)
@@ -521,7 +534,7 @@ class ApprovalCli(unittest.TestCase):
         self.assertEqual(self.pending(), [])
 
     def test_eof_at_the_prompt_declines_cleanly(self) -> None:
-        code, output = run_in_pty(self.args, "\x04", self.env)  # Ctrl-D
+        code, output = run_in_pty(self.args, EOF_KEYS, self.env)
         self.assertEqual(code, 1, output)
         self.assertIn("not approved", output)
         self.assertNotIn("Traceback", output)
@@ -564,6 +577,19 @@ class SecretRedaction(unittest.TestCase):
         ("feature/sk-implement-login-page-redesign", "feature/sk-implement-login-page-redesign"),
         ("token = request.headers.get(name)", "token = request.headers.get(name)"),
         ("no secrets here", "no secrets here"),
+        # Review findings: a secret glued to a word, or a key cut off before
+        # its END line, is still that secret.
+        ("__lzap_" + "0123456789abcdef" * 2 + "__", "__[redacted:approval-nonce]"),
+        ("xlzap_" + "0123456789abcdef" * 2, "x[redacted:approval-nonce]"),
+        ("_lzsc_" + "0123456789abcdef" * 2 + "_", "_[redacted:session-credential]"),
+        ("my_ghp_" + "a" * 36, "my_[redacted:github-token]"),
+        ("ghp_" + "a" * 36 + "__", "[redacted:github-token]__"),
+        ("id_AKIAIOSFODNN7EXAMPLE_x", "id_[redacted:aws-key]_x"),
+        ("key: -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n", "key: [redacted:private-key]"),
+        # Review finding: an armored PGP key ends its markers in BLOCK.
+        ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----\ntail",
+         "[redacted:private-key]\ntail"),
+        ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n", "[redacted:private-key]"),
     )
 
     def test_patterns(self) -> None:
@@ -585,12 +611,25 @@ class SecretRedaction(unittest.TestCase):
         self.assertEqual(scrubbed, {"[redacted:approval-nonce]": "use this", "password": "[redacted]", "GITHUB_TOKEN": "[redacted]", "note": "ok", "short_secret": "abc", "nested": {"client_secret": "[redacted]"}})
         self.assertEqual(count, 4)
 
+    def test_json_keys_that_scrub_to_the_same_text_keep_both_values(self) -> None:
+        scrubbed, count = Redactor().json({"lzap_" + "0" * 32: 1, "lzap_" + "f" * 32: 2})
+        self.assertEqual(sorted(scrubbed.values()), [1, 2])
+        self.assertEqual(count, 2)
+
     def test_scan_reports_strict_shapes_only(self) -> None:
         redactor = Redactor(["my-daemon-token-value"])
         self.assertEqual(redactor.scan("nothing"), [])
         self.assertEqual(redactor.scan("token = request.headers.get(name)"), [])  # heuristic tier never refuses
         self.assertEqual(sorted(redactor.scan("lzap_" + "a" * 32 + " and my-daemon-token-value")), ["approval-nonce", "daemon-token"])
         self.assertEqual(redactor.scan("https://u:p1@h/x"), ["url-credential"])
+
+    def test_private_key_headers_with_no_end_stay_linear(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        blob = (header * (128 * 1024 // len(header) + 1))[: 128 * 1024]
+        started = time.monotonic()
+        scrubbed, _ = Redactor().text(blob)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(scrubbed, "[redacted:private-key]")
 
     def test_large_hyphenated_payload_stays_linear(self) -> None:
         blob = "a-" * (32 * 1024)
@@ -618,6 +657,14 @@ class StoreAndServerRedaction(SecurityCase):
             self.assertNotIn(secret, dump)
         events = self.store.events(limit=100)
         self.assertEqual([e["payload"]["redactions"] for e in events if e["kind"] == "message.sent"], [4])
+
+    def test_an_oversized_payload_is_refused_before_it_is_scrubbed(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        started = time.monotonic()
+        with self.assertRaises(ValidationError):
+            self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="finding",
+                                    payload={"log": header * (256 * 1024 // len(header))})
+        self.assertLess(time.monotonic() - started, 1.0)
 
     def test_credential_bearing_urls_are_refused_not_stored(self) -> None:
         for call in (

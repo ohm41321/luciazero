@@ -26,10 +26,12 @@ Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
 
-This checkout is the **2.6.0** tree: the manifests and the top
-[changelog](CHANGELOG.md) entry agree, and this document describes that
-source. Its twelve eval fixtures pass offline under `./test.sh`; no real-model
-skills-ablation pilot has run yet.
+This checkout is the **2.6.0** tree plus the changes listed under
+`[Unreleased]` in the [changelog](CHANGELOG.md); the manifests and the newest
+released entry agree. Native Windows support, and every Windows instruction
+below, is one of those unreleased changes: the published 2.6.0 still installs
+through Bash on Windows. Its twelve eval fixtures pass offline under
+`./test.sh`; no real-model skills-ablation pilot has run yet.
 
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
@@ -162,8 +164,8 @@ as you. The project trust boundary is in
 |---|---|
 | “Done” without running a check | Stop-hook nudge; optional strict gate blocks a red stop |
 | `cat test.sh` counted as testing | Exact `LUCIAZERO_VERIFY_CMD` matching |
-| Tests weakened to reach green | Doctrine rule 3 + check-suppression guard |
-| New tests that pass without the fix | `revert-probe.sh` runs them against the old code |
+| Tests weakened to reach green | Doctrine rule 3 + the `/done` review; an opt-in suppression-guard hook example |
+| New tests that pass without the fix | `revert-probe.cjs` runs them against the old code |
 | Scope silently dropped | `/done` requires every item delivered or named as left out |
 | The same dead end repeated later | `/retro` records it; `/debug` reads it first |
 | Context lost between agents | `/lucia-relay` transfers evidence, next action, and negative knowledge |
@@ -257,7 +259,7 @@ command from any directory:
 
 ```bash
 luciazero                 # Claude Code
-luciazero --with-hooks    # Claude Code + hooks/statusline; needs Python 3.9+
+luciazero --with-hooks    # Claude Code + hooks/statusline; needs Node 18+
 luciazero codex           # Codex CLI
 
 luciazero uninstall             # remove the Claude classic files
@@ -269,6 +271,9 @@ luciazero global-uninstall      # remove the command and its exact PATH block
 For a one-off install without keeping the command, `npx luciazero@latest`
 continues to work. Automation may pass `global-install --yes`; interactive use
 asks before installing the package and changing a shell startup file.
+On Windows (unreleased), `global-install` uses npm's own global prefix
+(`%APPDATA%\npm` unless you moved it) and edits no startup file or Path;
+it and `global-status` say so if that prefix is not on your Path.
 
 Pick either plugin or classic for Claude Code: installing both loads every
 skill and the reviewer twice, even though hooks and doctrine deduplicate.
@@ -393,15 +398,23 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
 
 ## Security & requirements
 
-- Node.js 18+ for the CLI and discipline report.
-- Bash for classic installers; Python 3.9+ for hooks and Lucia Relay
-  (`install.sh --with-hooks` refuses anything older).
+- Node.js 18+ for the CLI, the discipline report, the hooks and status line,
+  and the helpers `/ready`, `/done` and `/bisect` run
+  (`node <skill-dir>/scripts/*.cjs`; the old `.sh` names are wrappers that
+  need Node too).
+- Bash for the classic installers on macOS and Linux. The hooks are wired in
+  exec form, which needs Claude Code 2.1.139 or newer
+  (`install.sh --with-hooks` refuses a Node older than 18).
+- Python 3.9+ for Lucia Relay: `python3 <skill-dir>/scripts/relay.py`, or
+  `python` / `py -3` on Windows.
 - The Agent Bus daemon (beta, opt-in) needs Python 3.10+ and a checkout: it is
   not in the npm payload and `npx luciazero` never starts it. From a checkout,
-  `./install.sh` adds the `luciazero-agentd` launcher to `~/.claude/bin`
-  (`LUCIAZERO_BIN_DIR` chooses another directory), and
-  `luciazero-agentd service install` runs the daemon under launchd or systemd
-  `--user`. macOS, Linux and WSL2 only. See [docs/agent-bus.md](docs/agent-bus.md).
+  `./install.sh` (on Windows, `node bin\luciazero.js`) adds the
+  `luciazero-agentd` and `lucia` launchers to `~/.claude/bin`
+  (`LUCIAZERO_BIN_DIR` chooses another directory, which later runs
+  remember), and
+  `luciazero-agentd service install` runs the daemon under launchd, systemd
+  `--user`, or Task Scheduler on Windows. See [docs/agent-bus.md](docs/agent-bus.md).
 - Core installers, hooks, helpers, and graders are offline. Real behavioral
   evals invoke a model CLI and consume API credit or subscription quota.
 - Hooks run commands on your machine. Read them before enabling them.
@@ -423,8 +436,13 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   and named once at `SessionStart`. Your own settings still configure it: the
   search stops at the repo root and at `$HOME`, and never reads your global
   `~/.claude/settings.json` or gitignored `.claude/settings.local.json`.
-- Windows: the installers and hooks are Bash scripts — run them under WSL.
-  `npx luciazero discipline` works in native Node.
+- Windows runs natively, without WSL (unreleased; see the top of this
+  page): `npx luciazero` installs through a Node port of the installers,
+  `global-install` uses npm's own global prefix, and the hooks, status line
+  and skill helpers are Node. There, the programs
+  Luciazero starts by name — git, node, npm, Python, a provider CLI,
+  PowerShell, schtasks — are looked up on PATH alone, never in the working
+  directory, where Windows would look first.
 
 See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) for the complete trust boundary.
 
@@ -441,17 +459,17 @@ scripts/test-timings.sh --report     # median and p95 per gate over the green sa
 ```
 
 The discipline tier is the loop command for the enforcement pack, the
-discipline report and the prompts: syntax, bash 3.2 and ShellCheck over every
-shipped script, the prompt and doctrine contracts, and the hook state machine,
-nothing else. The fast tier is the default intermediate check for everything
+discipline report and the prompts: syntax and ShellCheck over every shipped
+script (plus a bash 3.2 parse when `LZ_BASH32` names one; CI always runs it),
+the prompt and doctrine contracts, and the hook state machine, nothing else. The fast tier is the default intermediate check for everything
 else; use a more targeted command when changing a component it does not cover. The default
 full tier (also `./test.sh --full`) covers scripts, hook state, Relay, bisect,
 plugin/npm manifests, self-proving eval graders, and sandboxed install →
 reinstall → uninstall for Claude Code and Codex. CI and `/done` use the full
 tier. `test.sh` is the dispatcher; the checks live in `tests/gates/*.sh`, one
 file per subsystem, sourced in order — read the gate a change touches. In the
-full tier the tiers, eval, packaging, install and codex-install gates run at
-once, each in its own subshell, with their output replayed in order so it
+full tier the tiers, eval, packaging, install, codex-install and parity gates
+run at once, each in its own subshell, with their output replayed in order so it
 reads as the serial run; `LZ_TEST_PARALLEL=0` runs them one at a time.
 
 More detail:

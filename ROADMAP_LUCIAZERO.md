@@ -759,7 +759,8 @@ entry points. A root must use
 `root --ledger <path> --cell <cell> -- codex --disable multi_agent
 --disable multi_agent_v2 ...`; this rejects missing or conflicting
 native-collaboration flags before reservation or `Popen`, rejects uninspected
-`--config`/`-c` native-feature overrides, and emits
+`--config`/`-c` native-feature overrides in any TOML spelling of a key under
+`features` and any `--profile`/`-p` selection, and emits
 `ROOT_NATIVE_MULTI_AGENT=disabled` plus
 `ROOT_NATIVE_MULTI_AGENT_V2=disabled` as pre-start evidence.
 Every adapter role must use

@@ -26,8 +26,10 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
-checkout นี้คือ tree ของ **2.6.0**: manifest กับรายการบนสุดใน
-[changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
+checkout นี้คือ tree ของ **2.6.0** บวกการเปลี่ยนแปลงใต้ `[Unreleased]` ใน
+[changelog](CHANGELOG.md) โดย manifest กับรายการที่ release ล่าสุดตรงกัน
+การรองรับ Windows แบบ native และคำแนะนำสำหรับ Windows ทุกข้อด้านล่างคือหนึ่งใน
+การเปลี่ยนแปลงที่ยังไม่ release: 2.6.0 ที่เผยแพร่แล้วยังติดตั้งผ่าน Bash บน Windows
 eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
 skills-ablation กับ model จริง
 
@@ -158,8 +160,8 @@ force-push, การเปลี่ยน public contract และการข
 |---|---|
 | บอกว่า “เสร็จ” โดยไม่ตรวจ | Stop hook เตือน; strict gate แบบ opt-in บล็อกเมื่อผลแดง |
 | นับ `cat test.sh` ว่ารัน test | จับคู่ `LUCIAZERO_VERIFY_CMD` แบบ exact |
-| ลดความเข้ม test เพื่อให้เขียว | Doctrine ข้อ 3 + check-suppression guard |
-| Test ใหม่ผ่านแม้ไม่มี fix | `revert-probe.sh` รัน test กับโค้ดเก่า |
+| ลดความเข้ม test เพื่อให้เขียว | Doctrine ข้อ 3 + review ใน `/done`; มีตัวอย่าง hook กัน suppression แบบ opt-in |
+| Test ใหม่ผ่านแม้ไม่มี fix | `revert-probe.cjs` รัน test กับโค้ดเก่า |
 | ทำ scope หายเงียบ ๆ | `/done` บังคับให้ส่งครบหรือระบุสิ่งที่เว้นไว้ |
 | เดินเข้าทางตันเดิมอีกรอบ | `/retro` บันทึก และ `/debug` อ่านก่อนเริ่ม |
 | Context หายตอนเปลี่ยน agent | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge |
@@ -249,7 +251,7 @@ bin เข้า PATH ของ zsh หรือ bash เปิด shell ให�
 
 ```bash
 luciazero                 # Claude Code
-luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Python 3.9+
+luciazero --with-hooks    # Claude Code + hook/statusline; ต้องมี Node 18+
 luciazero codex           # Codex CLI
 
 luciazero uninstall             # ถอน classic files ฝั่ง Claude
@@ -261,6 +263,9 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 ถ้าต้องการรันครั้งเดียวโดยไม่เก็บคำสั่งไว้ ใช้ `npx luciazero@latest` ได้เหมือน
 เดิม งาน automation ส่ง `global-install --yes` ได้ ส่วนการใช้แบบโต้ตอบจะถาม
 ก่อนติดตั้งแพ็กเกจหรือเปลี่ยนไฟล์เริ่มต้นของ shell
+บน Windows (ยังไม่ release) `global-install` ใช้ global prefix ของ npm เอง
+(`%APPDATA%\npm` ถ้าไม่ได้ย้าย) และไม่แก้ไฟล์เริ่มต้นใดหรือ Path ทั้ง
+`global-install` และ `global-status` จะแจ้งถ้า prefix นั้นไม่อยู่ใน Path
 
 ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่ง เพราะติดตั้งทั้งคู่
 จะโหลด skill และ reviewer ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้
@@ -382,8 +387,20 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 
 ## ความปลอดภัยและ requirement
 
-- Node.js 18+ สำหรับ CLI และ discipline report
-- Bash สำหรับ classic installer; Python 3.9+ สำหรับ hook และ Lucia Relay (`install.sh --with-hooks` ปฏิเสธเวอร์ชันเก่ากว่านี้)
+- Node.js 18+ สำหรับ CLI, discipline report, hook และ status line รวมถึง helper
+  ที่ `/ready`, `/done` และ `/bisect` เรียก (`node <skill-dir>/scripts/*.cjs`;
+  ชื่อ `.sh` เดิมเป็น wrapper ที่ต้องใช้ Node เช่นกัน)
+- Bash สำหรับ classic installer บน macOS และ Linux; hook ถูกต่อแบบ exec form
+  จึงต้องใช้ Claude Code 2.1.139 ขึ้นไป (`install.sh --with-hooks` ปฏิเสธ Node
+  ที่เก่ากว่า 18)
+- Python 3.9+ สำหรับ Lucia Relay: `python3 <skill-dir>/scripts/relay.py` หรือ
+  `python` / `py -3` บน Windows
+- Agent Bus daemon (beta, opt-in) ต้องใช้ Python 3.10+ และ checkout: ไม่อยู่ใน
+  npm payload และ `npx luciazero` ไม่เคยเริ่ม daemon จาก checkout ให้รัน
+  `./install.sh` (บน Windows ใช้ `node bin\luciazero.js`) เพื่อติดตั้ง launcher
+  `luciazero-agentd` และ `lucia` ไว้ที่ `~/.claude/bin` แล้ว
+  `luciazero-agentd service install` จะรัน daemon ผ่าน launchd, systemd `--user`
+  หรือ Task Scheduler บน Windows ดู [docs/agent-bus.md](docs/agent-bus.md)
 - Installer, hook, helper และ grader หลักรัน offline ส่วน behavioral eval จริง
   เรียก model CLI และใช้เครดิต API หรือโควตา subscription
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
@@ -404,8 +421,13 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
   การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
   หรือ `.claude/settings.local.json` ของคุณ
-- Windows: installer และ hook เป็นสคริปต์ Bash ให้รันใน WSL;
-  `npx luciazero discipline` ใช้ได้บน Node ปกติ
+- Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ยังไม่ release; ดูต้นหน้านี้):
+  `npx luciazero` ติดตั้งผ่าน installer ที่ port เป็น Node, `global-install`
+  ใช้ global prefix ของ npm เอง และ hook,
+  status line และ skill helper เป็น Node ทั้งหมด บน Windows โปรแกรมที่
+  Luciazero เรียกด้วยชื่อ — git, node, npm, Python, provider CLI, PowerShell,
+  schtasks — ค้นจาก PATH เท่านั้น ไม่ค้นใน working directory ซึ่ง Windows
+  จะค้นก่อน
 
 อ่าน trust boundary ฉบับเต็มใน [SECURITY.md](SECURITY.md)
 
@@ -422,15 +444,16 @@ scripts/test-timings.sh --report     # median กับ p95 ต่อ gate จ�
 ```
 
 discipline tier เป็นคำสั่ง loop สำหรับ enforcement pack, discipline report และ
-prompt: syntax, bash 3.2 และ ShellCheck ของทุก script ที่ ship, contract ของ
-prompt/doctrine และ state machine ของ hook เท่านั้น fast tier เป็นคำสั่งระหว่างทำงาน
+prompt: syntax และ ShellCheck ของทุก script ที่ ship (และ parse ด้วย bash 3.2
+เมื่อ `LZ_BASH32` ชี้ไปที่ bash 3.2; CI รันเสมอ), contract ของ prompt/doctrine
+และ state machine ของ hook เท่านั้น fast tier เป็นคำสั่งระหว่างทำงาน
 ของส่วนอื่น; ถ้าแก้ส่วนที่ fast tier ไม่ครอบคลุมให้ใช้คำสั่ง targeted ของส่วนนั้น ส่วน full tier (`./test.sh` หรือ
 `./test.sh --full`) ครอบคลุม script, state ของ hook, Relay, bisect, manifest ของ
 plugin/npm, eval grader ที่พิสูจน์ตัวเองได้ และ install → reinstall → uninstall
 แบบ sandbox ทั้ง Claude Code และ Codex โดย CI และ `/done` ใช้ full tier
 `test.sh` เป็นตัว dispatch ส่วนตัวตรวจอยู่ใน `tests/gates/*.sh` แยกไฟล์ตาม
 subsystem และถูก source ตามลำดับ อ่านเฉพาะ gate ที่งานแตะ ใน full tier gate
-tiers, eval, packaging, install และ codex-install รันพร้อมกันคนละ subshell แล้ว
+tiers, eval, packaging, install, codex-install และ parity รันพร้อมกันคนละ subshell แล้ว
 replay output ตามลำดับเดิมจึงอ่านเหมือนรันเรียง; `LZ_TEST_PARALLEL=0` รันทีละ gate
 
 อ่านต่อ:

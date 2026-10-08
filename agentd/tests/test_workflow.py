@@ -25,7 +25,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from luciazero_agentd import ConflictError, NotFound, Store, ValidationError
+from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, ValidationError
 from luciazero_agentd.store import (
     CONVERSATION_TTL_SECONDS,
     MAX_HOPS,
@@ -177,6 +177,18 @@ class GraphTests(WorkflowCase):
         again = self.store.create_task_graph(created_by="codex-architect", nodes=nodes, idempotency_key="g1")
         self.assertEqual([t["id"] for t in first], [t["id"] for t in again])
         self.assertEqual(self.store.counts()["tasks"], 2)
+        self.assertEqual(len([e for e in self.store.events(limit=100) if e["kind"] == "task_graph.created"]), 1)
+
+    def test_a_retried_graph_that_adds_or_drops_a_node_is_a_different_request(self) -> None:
+        """Review finding: idempotency was kept per node, so the same batch key
+        with one more node created that node and a second graph event."""
+        nodes = [{"key": "fix", "title": "fix"}, {"key": "verify", "title": "verify", "depends_on": ["fix"]}]
+        self.store.create_task_graph(created_by="codex-architect", nodes=nodes, idempotency_key="g1")
+        for changed in (nodes + [{"key": "ship", "title": "ship", "depends_on": ["verify"]}], nodes[:1]):
+            with self.assertRaises(IdempotencyConflict):
+                self.store.create_task_graph(created_by="codex-architect", nodes=changed, idempotency_key="g1")
+        self.assertEqual(self.store.counts()["tasks"], 2)
+        self.assertEqual(len([e for e in self.store.events(limit=100) if e["kind"] == "task_graph.created"]), 1)
 
     def test_bad_graphs_are_refused(self) -> None:
         with self.assertRaises(ValidationError):
@@ -354,6 +366,68 @@ class BudgetTests(WorkflowCase):
         with self.assertRaises(BudgetExceeded):
             self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": first["id"]})
         self.assertEqual(self.state(second["id"]), "blocked")
+
+    def test_only_the_tasks_creator_and_assignee_spend_its_turns(self) -> None:
+        """Review finding: any sender naming a task_id spent a turn, so an agent
+        with no part in a task could message itself until the task stopped,
+        blocking its dependents and refusing its holder's completion."""
+        task = self.task("bounded", assigned_to="codex-implementer", budget={"turns": 2})
+        self.store.claim_task(task["id"], "codex-implementer")
+        for _ in range(5):
+            self.store.send_message(sender="claude-reviewer", recipient="claude-reviewer", kind="question",
+                                    payload={"task_id": task["id"]})
+        self.assertEqual(self.store.get_task(task["id"])["spent"].get("turns", 0), 0)
+        self.assertEqual(self.state(task["id"]), "claimed")
+        self.store.send_message(sender="codex-architect", recipient="codex-implementer", kind="task", payload={"task_id": task["id"]})
+        self.store.send_message(sender="codex-implementer", recipient="codex-architect", kind="result", payload={"task_id": task["id"]})
+        self.assertEqual(self.store.get_task(task["id"])["spent"]["turns"], 2)
+        with self.assertRaises(BudgetExceeded):
+            self.store.send_message(sender="codex-implementer", recipient="codex-architect", kind="result",
+                                    payload={"task_id": task["id"]})
+        self.assertEqual(self.state(task["id"]), "exhausted")
+
+    def test_a_task_past_its_deadline_is_stopped_whoever_names_it(self) -> None:
+        """Review finding on the test above: limiting the turn count to a
+        task's parties skipped the deadline too, so a task message from
+        anyone else for a task past it was queued and the task kept running."""
+        task = self.task("bounded", assigned_to="codex-implementer", budget={"seconds": 3600})
+        self.store.claim_task(task["id"], "codex-implementer")
+        self.store._conn.execute("UPDATE tasks SET deadline_at = ? WHERE id = ?", (_plus_seconds(utcnow(), -60), task["id"]))
+        messages = self.store.counts()["messages"]
+        with self.assertRaises(BudgetExceeded) as caught:
+            self.store.send_message(sender="claude-reviewer", recipient="claude-reviewer", kind="task",
+                                    payload={"task_id": task["id"]})
+        self.assertIn("seconds", str(caught.exception))
+        self.assertEqual(self.store.counts()["messages"], messages)
+        self.assertEqual(self.state(task["id"]), "exhausted")
+        self.assertEqual(self.store.get_task(task["id"])["spent"].get("turns", 0), 0)
+
+    def test_a_task_message_for_a_stopped_task_is_refused(self) -> None:
+        """Review finding: a stopped task's queued task messages are dead-
+        lettered, yet a new one -- the refused send retried, or one naming a
+        cancelled task -- was queued as live work."""
+        spent = self.task("bounded", budget={"turns": 1})
+        send = dict(sender="codex-architect", recipient="claude-reviewer", kind="task", payload={"task_id": spent["id"]})
+        self.store.send_message(**send)
+        with self.assertRaises(BudgetExceeded):
+            self.store.send_message(**send, idempotency_key="retry")
+        messages = self.store.counts()["messages"]
+        with self.assertRaises(BudgetExceeded) as caught:
+            self.store.send_message(**send, idempotency_key="retry")
+        self.assertIn("turns", str(caught.exception))
+        cancelled = self.task("dropped")
+        waiting = self.task("after", depends_on=[cancelled["id"]])
+        self.store.cancel_task(cancelled["id"], "human")
+        for stopped in (cancelled, waiting):
+            with self.assertRaises(ConflictError) as caught:
+                self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="task",
+                                        payload={"task_id": stopped["id"]})
+            self.assertIn(self.state(stopped["id"]), str(caught.exception))
+        self.assertEqual(self.store.counts()["messages"], messages)
+        self.assertEqual(self.store.inbox("claude-reviewer", states=("queued",))["items"], [])
+        # Talking about a stopped task is still allowed; only new work for it is refused.
+        self.store.send_message(sender="codex-architect", recipient="claude-reviewer", kind="finding",
+                                payload={"task_id": cancelled["id"]})
 
     def test_budget_remaining_reports_what_is_left(self) -> None:
         task = self.task("bounded", budget={"turns": 3, "tokens": 10})

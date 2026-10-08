@@ -10,7 +10,8 @@ and explicitly enrolled managed workers can use dispatch. Design and evidence:
 
 The bus is beta and separate from the core install: `npx luciazero` never
 starts a daemon. Everything below runs from a checkout of this repository.
-The daemon needs Python 3.10+ and `git`; nothing is installed with pip.
+The daemon needs Python 3.10+ and `git`; nothing is installed with pip. It
+runs on macOS, Linux, WSL2 and natively on Windows.
 
 `./install.sh` puts a `luciazero-agentd` launcher — and `lucia`, the same
 program under a shorter name — in `~/.claude/bin`
@@ -34,10 +35,25 @@ So the one-time part is a clone, an install, and a PATH entry:
 git clone https://github.com/ohm41321/luciazero.git
 cd luciazero
 # plain ./install.sh uses ~/.claude/bin; this picks a directory you may
-# already have on PATH
+# already have on PATH, and later installs, --status and the uninstall
+# remember it
 LUCIAZERO_BIN_DIR=~/.local/bin ./install.sh
 export PATH="$HOME/.local/bin:$PATH"      # and in your shell profile
 ```
+
+On Windows, with no Bash, the Node installer does the same from the
+checkout, in PowerShell or cmd.exe:
+
+```powershell
+git clone https://github.com/ohm41321/luciazero.git
+cd luciazero
+node bin\luciazero.js     # luciazero-agentd.cmd and lucia.cmd in %USERPROFILE%\.claude\bin
+```
+
+It names the directory to add to your user Path (System Properties >
+Environment Variables) when it is not there yet. The launchers take the
+first of `python3`, `python` and `py -3` that is 3.10 or newer, found through
+PATH alone.
 
 Without `git`, the release ZIP is the same checkout — it is built from the
 tag with `git archive`, so unpacking it and running `./install.sh` from
@@ -124,15 +140,20 @@ luciazero-agentd service uninstall
 ```
 
 macOS gets a LaunchAgent in `~/Library/LaunchAgents`; Linux and WSL2 get a
-systemd `--user` unit in `~/.config/systemd/user`. Both run as you, not as
-root, and Windows is refused by name (ADR 0002 scopes v1 to macOS, Linux and
-WSL2). The unit always serves with strict binding — a service is never
+systemd `--user` unit in `~/.config/systemd/user`; Windows gets a Task
+Scheduler task, `\Luciazero\agentd`, defined in
+`%LOCALAPPDATA%\Luciazero\agentd-task.xml`, that starts at your logon in
+your own session (so the claim dialog can appear), at least privilege,
+through `pythonw.exe` so no console window opens. All three run as you, not
+as root or an administrator; Cygwin is refused by name. The unit always
+serves with strict binding — a service is never
 installed with `--allow-unattributed` — and its output goes to
 `daemon.log` in the state directory.
 
 Every file carries an ownership marker. A service file that is not ours is
 reported and left exactly as it is, never backed up and replaced, and
-`service uninstall` deletes only files carrying that marker. `uninstall.sh`
+`service uninstall` deletes only files carrying that marker; nor does it stop
+a launchd or systemd service whose file lacks the marker. `uninstall.sh`
 stops the service before it removes the launcher — otherwise the manager
 would keep restarting a file that is gone — and leaves the launcher in place,
 loudly, if it could not.
@@ -488,8 +509,8 @@ recorded, and neither is interpreted:
 | --- | --- |
 | `provider_quiet_for` on `turn.nudged` | seconds since the provider last printed, at the instant the bus typed |
 | `human_typed_ago` on `turn.nudged` | seconds since the last keystroke, at that same instant |
-| `held_for` on `turn.nudged` | how long that knock waited for the pane to go quiet |
-| `turn.nudge_deferred` | a knock held back for a pane that was still printing, once per delivery |
+| `held_for` on `turn.nudged` | how long that knock waited for the pane to go quiet and the keyboard idle |
+| `turn.nudge_deferred` | a knock held back for a pane that was still printing or a person who had just typed, once per delivery |
 | `turn.human_input` | a person typed into this session, at most one event per 20 seconds |
 
 The exporter carries the first two onto the wait as they are, and counts the
@@ -535,6 +556,22 @@ This does not make the knock reliable. It stops the bus spending a keystroke
 on a terminal that is demonstrably not reading; a pane that is quiet and still
 swallows one is not covered, and nothing here confirms a turn actually
 started — `turn.nudged` remains the moment of typing, not of a turn.
+
+### Nothing is typed while somebody is typing
+
+A knock is a line and a return. Typed while a person is writing a prompt, the
+return submits their half-written line with the literal stuck to its end. The
+pane's echo of their keys already holds a knock for `QUIET_SECONDS`, but a
+person pauses longer than three seconds between words, so a keystroke holds
+it too, for `TYPING_SECONDS` (twenty, the same stretch after which a new
+`turn.human_input` is written). Held the same way as for a busy pane:
+nothing is lost, the cap and the cooldown are not spent, `turn.nudge_deferred`
+records the hold once with `human_typed_ago`, and `held_for` on the knock says
+how long it waited.
+
+The proxy does not read what was typed, so it cannot see a prompt left
+half-written: a person who stops for longer than twenty seconds in the middle
+of one can still have a knock appended to it.
 
 **The daemon starts the provider itself.** Under managed dispatch (M6, above)
 the first bytes come from the dispatcher: it mints a `managed` binding, starts
@@ -628,18 +665,25 @@ forever.
 | dimension  | measured by | spent when |
 | ---------- | ----------- | ---------- |
 | `seconds`  | the daemon  | the wall clock passes the task's deadline |
-| `turns`    | the daemon  | a message naming the task is sent |
+| `turns`    | the daemon  | the task's creator or assignee sends a message naming it |
 | `tokens`   | the provider, through `task_record_usage` | the claim holder reports usage |
 | `cost_usd` | the provider, through `task_record_usage` | the claim holder reports usage |
 
-The two the daemon measures cannot be under-reported. The two only a provider
-can know are additive and holder-only: a report raises a total, never lowers
+The two the daemon measures cannot be under-reported. Only the task's
+creator and assignee spend its turns: if a message from anyone else naming
+the task counted, any agent could stop another's work. A message from anyone
+naming a task past its deadline, or with a budget already spent, still stops
+it. The two only a provider can know are
+additive and holder-only: a report raises a total, never lowers
 one, only the agent holding the claim may make it, and every report keeps how
 much the reporting session's identity was worth. A spent
 budget is a stop, not a warning: the task becomes `exhausted`, its queued
 messages are dead-lettered, whatever waited on it is blocked, and the send or
-claim that hit the limit is refused. `bus status` names stopped tasks on their
-own line. There is no reopening; the user creates a new task.
+claim that hit the limit is refused. A new `task` message naming a stopped
+task -- exhausted, cancelled or blocked -- is refused too, so a retry cannot
+queue the same dead work again; other kinds may still name it. `bus status`
+names stopped tasks on their own line. There is no reopening; the user
+creates a new task.
 
 Two limits bound a conversation regardless of budgets: `MAX_HOPS` (32
 messages in one `correlation_id`) and a 24-hour conversation time to live.
@@ -765,6 +809,10 @@ that read it, the number of turns waited on, and the longest wait.
   again on the same state directory. Acknowledged messages, claimed tasks,
   worktree records and artifacts survive; the demo restarts the daemon
   between the reviewer's finding and the implementer's fix to prove it.
+  Identities given out by `claim approve` do not: MCP sessions live in the
+  daemon's memory, so `serve` revokes those bindings when it starts, and a
+  session that reconnects asks again. Terminals bound with `run` or `attach`
+  are checked by their process and stay bound.
 - **A second daemon.** `serve` refuses to start while `endpoint.json` names
   a live process, and a daemon only ever removes its own record.
 - **Stale worktree.** If an agent's checkout changed branch, moved, or was

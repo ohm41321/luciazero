@@ -1,0 +1,5 @@
+# Every text file is LF in every checkout, Windows included. The npm package
+# ships LF, the installers and hooks compare bytes, and Bash cannot run a
+# script with CR in it, so a CRLF checkout would test a tree no user gets.
+# CRLF handling is tested with fixtures that carry CRLF on purpose.
+* text=auto eol=lf

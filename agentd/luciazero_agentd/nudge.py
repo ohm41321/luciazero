@@ -68,22 +68,32 @@ something was typed and when, and nothing more.
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
-import pty
 import json
 import select
 import signal
 import sqlite3
 import struct
-import termios
+import sys
 import time
-import tty
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from .store import MESSAGE_KINDS, PROVIDERS, Store, StoreError
+
+try:
+    import fcntl
+    import pty
+    import termios
+    import tty
+except ImportError:
+    # Windows: no pty. `run` holds a pseudo console there instead (`conpty`),
+    # on Windows 10 1809 and later, and on anything older starts the provider
+    # on the console it was given.
+    AVAILABLE = False
+else:
+    AVAILABLE = True
 
 #: Typed into the provider's terminal, verbatim, and never anything else.
 TEXT = "check your bus inbox"
@@ -123,6 +133,16 @@ QUIET_SECONDS = 3.0
 #: stretch of typing answers exactly as well as one per keystroke, at a
 #: thousandth of the writes -- and this loop is holding the user's terminal.
 HUMAN_INPUT_SECONDS = 20.0
+#: How long after a keystroke nothing is typed. A knock is a line and a
+#: return, and typed while somebody is writing a prompt the return submits
+#: their half-written line with the literal stuck to its end. The pane's echo
+#: already holds a knock for `QUIET_SECONDS`; a person pauses longer than that
+#: between words. The same stretch as `HUMAN_INPUT_SECONDS`: somebody who typed
+#: this recently is taken to be at the keyboard.
+TYPING_SECONDS = 20.0
+# Keystrokes the provider has not taken yet. Past this the keyboard is not
+# read until it catches up, so a paste is slowed by the provider, not buffered.
+PENDING_INPUT_LIMIT = 65536
 
 
 @dataclass
@@ -261,6 +281,7 @@ class Watcher:
                  clock: Callable[[], float] = time.monotonic,
                  cooldown: float = COOLDOWN_SECONDS,
                  quiet: float = QUIET_SECONDS,
+                 typing: float = TYPING_SECONDS,
                  limit: int = MAX_NUDGES) -> None:
         self.db_path = str(db_path)
         self.agent_id = agent_id
@@ -268,6 +289,7 @@ class Watcher:
         self.clock = clock
         self.cooldown = cooldown
         self.quiet = quiet
+        self.typing = typing
         self.limit = limit
         #: Nudges since the last keystroke, not since the session started.
         self.unattended = 0
@@ -281,7 +303,8 @@ class Watcher:
         self.last_output: Optional[float] = None
         self.last_input: Optional[float] = None
         self.last_input_event: Optional[float] = None
-        #: The delivery currently waiting for the pane to go quiet, and when
+        #: The delivery currently waiting for the pane to go quiet or the
+        #: keyboard to go idle, and when
         #: it first had to wait. One deferral is recorded per delivery, not
         #: per poll, and the wait is reported when the knock finally goes in.
         self.deferred_seq: Optional[int] = None
@@ -298,15 +321,26 @@ class Watcher:
             return default
 
     def _max_queued_seq(self) -> int:
-        return self._newest()[0]
+        """The highest queued delivery, past however many pages of backlog."""
+        def highest(store: Store) -> int:
+            after = 0
+            while True:
+                page = store.inbox(self.agent_id, states=("queued",), limit=500, after=after)
+                if not page["has_more"]:
+                    return int(page["next_after"])
+                after = int(page["next_after"])
+        return self._read(highest, 0)
 
     def _newest(self) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
-        """The highest queued delivery, what it says, and the shape of the
-        queue behind it: `(seq, kind, sender)` per delivery, which is what a
-        knock is counted from. No payload rides along with those -- only the
-        newest one carries its text, and only to be shown."""
+        """The highest queued delivery new to this session, what it says, and
+        the shape of the queue behind it: `(seq, kind, sender)` per delivery,
+        which is what a knock is counted from. No payload rides along with
+        those -- only the newest one carries its text, and only to be shown.
+
+        Read from `seen_seq` on: the backlog behind it has had its knock, and
+        a page that started at the oldest would never reach what is new."""
         def newest(store: Store) -> tuple[int, Optional[Arrival], list[tuple[int, str, str]]]:
-            page = store.inbox(self.agent_id, states=("queued",), limit=500)
+            page = store.inbox(self.agent_id, states=("queued",), limit=500, after=self.seen_seq)
             queued = [(int(item["delivery_seq"]), str(item.get("kind") or ""),
                        str(item.get("sender") or "")) for item in page["items"]]
             latest = max(page["items"], key=lambda item: item["delivery_seq"], default=None)
@@ -382,16 +416,20 @@ class Watcher:
         if not self._seen_since_start():
             return None
         quiet_for = self._since(self.last_output, now)
-        if quiet_for is not None and quiet_for < self.quiet:
+        typed_ago = self._since(self.last_input, now)
+        if ((quiet_for is not None and quiet_for < self.quiet)
+                or (typed_ago is not None and typed_ago < self.typing)):
             # The pane is still printing, so it is still mid-turn, and a
             # keystroke typed into it is not a turn -- it is a keystroke a
-            # busy TUI never reads. Refusing here does not lose the delivery:
-            # `seen_seq` is untouched, exactly as when the cap holds, so this
-            # knocks the moment the pane goes quiet.
+            # busy TUI never reads. Or a person typed a moment ago, and the
+            # knock's return would submit whatever they were writing.
+            # Refusing here does not lose the delivery: `seen_seq` is
+            # untouched, exactly as when the cap holds, so this knocks the
+            # moment the pane goes quiet and the keyboard idle.
             if self.deferred_seq != newest:
                 self.deferred_seq = newest
                 self.deferred_since = now
-                self._defer(newest, quiet_for)
+                self._defer(newest, quiet_for, typed_ago)
             return None
         held_for = self._since(self.deferred_since, now) if self.deferred_seq == newest else None
         self.deferred_seq = self.deferred_since = None
@@ -401,7 +439,7 @@ class Watcher:
         self.last_nudge = now
         self.unattended += 1
         self._record(newest, provider_quiet_for=quiet_for, held_for=held_for,
-                     human_typed_ago=self._since(self.last_input, now))
+                     human_typed_ago=typed_ago)
         return arrival
 
     def _note_for(self, queued: Sequence[tuple[int, str, str]]) -> str:
@@ -436,7 +474,8 @@ class Watcher:
             return found
         return self._read(read, [])
 
-    def _defer(self, delivery_seq: int, provider_quiet_for: float) -> None:
+    def _defer(self, delivery_seq: int, provider_quiet_for: Optional[float],
+               human_typed_ago: Optional[float]) -> None:
         """Written once per delivery held back, never once per poll.
 
         Without it a provider that never stops printing would be a bus that
@@ -445,7 +484,8 @@ class Watcher:
         def write(store: Store) -> None:
             store.trust = "system"
             store.record_nudge_deferred(self.agent_id, delivery_seq=delivery_seq,
-                                        provider_quiet_for=provider_quiet_for)
+                                        provider_quiet_for=provider_quiet_for,
+                                        human_typed_ago=human_typed_ago)
         self._read(write, None)
 
     def _record(self, delivery_seq: int, *, provider_quiet_for: Optional[float] = None,
@@ -536,9 +576,33 @@ def _drain(master: int, stdout: int, *, seconds: float = 0.2) -> None:
             return
 
 
+def knock(watcher: Watcher, typist: Typist, show: Optional[Callable[[Arrival], None]]) -> None:
+    """One poll of the watcher: type the line if a delivery is due and no
+    line is already going in. Shared by the pty proxy and the Windows
+    console one."""
+    if typist.busy:
+        return
+    arrival = watcher.due()
+    if arrival:
+        # Nothing of a peer's is written to this terminal. The provider owns
+        # every cell of it, and the one thing that goes in is the literal,
+        # through the keyboard path the provider already understands.
+        if show is not None and isinstance(arrival, Arrival):
+            show(arrival)
+        typist.start(getattr(arrival, "note", None))
+
+
 def usable(stdin: int = 0, stdout: int = 1) -> bool:
-    """A pty is only worth taking when there is a real terminal to proxy."""
-    return os.isatty(stdin) and os.isatty(stdout)
+    """A pty is only worth taking when there is a real terminal to proxy,
+    and there is one to take. On Windows the terminal is a console and what
+    is taken is a pseudo console (`conpty`)."""
+    if sys.platform == "win32":
+        try:
+            from . import conpty
+        except (ImportError, OSError):
+            return False
+        return conpty.usable()
+    return AVAILABLE and os.isatty(stdin) and os.isatty(stdout)
 
 
 def spawn(argv: Sequence[str], env: dict[str, str]) -> tuple[int, int]:
@@ -565,7 +629,13 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
     returns -- an exception here would otherwise leave the user's shell without
     an echo.
     """
-    typist = typist or Typist(lambda data: os.write(master, data), clock=clock)
+    # Input to the provider is queued and written only as the pty takes it.
+    # One blocking write of a large paste deadlocks against a provider that
+    # answers input with output: its output fills the pty while this process,
+    # stuck in the write, is not reading it, and the provider stops reading.
+    pending = bytearray()
+    os.set_blocking(master, False)
+    typist = typist or Typist(pending.extend, clock=clock)
     _copy_window(stdout, master)
     restore: Optional[list[Any]] = None
     if os.isatty(stdin):
@@ -601,34 +671,45 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
                 status = waited
                 _drain(master, stdout)
                 break
+            sources = [master] + ([stdin] if len(pending) < PENDING_INPUT_LIMIT else [])
             try:
-                ready, _, _ = select.select([stdin, master], [], [], 0.2)
+                ready, writable, _ = select.select(sources, [master] if pending else [], [], 0.2)
             except (OSError, select.error) as exc:  # EINTR on window change
                 if getattr(exc, "errno", None) == errno.EINTR:
                     continue
                 raise
+            if master in writable:
+                try:
+                    del pending[:os.write(master, pending)]
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    pending.clear()  # the pty closed; the wait above will see the exit
             if master in ready:
                 try:
                     data = os.read(master, 65536)
+                except BlockingIOError:
+                    data = None
                 except OSError:
                     break  # the pty closed: the provider is gone
-                if not data:
+                if data == b"":
                     break
-                os.write(stdout, data)
-                # A pane that is streaming is a pane mid-turn. The proxy is
-                # the only thing that sees it, so it is the only thing that
-                # can say so; the bytes themselves are the user's screen and
-                # are neither inspected nor kept.
-                printed = getattr(watcher, "saw_output", None)
-                if printed is not None:
-                    printed()
+                if data:
+                    os.write(stdout, data)
+                    # A pane that is streaming is a pane mid-turn. The proxy
+                    # is the only thing that sees it, so it is the only thing
+                    # that can say so; the bytes themselves are the user's
+                    # screen and are neither inspected nor kept.
+                    printed = getattr(watcher, "saw_output", None)
+                    if printed is not None:
+                        printed()
             if stdin in ready:
                 try:
                     data = os.read(stdin, 65536)
                 except OSError:
                     data = b""
                 if data:
-                    os.write(master, data)
+                    pending.extend(data)
                     # The proxy is the only thing that sees a keystroke, so it
                     # is the only thing that can tell the cap somebody is here.
                     typed = getattr(watcher, "human_typed", None)
@@ -638,16 +719,7 @@ def proxy(pid: int, master: int, *, watcher: Optional[Watcher] = None,
             now = clock()
             if watcher is not None and now >= next_poll:
                 next_poll = now + poll
-                if not typist.busy:
-                    arrival = watcher.due()
-                    if arrival:
-                        # Nothing of a peer's is written to this terminal.
-                        # The provider owns every cell of it, and the one
-                        # thing that goes in is the literal, through the
-                        # keyboard path the provider already understands.
-                        if show is not None and isinstance(arrival, Arrival):
-                            show(arrival)
-                        typist.start(getattr(arrival, "note", None))
+                knock(watcher, typist, show)
     finally:
         if previous_winch is not None:
             try:

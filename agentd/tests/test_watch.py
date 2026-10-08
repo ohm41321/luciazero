@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import io
 import os
+import re
+import shlex
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta, timezone
 import sys
 import tempfile
@@ -32,25 +35,52 @@ from luciazero_agentd.store import Store
 
 ARCHITECT, IMPLEMENTER, BYSTANDER = "codex-architect", "claude-implementer", "claude-reviewer"
 
+WINDOWS = sys.platform == "win32"
+# The module form names the interpreter the way each platform's installer
+# does: Windows has no `python3` unless a user made one.
+PYTHON = "python" if WINDOWS else "python3"
+
+
+def entered(path: object, command: str) -> str:
+    """What a printed command looks like once it has to start somewhere:
+    PowerShell on Windows, a POSIX shell everywhere else. Spelled out here
+    rather than borrowed from `watch`, so a change to either form is a
+    change to a test, not a silent agreement with itself."""
+    if WINDOWS:
+        return f"Set-Location -LiteralPath '{path}' -ErrorAction Stop; {command}"
+    return f"cd {path} && {command}"
+
+
+def directory_of(printed: str) -> str:
+    """The directory a printed `entered` command goes to."""
+    if WINDOWS:
+        match = re.match(r"Set-Location -LiteralPath '((?:[^']|'')*)' -ErrorAction Stop; ", printed)
+        assert match, printed
+        return match.group(1).replace("''", "'")
+    words = shlex.split(printed)
+    assert words[0] == "cd" and words[2] == "&&", printed
+    return words[1]
+
 
 class WatchCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-watch-")
+        # Cleanups run last-added first, so every follower a test opens is
+        # closed before the store and the store before the directory goes:
+        # Windows will not delete a database file something still has open.
+        self.addCleanup(self._tmp.cleanup)
         self.state_dir = Path(self._tmp.name)
         self.db = self.state_dir / "bus.sqlite3"
         # The writer stays open for the whole test: a watcher always reads a
         # database somebody else is writing.
         self.store = Store.open(str(self.db))
+        self.addCleanup(self.store.close)
         self.store.migrate()
         self.store.trust = "bound"
         for agent, provider, role in ((ARCHITECT, "codex", "architect"),
                                       (IMPLEMENTER, "claude", "implementer"),
                                       (BYSTANDER, "claude", "reviewer")):
             self.store.register_agent(agent, provider=provider, role=role)
-
-    def tearDown(self) -> None:
-        self.store.close()
-        self._tmp.cleanup()
 
     def follower(self, **kwargs: object) -> watch.Follower:
         follower = watch.Follower(self.db, **kwargs)  # type: ignore[arg-type]
@@ -141,6 +171,7 @@ class FollowTests(WatchCase):
         self.say(ARCHITECT, IMPLEMENTER, "before the restart")
         self.store.close()
         self.store = Store.open(str(self.db))
+        self.addCleanup(self.store.close)  # the one in setUp closes the first writer
         self.store.migrate()
         self.store.trust = "bound"
         self.say(IMPLEMENTER, ARCHITECT, "after the restart")
@@ -279,11 +310,30 @@ class ChatTests(WatchCase):
         """
         repo = make_repo(self.state_dir / "wt-implementer")
         self.store.bind_worktree(IMPLEMENTER, repo)
-        for which, expected in ((lambda name: "/opt/bin/" + name, f"cd {repo} && luciazero-agentd"),
-                                (lambda name: None, f"cd {repo}/agentd && python3 -m luciazero_agentd")):
+        for which, expected in ((lambda name: "/opt/bin/" + name, entered(repo, "luciazero-agentd")),
+                                (lambda name: None, entered(Path(repo) / "agentd", f"{PYTHON} -m luciazero_agentd"))):
             plan = dict(watch.conversation_plan(self.roster(), ARCHITECT, IMPLEMENTER, which=which))
             line = plan[f"terminal for {IMPLEMENTER} (claude)"]
             self.assertTrue(line.startswith(expected), line)
+
+    def test_a_path_in_a_printed_command_is_one_argument(self) -> None:
+        """Review finding: a worktree and a state directory went into the
+        printed commands as they were. A space split the command, and a
+        worktree an agent named `/tmp/wt;touch PWNED;#` turned the line the
+        user copies into a second command."""
+        hostile = "/tmp/wt;touch PWNED;#"
+        state = Path("/tmp/state dir")
+        agents = [{"id": IMPLEMENTER, "provider": "claude", "worktree": hostile}]
+        lines = [line for _, line in watch.auto_turn_plan(agents, ARCHITECT, IMPLEMENTER, state_dir=state)]
+        lines += [line for _, line in watch.conversation_plan(agents, ARCHITECT, IMPLEMENTER, state_dir=state,
+                                                              which=lambda name: None)]
+        enrol = next(line for line in lines if f"worker add {IMPLEMENTER}" in line)
+        self.assertIn(f"--cwd {watch.shell_quote(hostile)} ", enrol)
+        for line in lines:
+            self.assertIn(f"--state-dir {watch.shell_quote(state)}", line)
+        if not WINDOWS:
+            words = shlex.split(enrol)
+            self.assertEqual(words[words.index("--cwd") + 1], hostile)
 
     def test_an_agent_whose_provider_has_no_known_command_is_not_guessed_at(self) -> None:
         self.store.register_agent("someone-else", provider="other", role="helper")
@@ -475,7 +525,8 @@ class LauncherTests(WatchCase):
     Everything `chat` and `next` print is meant to be pasted into another
     terminal, so the only property that matters is that what is printed runs.
     `luciazero-agentd` runs only once install.sh has put it on PATH; before
-    that the package is reached with `python3 -m` from the `agentd` directory,
+    that the package is reached with `python3 -m` (`python -m` on Windows)
+    from the `agentd` directory,
     and printing the short form early would print a command not found.
     """
 
@@ -484,24 +535,53 @@ class LauncherTests(WatchCase):
 
     def test_without_it_the_module_form_carries_its_own_cd(self) -> None:
         printed = watch.launcher(which=lambda name: None)
-        self.assertTrue(printed.endswith("agentd && python3 -m luciazero_agentd"), printed)
-        self.assertTrue(Path(printed.split(" && ")[0][len("cd "):]).is_dir(),
+        self.assertTrue(printed.endswith(f"; {PYTHON} -m luciazero_agentd" if WINDOWS
+                                         else "agentd && python3 -m luciazero_agentd"), printed)
+        self.assertEqual(Path(directory_of(printed)).name, "agentd", printed)
+        self.assertTrue(Path(directory_of(printed)).is_dir(),
                         "the fallback names a directory that exists")
 
     def test_an_agent_is_still_started_from_inside_its_own_worktree(self) -> None:
         """The `cd` exists so the binding records the worktree. With the
         launcher it lands in the worktree itself; without it, in the `agentd`
         directory under it, which is where the module has to be imported."""
-        self.assertEqual("cd /tmp/wt && luciazero-agentd",
+        self.assertEqual(entered("/tmp/wt", "luciazero-agentd"),
                          watch.launcher_in("/tmp/wt", which=lambda name: "/opt/bin/" + name))
-        self.assertEqual("cd /tmp/wt/agentd && python3 -m luciazero_agentd",
+        self.assertEqual(entered(Path("/tmp/wt") / "agentd", f"{PYTHON} -m luciazero_agentd"),
                          watch.launcher_in("/tmp/wt", which=lambda name: None))
 
     def test_a_worktree_with_a_space_stays_one_argument(self) -> None:
         """`cd /tmp/my tree && ...` is a command that cds somewhere else."""
-        for which in (lambda name: "/opt/bin/" + name, lambda name: None):
+        for which, inside in ((lambda name: "/opt/bin/" + name, Path("/tmp/my tree")),
+                              (lambda name: None, Path("/tmp/my tree") / "agentd")):
             printed = watch.launcher_in("/tmp/my tree", which=which)
-            self.assertIn("'/tmp/my tree", printed, printed)
+            self.assertEqual(Path(directory_of(printed)), inside, printed)
+
+    def test_the_printed_directory_change_runs_in_the_shell_it_is_printed_for(self) -> None:
+        """What is printed is pasted, so it is run here by the same shell a
+        human would paste it into -- PowerShell on Windows, sh elsewhere --
+        through a directory whose name needs quoting twice over: a space and
+        a single quote, which PowerShell escapes by doubling. A directory
+        that cannot be entered must stop the command, not run it from
+        wherever the shell already was."""
+        root = Path(tempfile.mkdtemp(prefix="agentd-launch-"))
+        self.addCleanup(lambda: [p.rmdir() for p in (root / "it's my tree", root) if p.exists()])
+        target = root / "it's my tree"
+        target.mkdir()
+
+        def run(command: str) -> subprocess.CompletedProcess:
+            argv = (["powershell", "-NoProfile", "-NonInteractive", "-Command", command] if WINDOWS
+                    else ["sh", "-c", command])
+            return subprocess.run(argv, capture_output=True, text=True, timeout=120, check=False,
+                                  stdin=subprocess.DEVNULL)
+
+        here = run(watch.in_directory(target, "(Get-Location).ProviderPath" if WINDOWS else "pwd -P"))
+        self.assertEqual(here.returncode, 0, here.stderr)
+        self.assertEqual(os.path.realpath(here.stdout.strip()), os.path.realpath(target), here.stdout)
+
+        missing = run(watch.in_directory(root / "gone", "echo ran-anyway"))
+        self.assertNotIn("ran-anyway", missing.stdout)
+        self.assertNotEqual(missing.returncode, 0, missing.stdout)
 
     def test_next_prints_the_short_form_when_it_is_available(self) -> None:
         self.say(ARCHITECT, IMPLEMENTER, "please look at this")
@@ -514,4 +594,4 @@ class LauncherTests(WatchCase):
         self.say(ARCHITECT, IMPLEMENTER, "please look at this")
         with mock.patch("shutil.which", lambda name: None):
             actions = watch.owed(self.follower().connect())
-        self.assertIn("python3 -m luciazero_agentd run --agent", actions[0]["do"])
+        self.assertIn(f"{PYTHON} -m luciazero_agentd run --agent", actions[0]["do"])

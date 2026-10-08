@@ -22,9 +22,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The website's home page carries the Google Search Console verification tag,
   and the site checker fails a home page without it, since a deploy that drops
   the tag unverifies the site.
+- Native Windows, with no WSL. `npx luciazero` runs a Node port of the four
+  installers there (`bin/lib/installer.js`), held to the Bash ones by a parity
+  gate, and `global-install`, `-status` and `-uninstall` use npm's own global
+  prefix. From a checkout the Agent Bus daemon runs natively: Win32 process
+  facts, providers in Job Objects, `run` on a pseudo console, a protected DACL
+  on the state directory, an exclusive port, `luciazero-agentd.cmd` and
+  `lucia.cmd` launchers, and a Task Scheduler service. On Windows the programs
+  Luciazero starts by name come from PATH's absolute entries only, never from
+  the working directory. CI runs the installers, hooks and skill helpers on
+  Windows with Node 18 and 22, and the daemon suite and Lucia Relay checks on
+  Python 3.10 and 3.13.
 
 ### Changed
 
+- The enforcement hooks and status line are Node programs
+  (`luciazero-verify.cjs`, `luciazero-statusline.cjs`) wired in exec form,
+  which needs Claude Code 2.1.139 or newer. `install.sh --with-hooks` needs
+  Node 18+ instead of Python 3.9+ and moves older `.sh` entries in place.
+- The helpers `/ready`, `/done` and `/bisect` run are Node:
+  `node <skill-dir>/scripts/detect.cjs`, `revert-probe.cjs` and
+  `safe-bisect.cjs`. On Windows `revert-probe` runs the verify command through
+  cmd.exe, and `safe-bisect` starts a `.cmd` or `.bat` criterion with each
+  argument quoted for it. The `.sh` names stay as wrappers and need Node 18+.
 - `homepage` in `package.json` and `.claude-plugin/plugin.json` now points at
   the website, and both READMEs link to it next to the language switch.
 - The website, its social card and both READMEs use the 3D (VRM) render of
@@ -35,6 +55,351 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/assets/og-card.html`, which records the render command. The READMEs
   pin the image at the `main` commit that added it, as the npm page requires;
   `docs/assets/lucia.png` stays for the READMEs of earlier releases.
+- Agent Bus: a `task` message naming a stopped task (exhausted, cancelled or
+  blocked) is refused. Stopping already dead-lettered the queued ones, yet a
+  new one, including the very send the budget had refused, was queued as live
+  work. Other kinds may still name the task.
+- The verify hook no longer treats a `.txt` write as documentation, so editing
+  `requirements.txt` or `CMakeLists.txt` after a green run arms the stop nudge
+  like any code edit. `.md`, `.markdown` and `.rst` writes still leave the
+  verify state alone; `LUCIAZERO_DOC_REGEX` in your own settings restores the
+  old set.
+- The verify hook's stop nudge is per session. Two sessions in one project
+  shared one marker: a session that edited nothing was nudged for the other's
+  edit, and the session that made it then stopped without a nudge. Each
+  session that edited since the last verify run is now nudged once, and a
+  verify run in any session still covers every edit made before it started.
+  An unverified edit recorded before the update still nudges every session
+  once, and a session still running an older copy keeps its old behaviour.
+- The verify hook records overlapping verify runs by when they started: a run
+  that started before the recorded one and finishes after it no longer
+  replaces it. It used to move the verified point back, so an edit the later
+  run had covered nudged again, and its red replaced a green for newer code.
+  This holds only for a result whose start the hook recorded itself
+  (`last_verify_start`). A result written by an older copy of the hook, or
+  by a run whose start was never recorded, is timed by when it finished, and
+  any run that ends after it replaces it, as before. So a red for code older
+  than an older copy's green can still replace that green when its run ends
+  later: an extra nudge, never a false green.
+
+### Fixed
+
+- Release: the workflow publishes only after the whole CI workflow passes at
+  the tag, the native Windows suites included, and only for a commit on
+  `main`; it ran the Linux suite alone and released any tagged commit. A
+  rerun for a tag whose release already has its ZIP no longer replaces it:
+  npm skips a version that is already live, so a tag moved since the first
+  run shipped a ZIP and an npm package from different commits. It now stops
+  unless the new build matches, entry for entry
+  (`scripts/release-zip-unchanged.py`).
+- Eval graders: `relay-transfer` scores a string `verification` entry as a
+  failed criterion; it crashed with no `SCORE` line, so `run.sh` dropped a
+  wrong answer as invalid. `archive-security` restores two levels down and
+  searches the whole temp tree, so a restore that writes `../../outside.txt`
+  and only then refuses fails `no-path-escape`; the old check looked in the
+  wrong directory. `archive-security`, `schema-migration` and `paginated-sync`
+  award `regression-red` only after a green suite, so deleting or breaking
+  the tests no longer earns it. The eval gate pins all three with overlays;
+  `docs/benchmark.md` says which published rows each change can touch.
+- Agent Bus: `run` holds a knock for 20 seconds after the last keystroke. The
+  pane's echo held it for three, so a person who paused longer mid-prompt had
+  the literal and a return typed after their half-written line, which
+  submitted both. A held knock is not lost and spends neither the cap nor the
+  cooldown; `turn.nudge_deferred` records `human_typed_ago`. A pause longer
+  than 20 seconds is still not covered: the proxy never reads what was typed.
+- Agent Bus: `run` starts its knock watcher before the provider, not after.
+  A provider that reached the bus in between was taken for one that never
+  had, so nothing knocked until its next bus call, and a delivery that
+  arrived in between counted as backlog and never knocked. The two `run`
+  tests that synchronised on the "bound as" line, which is printed before
+  either, now wait for the provider's pid; a one-second delay before the
+  watcher made both fail every time before this change.
+- Agent Bus: a SIGTERM to `run` between minting the binding and starting the
+  provider now revokes the binding, removes the provider's configuration and
+  exits 130. It used to end `run` without its cleanup, leaving the credential
+  valid until its TTL and the agent's next `run` refused as a live session.
+  Ctrl+Break is taken over at the same point on Windows, which has not been
+  tried on a Windows machine. `run` names the binding itself and registers
+  its cleanup before the store commits it, so a signal between that commit
+  and `bind_terminal` returning, on a first run that adds the agent to the
+  roster too, revokes it as well.
+- Agent Bus: only a task's creator and assignee spend its turn budget. Any
+  sender naming a `task_id` spent a turn, so an agent with no part in a task
+  could message itself until the task was exhausted, its dependents blocked
+  and its holder's completion refused. A message from anyone naming a task
+  past its deadline still stops it.
+- `revert-probe` reports `UNASSESSABLE` (exit 2) when the verify command names
+  a file the working tree has and the old tree lacks both before and after the
+  old-code run: the command itself, any non-option argument, or the input of a
+  `<`. Such a run judged nothing, but when the missing file was reported with
+  an exit other than 127 it was read as a regression. In 2.6.0, `python3
+  run_tests.py tests/test_calc.py` with a `run_tests.py` the change adds gave
+  PASS on Python's "can't open file" (exit 2). The check does not depend on
+  the message, so it also holds on Windows, where cmd.exe exits 1 for a
+  missing command and words it in the display language.
+- `revert-probe` no longer writes through a link the old tree has above a
+  changed file. Where the base revision had a directory link (to anywhere,
+  outside the repository included) and the working tree has a real
+  directory, the copy into the throwaway worktree used to follow the link and
+  overwrite the file at its target. The link is now replaced inside the
+  worktree, and nothing a link reaches is removed either.
+- `revert-probe` removes a file the change renamed away before its control
+  run. With git's rename detection the old name was listed nowhere, so the
+  control tree kept it and passed while the real tree, still loading it,
+  failed: a false PASS.
+- `revert-probe` run on a fix that is already committed says nothing changed
+  and names the base ref to pass, instead of reporting that the change ships
+  without a test. The debug and done skills say to pass the pre-fix commit.
+- `safe-bisect --retries 00` (or any other spelling of zero) is a usage error.
+  It used to sample neither endpoint, so a criterion that always passes went
+  unchecked and bisect named the last commit.
+- Installer backups reserve their name instead of testing it (roadmap R24).
+  All four installers share one `bakcopy` helper that takes
+  `<file>.bak.<timestamp>[.n]` with a call that fails when anything is at the
+  name and neither follows nor enters it: `mkdir` for a directory, the POSIX
+  `link` utility for a file, and for a symlink GNU `ln -sT`, `perl` or `node`,
+  whichever is shown on a scratch directory to make the link at exactly its
+  name. A file is staged in a private directory and a tree is copied into the
+  directory `mkdir` made, each written only once the directory entered is
+  owned by the user, empty and at the expected path; the private directory is
+  removed only when it passes that check again. Paths, link targets and
+  listings keep a trailing newline, which `$( )` used to delete. A symlink planted after the name was chosen can no longer receive
+  the user's file, a directory at the name is skipped rather than written
+  into, and one swapped in after the name was taken is left with its contents.
+  Backups now need hard links in the directory that holds them, and backing up
+  a symlinked skill or doctrine needs one of those three tools; without one
+  the install stops before it removes the symlink.
+- A `settings.json` that is a symlink loop, or that cannot be read for any
+  reason other than not being there, is refused by the Node settings wiring
+  instead of read as empty and written fresh over one of its links. A symlink
+  to a file not made yet is still written at the name it points to.
+- The Node hooks read input that arrives after they start. Opening
+  `process.stdin` made the pipe non-blocking, so a hook started before its
+  writer had written read nothing, dropped the event and broke the writer's
+  pipe.
+- `install.sh --with-hooks` checks `settings.json` before it copies any hook
+  file (roadmap R14). Invalid JSON, a shape the hooks cannot live in, or a file
+  that is not writable fails the install with no hook file in place and
+  `settings.json` byte-identical. The installer and uninstaller write the new
+  file beside the real one and replace it whole, keeping its mode; a symlinked
+  `settings.json` stays a symlink.
+- The discipline stats log rotates through a fresh `mkstemp` name rather than
+  `luciazero-stats.log.tmp`, so a symlink planted at that name is not followed
+  (roadmap R21).
+- An Agent Bus run log under its size cap is scrubbed as one text. Its head
+  and tail were scrubbed apart, so a credential or token that crossed the
+  point where the head filled up was written to disk whole.
+- The Agent Bus daemon answers when its database file is not a database:
+  the identity lookups each request makes let sqlite3's own error escape,
+  and the connection was dropped with a traceback instead of a refusal.
+- `luciazero-agentd run` on a terminal revokes the session's credential when
+  the process table fails just as the provider is bound. That error escaped
+  with a traceback, before the cleanup that revokes it.
+- The Agent Bus redactor scrubs a token glued to a word (`my_ghp_...`,
+  `__lzap_...__` in Markdown bold, `xlzsc_...`), a private key whose END line
+  is missing (to the end of the text), and keeps both values when two JSON
+  keys scrub to the same text. A run of `BEGIN ... PRIVATE KEY` lines took
+  quadratic time; it is linear, and a payload over the 64 KiB cap is refused
+  before it is scrubbed, so an oversized send no longer holds a server thread
+  for seconds.
+- Asking again with `agent_claim_begin` while its approval dialog is still on
+  screen returns that request instead of raising a second window. The second
+  request superseded the first, so Allow on the window the user saw failed
+  silently. The tool no longer claims to be idempotent.
+- A managed turn ends what its provider left running. A child still holding
+  the output pipe used to keep the turn open until it exited, with the turn's
+  credential in its environment; on macOS and Linux the group is now swept
+  after every turn, as Windows already did by closing the job, and the pipe
+  is never closed under a reader still blocked on it. Stopping a group also
+  waits for the group, not its leader: a member that ignored SIGTERM, in a
+  turn, an app-server or an orphan recovery stopped, was never sent SIGKILL.
+- A process table that could not be read when a turn started no longer
+  leaves the provider running unwatched. The dispatcher records the pid
+  without a start time, and an adapter whose `on_process` callback raises
+  ends the provider before the error propagates.
+- `run` on a pty stops a provider that ignores SIGTERM: it sent SIGTERM and
+  then waited with no limit, so the SIGKILL after it was never reached. It now
+  waits ten seconds.
+- `run` on a pty no longer freezes on a large paste into a provider that
+  echoes or redraws. Keystrokes went to the pty in one blocking write while
+  the provider's output filled the pty unread; input is now queued and
+  written as the pty takes it, and the keyboard is not read while 64 KiB is
+  still waiting.
+- `service uninstall` on macOS and Linux checks the service file is ours
+  before it stops anything. It ran `launchctl bootout` or `systemctl disable
+  --now` first, so a service under the same label that was not ours was
+  stopped and then reported as left untouched.
+- The commands `chat` prints quote the state directory and an agent's
+  worktree. A path with a space split the line, and a worktree an agent
+  named with a `;` made the `worker add` line the user copies run a second
+  command.
+- On macOS a provider installed under a path with a space is recognised:
+  the process name was cut at its first space, which missed it (and the
+  check that stops a session approving its own claim with it) and could
+  take a `claude tools/` directory for a provider.
+- A provider session id read off a managed turn's output must look like
+  one before the next turn resumes it. The `codex exec` fallback prints the
+  model's own text, and a JSON line in it naming `--last` as the session
+  would have become an option on the next command line.
+- `run` still knocks for a delivery that arrives behind a backlog of more
+  than 500. The watcher read the oldest page of the queue only, so past it
+  nothing new was ever seen; it now reads from the last delivery it knocked
+  for, and finds the end of the backlog when the session opens.
+- On Windows the daemon starts `git` and `taskkill` with `CREATE_NO_WINDOW`.
+  The service runs under `pythonw.exe`, which has no console, so each call
+  would have opened a console window on the desktop (reasoned; the test runs
+  in the Windows CI job, and the field test lists it).
+- `eval/check-result.sh` marks an empty or blank agent log INVALID. It
+  used to read one as plain-text output with nothing in it to refute, so a
+  run that printed nothing could have been booked as a real arm.
+- `/lucia-chat` names the module form the bus prints on Windows,
+  `python -m luciazero_agentd`, and keeps `py -3` as the fallback where only
+  the `py` launcher is on PATH. It said the bus printed `py -3`.
+- `scripts/check-skill-prompts.py` holds `/lucia-chat` to a word budget and
+  its behavioural clauses, and fails when a cataloged skill has no prompt
+  contract anywhere. `/lucia-chat` had neither, so nothing read its prompt.
+- The Astra/Luna canary wrapper refuses a root launch that sets anything
+  under `features` with `-c` in any TOML spelling (`features={...}`, a quoted
+  key segment), written `-c X`, `-cX` or `-c=X`, or selects a config
+  `--profile`. It matched only the literal
+  `features.multi_agent=` prefixes, so other spellings of the same override
+  reached the provider.
+- `scripts/check-astra-luna-adapter.py` refuses a Slice 0 baseline with a
+  top-level field outside its pinned sections. The check in that place
+  asserted a SHA-256 hex digest was non-empty, which is always true.
+- CI's Bash 3.2 step parses every shell script. `find -exec bash -n {} +`
+  handed all of them to one `bash -n`, which parses the first file and reads
+  the rest as its arguments. The step now runs one parse per file, counts
+  them, and pins the `bash:3.2` image by digest.
+- The suite matches captured output from a here-string, never through a
+  pipe into `grep -q`, from a variable or from a command. Under `pipefail`,
+  grep's early exit after a match can hand the writer a closed pipe and turn
+  a pass into a failure (seen in CI as `printf: write error: Broken pipe`),
+  or, in an `if`, a hit into none; 104 sites are rewritten. The core gate
+  rejects a pipe (`|` or `|&`) into `grep`, `egrep` or `fgrep`, bare or
+  behind `command`, `env` (with flags, and `-u NAME`) or `VAR=value`, when
+  `-q` in an option group of letters and digits, `--quiet` or `--silent`
+  appears before the stage ends at a `|`, `;`, `&` or `)` outside quotes;
+  at any stage of a pipeline and across continued lines, in every linted
+  script.
+- A node test proves the hooks still name their state directory, with
+  sha256, when Node refuses md5 (FIPS mode). The only check left was a grep
+  for Python's `hashlib.md5(` in hooks that are now Node, which could not
+  fail.
+- The core gate fails when the node test files named in the parity gate or
+  the Windows CI job differ from `tests/node/*.test.js`. Both lists were
+  kept by hand, so a new test file could run nowhere. Only a `node --test`
+  command counts: a comment naming the file runs nothing.
+- An interrupted full run stops the gates it started. Background jobs of a
+  non-interactive shell ignore Ctrl-C, so `./test.sh` used to exit and
+  delete the shared sandbox while six gates ran on; it now stops each gate
+  and every process under it, then exits 130 (or 143 on SIGTERM).
+- `scripts/gate-linux-container.sh` is linted with the other shipped
+  scripts (syntax, Bash 3.2, ShellCheck); it was missing from the list, and
+  an unused variable in it is gone.
+- The README and the site no longer list a "check-suppression guard" as
+  the mechanism against weakened tests. No install path ships one; the
+  mechanisms are doctrine rule 3 and the `/done` review, with an inert
+  opt-in hook example in `examples/`.
+- Both READMEs say native Windows support is unreleased. They called the
+  checkout the 2.6.0 tree while describing Windows features that 2.6.0, the
+  version `npx luciazero@latest` installs, does not have.
+- A relay's `Modified:` list names both sides of a rename. With git's rename
+  detection on, as it is by default, a staged `git mv old new` was listed as
+  `new` alone, so the receiver was not told `old` was gone. The fingerprint
+  is unchanged.
+- On Windows the claim dialog opens no console window beside it. The service
+  runs the daemon under `pythonw.exe`, so PowerShell got a console of its
+  own, and closing that window ended the dialog with the claim unanswered.
+- A turn whose provider left a child outside its process group, in a session
+  of its own, no longer ends with a traceback from its output reader. What
+  that child prints after the turn is drained and dropped instead of written
+  into the closed run log, for the exec adapters and the Codex app server.
+- `run` on Windows revokes its binding however it fails between starting the
+  provider and attaching to its console, as it already did on a pty.
+- A SIGTERM (on Windows, a Ctrl+Break) that reaches `run` while it binds the
+  provider's pid ends the provider and revokes the binding. `run` took the
+  signal over only after that setup, so in that moment the default handler
+  ended `run` without its cleanup, and the binding stayed live until its
+  TTL. On macOS and Linux the provider also kept running; on Windows the
+  job holding it ended it with `run`, unless Windows had refused that job.
+  Without a terminal, a Ctrl+C there also skipped the cleanup on macOS and
+  Linux.
+- Run logs redact an armored PGP private key (`-----BEGIN PGP PRIVATE KEY
+  BLOCK-----`), and a relay that carries one is refused, as other private
+  keys already were.
+- `serve` revokes the bindings approved claims minted. A restart ends every
+  MCP session, but those bindings have no process to reap, so they stayed
+  active for an hour and refused the reconnected session's new claim.
+- `task_graph_create` with an `idempotency_key` replays the batch as a whole.
+  A retry with a node added used to create that node and a second
+  `task_graph.created` event; adding or dropping a node is now an
+  idempotency conflict, and an exact retry records no second event.
+- Agent Bus binding renewal only moves an expiry forward and records a
+  `binding.renewed` event only when the row changed, so out-of-order renewals
+  cannot shorten a binding and a revoked one is never reported renewed
+  (roadmap R16). A managed bind settles process liveness before its write
+  transaction instead of probing the process table while holding the lock
+  (roadmap R17).
+- The settings wiring recognizes its own hook and status line entries however
+  the config directory was spelled. A `CLAUDE_CONFIG_DIR` given with a trailing
+  or doubled separator used to wire every hook a second time on the next
+  install and leave all of them in place on uninstall.
+- Uninstalling writes through a `CLAUDE.md` or `AGENTS.md` that is a symlink
+  (into a dotfiles checkout, say) instead of replacing the link with a file.
+- Agent Bus launchers installed with `LUCIAZERO_BIN_DIR` are found again by
+  `--status`, a reinstall and the uninstall when the variable is not set:
+  the install records the directory in `.luciazero-agentd-bin`. They used to
+  be left behind.
+- `uninstall.sh` stops the Agent Bus service through `python3 -m` from the
+  package directory when no launcher is left, so a `luciazero_agentd` in the
+  directory it was started from is never the one that runs.
+- `install.sh --with-hooks` and the Node installer back up `settings.json`
+  only when the wiring is about to change it, not on every run.
+- `--status` reports a `settings.json` it cannot read as unreadable, as the
+  settings wiring's own contract says, instead of listing every hook as
+  missing and suggesting a reinstall that would refuse the file.
+- The Node installer's `--status` reads the recorded Agent Bus package path as
+  UTF-8. A checkout under a name that is not ASCII was reported missing, with
+  advice to reinstall.
+- The settings wiring reads a `settings.json` saved with a UTF-8 byte order
+  mark, as Windows PowerShell 5 saves it. Install refused such a file, and
+  uninstall could not clean it.
+- On Windows, `npx luciazero relay` takes the first Python 3.9+ among
+  `python3`, `python` and `py -3`, as the Agent Bus launcher does. It looked
+  for `python.exe` alone, which a python.org install that left PATH alone
+  does not have, and could reach the Microsoft Store stand-in.
+- On Windows, a link the Node installer backs up is made as a junction when
+  Windows refuses a symlink (no Developer Mode, no elevation) and the link
+  names an absolute directory, as a junction does. Install used to stop with
+  EPERM on a junction it had to back up.
+- The hooks no longer record a verify command started in the background
+  (`run_in_background`) as a result. Its PostToolUse marks the launch, so a
+  red run used to clear the nudge and pass the strict gate as green.
+- An edit made while a verify command runs stays unverified: the run is
+  recorded as of when it started, not when it finished. That includes the
+  strict gate's own run, whose green no longer lets a later stop skip the
+  command after another session edited during it.
+- The hooks and the status line keep their state per project
+  (`CLAUDE_PROJECT_DIR`, or the status line's `workspace.project_dir`), not per
+  working directory. A `cd` into a subdirectory used to start an empty state
+  that held none of the session's edits, so the nudge and the strict gate
+  never fired. The strict verify command runs in the project directory.
+- The refusal of committed `LUCIAZERO_*` and `CLAUDE_CONFIG_DIR` settings
+  applies to every hook mode, the session-start doctrine included, and goes on
+  past a nested repository (a submodule, a vendored checkout) up to
+  `CLAUDE_PROJECT_DIR`. A committed `CLAUDE_CONFIG_DIR` pointing at a planted
+  config directory could silence the doctrine and turn the hooks off. On
+  Windows a key is refused whatever its case, since a lowercase name sets the
+  same variable there.
+- On POSIX a strict verify command that times out is killed with every process
+  it started, not just the shell that ran it.
+- Lucia Relay refuses a cross-machine verification command with a shell
+  operator glued to a word (`npm test;curl x|sh`, `$(id)`, a backtick, `>out`,
+  a line break). Only operators standing alone as words were refused.
+- A relay drafted with `--root` below the repository's top level no longer
+  counts its own `LUCIA_RELAY.*` files as changes: it reported drift at once,
+  and a cross-machine relay could not be finalized.
 
 ## [2.6.0] - 2026-09-22
 

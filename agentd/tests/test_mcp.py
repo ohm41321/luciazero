@@ -7,6 +7,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ from typing import Any, Optional
 from luciazero_agentd import NotFound, Store
 from luciazero_agentd.server import HANDLER_TIMEOUT_SECONDS, MAX_BODY_BYTES, MAX_SESSIONS, PROTOCOL_VERSIONS, TOOLS, BusServer, tool_contract
 from luciazero_agentd.statedir import read_endpoint
-from tests.fixtures import make_repo
+from tests.fixtures import WINDOWS, make_repo, private_problem
 
 TOKEN = "test-token-0123456789abcdef"
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -173,6 +174,18 @@ class ErrorShapes(ServerCase):
         self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32600))
         status, _, body = self.client.raw(json.dumps({"jsonrpc": "2.0", "method": "ping", "id": 1, "params": [1]}).encode())
         self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32600))
+
+    def test_a_store_that_is_not_a_database_is_a_refusal_not_a_dropped_connection(self) -> None:
+        """Review finding: sqlite3's own error escaped the identity lookups
+        every request makes, and the daemon closed the connection with a
+        traceback instead of answering."""
+        self.client.initialize()
+        Path(self.db).write_bytes(b"not a database, just bytes" * 100)
+        status, _, body = self.client.rpc("ping", {})
+        self.assertEqual((status, body.get("result")), (200, {}))
+        credential = Http(self.server.url, token="lzsc_" + "0" * 32)
+        status, _, _ = credential.raw(json.dumps({"jsonrpc": "2.0", "method": "ping", "id": 1}).encode())
+        self.assertEqual(status, 401)
 
     def test_method_not_found_and_unknown_tool(self) -> None:
         self.client.initialize()
@@ -404,7 +417,10 @@ class DaemonCli(unittest.TestCase):
     def test_serve_status_and_client_config(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agentd-cli-") as tmp:
             env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT))
-            proc = subprocess.Popen([sys.executable, "-m", "luciazero_agentd", "serve", "--state-dir", tmp, "--port", "0"], cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Its own process group on Windows, so Ctrl+Break -- the request
+            # to stop there -- reaches the daemon and not this test.
+            group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
+            proc = subprocess.Popen([sys.executable, "-m", "luciazero_agentd", "serve", "--state-dir", tmp, "--port", "0"], cwd=PACKAGE_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **group)
             try:
                 endpoint = None
                 for _ in range(100):
@@ -414,8 +430,8 @@ class DaemonCli(unittest.TestCase):
                     time.sleep(0.05)
                 self.assertIsNotNone(endpoint, "daemon did not write endpoint.json")
                 self.assertTrue(endpoint["url"].startswith("http://127.0.0.1:"))
-                self.assertEqual(oct(os.stat(tmp).st_mode & 0o777), "0o700")
-                self.assertEqual(oct(os.stat(Path(tmp) / "token").st_mode & 0o777), "0o600")
+                self.assertIsNone(private_problem(tmp))
+                self.assertIsNone(private_problem(Path(tmp) / "token"))
                 status = subprocess.run([sys.executable, "-m", "luciazero_agentd", "status", "--state-dir", tmp, "--json"], cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(status.returncode, 0, status.stderr)
                 self.assertEqual(json.loads(status.stdout)["queued_deliveries"], 0)
@@ -438,7 +454,7 @@ class DaemonCli(unittest.TestCase):
                 proxied = subprocess.run([sys.executable, "-m", "luciazero_agentd", "status", "--state-dir", tmp, "--json"], cwd=PACKAGE_ROOT, env=dict(env, http_proxy="http://127.0.0.1:1", HTTP_PROXY="http://127.0.0.1:1"), capture_output=True, text=True, timeout=30)
                 self.assertEqual(proxied.returncode, 0, proxied.stderr)
             finally:
-                proc.terminate()
+                proc.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:

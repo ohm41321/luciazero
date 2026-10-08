@@ -8,13 +8,28 @@ permissions:
   contents: write
 
 jobs:
+  # Every suite CI runs, the native Windows ones included, at the tagged
+  # commit: nothing is published from a tree only Linux has seen.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # test.sh exercises an upgrade from the last released tag.
           fetch-depth: 0
+      - name: Tag must be on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "${GITHUB_REF_NAME} ($(git rev-parse HEAD)) is not on main; release only a commit main has" >&2
+            exit 1
+          fi
       - name: Validate release versions
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -48,7 +63,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" luciazero-*.zip --clobber
+            # A rerun may restore a missing asset, never change one: npm
+            # skips a version already live, so a tag moved since the first
+            # run would leave the ZIP and the npm package from different
+            # commits.
+            PUBLISHED="$(mktemp -d)"
+            if gh release download "${GITHUB_REF_NAME}" --pattern 'luciazero-*.zip' --dir "${PUBLISHED}"; then
+              python3 scripts/release-zip-unchanged.py "${PUBLISHED}"/luciazero-*.zip luciazero-*.zip
+              echo "the published ZIP matches this build; nothing to upload"
+            else
+              gh release upload "${GITHUB_REF_NAME}" luciazero-*.zip
+            fi
           else
             gh release create "${GITHUB_REF_NAME}" luciazero-*.zip \
               --generate-notes --verify-tag

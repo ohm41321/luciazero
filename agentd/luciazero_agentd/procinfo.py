@@ -4,7 +4,10 @@ Three things are wanted: which provider CLI sessions own a terminal, the
 identity of one process (tty, start time, working directory), and whether a
 recorded process is still that same process. Only ``ps`` and, on macOS,
 ``lsof`` are used; nothing is installed and nothing needs privileges beyond
-reading the caller's own processes.
+reading the caller's own processes. Windows has neither, so there the same
+answers come from the Win32 API (``winproc``), without a tty or a working
+directory: a Windows console has no name to bind to, and another process's
+working directory is readable only from its memory.
 
 Two facts shape this module:
 
@@ -19,12 +22,30 @@ Two facts shape this module:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
 from typing import Any, Optional, Sequence
 
+WINDOWS = sys.platform == "win32"
+if WINDOWS:
+    from . import winproc
+
 PROVIDER_COMMANDS = {"claude": "claude", "codex": "codex"}
+# Windows names a process by its image file. The codex npm package starts a
+# native binary named for its target; the claude and codex installers name
+# theirs plainly.
+WINDOWS_PROVIDER_IMAGES = re.compile(r"(claude|codex)(?:-(?:x86_64|aarch64)-pc-windows-msvc)?")
+# An npm-installed provider is node.exe running its package's CLI script, so
+# the script, not the image, names it -- and only these scripts do: any other
+# node process is not a provider.
+WINDOWS_NODE_IMAGE = "node.exe"
+WINDOWS_PROVIDER_SCRIPTS = {
+    "claude": re.compile(r"[\\/]node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.[cm]?js\Z", re.I),
+    "codex": re.compile(r"[\\/]node_modules[\\/]@openai[\\/]codex[\\/]bin[\\/]codex\.[cm]?js\Z", re.I),
+}
+WINDOWS_COMMAND_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
 TIMEOUT_SECONDS = 10
 # A process start time never changes, but a reused pid brings a new one, so
 # the value is cached only briefly: long enough that a bound session does not
@@ -56,8 +77,31 @@ def _run(argv: Sequence[str]) -> str:
     return done.stdout
 
 
-def _provider_of(command: str) -> Optional[str]:
-    name = os.path.basename(command.split(" ", 1)[0])
+def _provider_of(row: dict[str, Any]) -> Optional[str]:
+    command = row["command"]
+    if WINDOWS:
+        match = WINDOWS_PROVIDER_IMAGES.fullmatch(command.lower().removesuffix(".exe"))
+        if match:
+            return PROVIDER_COMMANDS[match.group(1)]
+        script = row.get("script")
+        if script and command.lower() == WINDOWS_NODE_IMAGE:
+            for provider, pattern in WINDOWS_PROVIDER_SCRIPTS.items():
+                if pattern.search(script):
+                    return PROVIDER_COMMANDS[provider]
+        return None
+    # The whole field: `comm` carries no arguments, and on macOS it is the
+    # full path, which may hold a space.
+    return PROVIDER_COMMANDS.get(os.path.basename(command))
+
+
+def provider_named(command: str) -> Optional[str]:
+    """The provider a command the user typed starts: `claude`, and on
+    Windows also `claude.exe` or `claude.cmd`, any case."""
+    name = os.path.basename(command)
+    if WINDOWS:
+        name = name.lower()
+        for suffix in WINDOWS_COMMAND_SUFFIXES:
+            name = name.removesuffix(suffix)
     return PROVIDER_COMMANDS.get(name)
 
 
@@ -70,7 +114,10 @@ def started_at(pid: int, *, cache: bool = False) -> Optional[str]:
         now = time.monotonic()
         if hit is not None and now - hit[0] < START_CACHE_SECONDS:
             return hit[1]
-    out = _run(["ps", "-o", "lstart=", "-p", str(pid)]).strip() or None
+    if WINDOWS:
+        out = winproc.started_at(pid)
+    else:
+        out = _run(["ps", "-o", "lstart=", "-p", str(pid)]).strip() or None
     if cache:
         if len(_start_cache) > 512:
             _start_cache.clear()
@@ -79,6 +126,11 @@ def started_at(pid: int, *, cache: bool = False) -> Optional[str]:
 
 
 def _table() -> list[dict[str, Any]]:
+    if WINDOWS:
+        try:
+            return winproc.table()
+        except OSError as exc:
+            raise ProcessError(f"cannot read the Windows process table: {exc}") from exc
     rows = []
     # comm comes last: a command path can contain spaces, the three fields
     # before it cannot.
@@ -95,6 +147,8 @@ def _table() -> list[dict[str, Any]]:
 
 def cwd_of(pid: int) -> Optional[str]:
     """Working directory of a process the caller owns."""
+    if WINDOWS:
+        return None
     if sys.platform.startswith("linux"):
         try:
             return os.readlink(f"/proc/{int(pid)}/cwd")
@@ -111,7 +165,7 @@ def sessions(*, with_cwd: bool = True) -> list[dict[str, Any]]:
     one (an IDE session), newest first."""
     table = _table()
     parent = {row["pid"]: row["ppid"] for row in table}
-    providers = {row["pid"]: row for row in table if _provider_of(row["command"])}
+    providers = {row["pid"]: row for row in table if _provider_of(row)}
     out = []
     for pid, row in providers.items():
         if _descends_from_provider(pid, parent, providers):
@@ -119,7 +173,7 @@ def sessions(*, with_cwd: bool = True) -> list[dict[str, Any]]:
         out.append({
             "pid": pid,
             "tty": row["tty"],
-            "provider": _provider_of(row["command"]),
+            "provider": _provider_of(row),
             "command": row["command"],
             "started_at": started_at(pid),
             "cwd": cwd_of(pid) if with_cwd else None,
@@ -159,8 +213,8 @@ def provider_above(pid: int) -> Optional[dict[str, Any]]:
     current = parent.get(pid)  # above, so a provider asking about itself is not the answer
     while current is not None and current > 1 and current not in seen:
         row = rows.get(current)
-        if row is not None and _provider_of(row["command"]):
-            return {"pid": current, "tty": row["tty"], "provider": _provider_of(row["command"]),
+        if row is not None and _provider_of(row):
+            return {"pid": current, "tty": row["tty"], "provider": _provider_of(row),
                     "command": row["command"]}
         seen.add(current)
         current = parent.get(current)
@@ -178,7 +232,7 @@ def identity(pid: int) -> Optional[dict[str, Any]]:
             return {
                 "pid": pid,
                 "tty": row["tty"],
-                "provider": _provider_of(row["command"]),
+                "provider": _provider_of(row),
                 "command": row["command"],
                 "started_at": started_at(pid),
                 "cwd": cwd_of(pid),
@@ -189,6 +243,12 @@ def identity(pid: int) -> Optional[dict[str, Any]]:
 def owned(pid: int) -> bool:
     """True when the process exists and the caller may signal it, which for
     a single-user daemon means it is the caller's own."""
+    if WINDOWS:
+        # Never os.kill(pid, 0) here: on Windows signal 0 is CTRL_C_EVENT.
+        try:
+            return winproc.owned(int(pid))
+        except (OverflowError, ValueError):
+            return False
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:

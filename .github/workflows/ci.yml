@@ -2,8 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # windows-native carries the native-Windows port until it merges; drop it
+    # from this list then.
+    branches: [main, windows-native]
   pull_request:
+  # release.yml runs this whole workflow at the tagged commit before it
+  # publishes anything.
+  workflow_call:
 
 # This workflow gates a package that writes into contributors' ~/.claude, so it
 # takes the narrowest token and pins every action to a commit — a moved tag must
@@ -20,8 +25,73 @@ jobs:
           # test.sh exercises an upgrade from the last released tag.
           fetch-depth: 0
       - name: Parse shell scripts under Bash 3.2
+        # One `bash -n` per file: `bash -n a.sh b.sh` parses a.sh and reads
+        # the rest as its arguments. The image is pinned by digest (bash
+        # 3.2.57) for the same reason the actions are pinned by commit.
         run: |
-          docker run --rm --network=none -v "$PWD":/w:ro bash:3.2 \
-            bash -c 'find /w -path /w/.git -prune -o -type f -name "*.sh" -exec bash -n {} +'
+          docker run --rm --network=none -v "$PWD":/w:ro \
+            bash:3.2@sha256:0fd7cb8499c63a3c9345e7088a9cd83bb69f6e895e83833859aff838a0312091 \
+            bash -c 'n=0; rc=0
+              while IFS= read -r f; do
+                n=$((n + 1))
+                bash -n "$f" || { echo "bash 3.2 cannot parse ${f#/w/}" >&2; rc=1; }
+              done < <(find /w -path /w/.git -prune -o -type f -name "*.sh" -print)
+              echo "parsed $n scripts under $BASH_VERSION"
+              [ "$n" -gt 0 ] || rc=1
+              exit $rc'
       - name: Run verify
         run: ./test.sh
+
+  windows:
+    # Native Windows: no WSL and no Bash. What runs there is the Node
+    # installer, the settings wiring, the hooks and the skills' Node helpers,
+    # so their own suites run there, on the oldest Node the package supports
+    # and a current one. The installer's Agent Bus launcher (a .cmd) runs
+    # Python, the oldest it takes.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+      - name: Native Windows suites
+        env:
+          # Lets uninstall end and delete \Luciazero\agentd in the real Task
+          # Scheduler of this throwaway runner; off on a developer's machine.
+          LUCIAZERO_TEST_TASK_SCHEDULER: "1"
+        run: node --test tests/node/hooks.test.js tests/node/wiring.test.js tests/node/installer.test.js tests/node/global.test.js tests/node/skill-helpers.test.js
+
+  windows-agentd:
+    # The Agent Bus daemon on native Windows: process facts through the
+    # Win32 API, process trees, private state, the pseudo console, the MCP
+    # server and the Task Scheduler service, on the oldest Python it supports
+    # and a current one.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Agent Bus suite
+        working-directory: agentd
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          # Registers, runs and removes real tasks under \LuciazeroTest\ on
+          # this throwaway runner; off by default on a developer's machine.
+          LUCIAZERO_TEST_TASK_SCHEDULER: "1"
+        run: python -m unittest discover -s tests -t . -v
+      - name: Lucia Relay trust regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python test_lucia_relay.py

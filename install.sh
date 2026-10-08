@@ -7,13 +7,14 @@
 #   ./install.sh               doctrine + skills + reviewer agent
 #   ./install.sh --with-hooks  also wire the enforcement pack: verify-tracking
 #                              hooks + statusline into ~/.claude/settings.json
-#                              (Claude Code only; requires python3)
+#                              (Claude Code 2.1.139+ only; requires Node 18+)
 #   ./install.sh --status      read-only health check of an existing install;
 #                              exits non-zero if a core piece is missing
 #
-#   LUCIAZERO_BIN_DIR=<dir>    where `luciazero-agentd` goes (default
-#                              ~/.claude/bin; a checkout only -- the daemon
-#                              is not in the npm payload)
+#   LUCIAZERO_BIN_DIR=<dir>    where `luciazero-agentd` goes (default: where
+#                              the last install put it, else ~/.claude/bin;
+#                              a checkout only -- the daemon is not in the
+#                              npm payload)
 set -euo pipefail
 
 WITH_HOOKS=0
@@ -37,7 +38,15 @@ BACKUP_DIR="${CLAUDE_DIR}/.luciazero-backups"
 # its promise to write nowhere else; LUCIAZERO_BIN_DIR points it at a PATH
 # directory such as ~/.local/bin when the user wants one.
 AGENTD_MARKER="luciazero-managed: agentd-launcher"
-AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-${CLAUDE_DIR}/bin}"
+# An install told LUCIAZERO_BIN_DIR records where it put the launchers, so a
+# status check, a reinstall or an uninstall not told it again still finds them.
+AGENTD_BIN_FILE="${CLAUDE_DIR}/.luciazero-agentd-bin"
+AGENTD_BIN_DIR="${LUCIAZERO_BIN_DIR:-}"
+if [ -z "${AGENTD_BIN_DIR}" ] && [ -f "${AGENTD_BIN_FILE}" ]; then
+  AGENTD_BIN_DIR="$(head -n 1 "${AGENTD_BIN_FILE}" 2>/dev/null || true)"
+  case "${AGENTD_BIN_DIR}" in /*) ;; *) AGENTD_BIN_DIR="" ;; esac
+fi
+AGENTD_BIN_DIR="${AGENTD_BIN_DIR:-${CLAUDE_DIR}/bin}"
 AGENTD_LAUNCHER="${AGENTD_BIN_DIR}/luciazero-agentd"
 # One script, installed twice. `lucia claude` is the whole of the ordinary
 # path and the long name is what the subcommands were documented under, so
@@ -91,6 +100,26 @@ plugin_double_install_note() {
   echo "        luciazero@luciazero for the plugin, or ./uninstall.sh for this copy."
 }
 
+# Node 18+ runs the hooks, the status line and the settings wiring.
+node_ok() {
+  command -v node >/dev/null 2>&1 \
+    && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' 2>/dev/null
+}
+
+# The hooks are wired in exec form (`args`), which Claude Code reads from
+# 2.1.139 on; an older one runs `node` with no script. A note, never a stop:
+# the version cannot always be asked, and the install itself is still right.
+claude_version_note() { # claude_version_note <indent>
+  CV="$(claude --version 2>/dev/null | head -n 1 | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')" || CV=""
+  if [ -z "${CV}" ]; then
+    echo "$1--    Claude Code version unknown — the hooks need 2.1.139 or newer"
+  elif printf '%s\n%s\n' 2.1.139 "${CV}" | sort -t. -k1,1n -k2,2n -k3,3n -C; then
+    echo "$1ok    Claude Code ${CV} (the hooks need 2.1.139 or newer)"
+  else
+    echo "$1!!    Claude Code ${CV} is older than 2.1.139 — it cannot run the hooks' exec-form entries; update Claude Code"
+  fi
+}
+
 if [ "${STATUS_ONLY}" = 1 ]; then
   echo "Status of ${CLAUDE_DIR} (read-only)"
   STATUS_RC=0
@@ -107,6 +136,9 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   while IFS= read -r SKILL; do
     check -f "${CLAUDE_DIR}/skills/${SKILL}/SKILL.md" "skill ${SKILL}"
   done < <(skill_inventory)
+  check -x "${CLAUDE_DIR}/skills/ready/scripts/detect.cjs" "detect.cjs executable"
+  check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.cjs" "revert-probe.cjs executable"
+  check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.cjs" "safe-bisect.cjs executable"
   check -x "${CLAUDE_DIR}/skills/ready/scripts/detect.sh" "detect.sh executable"
   check -x "${CLAUDE_DIR}/skills/done/scripts/revert-probe.sh" "revert-probe.sh executable"
   check -x "${CLAUDE_DIR}/skills/bisect/scripts/safe-bisect.sh" "safe-bisect.sh executable"
@@ -154,77 +186,33 @@ if [ "${STATUS_ONLY}" = 1 ]; then
   else
     echo "  !!    installed ${V_INST}, checkout ${V_SRC:-?} — re-run ./install.sh to update"
   fi
-  if [ -f "${CLAUDE_DIR}/hooks/luciazero-verify.sh" ]; then
-    check -x "${CLAUDE_DIR}/hooks/luciazero-verify.sh" "hook luciazero-verify.sh executable"
-    check -x "${CLAUDE_DIR}/hooks/luciazero-statusline.sh" "hook luciazero-statusline.sh executable"
+  if [ -f "${CLAUDE_DIR}/hooks/luciazero-verify.cjs" ]; then
     # stale hooks are the silent failure mode of `git pull && ./install.sh`
     # without --with-hooks: sidecar updates, hook files do not
-    for HFILE in luciazero-verify.sh luciazero-statusline.sh; do
+    for HFILE in luciazero-verify.cjs luciazero-statusline.cjs; do
       if cmp -s "${CLAUDE_DIR}/hooks/${HFILE}" "${SRC}/claude/hooks/${HFILE}"; then
         echo "  ok    hooks/${HFILE} matches this checkout"
       else
         echo "  MISS  hooks/${HFILE} differs from this checkout (stale or customized) — re-run ./install.sh --with-hooks"; STATUS_RC=1
       fi
     done
-    # The stored command is a shell string whose path may be quoted, so
-    # whether a subcommand is wired is asked of the parsed command rather
-    # than of the bytes: a `grep` for the bare path stops seeing a
-    # correctly quoted entry the moment the path needs quoting.
+    # Whether a subcommand is wired is asked of the parsed settings, by the
+    # same module that wires them, never of the bytes.
     WIRE_MISS=""
     WIRE_UNCHECKED=""
-    if command -v python3 >/dev/null 2>&1; then
+    if node_ok; then
       # a reader that crashed printed nothing, and nothing is what a fully
       # wired settings.json prints too -- so its exit status decides
-      WIRE_MISS="$(python3 - "${CLAUDE_DIR}/settings.json" "${CLAUDE_DIR}/hooks/luciazero-verify.sh" <<'WIREPY'
-import json, shlex, sys
-
-path, verify = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f:
-        settings = json.load(f)
-except (OSError, ValueError):
-    settings = {}
-
-def sub_of(cmd):
-    """Which subcommand of ours this entry runs, or None if it is not ours."""
-    if not isinstance(cmd, str):
-        return None
-    if cmd == verify:
-        return ""
-    if cmd.startswith(verify + " "):
-        return cmd[len(verify) + 1:].strip()
-    try:
-        parts = shlex.split(cmd)
-    except ValueError:
-        return None
-    if parts and parts[0] == verify:
-        return " ".join(parts[1:])
-    return None
-
-hooks = settings.get("hooks") if isinstance(settings, dict) else None
-wired = set()
-for entries in (hooks or {}).values() if isinstance(hooks, dict) else ():
-    for entry in entries if isinstance(entries, list) else ():
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        for hook in inner if isinstance(inner, list) else ():
-            if not isinstance(hook, dict):
-                continue
-            sub = sub_of(hook.get("command", ""))
-            if sub is not None:
-                wired.add(sub)
-
-want = "prompt skill-prompt bash-start edit bash bash-failure skill stop session".split()
-sys.stdout.write("".join(" " + s for s in want if s not in wired))
-WIREPY
-)" || WIRE_UNCHECKED=reader
+      WIRE_MISS="$(node "${SRC}/bin/lib/settings-wiring.js" status \
+        "${CLAUDE_DIR}/settings.json" "${CLAUDE_DIR}/hooks")" || WIRE_UNCHECKED=reader
     else
-      WIRE_UNCHECKED=python3
+      WIRE_UNCHECKED=node
     fi
-    # Two different unknowns, and neither is "wired": no python3 to ask with,
+    # Two different unknowns, and neither is "wired": no Node to ask with,
     # and a reader that could not answer. Both are reported as what they are,
     # because a status that says "ok" here is the one nobody re-checks.
-    if [ "${WIRE_UNCHECKED}" = python3 ]; then
-      echo "  MISS  hook wiring not checked — python3 not found"; STATUS_RC=1
+    if [ "${WIRE_UNCHECKED}" = node ]; then
+      echo "  MISS  hook wiring not checked — Node 18+ not found"; STATUS_RC=1
     elif [ "${WIRE_UNCHECKED}" = reader ]; then
       echo "  MISS  hook wiring not checked — settings.json could not be read"; STATUS_RC=1
     elif [ -z "${WIRE_MISS}" ]; then
@@ -232,15 +220,19 @@ WIREPY
     else
       echo "  MISS  settings.json missing hook entries:${WIRE_MISS} (re-run ./install.sh --with-hooks)"; STATUS_RC=1
     fi
-    if command -v python3 >/dev/null 2>&1 \
-      && python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
-      echo "  ok    python3 >= 3.9 available (the hooks need it)"
-    elif command -v python3 >/dev/null 2>&1; then
-      echo "  MISS  python3 is older than 3.9 — the hooks fail open (doing nothing)"; STATUS_RC=1
+    if node_ok; then
+      echo "  ok    node >= 18 available (the hooks need it)"
+    elif command -v node >/dev/null 2>&1; then
+      echo "  MISS  node is older than 18 — the hooks fail (doing nothing)"; STATUS_RC=1
     else
-      # fail-open means a missing python3 breaks the hooks SILENTLY — surface it here
-      echo "  MISS  python3 not found — the installed hooks are failing open (doing nothing)"; STATUS_RC=1
+      # a missing node breaks the hooks SILENTLY — surface it here
+      echo "  MISS  node not found — the installed hooks cannot run (doing nothing)"; STATUS_RC=1
     fi
+    claude_version_note "  "
+  elif [ -f "${CLAUDE_DIR}/hooks/luciazero-verify.sh" ]; then
+    # the Bash hooks before the move to Node: still running where python3 is,
+    # but not what this checkout installs
+    echo "  MISS  enforcement pack is the older Bash version (needs python3) — re-run ./install.sh --with-hooks to move it to Node"; STATUS_RC=1
   elif [ -f "${CLAUDE_DIR}/settings.json" ] \
     && grep -qF "${CLAUDE_DIR}/hooks/luciazero-" "${CLAUDE_DIR}/settings.json"; then
     # worse than not installed: Claude Code keeps executing references to
@@ -252,19 +244,143 @@ WIREPY
   exit "${STATUS_RC}"
 fi
 
-# A free backup name for $1. Two runs in the same second must not overwrite
-# each other, and a name a symlink already holds is taken too: `-e` follows
-# the name and answers false for a symlink whose target is missing, which
-# would send the `cp` below straight through that symlink and out of the
-# config directory. This is a check, not a reservation -- the name is still
-# free to be taken between the test and the `cp` (roadmap R24). The
-# uninstaller's settings backup reserves its name with `O_CREAT | O_EXCL`
-# instead, which the shell has no portable equivalent for.
-bakpath() {
-  B="$1.bak.$(date +%Y%m%d%H%M%S)"
-  N=1
-  while [ -e "${B}" ] || [ -L "${B}" ]; do B="$1.bak.$(date +%Y%m%d%H%M%S).${N}"; N=$((N+1)); done
-  printf '%s' "${B}"
+# Copy $2 to a free backup name beside $3, <base>.bak.<timestamp>[.n], and
+# print that name. Two runs in the same second must not overwrite each other,
+# and nothing planted at a name -- before it is chosen or after -- may be
+# followed, written into or replaced (roadmap R24). So a name is never tested
+# and then written. It is taken by one call that fails when anything at all is
+# there, a dangling symlink included, and that neither follows nor enters what
+# it finds: `mkdir` for a directory, `link` (link(2)) for a file, and for a
+# symlink a tool shown, on a scratch directory first, to make the link at
+# exactly the name it is given. Plain `ln` puts the link inside a directory it
+# finds, and `ln -f` replaces what is inside, so it is never trusted with an
+# unchecked name. Everything else is written relative to a directory this
+# helper made and then entered, and only once what it entered passes
+# `bc_enter`; from then on a swap of the name cannot redirect the writes.
+# Paths and link targets are kept byte for byte, a trailing newline included.
+# $1 is `-L` to back up what a symlink points at, as `cp` does, or `-P` to
+# back up the symlink itself, as `cp -P` does.
+#
+# bc_raw <var> <command...>: the command's output, whole, into <var>. `$( )`
+# deletes every trailing newline, and a file name or link target may end in
+# one, so only the one newline the command itself ends with is taken off.
+bc_raw() {
+  BC_OUT="$(shift; "$@" && printf x)" || return 1
+  BC_OUT="${BC_OUT%x}"
+  printf -v "$1" '%s' "${BC_OUT%$'\n'}"
+}
+
+# The physical path of directory $1, for bc_raw.
+bc_physical() {
+  CDPATH='' cd -P -- "$1" && pwd -P
+}
+
+bc_symlink() {
+  case "$1" in
+    ln) ln -sT -- "$2" "$3" ;;
+    perl) perl -e 'symlink($ARGV[0], $ARGV[1]) or exit 1' -- "$2" "$3" ;;
+    node) node -e 'try { require("fs").symlinkSync(process.argv[1], process.argv[2]) } catch (e) { process.exit(1) }' -- "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Enter $1, an absolute physical path to a directory bakcopy made, and succeed
+# only when what was entered is a directory owned by this user, empty, and at
+# that physical path, reached without a symlink. Empty is a listing that
+# succeeded and printed nothing at all, so an entry named only by newlines
+# counts. Not an inode identity check: it shuts out other users' directories
+# and planted symlinks, not this user's own processes, and it holds only
+# while other users cannot rename entries in the directory above.
+bc_enter() {
+  cd "$1" 2>/dev/null && [ -O . ] && bc_raw BC_LS ls -A . && [ -z "${BC_LS}" ] \
+    && [ "$(pwd -P; printf x)" = "$1"$'\n'x ]
+}
+
+bakcopy() {
+  BC_SRC="$2"; BC_BASE="$3"; BC_Q=""; BC_RC=0
+  BC_STAMP="$(date +%Y%m%d%H%M%S)"
+  if [ "$1" = -P ] && [ -L "${BC_SRC}" ]; then
+    BC_KIND="link"
+  elif [ -d "${BC_SRC}" ]; then
+    BC_KIND="tree"
+  else
+    BC_KIND="file"
+  fi
+  case "${BC_SRC}" in /*) ;; *) BC_SRC="${PWD}/${BC_SRC}" ;; esac
+  if ! { bc_raw BC_DIR dirname "${BC_BASE}" && bc_raw BC_DIR bc_physical "${BC_DIR}"; }; then
+    echo "FAIL: could not back up ${BC_SRC}" >&2; return 1
+  fi
+  if [ "${BC_KIND}" = link ]; then
+    # `readlink -n`, whole: macOS adds no newline after a target that already
+    # ends in one, so taking one off would cut the target.
+    BC_TO="$(readlink -n "${BC_SRC}" && printf x)" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    BC_TO="${BC_TO%x}"
+    BC_SL=""
+    BC_P="$(mktemp -d)" || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+    for BC_T in ln perl node; do
+      command -v "${BC_T}" >/dev/null 2>&1 || continue
+      rm -rf "${BC_P}/t"
+      if ! { mkdir "${BC_P}/t" "${BC_P}/t/d" && : > "${BC_P}/t/d/c" && printf k > "${BC_P}/t/r" \
+        && ln -s d "${BC_P}/t/s" && ln -s nowhere "${BC_P}/t/g"; }; then
+        break
+      fi
+      if bc_symlink "${BC_T}" x "${BC_P}/t/n" 2>/dev/null \
+        && [ "$(readlink "${BC_P}/t/n")" = x ] \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/d" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/s" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/g" 2>/dev/null \
+        && ! bc_symlink "${BC_T}" x "${BC_P}/t/r" 2>/dev/null \
+        && [ "$(ls -A "${BC_P}/t/d")" = c ] && [ ! -e "${BC_P}/t/nowhere" ] \
+        && [ ! -L "${BC_P}/t/nowhere" ] && [ ! -L "${BC_P}/t/r" ] \
+        && [ "$(cat "${BC_P}/t/r")" = k ]; then
+        BC_SL="${BC_T}"; break
+      fi
+    done
+    rm -rf "${BC_P}"
+    if [ -z "${BC_SL}" ]; then
+      echo "FAIL: could not back up the symlink ${BC_SRC}, so it was left as it is: no tool here makes a symlink at exactly a given name (needs GNU ln -T, perl or node)" >&2
+      return 1
+    fi
+  elif [ "${BC_KIND}" = file ]; then
+    BC_Q="$(mktemp -d "${BC_DIR}/.luciazero-bak.XXXXXX")" \
+      || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
+  fi
+  (
+    if [ "${BC_KIND}" = file ]; then
+      bc_enter "${BC_Q}" && cp -p "${BC_SRC}" f || exit 1
+    fi
+    BC_DST="${BC_BASE}.bak.${BC_STAMP}"; BC_N=0
+    while :; do
+      BC_AT="${BC_DIR}/${BC_DST##*/}"
+      case "${BC_KIND}" in
+        tree) mkdir "${BC_AT}" 2>/dev/null && break ;;
+        link) bc_symlink "${BC_SL}" "${BC_TO}" "${BC_AT}" 2>/dev/null && break ;;
+        file) link f "${BC_AT}" 2>/dev/null && break ;;
+      esac
+      # Taken is the only reason to try the next name; anything else would
+      # loop over a failure that every name shares.
+      if { [ ! -e "${BC_AT}" ] && [ ! -L "${BC_AT}" ]; } || [ "${BC_N}" -ge 100 ]; then
+        echo "FAIL: could not reserve a backup name for ${BC_SRC} (needs mkdir, or the link utility and hard links)" >&2
+        exit 1
+      fi
+      BC_N=$((BC_N+1)); BC_DST="${BC_BASE}.bak.${BC_STAMP}.${BC_N}"
+    done
+    case "${BC_KIND}" in
+      tree) bc_enter "${BC_AT}" && cp -RP "${BC_SRC}/." . || exit 1 ;;
+      file) rm -f f ;;
+    esac
+    printf '%s' "${BC_DST}"
+  ) || BC_RC=1
+  # The private directory goes only when it passes the same owner and path
+  # check as before it was written; anything else at its name stays.
+  if [ -n "${BC_Q}" ]; then
+    if ( cd "${BC_Q}" 2>/dev/null && [ -O . ] && [ "$(pwd -P; printf x)" = "${BC_Q}"$'\n'x ] \
+      && rm -f f ); then
+      rmdir "${BC_Q}" 2>/dev/null || :
+    fi
+  fi
+  [ "${BC_RC}" = 0 ] || { echo "FAIL: could not back up ${BC_SRC}" >&2; return 1; }
 }
 
 # A catalog entry such as "plan" can already belong to the user or another
@@ -281,8 +397,7 @@ backup_tree() {
   BT_SRC="$1"; BT_LABEL="$2"
   BT_BASE="${BACKUP_DIR}/${BT_LABEL}"
   mkdir -p "$(dirname "${BT_BASE}")"
-  BT_DST="$(bakpath "${BT_BASE}")"
-  cp -RP "${BT_SRC}" "${BT_DST}"
+  BT_DST="$(bakcopy -P "${BT_SRC}" "${BT_BASE}")"
   echo "  ok  backed up existing ${BT_LABEL} -> ${BT_DST#"${CLAUDE_DIR}/"}"
 }
 
@@ -335,8 +450,7 @@ install_file() {
     if [ "${IF_OURS}" = 0 ]; then
       IF_BASE="${BACKUP_DIR}/${IF_LABEL}"
       mkdir -p "$(dirname "${IF_BASE}")"
-      IF_BACKUP="$(bakpath "${IF_BASE}")"
-      cp -P "${IF_DST}" "${IF_BACKUP}"
+      IF_BACKUP="$(bakcopy -P "${IF_DST}" "${IF_BASE}")"
       echo "  ok  backed up existing ${IF_LABEL} -> ${IF_BACKUP#"${CLAUDE_DIR}/"}"
     fi
     rm -f "${IF_DST}"
@@ -424,6 +538,11 @@ if [ -f "${SRC}/agentd/luciazero_agentd/__init__.py" ] && [ -f "${SRC}/bin/lucia
     # The installed copy is no longer next to the package, so it is told
     # where the package went. Nothing here depends on the caller's cwd.
     printf '%s\n' "${SRC}/agentd" > "${AGENTD_HOME_FILE}"
+    if [ "${AGENTD_BIN_DIR}" = "${CLAUDE_DIR}/bin" ]; then
+      rm -f "${AGENTD_BIN_FILE}"
+    else
+      printf '%s\n' "$(CDPATH='' cd -- "${AGENTD_BIN_DIR}" && pwd -P)" > "${AGENTD_BIN_FILE}"
+    fi
     on_path "${AGENTD_BIN_DIR}" \
       || echo "      add to PATH:  export PATH=\"${AGENTD_BIN_DIR}:\$PATH\""
   fi
@@ -485,8 +604,7 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   echo "  ok  CLAUDE.md already imports ${DOCTRINE}"
 else
   if [ -f "${GLOBAL_MD}" ]; then
-    BACKUP="$(bakpath "${GLOBAL_MD}")"
-    cp "${GLOBAL_MD}" "${BACKUP}"
+    BACKUP="$(bakcopy -L "${GLOBAL_MD}" "${GLOBAL_MD}")"
     echo "  ok  backed up CLAUDE.md -> $(basename "${BACKUP}")"
     printf '\n%s\n' "${IMPORT_LINE}" >> "${GLOBAL_MD}"
     # Provenance for the uninstaller, and the only reason it may remove the
@@ -505,123 +623,67 @@ else
   echo "  ok  CLAUDE.md imports ${DOCTRINE}"
 fi
 
+# wire_settings <check|write>: wire the pack's hooks and status line into
+# ${SETTINGS}, additively and idempotently, migrating the Bash-era entries of
+# an older install in place. `check` decides everything and writes nothing;
+# `write` replaces the file whole. bin/lib/settings-wiring.js holds the rules,
+# shared with uninstall.sh and the Windows installer.
+wire_settings() {
+  node "${SRC}/bin/lib/settings-wiring.js" wire "$1" "${SETTINGS}" "${CLAUDE_DIR}/hooks"
+}
+
+# legacy_shipped <file>: the file is a Bash-era hook exactly as this project
+# shipped it (claude/hooks/legacy-hooks.sha256), so nobody's edits are in it.
+legacy_shipped() {
+  LS_SUM="$(sha_of "$1")"
+  [ -n "${LS_SUM}" ] && grep -qx "${LS_SUM}" "${SRC}/claude/hooks/legacy-hooks.sha256"
+}
+
 # 6. enforcement pack (opt-in): hooks + statusline wired into settings.json
 if [ "${WITH_HOOKS}" = 1 ]; then
-  command -v python3 >/dev/null 2>&1 || { echo "FAIL: --with-hooks requires python3" >&2; exit 1; }
-  # 3.9 is where hashlib gained usedforsecurity=, which the hooks pass so their
-  # md5 state key does not raise under FIPS and silently disable tracking
-  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null \
-    || { echo "FAIL: --with-hooks requires a working python3 >= 3.9" >&2; exit 1; }
+  command -v node >/dev/null 2>&1 || { echo "FAIL: --with-hooks requires Node 18+ (node not found)" >&2; exit 1; }
+  node_ok || { echo "FAIL: --with-hooks requires Node 18+ (found $(node --version 2>/dev/null))" >&2; exit 1; }
+  SETTINGS="${CLAUDE_DIR}/settings.json"
+  # Whether settings.json can be wired is decided before anything of the pack
+  # is copied: a file that is not JSON, not the shape hooks live in, or not
+  # writable stops the install here, with no hook file in place and
+  # settings.json untouched (roadmap R14).
+  WIRE_PENDING="$(wire_settings check)" \
+    || { echo "FAIL: settings.json cannot be wired (see above) — hook files not copied, settings.json untouched" >&2; exit 1; }
   mkdir -p "${CLAUDE_DIR}/hooks"
-  for H in luciazero-verify.sh luciazero-statusline.sh; do
+  for H in luciazero-verify.cjs luciazero-statusline.cjs; do
     DST="${CLAUDE_DIR}/hooks/${H}"
     if [ -f "${DST}" ] && ! cmp -s "${SRC}/claude/hooks/${H}" "${DST}"; then
-      cp "${DST}" "$(bakpath "${DST}")"
+      bakcopy -L "${DST}" "${DST}" >/dev/null
       echo "  ok  backed up existing hooks/${H}"
     fi
     cp "${SRC}/claude/hooks/${H}" "${DST}"
     chmod +x "${DST}"
   done
-  SETTINGS="${CLAUDE_DIR}/settings.json"
-  if [ -f "${SETTINGS}" ]; then
-    cp "${SETTINGS}" "$(bakpath "${SETTINGS}")"
+  # backed up only when the wiring is about to change it
+  if [ -f "${SETTINGS}" ] && [ "${WIRE_PENDING}" = changes ]; then
+    bakcopy -L "${SETTINGS}" "${SETTINGS}" >/dev/null
   fi
-  python3 - "${SETTINGS}" "${CLAUDE_DIR}/hooks" <<'PY' || { echo "FAIL: could not update settings.json (invalid JSON?) — hook files copied but not wired" >&2; exit 1; }
-import json, os, shlex, sys
-
-path, hooks_dir = sys.argv[1], sys.argv[2]
-verify_cmd = os.path.join(hooks_dir, "luciazero-verify.sh")
-status_cmd = os.path.join(hooks_dir, "luciazero-statusline.sh")
-MARKERS = (verify_cmd, status_cmd)
-
-# A hook command is a shell string, not an argv. A hooks directory whose name
-# contains a space ends the command at that byte -- the stored command runs a
-# prefix of the path and the shell answers 127 -- and a quote or a `$` in it
-# would be worse than a broken hook. `shlex.quote` leaves a path that needs
-# nothing exactly as it was, so an install that already worked keeps every
-# byte and only the ones that were broken change.
-def command(script, sub=""):
-    return shlex.quote(script) + (" " + sub if sub else "")
-
-# Ours in either spelling: what `command` writes now, and the bare path older
-# versions wrote -- including a bare path with a space in it, which shlex
-# cannot parse back because it was never a valid command in the first place.
-def parse(cmd):
-    for m in MARKERS:
-        if cmd == m:
-            return (m, "")
-        if cmd.startswith(m + " "):
-            return (m, cmd[len(m) + 1:].strip())
-    try:
-        parts = shlex.split(cmd)
-    except ValueError:
-        return None
-    if parts and parts[0] in MARKERS:
-        return (parts[0], " ".join(parts[1:]))
-    return None
-
-settings = {}
-if os.path.exists(path):
-    with open(path) as f:
-        settings = json.load(f)
-
-changed = False
-hooks = settings.setdefault("hooks", {})
-
-def ensure(event, matcher, sub):
-    global changed
-    want = command(verify_cmd, sub)
-    entries = hooks.setdefault(event, [])
-    for e in entries:
-        for h in e.get("hooks", []):
-            if parse(h.get("command", "")) == (verify_cmd, sub):
-                if h.get("command") != want:
-                    h["command"] = want  # an older install's unquoted entry
-                    changed = True
-                return
-    entry = {"hooks": [{"type": "command", "command": want}]}
-    if matcher is not None:
-        entry["matcher"] = matcher
-    entries.append(entry)
-    changed = True
-
-ensure("PostToolUse", "Edit|Write|NotebookEdit", "edit")
-ensure("PostToolUse", "Bash", "bash")
-ensure("PostToolUse", "Skill", "skill")
-ensure("PostToolUseFailure", "Bash", "bash-failure")
-ensure("PreToolUse", "Bash", "bash-start")
-ensure("UserPromptSubmit", None, "prompt")
-ensure("UserPromptExpansion", None, "skill-prompt")
-ensure("Stop", None, "stop")
-ensure("SessionStart", None, "session")
-
-sl = settings.get("statusLine")
-want_sl = command(status_cmd)
-if sl is None:
-    settings["statusLine"] = {"type": "command", "command": want_sl}
-    changed = True
-    print("  ok  statusline wired")
-elif isinstance(sl, dict) and parse(sl.get("command", "")) == (status_cmd, ""):
-    if sl.get("command") != want_sl:
-        sl["command"] = want_sl
-        changed = True
-        print("  ok  statusline rewritten so its path survives the shell")
-    else:
-        print("  ok  statusline already wired")
-else:
-    print("  !!  statusline SKIPPED — a custom statusLine exists; to use ours, set")
-    print("      settings.json statusLine.command to: " + want_sl)
-
-if changed:
-    with open(path, "w") as f:
-        # ensure_ascii=False: an escaped non-ASCII config path (é) would
-        # never match --status's byte-level greps for the hook commands
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    print("  ok  hooks wired into settings.json")
-else:
-    print("  ok  hooks already wired")
-PY
+  wire_settings write \
+    || { echo "FAIL: could not update settings.json (see above) — hook files copied but not wired" >&2; exit 1; }
+  # The Bash hooks of an older install are unwired now. One still named in
+  # settings.json (a custom status line built on it) stays; one exactly as
+  # shipped goes; one somebody edited goes only after a backup.
+  for H in luciazero-verify.sh luciazero-statusline.sh; do
+    F="${CLAUDE_DIR}/hooks/${H}"
+    [ -f "${F}" ] || continue
+    if [ -f "${SETTINGS}" ] && grep -qF "${H}" "${SETTINGS}"; then
+      echo "  !!  hooks/${H} kept — settings.json still names it"
+    elif legacy_shipped "${F}"; then
+      rm -f "${F}"
+      echo "  ok  retired hooks/${H} (the Bash hooks before Node)"
+    else
+      B="$(bakcopy -L "${F}" "${F}")"
+      rm -f "${F}"
+      echo "  ok  retired edited hooks/${H} (backup: $(basename "${B}"))"
+    fi
+  done
+  claude_version_note "  "
 fi
 
 echo

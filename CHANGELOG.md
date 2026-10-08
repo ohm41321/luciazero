@@ -250,8 +250,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A SIGTERM (on Windows, a Ctrl+Break) that reaches `run` while it binds the
   provider's pid ends the provider and revokes the binding. `run` took the
   signal over only after that setup, so in that moment the default handler
-  ended `run` alone and left the provider running with a live credential
-  until its TTL. Without a terminal, a Ctrl+C there did the same.
+  ended `run` without its cleanup, and the binding stayed live until its
+  TTL. On macOS and Linux the provider also kept running; on Windows the
+  job holding it ended it with `run`, unless Windows had refused that job.
+  Without a terminal, a Ctrl+C there also skipped the cleanup on macOS and
+  Linux.
 - Run logs redact an armored PGP private key (`-----BEGIN PGP PRIVATE KEY
   BLOCK-----`), and a relay that carries one is refused, as other private
   keys already were.

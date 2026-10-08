@@ -17,7 +17,7 @@ become the reason to keep building:
 > If that evidence does not exist, the release decision is "stop at the pull
 > beta"; "it feels used" is not a gate.
 
-## Where the gate stands (2026-09-04)
+## Where the gate stands (2026-09-04, counts updated to 2026-09-09)
 
 | Criterion | Required | Recorded | Verdict |
 | --- | --- | --- | --- |
@@ -55,9 +55,33 @@ Three ways out, and this is the user's decision:
 Until one of those is recorded, M7 has no baseline: it would extend managed
 dispatch on evidence that the decision gate does not accept.
 
+## Decision (2026-10-08): the evidence is accepted late, the order is amended
+
+Recorded at the user's direction on 2026-10-08.
+
+The evidence the gate asks for now exists: seven distinct real workflows and
+two retros that name the user-started turn as the blocking cost with the wait
+measured, all recorded by 2026-09-09 (the third workflow on 2026-09-07), and
+no open M3 safety finding as the criterion 3 section below records it. What
+the gate also asked -- that this be recorded before M5 started -- did not
+happen and cannot be made to have happened: M5 and M6 shipped first.
+
+So this is not one of the three ways out as written. It is the evidence the
+gate asked for, not the machinery evidence of the second way, and it was met
+late rather than now. The user accepts it as the baseline for M7 and amends
+the gate's "before M5 starts" condition for that purpose. The reason: every
+count the gate names was reached on real work, and three more workflows would
+not change the order in which things happened. No replacement workflows were
+run, and the demo is not counted.
+
+What this does not do: it does not accept ADR 0007, which stays proposed, and
+it does not authorise implementing M7, running its live slice, or spending
+quota. Each of those is its own decision. The sections above and the ledger
+below keep the missed ordering on the record as it was written at the time.
+
 ## Ledger: real workflows on the pull beta
 
-Empty. A row is added by doing real work on the bus and exporting its records:
+A row is added by doing real work on the bus and exporting its records:
 
 ```bash
 ./scripts/agent-bus-evidence.sh --state-dir ~/.luciazero/agent-bus --list
@@ -83,7 +107,8 @@ the roadmap and ADR 0007 were written by the implementer on the bus, from its
 own worktree, against a task the architect created there -- and the task
 reached `completed` with two artifacts. What it does not show is a closed
 loop: the implementer's `result` message is still `queued`, because the
-architect's session was closed before anyone opened it.
+architect's session was closed before anyone opened it. (Written 2026-09-04;
+the loop closed on 2026-09-05, see "Carry-over" below.)
 
 The 120.334s is measured, and it is **not** a measurement of a human wait. The
 records split it at the recipient's first bus call:
@@ -615,11 +640,18 @@ it.
   attached to it, and the ledger takes work the user would have done anyway,
   not a handshake. Recorded so that a later reading of the evidence directory
   does not mistake it for the missing third row.
-- **The M7-design workflow's open loop.** Its `result` delivery is still
-  `queued`: closing it needs the architect's own terminal, not this log.
+- ~~**The M7-design workflow's open loop.**~~ Closed 2026-09-05: its
+  `result` delivery to `codex-architect` was acknowledged at 03:11:44 UTC and
+  completed at 03:12:18 UTC, as the bus database records. The ledger row's
+  record set was exported on 2026-09-04 and still shows it `queued`.
 
 ## Next decision
 
-The user decides between the three options above. M7 (the managed-dispatch
-vertical slice: several agents, several turns, recovery in the middle) should
-start from whichever of them is recorded here, and this log is its baseline.
+Made on 2026-10-08; see "Decision (2026-10-08)" above. Until then this
+section read: the user decides between the three options above, and M7 (the
+managed-dispatch vertical slice: several agents, several turns, recovery in
+the middle) starts from whichever of them is recorded here, with this log as
+its baseline.
+
+Still open, each a separate decision: accepting ADR 0007, which is proposed;
+implementing M7; and approving quota for its live slice.

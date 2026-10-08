@@ -565,6 +565,11 @@ ledger the workflows are recorded in. As of 2026-09-04 the gate is not met:
 no real workflow has been recorded, and M5 and M6 shipped without waiting for
 one. The log names the three ways out and leaves the choice to the user.
 
+Amended 2026-10-08: the counts were met by 2026-09-09, after M5 and M6 had
+shipped. The user accepted that evidence as M7's baseline and amended the
+"before M5 starts" condition; the log records the decision and keeps the
+missed ordering on the record.
+
 ### M4.5 — Terminal binding and session credentials (complete 2026-09-04)
 
 The last identity the model still asserts is its own: the user tells it "you
@@ -1159,9 +1164,10 @@ replied and acknowledged with nobody typing.
 
 ### M7 — Managed-dispatch vertical slice
 
-Designed in ADR 0007, which states what has to be true before the live run
-starts — the M4 decision gate resolved first, the offline gate green, and the
-quota approved with a number attached.
+Designed in ADR 0007 (proposed, amended 2026-10-08), which states what has to
+be true before the live run starts — the M4 decision gate resolved first (it
+was, by amendment, on 2026-10-08), the offline gate green, one root allowance
+written down for the flow, and the quota approved with a number attached.
 
 - [ ] Register the three agents from M4 as managed workers.
 - [ ] Run the outcome flow with no user-started turns.

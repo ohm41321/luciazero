@@ -38,8 +38,8 @@ dispatch; see [its guide](agent-bus.md) for its limits.
    breaking a covered line to prove verify goes red, and running it twice to
    catch flakes. A verify command that cannot fail is not a verify command.
 4. **Enforcement is instrumented, not prose.** The opt-in pack tracks
-   edits-vs-verify per project, shows it in the statusline, nudges once at
-   stop — and, in opt-in strict mode, actually runs your verify command and
+   edits-vs-verify per project, shows it in the statusline, nudges each
+   session that edited once at stop — and, in opt-in strict mode, actually runs your verify command and
    blocks a red stop with the failing output attached. Honest limit: the
    blocked stop's continuation is never re-blocked, so strict mode is a
    speed bump with evidence, not proof-loop's wall.

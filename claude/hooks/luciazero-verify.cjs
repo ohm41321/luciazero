@@ -2,8 +2,9 @@
 // Enforcement-pack hook (Claude Code only; installed by `install.sh --with-hooks`
 // or `luciazero --with-hooks`, or loaded by the plugin).
 // Tracks per-project whether edits have been followed by a verify run, and
-// nudges ONCE at session stop when they have not — mechanizing doctrine rule 1
-// ("done is proven by a command") at the exact moment it is most violated.
+// nudges each session ONCE at stop when its own edits have not — mechanizing
+// doctrine rule 1 ("done is proven by a command") at the exact moment it is
+// most violated. Any session's verify run covers every session's edits.
 //
 // One Node program on every platform, wired in exec form
 // (`"command": "node", "args": [<this file>, <subcommand>]`), so no shell sits
@@ -217,6 +218,12 @@ function mkdirs(...dirs) {
 function removeFile(file) {
   try {
     fs.rmSync(file, { force: true });
+  } catch {}
+}
+
+function removeTree(target) {
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
   } catch {}
 }
 
@@ -696,6 +703,10 @@ function main(argv) {
   const project = projectOf(cwd);
   const key = stateKey(project);
   const sessionKey = sha256(field(input, "session_id") || "parent-" + process.ppid, 16);
+  // Who the stop nudge is for. An event without a session_id cannot be told
+  // apart from another one, so all of those share one key, which is the
+  // per-project nudge this hook had before it tracked sessions.
+  const editorKey = field(input, "session_id") ? sessionKey : "no-session";
   // stable opaque tool key; raw tool input never leaves temporary state
   const toolKey = sha256(field(input, "tool_use_id") || field(input, "tool_input", "command")
     || field(input, "tool_input", "skill") || field(input, "command_name") || field(input, "prompt")
@@ -811,7 +822,8 @@ function main(argv) {
       else if (filePath && anyLine(filePath, docRe)) counted = "no"; // doc-only write; verify state unchanged
       else {
         touch(path.join(state, "last_edit"));
-        removeFile(path.join(state, "nudged")); // new code edits re-arm the one-shot nudge
+        if (mkdirs(path.join(state, "edited"))) touch(path.join(state, "edited", editorKey));
+        removeFile(path.join(state, "nudged", editorKey)); // a new code edit re-arms this session's nudge
       }
       // Opt-in diagnostic (LUCIAZERO_EDIT_DIAG=1): one line per edit event in
       // the state directory, next to last_edit, saying what the event carried
@@ -886,7 +898,7 @@ function main(argv) {
         // Keep only an opaque digest for strict-gate equality; raw commands may
         // contain paths or secrets and must never persist in shared state.
         write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
-        removeFile(path.join(state, "nudged"));
+        removeTree(path.join(state, "nudged"));
       }
       return 0;
     }
@@ -928,7 +940,7 @@ function main(argv) {
           write(path.join(state, "last_verify"), "ok\n");
           stampAt(path.join(state, "last_verify"), startMs);
           write(path.join(state, "last_verify_cmd_hash"), sha256(strict, 64) + "\n");
-          removeFile(path.join(state, "nudged"));
+          removeTree(path.join(state, "nudged"));
           statLog("stop-clean", ctx);
           endTurn();
           return 0;
@@ -945,11 +957,21 @@ function main(argv) {
         }
         // error — fall through to the ordinary fail-open nudge
       }
-      const lastEdit = mtime(path.join(state, "last_edit"));
+      // The nudge goes to the session whose edits are unverified, once each
+      // however the sessions' stops interleave: one that made no edit stops
+      // clean while another session's edit waits for a verify. State an older
+      // copy wrote has last_edit but no edited/ yet; it is read as before.
+      const edited = path.join(state, "edited");
+      const lastEdit = fs.existsSync(edited) ? mtime(path.join(edited, editorKey)) : mtime(path.join(state, "last_edit"));
       const lastVerify = mtime(path.join(state, "last_verify"));
       const nudge = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
-      if (nudge && !isFile(path.join(state, "nudged"))) {
-        touch(path.join(state, "nudged"));
+      const nudged = path.join(state, "nudged");
+      if (nudge && !isFile(path.join(nudged, editorKey))) {
+        // an older copy kept one plain `nudged` file for the whole project
+        try {
+          if (!fs.lstatSync(nudged).isDirectory()) removeFile(nudged);
+        } catch {}
+        if (mkdirs(nudged)) touch(path.join(nudged, editorKey));
         statLog("nudge", ctx);
         process.stderr.write(NUDGE_TEXT + "\n");
         return 2;

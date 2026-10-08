@@ -50,6 +50,43 @@ for DOC in README.md requirements.txt CMakeLists.txt; do
   if [ "${DOC}" = README.md ]; then WANT=0; else WANT=2; fi
   [ "${RC}" = "${WANT}" ] || { rm -rf "${HT}"; fail "stop hook after a write to ${DOC} following green verify: rc=${RC}, want ${WANT}"; }
 done
+# The stop nudge belongs to the session whose edit is unverified, once each:
+# a session that edited nothing stops clean, and another session's nudge does
+# not use up this one's. Any session's verify run covers every session's edit.
+sess_hook() { # sess_hook <session> <mode> [extra-json-fields]: exit code in SH_RC
+  SH_RC=0
+  printf '{"cwd":"%s","session_id":"%s"%s}\n' "${SESS_CWD}" "$1" "${3:-}" \
+    | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" "$2" 2>/dev/null || SH_RC=$?
+}
+sess_stop() { # sess_stop <session> <want rc> <failure message>
+  sess_hook "$1" stop
+  [ "${SH_RC}" = "$2" ] || { rm -rf "${HT}"; fail "$3 (session $1 stop: rc=${SH_RC}, want $2)"; }
+}
+sess_state() { # the hook's state directory for SESS_CWD
+  printf '%s/luciazero-verify-state-%s/%s' "${HT}" "$(id -u)" \
+    "$(python3 -c 'import hashlib,sys; print(hashlib.md5(sys.argv[1].encode(), usedforsecurity=False).hexdigest()[:12])' "${SESS_CWD}")"
+}
+SESS_EDIT=',"tool_input":{"file_path":"/hook/test/sessions/a.py"}'
+SESS_GREEN=',"tool_input":{"command":"./test.sh"},"tool_response":{"exit_code":0}'
+SESS_CWD=/hook/test/sessions
+sess_hook A edit "${SESS_EDIT}"
+sess_stop B 0 "a session that made no edit was nudged for another session's edit"
+sess_stop A 2 "the session that edited was not nudged after another session stopped first"
+sess_stop A 0 "the per-session nudge is not one-shot"
+sess_hook B edit "${SESS_EDIT}"
+sess_stop B 2 "one session's nudge used up another's"
+sess_hook B bash "${SESS_GREEN}"
+sess_hook A edit "${SESS_EDIT}"
+sess_stop B 0 "a green run did not cover the edit made before it"
+sess_stop A 2 "an edit after a green run in another session did not re-arm this session's nudge"
+# State an older copy left -- last_edit with no edited/, one plain nudged file
+# for the whole project -- still nudges, and the marker becomes per session.
+SESS_CWD=/hook/test/sessions-legacy
+mkdir -p "$(sess_state)"; chmod 700 "$(sess_state)"
+touch "$(sess_state)/last_edit" "$(sess_state)/nudged"
+sess_stop C 2 "an older copy's project-wide nudged file silenced a session that was never nudged"
+sess_stop C 0 "the nudge after an older copy's state is not one-shot"
+[ -d "$(sess_state)/nudged" ] || { rm -rf "${HT}"; fail "the older copy's nudged file was not replaced by the per-session marker"; }
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'
@@ -173,7 +210,7 @@ RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" LUCIAZERO_CH
 # a copy running from anywhere else still stands down when classic is wired;
 # the classic stop above fired the one-shot nudge, which alone would make this
 # stop exit 0, so re-arm it first
-rm -f "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
+rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
 RC=0; echo "${CHJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/cfg" \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || RC=$?
 [ "${RC}" = 0 ] \
@@ -219,7 +256,7 @@ legacy_rc() { # legacy_rc <settings.json body>: stop exit code beside a legacy i
   printf '%s\n' "$1" > "${CHD}/legacy/settings.json"
   LG_RC=0; echo "${LGJ}" | TMPDIR="${HT}" CLAUDE_CONFIG_DIR="${CHD}/legacy" \
     "${ROOT}/claude/hooks/luciazero-verify.cjs" stop >/dev/null 2>&1 || LG_RC=$?
-  rm -f "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
+  rm -rf "${HT}/luciazero-verify-state-$(id -u)/"*/nudged
 }
 LGW="$(printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s/legacy/hooks/luciazero-verify.sh stop"}]}]}}' "${CHD}")"
 chmod -x "${CHD}/legacy/hooks/luciazero-verify.sh"

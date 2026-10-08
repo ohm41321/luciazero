@@ -64,6 +64,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   like any code edit. `.md`, `.markdown` and `.rst` writes still leave the
   verify state alone; `LUCIAZERO_DOC_REGEX` in your own settings restores the
   old set.
+- The verify hook's stop nudge is per session. Two sessions in one project
+  shared one marker: a session that edited nothing was nudged for the other's
+  edit, and the session that made it then stopped without a nudge. Each
+  session that edited since the last verify run is now nudged once, and a
+  verify run in any session still covers every session's edits.
 
 ### Fixed
 

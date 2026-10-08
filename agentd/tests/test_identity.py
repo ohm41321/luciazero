@@ -26,7 +26,7 @@ from luciazero_agentd.store import BINDING_MAX_LIFETIME_SECONDS, utcnow
 from luciazero_agentd import procinfo
 from luciazero_agentd.redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX, DEFAULT as DEFAULT_REDACTOR
 from luciazero_agentd.server import ACTOR_FIELDS, TOOL_INDEX, BusServer, tool_contract
-from luciazero_agentd.store import ConflictError, NotFound, UnsafeReference
+from luciazero_agentd.store import ConflictError, NotFound, UnsafeReference, ValidationError
 from tests.fixtures import WINDOWS, fake_cli, kill_pid, pid_running
 from tests.test_mcp import TOKEN, Http
 
@@ -61,6 +61,24 @@ class Bindings(StoreCase):
         row = self.store._conn.execute("SELECT credential_hash FROM bindings WHERE id = ?", (binding["id"],)).fetchone()
         self.assertNotIn(credential, str(row["credential_hash"]))
         self.assertEqual(self.store.resolve_credential(credential, alive=ALIVE)["agent_id"], "claude-reviewer")
+
+    def test_a_binding_named_by_its_caller_keeps_that_name_and_is_checked(self) -> None:
+        """`run` names its binding before the store commits it, so that an
+        interrupt between the commit and the return still knows what to
+        revoke. A name from outside is checked like every other id, on the
+        path that binds inside a caller's transaction too."""
+        binding, _ = self.bind(tty="ttys130", pid=os.getpid(), binding_id="bind_chosen")
+        self.assertEqual("bind_chosen", binding["id"])
+        for bad in ("bind chosen", "", "x" * 200):
+            with self.subTest(binding_id=bad):
+                with self.assertRaises(ValidationError):
+                    self.bind("codex-architect", provider="codex", binding_id=bad)
+                with self.assertRaises(ValidationError):
+                    with self.store._tx("test"):
+                        self.store._bind_terminal_locked("codex-architect", provider="codex",
+                                                         by="human:test", binding_id=bad)
+        self.assertEqual([], [b for b in self.store.list_bindings(states=("active", "revoked", "stale"), alive=None)
+                              if b["agent_id"] == "codex-architect"])
 
     def test_unknown_and_malformed_credentials_resolve_to_nobody(self) -> None:
         for value in (None, 42, "", "bearer", CREDENTIAL_PREFIX + "0" * 32, CREDENTIAL_PREFIX + "zz", "lzap_" + "0" * 32):

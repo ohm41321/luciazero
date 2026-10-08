@@ -1866,6 +1866,8 @@ class Store:
             _check_enum(ownership, OWNERSHIPS, "ownership")
             _check_text(by, "by", 128)
             _check_int(ttl_seconds, 60, 86_400, "ttl_seconds")
+            if binding_id is not None:
+                _check_id(binding_id, "binding id", self._redactor)
         credential = CREDENTIAL_PREFIX + secrets.token_hex(16)
         digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
         if binding_id is None:

@@ -1375,6 +1375,12 @@ class RunSetupSignals(unittest.TestCase):
                 with self.subTest(after=taken, raised=raised):
                     # Python's own, whatever a failed subtest before this left.
                     self.addCleanup(install, signal.SIGINT, install(signal.SIGINT, signal.default_int_handler))
+                    if WINDOWS:
+                        # A Ctrl+Break raised before `run` takes it over would
+                        # meet the default, which ends the suite's process; one
+                        # that raises is seen instead, and must come back too.
+                        self.addCleanup(install, signal.SIGBREAK,
+                                        install(signal.SIGBREAK, signal.default_int_handler))
                     breaks = signal.getsignal(signal.SIGBREAK) if WINDOWS else None
 
                     def taking(signum: int, handler: object) -> object:

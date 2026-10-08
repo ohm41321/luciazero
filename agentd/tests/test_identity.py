@@ -825,6 +825,62 @@ class HumanCommands(unittest.TestCase):
         self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
                               if b["agent_id"] == "claude-reviewer"])
 
+    def _run_signalled_at_bind(self, *, pty: bool) -> tuple[subprocess.CompletedProcess, int]:
+        """`run` with a sleeping provider, sent SIGTERM while it binds the
+        provider's pid -- after the spawn, before the session is proxied.
+        Returns the result and the provider's pid."""
+        spy = (
+            "import os, signal, subprocess, sys\n"
+            "from luciazero_agentd import __main__ as cli, procinfo\n"
+            "def spawn(argv, env):\n"
+            "    return subprocess.Popen(argv, env=env).pid, os.open(os.devnull, os.O_RDONLY)\n"
+            "def proxy(pid, master, **_):\n"
+            "    os.close(master)\n"
+            "    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])\n"
+            "real = procinfo.started_at\n"
+            "def started_at(pid, **kw):\n"
+            "    if pid != os.getpid():\n"
+            "        print(f'provider pid {pid}', file=sys.stderr, flush=True)\n"
+            "        os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    return real(pid, **kw)\n"
+            f"if {pty!r}:\n"
+            "    cli.nudge.usable, cli.nudge.spawn, cli.nudge.proxy = (lambda: True), spawn, proxy\n"
+            "procinfo.started_at = started_at\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", spy, "run", "--agent", "claude-reviewer", "--provider", "claude",
+             "--state-dir", str(self.state), "--", self._sleeper()],
+            cwd=str(PACKAGE_ROOT), capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "LUCIAZERO_AGENT_BUS_HOME": str(self.state)},
+        )
+        pids = [int(line.split()[-1]) for line in done.stderr.splitlines() if line.startswith("provider pid ")]
+        self.assertEqual(1, len(pids), done.stderr)
+        self.addCleanup(kill_pid, pids[0])
+        return done, pids[0]
+
+    def _assert_stopped_cleanly(self, done: subprocess.CompletedProcess, provider: int) -> None:
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(done.returncode, 130, done.stderr + done.stdout)
+        self.assertFalse(pid_running(provider), "the provider outlived run")
+        self.assertEqual([], [b["id"] for b in self._bindings(states=("active",))
+                              if b["agent_id"] == "claude-reviewer"])
+
+    @unittest.skipIf(WINDOWS, "SIGTERM; Windows ends the process at once, with no handler to run")
+    def test_a_sigterm_while_run_binds_its_provider_still_ends_both(self) -> None:
+        """Review finding: `run` took SIGTERM over only once the provider's pid
+        was bound, so a SIGTERM in that moment ended `run` alone and left the
+        provider running with a live credential until its TTL."""
+        self.addCleanup(self._stop_daemon)
+        self._assert_stopped_cleanly(*self._run_signalled_at_bind(pty=False))
+
+    @unittest.skipIf(WINDOWS, "the pty path, and SIGTERM")
+    def test_a_sigterm_while_run_binds_its_pty_provider_still_ends_both(self) -> None:
+        """The same moment on the pty path, which took SIGTERM over only
+        after the bind and the delivery watcher were set up."""
+        self.addCleanup(self._stop_daemon)
+        self._assert_stopped_cleanly(*self._run_signalled_at_bind(pty=True))
+
     @unittest.skipIf(WINDOWS, "the pty path; Windows ends the console's tree instead")
     def test_a_provider_that_ignores_sigterm_does_not_hold_run_open(self) -> None:
         """Review finding: stopping `run` on a pty sent SIGTERM and then waited

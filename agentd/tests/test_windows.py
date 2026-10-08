@@ -4,7 +4,8 @@ pseudo console, against the real Win32 API.
 Most of this runs only on Windows, where CI runs it (the windows-agentd job).
 Two parts run everywhere: provider discovery against a mocked Windows process
 table, because what decides it is plain string logic, and the daemon's port,
-because no platform may let a second socket take it.
+because no platform may let a second socket take it. When `run` on a console
+takes Ctrl+Break over is checked off Windows only, with SIGUSR1 standing in.
 """
 from __future__ import annotations
 
@@ -920,6 +921,49 @@ class RunOnAConsole(unittest.TestCase):
         written = log.read_text(encoding="utf-8")
         self.assertIn("claude-implementer [finding]:", written)
         self.assertIn("while you were idle", written)
+
+
+@unittest.skipIf(WINDOWS, "simulated with SIGUSR1 for SIGBREAK, which Windows does not have")
+class ConsoleRunSetup(unittest.TestCase):
+    """Review finding: `run` on a console took Ctrl+Break over only after the
+    bind and the delivery watcher were set up, so a Ctrl+Break in that moment
+    met the default handler, which ends the process without its cleanup and
+    leaves the binding live. Here the default is a handler that raises, so
+    an escape is seen rather than fatal."""
+
+    def test_a_ctrl_break_during_setup_ends_the_session_and_the_binding(self) -> None:
+        import signal
+        import types
+
+        import luciazero_agentd
+        from luciazero_agentd import __main__ as cli
+
+        class Escaped(Exception):
+            pass
+
+        def default(*_: object) -> None:
+            raise Escaped
+
+        conpty = types.SimpleNamespace(spawn=lambda argv, env: types.SimpleNamespace(pid=os.getpid()),
+                                       proxy=lambda *a, **kw: self.fail("the proxy started"))
+
+        def open_store(*_: object) -> None:
+            signal.raise_signal(signal.SIGUSR1)
+            return None
+
+        previous = signal.signal(signal.SIGUSR1, default)
+        self.addCleanup(signal.signal, signal.SIGUSR1, previous)
+        ended: list[str] = []
+        with mock.patch.dict(sys.modules, {"luciazero_agentd.conpty": conpty}), \
+                mock.patch.object(luciazero_agentd, "conpty", conpty, create=True), \
+                mock.patch.object(signal, "SIGBREAK", signal.SIGUSR1, create=True), \
+                mock.patch.object(cli, "_open_store", open_store):
+            code = cli._run_on_a_console(types.SimpleNamespace(max_nudges=1), ["provider"], {},
+                                         {"id": "bind_x", "agent_id": "codex-architect"},
+                                         Path(tempfile.gettempdir()), ended.append)
+        self.assertEqual(130, code)
+        self.assertEqual(["run exited"], ended)
+        self.assertIs(default, signal.getsignal(signal.SIGUSR1))
 
 
 class GitOutput(unittest.TestCase):

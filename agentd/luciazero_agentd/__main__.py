@@ -1118,23 +1118,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         _cleanup("spawn failed")
         print(f"run: cannot start {clean(command[0])}: {clean(exc)}", file=sys.stderr)
         return 2
-    store = _open_store("run", state_dir)
-    if store is not None:
-        with store:
-            try:
-                store.bind_process(binding["id"], pid=child.pid, process_started_at=procinfo.started_at(child.pid))
-            except (StoreError, procinfo.ProcessError):
-                # The child may already be gone (the reaper handles it), or
-                # the process table may have become unreadable since the
-                # check above. Neither is worth taking the user's terminal
-                # down for: the binding still dies when this command exits.
-                pass
-
     def _stop_run(*_: object) -> None:
         raise KeyboardInterrupt
 
     # Without this a SIGTERM to `run` skips the cleanup below and leaves an
-    # orphaned provider holding a live credential until its TTL expires.
+    # orphaned provider holding a live credential until its TTL expires. It
+    # comes before the bind, which a SIGTERM can land in too.
     previous = signal.signal(signal.SIGTERM, _stop_run)
     # Windows: the provider shares this console, so a Ctrl+C reaches it
     # directly and is its to handle -- Claude Code and Codex use it to stop a
@@ -1143,6 +1132,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     previous_windows = ((signal.signal(signal.SIGINT, signal.SIG_IGN), signal.signal(signal.SIGBREAK, _stop_run))
                         if proctree.WINDOWS else None)
     try:
+        store = _open_store("run", state_dir)
+        if store is not None:
+            with store:
+                try:
+                    store.bind_process(binding["id"], pid=child.pid, process_started_at=procinfo.started_at(child.pid))
+                except (StoreError, procinfo.ProcessError):
+                    # The child may already be gone (the reaper handles it),
+                    # or the process table may have become unreadable since
+                    # the check above. Neither is worth taking the user's
+                    # terminal down for: the binding still dies when this
+                    # command exits.
+                    pass
         # In slices on Windows, where one wait is deaf to Ctrl+Break until
         # the provider exits -- and a provider may handle Ctrl+Break itself.
         return adapters.wait_for(child, None)
@@ -1181,7 +1182,14 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
     previous = signal.getsignal(signal.SIGTERM)
+
+    def _stop_run(*_: object) -> None:
+        raise KeyboardInterrupt
+
     try:
+        # First, so that a SIGTERM during the setup below still ends the
+        # provider and the binding.
+        signal.signal(signal.SIGTERM, _stop_run)
         store = _open_store("run", state_dir)
         if store is not None:
             with store:
@@ -1192,11 +1200,6 @@ def _run_on_a_pty(args: argparse.Namespace, argv: list[str], env: dict[str, str]
                     pass
         watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
                                 limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
-
-        def _stop_run(*_: object) -> None:
-            raise KeyboardInterrupt
-
-        signal.signal(signal.SIGTERM, _stop_run)
         return nudge.proxy(pid, master, watcher=watcher,
                            show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
@@ -1246,9 +1249,18 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
         print(f"run: cannot start {clean(argv[0])}: {clean(exc)}", file=sys.stderr)
         return 2
     previous = signal.getsignal(signal.SIGBREAK)
+
+    def _stop_run(*_: object) -> None:
+        raise KeyboardInterrupt
+
     # Everything after the spawn sits inside the try, as on a pty: whatever
     # fails on the way to the proxy, the binding still dies with this run.
     try:
+        # Ctrl+C is a keystroke for the provider while the console is raw; a
+        # Ctrl+Break, or one that lands before the console is raw, ends the
+        # session, and the proxy ends the provider's job on its way out. It
+        # is taken over first, so one during the setup below does too.
+        signal.signal(signal.SIGBREAK, _stop_run)
         store = _open_store("run", state_dir)
         if store is not None:
             with store:
@@ -1259,14 +1271,6 @@ def _run_on_a_console(args: argparse.Namespace, argv: list[str], env: dict[str, 
                     pass
         watcher = nudge.Watcher(state_dir / "bus.sqlite3", binding["agent_id"], started_at=utcnow(),
                                 limit=max(0, int(getattr(args, "max_nudges", nudge.MAX_NUDGES))))
-
-        def _stop_run(*_: object) -> None:
-            raise KeyboardInterrupt
-
-        # Ctrl+C is a keystroke for the provider while the console is raw; a
-        # Ctrl+Break, or one that lands before the console is raw, ends the
-        # session, and the proxy ends the provider's job on its way out.
-        signal.signal(signal.SIGBREAK, _stop_run)
         return conpty.proxy(session, watcher=watcher, show=nudge.log_sink(state_dir / nudge.LOG_NAME))
     except KeyboardInterrupt:
         return 130

@@ -190,7 +190,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contract anywhere. `/lucia-chat` had neither, so nothing read its prompt.
 - The Astra/Luna canary wrapper refuses a root launch that sets anything
   under `features` with `-c` in any TOML spelling (`features={...}`, a quoted
-  key segment) or selects a config `--profile`. It matched only the literal
+  key segment), written `-c X`, `-cX` or `-c=X`, or selects a config
+  `--profile`. It matched only the literal
   `features.multi_agent=` prefixes, so other spellings of the same override
   reached the provider.
 - `scripts/check-astra-luna-adapter.py` refuses a Slice 0 baseline with a

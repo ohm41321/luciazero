@@ -619,6 +619,8 @@ def _reject_native_config_overrides(command: Sequence[str]) -> None:
                     "Codex launch must not use a native multi-agent config override"
                 )
         compact = part[2:] if part.startswith("-c") else ""
+        if compact.startswith("="):
+            compact = compact[1:]  # -c=key=value, which Codex reads too
         if compact and _sets_features(compact):
             raise NativeSpawnPolicyError(
                 "Codex launch must not use a native multi-agent enable/config override"

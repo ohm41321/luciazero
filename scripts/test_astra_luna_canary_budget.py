@@ -707,6 +707,8 @@ class CanaryBudgetTests(unittest.TestCase):
             ["-c", "'features'.multi_agent_v2=true"],
             ["-c", "features . multi_agent = true"],
             ["-cfeatures={multi_agent_v2=true}"],
+            ["-c=features={multi_agent=true}"],
+            ["-c=features.multi_agent_v2=true"],
             ["--profile", "collab"],
             ["--profile=collab"],
             ["-p", "collab"],

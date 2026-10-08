@@ -105,6 +105,15 @@ if [ -e "$(sess_state)/nudged" ]; then
 fi
 sess_hook P bash "${SESS_GREEN}"
 sess_stop D 0 "a green run did not cover the older copy's edit"
+# An older copy's edit made while this copy's verify ran is not covered by
+# that run either.
+SESS_CWD=/hook/test/sessions-changeover
+sess_hook N bash-start "${SESS_RUN}"
+touch "$(sess_state)/last_edit"
+sess_hook P edit "${SESS_EDIT}"
+sess_stop C 2 "an older copy's edit made while a verify ran was not nudged"
+sess_hook N bash "${SESS_RUN}"',"tool_response":{"exit_code":0}'
+sess_stop C 0 "a verify run that started before an older copy's edit re-armed the nudge that edit had caused"
 # exact-match mode: with LUCIAZERO_VERIFY_CMD set, reading the test file is no
 # longer counted as running it (regression: `cat test.sh` flipped state green)
 EJ='{"cwd":"/hook/test/exact"}'

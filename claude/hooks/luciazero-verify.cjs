@@ -227,12 +227,23 @@ function removeFile(file) {
 // for the whole project and reads only last_edit; this copy still touches
 // last_edit and removes `nudged` where that copy did, so a session still
 // running it keeps working.
-//
+
+// The last edit a stop would nudge this session for: its own newest one, or
+// one only an older copy recorded (last_edit, before edited/ existed), which
+// is every session's, as it was for that copy.
+function lastEditOf(state, key) {
+  const edited = path.join(state, "edited");
+  const times = [mtime(path.join(edited, key)),
+    fs.existsSync(edited) ? mtime(path.join(state, "legacy_edit")) : mtime(path.join(state, "last_edit"))]
+    .filter((t) => t !== null);
+  return times.length ? Math.max(...times) : null;
+}
+
 // A verify run settles the sessions whose edits it covers: their markers go,
 // and a later edit re-arms each one anyway. A session that edited after the
 // run started keeps its marker, so it is not nudged twice for one edit.
 function settleNudged(state) {
-  removeFile(path.join(state, "nudged"));
+  removeOlderMarker(state);
   const verified = mtime(path.join(state, "last_verify"));
   const dir = path.join(state, "nudged-sessions");
   let keys;
@@ -242,9 +253,17 @@ function settleNudged(state) {
     return;
   }
   for (const key of keys) {
-    const edited = mtime(path.join(state, "edited", key));
-    if (verified !== null && (edited === null || edited <= verified)) removeFile(path.join(dir, key));
+    const last = lastEditOf(state, key);
+    if (verified !== null && (last === null || last <= verified)) removeFile(path.join(dir, key));
   }
+}
+
+// An older copy's one-shot marker. A directory there was left by an
+// unreleased build that kept the per-session markers under that name.
+function removeOlderMarker(state) {
+  try {
+    fs.rmSync(path.join(state, "nudged"), { recursive: true, force: true });
+  } catch {}
 }
 
 // LUCIAZERO_VERIFY_REGEX and LUCIAZERO_DOC_REGEX are POSIX extended regular
@@ -857,7 +876,7 @@ function main(argv) {
         }
         // a new code edit re-arms this session's nudge, and an older copy's
         removeFile(path.join(state, "nudged-sessions", editorKey));
-        removeFile(path.join(state, "nudged"));
+        removeOlderMarker(state);
       }
       // Opt-in diagnostic (LUCIAZERO_EDIT_DIAG=1): one line per edit event in
       // the state directory, next to last_edit, saying what the event carried
@@ -993,14 +1012,8 @@ function main(argv) {
       }
       // The nudge goes to the session whose edits are unverified, once each
       // however the sessions' stops interleave: one that made no edit stops
-      // clean while another session's edit waits for a verify. An edit only
-      // an older copy recorded (last_edit, before edited/ existed) is every
-      // session's, as it was for that copy.
-      const edited = path.join(state, "edited");
-      const times = [mtime(path.join(edited, editorKey)),
-        fs.existsSync(edited) ? mtime(path.join(state, "legacy_edit")) : mtime(path.join(state, "last_edit"))]
-        .filter((t) => t !== null);
-      const lastEdit = times.length ? Math.max(...times) : null;
+      // clean while another session's edit waits for a verify.
+      const lastEdit = lastEditOf(state, editorKey);
       const lastVerify = mtime(path.join(state, "last_verify"));
       const nudge = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
       const nudged = path.join(state, "nudged-sessions");

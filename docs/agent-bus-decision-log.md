@@ -107,7 +107,8 @@ the roadmap and ADR 0007 were written by the implementer on the bus, from its
 own worktree, against a task the architect created there -- and the task
 reached `completed` with two artifacts. What it does not show is a closed
 loop: the implementer's `result` message is still `queued`, because the
-architect's session was closed before anyone opened it.
+architect's session was closed before anyone opened it. (Written 2026-09-04;
+the loop closed on 2026-09-05, see "Carry-over" below.)
 
 The 120.334s is measured, and it is **not** a measurement of a human wait. The
 records split it at the recipient's first bus call:
@@ -639,8 +640,10 @@ it.
   attached to it, and the ledger takes work the user would have done anyway,
   not a handshake. Recorded so that a later reading of the evidence directory
   does not mistake it for the missing third row.
-- **The M7-design workflow's open loop.** Its `result` delivery is still
-  `queued`: closing it needs the architect's own terminal, not this log.
+- ~~**The M7-design workflow's open loop.**~~ Closed 2026-09-05: its
+  `result` delivery to `codex-architect` was acknowledged at 03:11:44 UTC and
+  completed at 03:12:18 UTC, as the bus database records. The ledger row's
+  record set was exported on 2026-09-04 and still shows it `queued`.
 
 ## Next decision
 

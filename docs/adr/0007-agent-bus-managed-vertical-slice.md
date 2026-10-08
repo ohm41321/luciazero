@@ -252,15 +252,17 @@ In order, and none of them is a technical step:
    the reason, in the decision log. The gate's ordering was missed and the
    log still says so; no replacement workflows were run, and the demo is not
    counted.
-2. The offline gate is green on every platform the daemon supports when the
-   gate is built: macOS, Linux and WSL2 under ADR 0002 today, and native
-   Windows as well if native Windows support has been accepted into ADR 0002
-   by then. Against model-free rehearsal workers it shows that:
+2. The offline gate is green on native Windows, macOS and Linux. Native
+   Windows depends on ADR 0002's native Windows amendment, which is in review
+   with the Windows port and not yet on `main`, where ADR 0002 still scopes
+   the daemon to macOS, Linux and WSL2. Against model-free rehearsal workers
+   the gate shows that:
    - three agents carry the six-turn flow to the end from bus records alone,
      and a fresh provider session midway costs efficiency, not correctness;
-   - a task that becomes claimable for an enabled managed worker queues one
-     system delivery in the same transaction, and a replay or recovery pass
-     queues no second one;
+   - a claimable task in a managed flow with a root allowance, assigned to
+     an enabled managed worker, queues one system delivery in the same
+     transaction, a replay or recovery pass queues no second one, and a task
+     with no root assigned to such a worker queues none;
    - each side-effecting worker step, killed and retried, leaves no duplicate
      artifact, message or commit, and the dispatcher acknowledges nothing on a
      worker's behalf;
@@ -298,7 +300,7 @@ In order, and none of them is a technical step:
 - `bus status` gains stalled flows. No new command: restarting a flow stays a
   human act through the existing cancel and re-queue path.
 - A new gate tier `./test.sh --agent-bus-managed`, offline, in `--full`, run on
-  every platform the daemon supports, to be added by this work: `test.sh` today
+  native Windows, macOS and Linux, to be added by this work: `test.sh` today
   offers `--agent-bus-spike|store|mcp|security|e2e|workflow|dispatch|chat|live`
   and nothing named `managed`. The M4 tier and its assertions are untouched,
   which is the point of scoping the new delivery to enrolled workers.
@@ -376,6 +378,7 @@ and the bus behaves exactly as it does in M6 and M5. Rolling back M7 is
 removing the workers. Rolling back the trigger is reverting one transaction's
 extra insert, which the M4 tier — untouched by design — will show is safe. The
 root allowance is not that small: its fields, each task's link to its root
-and the charge in `begin_turn` arrive with a schema migration, and how that
-migration is reversed is part of specifying those fields before
-implementation, proved by the managed gate rather than the M4 tier.
+and the charge in `begin_turn` arrive with a schema migration. How that
+migration is reversed, and the check that proves it, are still to be
+specified with those fields before implementation; the M4 tier does not
+cover them.

@@ -291,7 +291,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`run_in_background`) as a result. Its PostToolUse marks the launch, so a
   red run used to clear the nudge and pass the strict gate as green.
 - An edit made while a verify command runs stays unverified: the run is
-  recorded as of when it started, not when it finished.
+  recorded as of when it started, not when it finished. That includes the
+  strict gate's own run, whose green no longer lets a later stop skip the
+  command after another session edited during it.
 - The hooks and the status line keep their state per project
   (`CLAUDE_PROJECT_DIR`, or the status line's `workspace.project_dir`), not per
   working directory. A `cd` into a subdirectory used to start an empty state

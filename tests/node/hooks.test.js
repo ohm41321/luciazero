@@ -184,6 +184,28 @@ test("an edit made while a verify runs is still unverified", (t) => {
   assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 2, "the edit made during the run was taken as verified");
 });
 
+// The same holds for the strict gate's own run: here its command records an
+// edit halfway through, as another session sharing the project's state would.
+test("an edit made while the strict gate runs is still unverified", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "strict-during");
+  fs.mkdirSync(cwd, { recursive: true });
+  const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+  const editEvent = event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } });
+  fs.writeFileSync(path.join(cwd, "edit.json"), editEvent);
+  fs.writeFileSync(path.join(cwd, "mid.js"), `const { spawnSync } = require("child_process");
+const input = require("fs").readFileSync(${JSON.stringify(path.join(cwd, "edit.json"))}, "utf8");
+const r = spawnSync(process.execPath, [${JSON.stringify(VERIFY)}, "edit"], { input });
+process.exit(r.status === 0 ? 0 : 3);
+`);
+  assert.strictEqual(node(box.env, [VERIFY, "edit"], editEvent).status, 0);
+  const strict = { ...box.env, LUCIAZERO_STRICT_VERIFY_CMD: `"${process.execPath}" mid.js`, LUCIAZERO_STRICT_TIMEOUT: "60" };
+  const first = node(strict, [VERIFY, "stop"], event());
+  assert.strictEqual(first.status, 0, first.stderr);
+  assert.strictEqual(lastVerify(box.env, cwd), "ok\n");
+  assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 2, "the edit made during the strict run was taken as verified");
+});
+
 // The session's project is where Claude Code started; a `cd` into a
 // subdirectory persists between tool calls and must not move the session to
 // state that has none of its edits, nor stop the refusal walk at a checkout

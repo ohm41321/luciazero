@@ -172,6 +172,14 @@ function mtime(file) {
   }
 }
 
+// A verify run vouches for the code as it was when it started: an edit made
+// while it ran (another session, a background agent) has to stay after it.
+function stampAt(file, ms) {
+  try {
+    fs.utimesSync(file, new Date(ms), new Date(ms));
+  } catch {}
+}
+
 function readTrimmed(file) {
   try {
     return fs.readFileSync(file, "utf8").trim();
@@ -871,13 +879,7 @@ function main(argv) {
           }
         }
         write(path.join(state, "last_verify"), (status || "ran") + "\n");
-        // The run vouches for the code as it was when it started: an edit made
-        // while it ran (another session, a background agent) stays after it.
-        if (/^\d+$/.test(startMs) && nowMs >= Number(startMs)) {
-          try {
-            fs.utimesSync(path.join(state, "last_verify"), new Date(Number(startMs)), new Date(Number(startMs)));
-          } catch {}
-        }
+        if (/^\d+$/.test(startMs) && nowMs >= Number(startMs)) stampAt(path.join(state, "last_verify"), Number(startMs));
         // Keep only an opaque digest for strict-gate equality; raw commands may
         // contain paths or secrets and must never persist in shared state.
         write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
@@ -921,6 +923,7 @@ function main(argv) {
         if (outcome.verdict === "ok") {
           recordStrictTelemetry(startMs);
           write(path.join(state, "last_verify"), "ok\n");
+          stampAt(path.join(state, "last_verify"), startMs);
           write(path.join(state, "last_verify_cmd_hash"), sha256(strict, 64) + "\n");
           removeFile(path.join(state, "nudged"));
           statLog("stop-clean", ctx);
@@ -930,6 +933,7 @@ function main(argv) {
         if (outcome.verdict === "red") {
           recordStrictTelemetry(startMs);
           write(path.join(state, "last_verify"), "fail\n");
+          stampAt(path.join(state, "last_verify"), startMs);
           write(path.join(state, "last_verify_cmd_hash"), sha256(strict, 64) + "\n");
           statLog("strict-block", ctx);
           process.stderr.write(`Strict verify gate: '${strict}' is RED. Fix it before finishing — or say plainly that you are handing back a red state. Failing output:\n`);

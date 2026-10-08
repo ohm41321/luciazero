@@ -1106,5 +1106,88 @@ class HumanCommands(unittest.TestCase):
         self.assertEqual(bindings[0]["ended_reason"], "run exited")
 
 
+class RunSetupSignals(unittest.TestCase):
+    """Review finding (R16): `run` took SIGTERM over only once the provider
+    was started, so one that landed while the binding was minted, its
+    configuration written or the provider spawned met the default action,
+    which ends the process without its cleanup. The credential stayed valid
+    until its TTL and the agent's next `run` was refused as a live session.
+
+    Here the handler `run` finds raises instead of ending the process, so a
+    signal that escapes `run` is seen rather than fatal."""
+
+    def setUp(self) -> None:
+        from luciazero_agentd.statedir import write_endpoint
+
+        tmp = tempfile.TemporaryDirectory(prefix="agentd-run-signal-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(os.path.realpath(tmp.name))
+        self.state = self.root / "state"
+        self.state.mkdir()
+        with Store.open(self.state / "bus.sqlite3") as store:
+            store.migrate()
+            store.register_agent("claude-reviewer", provider="claude", role="reviewer")
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "now")
+
+    def interrupted_at(self, target: object, name: str) -> tuple[int, list[str]]:
+        """`run`, with a SIGTERM raised as `target.name` is called."""
+        import contextlib
+        import io
+        import signal
+
+        from luciazero_agentd import __main__ as cli
+
+        class Escaped(Exception):
+            pass
+
+        def default(*_: object) -> None:
+            raise Escaped
+
+        previous = signal.signal(signal.SIGTERM, default)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        real = getattr(target, name)
+
+        def terminated(*args: object, **kwargs: object) -> object:
+            signal.raise_signal(signal.SIGTERM)
+            return real(*args, **kwargs)
+
+        made: list[str] = []
+        mkdtemp = tempfile.mkdtemp
+
+        def workspace(*args: object, **kwargs: object) -> str:
+            made.append(mkdtemp(*args, dir=str(self.root), **kwargs))  # type: ignore[arg-type]
+            return made[-1]
+
+        with mock.patch.object(target, name, terminated), \
+                mock.patch.object(tempfile, "mkdtemp", workspace), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
+                             "--state-dir", str(self.state), "--", sys.executable, "-c", "pass"])
+        self.assertIs(default, signal.getsignal(signal.SIGTERM), "run must give the handler back")
+        return code, made
+
+    def bindings(self) -> list[dict]:
+        with Store.open(self.state / "bus.sqlite3") as store:
+            return store.list_bindings(states=("active", "revoked", "stale"), alive=None)
+
+    def test_a_sigterm_while_the_binding_is_minted_leaves_none(self) -> None:
+        code, _ = self.interrupted_at(Store, "bind_terminal")
+        self.assertEqual(130, code)
+        self.assertEqual([], self.bindings())
+
+    def test_a_sigterm_after_the_binding_ends_it_and_its_configuration(self) -> None:
+        from luciazero_agentd import __main__ as cli
+
+        for target, name in ((cli, "create_private"), (cli.nudge, "usable"), (cli.proctree, "start")):
+            with self.subTest(at=name):
+                code, made = self.interrupted_at(target, name)
+                self.assertEqual(130, code)
+                self.assertEqual(1, len(made), "run made its workspace before the signal")
+                self.assertFalse(Path(made[0]).exists(), "the provider's configuration outlived run")
+                bindings = self.bindings()
+                self.assertTrue(bindings)
+                self.assertEqual({"revoked"}, {b["state"] for b in bindings}, "a binding outlived run")
+
+
 if __name__ == "__main__":
     unittest.main()

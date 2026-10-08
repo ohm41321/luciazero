@@ -104,6 +104,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tests that synchronised on the "bound as" line, which is printed before
   either, now wait for the provider's pid; a one-second delay before the
   watcher made both fail every time before this change.
+- Agent Bus: a SIGTERM to `run` between minting the binding and starting the
+  provider now revokes the binding, removes the provider's configuration and
+  exits 130. It used to end `run` without its cleanup, leaving the credential
+  valid until its TTL and the agent's next `run` refused as a live session.
+  Ctrl+Break is taken over at the same point on Windows, which has not been
+  tried on a Windows machine. A signal that lands after the binding is
+  committed but before `run` registers its cleanup, a few statements later,
+  can still leave the binding live.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

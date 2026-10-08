@@ -1011,6 +1011,36 @@ def cmd_run(args: argparse.Namespace) -> int:
               "session's pid and start time, so there is nothing to bind to here; start the "
               "provider yourself and use `attach` from a terminal that can.", file=sys.stderr)
         return 2
+
+    def _stop_run(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    # Taken over before the binding is minted. Left at the default until the
+    # provider was started, a SIGTERM -- or on Windows a Ctrl+Break -- while
+    # the binding was minted, its configuration written or the provider
+    # spawned ended this process without its cleanup: the credential stayed
+    # valid until its TTL, its configuration stayed on disk, and the agent's
+    # next `run` was refused as a live session.
+    cleanups: list[Callable[[str], None]] = []
+    previous = signal.signal(signal.SIGTERM, _stop_run)
+    previous_break = signal.signal(signal.SIGBREAK, _stop_run) if proctree.WINDOWS else None
+    try:
+        return _run_bound(args, state_dir, command, provider, endpoint, cleanups)
+    except KeyboardInterrupt:
+        for cleanup in cleanups:
+            cleanup("run interrupted")
+        return 130
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if previous_break is not None:
+            signal.signal(signal.SIGBREAK, previous_break)
+
+
+def _run_bound(args: argparse.Namespace, state_dir: Path, command: list[str], provider: str,
+               endpoint: dict[str, Any], cleanups: list[Callable[[str], None]]) -> int:
+    """`run` from the binding on: mint it, configure the provider, start it.
+    The cleanup goes in `cleanups` as soon as there is one, for an interrupt
+    that lands where nothing below catches it."""
     store = _open_store("run", state_dir)
     if store is None:
         return 2
@@ -1051,9 +1081,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     env = dict(os.environ)
     url = endpoint["url"]
     workspace: Optional[Path] = None
+    cleaned: list[str] = []
 
     def _cleanup(reason: str) -> None:
-        """A credential must never outlive this command, however it ends."""
+        """A credential must never outlive this command, however it ends.
+        Once: an interrupt that already cleaned up still reaches cmd_run."""
+        if cleaned:
+            return
+        cleaned.append(reason)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
         closer = _open_store("run", state_dir)
@@ -1065,6 +1100,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             except StoreError:
                 pass
 
+    cleanups.append(_cleanup)
     try:
         workspace = Path(tempfile.mkdtemp(prefix="luciazero-bind-"))
         restrict(workspace)

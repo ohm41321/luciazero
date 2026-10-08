@@ -167,6 +167,7 @@ class WatcherTests(unittest.TestCase):
         self.send("two")
         self.assertFalse(watcher.due())
         watcher.human_typed()
+        self.now += nudge.TYPING_SECONDS  # ...and stopped typing
         self.assertTrue(watcher.due(), "a person typed; the loop is theirs again")
 
     def test_the_cap_counts_consecutive_nudges_not_a_day_s_worth(self) -> None:
@@ -178,6 +179,7 @@ class WatcherTests(unittest.TestCase):
             self.send(f"message {n}")
             self.assertTrue(watcher.due(), f"message {n} was refused")
             watcher.human_typed()
+            self.now += nudge.TYPING_SECONDS
 
     def test_a_delivery_held_back_by_the_cap_is_not_forgotten(self) -> None:
         """The cap stops the typing, not the delivery: once a person is back,
@@ -189,6 +191,7 @@ class WatcherTests(unittest.TestCase):
         self.send("arrived while capped")
         self.assertFalse(watcher.due())
         watcher.human_typed()
+        self.now += nudge.TYPING_SECONDS
         self.assertTrue(watcher.due())
 
     def test_a_nudge_is_recorded_as_the_moment_the_turn_started(self) -> None:
@@ -216,12 +219,12 @@ class WatcherTests(unittest.TestCase):
         watcher.saw_output()          # the provider printed
         self.now += 30.0
         watcher.human_typed()         # ...and 30s later a person typed
-        self.now += 5.0
+        self.now += nudge.TYPING_SECONDS + 5.0
         self.send()
         self.assertTrue(watcher.due())
         payload = self.nudges()[0]["payload"]
-        self.assertAlmostEqual(35.0, payload["provider_quiet_for"], places=3)
-        self.assertAlmostEqual(5.0, payload["human_typed_ago"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 35.0, payload["provider_quiet_for"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 5.0, payload["human_typed_ago"], places=3)
 
     def test_a_knock_is_not_typed_into_a_pane_that_is_still_printing(self) -> None:
         """The lost nudge of workflow 2, in one place.
@@ -281,6 +284,31 @@ class WatcherTests(unittest.TestCase):
         self.assertIsNone(watcher.last_nudge)
         self.now += nudge.QUIET_SECONDS + 0.5
         self.assertTrue(watcher.due())
+
+    def test_a_knock_waits_for_a_person_who_is_typing(self) -> None:
+        """A knock is a line and a return. Typed while somebody is composing a
+        prompt, the return submits their half-written line with the literal
+        stuck to its end. The pane's echo only holds it for `QUIET_SECONDS`,
+        and a person pauses longer than that between words; so a keystroke
+        holds it too, for `TYPING_SECONDS`, held rather than lost."""
+        watcher = self.watcher()
+        self.seen()
+        watcher.human_typed()
+        self.now += nudge.QUIET_SECONDS + 1.0     # the echo is long over
+        self.send()
+        self.assertIsNone(watcher.due(), "the bus typed into a prompt somebody was writing")
+        self.now += nudge.TYPING_SECONDS - nudge.QUIET_SECONDS - 1.5
+        self.assertIsNone(watcher.due())
+        self.assertEqual([], self.nudges())
+        held = self.events_of("turn.nudge_deferred")
+        self.assertEqual(1, len(held), "one record per delivery held, not one per poll")
+        self.assertAlmostEqual(nudge.QUIET_SECONDS + 1.0, held[0]["payload"]["human_typed_ago"], places=3)
+        self.assertEqual(0, watcher.unattended)
+        self.now += 1.0
+        self.assertTrue(watcher.due(), "the keyboard went idle and the delivery was still there")
+        payload = self.nudges()[0]["payload"]
+        self.assertAlmostEqual(nudge.TYPING_SECONDS + 0.5, payload["human_typed_ago"], places=3)
+        self.assertAlmostEqual(nudge.TYPING_SECONDS - nudge.QUIET_SECONDS - 0.5, payload["held_for"], places=3)
 
     def test_a_terminal_nobody_watched_records_no_guess(self) -> None:
         """`due()` is callable without a proxy behind it. Never observed is a

@@ -509,8 +509,8 @@ recorded, and neither is interpreted:
 | --- | --- |
 | `provider_quiet_for` on `turn.nudged` | seconds since the provider last printed, at the instant the bus typed |
 | `human_typed_ago` on `turn.nudged` | seconds since the last keystroke, at that same instant |
-| `held_for` on `turn.nudged` | how long that knock waited for the pane to go quiet |
-| `turn.nudge_deferred` | a knock held back for a pane that was still printing, once per delivery |
+| `held_for` on `turn.nudged` | how long that knock waited for the pane to go quiet and the keyboard idle |
+| `turn.nudge_deferred` | a knock held back for a pane that was still printing or a person who had just typed, once per delivery |
 | `turn.human_input` | a person typed into this session, at most one event per 20 seconds |
 
 The exporter carries the first two onto the wait as they are, and counts the
@@ -556,6 +556,22 @@ This does not make the knock reliable. It stops the bus spending a keystroke
 on a terminal that is demonstrably not reading; a pane that is quiet and still
 swallows one is not covered, and nothing here confirms a turn actually
 started — `turn.nudged` remains the moment of typing, not of a turn.
+
+### Nothing is typed while somebody is typing
+
+A knock is a line and a return. Typed while a person is writing a prompt, the
+return submits their half-written line with the literal stuck to its end. The
+pane's echo of their keys already holds a knock for `QUIET_SECONDS`, but a
+person pauses longer than three seconds between words, so a keystroke holds
+it too, for `TYPING_SECONDS` (twenty, the same stretch after which a new
+`turn.human_input` is written). Held the same way as for a busy pane:
+nothing is lost, the cap and the cooldown are not spent, `turn.nudge_deferred`
+records the hold once with `human_typed_ago`, and `held_for` on the knock says
+how long it waited.
+
+The proxy does not read what was typed, so it cannot see a prompt left
+half-written: a person who stops for longer than twenty seconds in the middle
+of one can still have a knock appended to it.
 
 **The daemon starts the provider itself.** Under managed dispatch (M6, above)
 the first bytes come from the dispatcher: it mints a `managed` binding, starts

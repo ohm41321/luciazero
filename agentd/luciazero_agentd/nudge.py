@@ -133,6 +133,13 @@ QUIET_SECONDS = 3.0
 #: stretch of typing answers exactly as well as one per keystroke, at a
 #: thousandth of the writes -- and this loop is holding the user's terminal.
 HUMAN_INPUT_SECONDS = 20.0
+#: How long after a keystroke nothing is typed. A knock is a line and a
+#: return, and typed while somebody is writing a prompt the return submits
+#: their half-written line with the literal stuck to its end. The pane's echo
+#: already holds a knock for `QUIET_SECONDS`; a person pauses longer than that
+#: between words. The same stretch as `HUMAN_INPUT_SECONDS`: somebody who typed
+#: this recently is taken to be at the keyboard.
+TYPING_SECONDS = 20.0
 # Keystrokes the provider has not taken yet. Past this the keyboard is not
 # read until it catches up, so a paste is slowed by the provider, not buffered.
 PENDING_INPUT_LIMIT = 65536
@@ -274,6 +281,7 @@ class Watcher:
                  clock: Callable[[], float] = time.monotonic,
                  cooldown: float = COOLDOWN_SECONDS,
                  quiet: float = QUIET_SECONDS,
+                 typing: float = TYPING_SECONDS,
                  limit: int = MAX_NUDGES) -> None:
         self.db_path = str(db_path)
         self.agent_id = agent_id
@@ -281,6 +289,7 @@ class Watcher:
         self.clock = clock
         self.cooldown = cooldown
         self.quiet = quiet
+        self.typing = typing
         self.limit = limit
         #: Nudges since the last keystroke, not since the session started.
         self.unattended = 0
@@ -294,7 +303,8 @@ class Watcher:
         self.last_output: Optional[float] = None
         self.last_input: Optional[float] = None
         self.last_input_event: Optional[float] = None
-        #: The delivery currently waiting for the pane to go quiet, and when
+        #: The delivery currently waiting for the pane to go quiet or the
+        #: keyboard to go idle, and when
         #: it first had to wait. One deferral is recorded per delivery, not
         #: per poll, and the wait is reported when the knock finally goes in.
         self.deferred_seq: Optional[int] = None
@@ -406,16 +416,20 @@ class Watcher:
         if not self._seen_since_start():
             return None
         quiet_for = self._since(self.last_output, now)
-        if quiet_for is not None and quiet_for < self.quiet:
+        typed_ago = self._since(self.last_input, now)
+        if ((quiet_for is not None and quiet_for < self.quiet)
+                or (typed_ago is not None and typed_ago < self.typing)):
             # The pane is still printing, so it is still mid-turn, and a
             # keystroke typed into it is not a turn -- it is a keystroke a
-            # busy TUI never reads. Refusing here does not lose the delivery:
-            # `seen_seq` is untouched, exactly as when the cap holds, so this
-            # knocks the moment the pane goes quiet.
+            # busy TUI never reads. Or a person typed a moment ago, and the
+            # knock's return would submit whatever they were writing.
+            # Refusing here does not lose the delivery: `seen_seq` is
+            # untouched, exactly as when the cap holds, so this knocks the
+            # moment the pane goes quiet and the keyboard idle.
             if self.deferred_seq != newest:
                 self.deferred_seq = newest
                 self.deferred_since = now
-                self._defer(newest, quiet_for)
+                self._defer(newest, quiet_for, typed_ago)
             return None
         held_for = self._since(self.deferred_since, now) if self.deferred_seq == newest else None
         self.deferred_seq = self.deferred_since = None
@@ -425,7 +439,7 @@ class Watcher:
         self.last_nudge = now
         self.unattended += 1
         self._record(newest, provider_quiet_for=quiet_for, held_for=held_for,
-                     human_typed_ago=self._since(self.last_input, now))
+                     human_typed_ago=typed_ago)
         return arrival
 
     def _note_for(self, queued: Sequence[tuple[int, str, str]]) -> str:
@@ -460,7 +474,8 @@ class Watcher:
             return found
         return self._read(read, [])
 
-    def _defer(self, delivery_seq: int, provider_quiet_for: float) -> None:
+    def _defer(self, delivery_seq: int, provider_quiet_for: Optional[float],
+               human_typed_ago: Optional[float]) -> None:
         """Written once per delivery held back, never once per poll.
 
         Without it a provider that never stops printing would be a bus that
@@ -469,7 +484,8 @@ class Watcher:
         def write(store: Store) -> None:
             store.trust = "system"
             store.record_nudge_deferred(self.agent_id, delivery_seq=delivery_seq,
-                                        provider_quiet_for=provider_quiet_for)
+                                        provider_quiet_for=provider_quiet_for,
+                                        human_typed_ago=human_typed_ago)
         self._read(write, None)
 
     def _record(self, delivery_seq: int, *, provider_quiet_for: Optional[float] = None,

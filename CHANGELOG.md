@@ -89,6 +89,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   award `regression-red` only after a green suite, so deleting or breaking
   the tests no longer earns it. The eval gate pins all three with overlays;
   `docs/benchmark.md` says which published rows each change can touch.
+- Agent Bus: `run` holds a knock for 20 seconds after the last keystroke. The
+  pane's echo held it for three, so a person who paused longer mid-prompt had
+  the literal and a return typed after their half-written line, which
+  submitted both. A held knock is not lost and spends neither the cap nor the
+  cooldown; `turn.nudge_deferred` records `human_typed_ago`. A pause longer
+  than 20 seconds is still not covered: the proxy never reads what was typed.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

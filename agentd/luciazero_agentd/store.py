@@ -3037,15 +3037,18 @@ class Store:
             self._event("bus", "turn.nudged", "agent", agent_id, payload)
 
     def record_nudge_deferred(self, agent_id: str, *, delivery_seq: Optional[int] = None,
-                              provider_quiet_for: Optional[float] = None) -> None:
+                              provider_quiet_for: Optional[float] = None,
+                              human_typed_ago: Optional[float] = None) -> None:
         """A knock the bus decided not to type yet, because the pane was still
-        printing and a keystroke sent into a busy TUI is not a turn.
+        printing and a keystroke sent into a busy TUI is not a turn, or because
+        a person had just typed and its return would submit their line.
 
         Recorded because the alternative is indistinguishable from silence. A
         provider that never stops printing would hold every knock forever, and
         without this the records would look exactly like a bus with nothing to
         deliver. The delivery is not lost -- it knocks as soon as the pane goes
-        quiet, and `held_for` on that nudge says how long it waited.
+        quiet and the keyboard idle, and `held_for` on that nudge says how
+        long it waited.
         """
         _check_id(agent_id, "agent id", self._redactor)
         payload: dict[str, Any] = {}
@@ -3053,6 +3056,8 @@ class Store:
             payload["delivery_seq"] = _check_int(delivery_seq, 0, 2**62, "delivery_seq")
         if provider_quiet_for is not None:
             payload["provider_quiet_for"] = _check_seconds(provider_quiet_for, "provider_quiet_for")
+        if human_typed_ago is not None:
+            payload["human_typed_ago"] = _check_seconds(human_typed_ago, "human_typed_ago")
         with self._tx("record_nudge_deferred"):
             self._event("bus", "turn.nudge_deferred", "agent", agent_id, payload)
 

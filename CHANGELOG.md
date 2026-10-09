@@ -104,9 +104,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   POSIX shell present or `%COMSPEC% /C` on Windows, from a plugin path with
   spaces and shell metacharacters. On Windows, `cmd.exe` no longer runs a
   `node.cmd` from the repository in Node's place, and the strict gate still
-  runs the repository's own programs. A plugin path containing `'` still
-  breaks the POSIX command, and a Codex patch counts as a code edit even when
-  it touches only documentation.
+  runs the repository's own programs. Codex pastes `${PLUGIN_ROOT}` into a
+  command before any shell reads it, so a quote, `$(...)` or `;` in the plugin
+  path ran as shell code; the commands read `$PLUGIN_ROOT` (`%PLUGIN_ROOT%` in
+  `cmd.exe`) from the environment instead. A login shell that does not expand
+  `$NAME` (nushell, for one) cannot run them, and a Codex patch counts as a
+  code edit even when it touches only documentation.
 - Release: the workflow publishes only after the whole CI workflow passes at
   the tag, the native Windows suites included, and only for a commit on
   `main`; it ran the Linux suite alone and released any tagged commit. A

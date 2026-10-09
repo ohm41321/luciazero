@@ -151,6 +151,10 @@ for event, entries in codex_hooks["hooks"].items():
             assert h.get("type") == "command" and "args" not in h \
                 and isinstance(h.get("command"), str) and isinstance(h.get("commandWindows"), str), \
                 f"Codex hook must be a command string with commandWindows: {h}"
+            # Codex pastes ${...} in before the shell reads the command, so a
+            # quote or `$(` in the plugin path would run; the shell expands
+            # the variable itself instead
+            assert "${" not in h["command"] + h["commandWindows"], f"Codex hook must not use ${{...}}: {h}"
 PY
 echo "ok  plugin manifests valid + wired"
 

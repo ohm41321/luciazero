@@ -202,6 +202,43 @@ test("under Codex the doctrine loads once: beside Claude's classic install, not 
   const second = codexRun(doctrine, box.env, box.root, box.cwd, start);
   assert.strictEqual(second.status, 0, second.stderr);
   assert.strictEqual(second.stdout, "", "Codex's classic install already loads the doctrine");
+  // Codex reads AGENTS.override.md instead of AGENTS.md when it has any text
+  const override = path.join(box.codex, "AGENTS.override.md");
+  const cases = [[" \n", "", "a blank override leaves AGENTS.md in charge"],
+    ["mine\n", text, "an override hides the AGENTS.md block from Codex"],
+    [`<!-- luciazero:start -->\n${text}<!-- luciazero:end -->\n`, "", "the override carries the doctrine"]];
+  for (const [content, want, why] of cases) {
+    fs.writeFileSync(override, content);
+    const r = codexRun(doctrine, box.env, box.root, box.cwd, start);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout, want, why);
+  }
+});
+
+// Codex never applies a repository's .claude/settings.json, so the refusal
+// that guards Claude Code against it would only let the repository switch
+// the user's own settings off.
+test("under Codex a repository's Claude settings change nothing", (t) => {
+  const box = codexBox(t);
+  const hooks = codexHooks(box.root);
+  const event = (extra) => ({ session_id: "s1", cwd: box.cwd, turn_id: "t1", ...extra });
+  fs.mkdirSync(path.join(box.cwd, ".git"));
+  fs.mkdirSync(path.join(box.cwd, ".claude"));
+  fs.writeFileSync(path.join(box.cwd, ".claude", "settings.json"),
+    JSON.stringify({ env: { LUCIAZERO_STRICT_VERIFY_CMD: "exit 0", LUCIAZERO_DOC_REGEX: "." } }));
+  fs.writeFileSync(path.join(box.cwd, "verify.js"), "process.exit(1);\n");
+  const strict = { ...box.env, LUCIAZERO_STRICT_VERIFY_CMD: `"${process.execPath}" verify.js`, LUCIAZERO_STRICT_TIMEOUT: "60" };
+  const session = codexRun(find(hooks, "SessionStart", "session")[2], strict, box.root, box.cwd,
+    event({ hook_event_name: "SessionStart", source: "startup" }));
+  assert.strictEqual(session.status, 0, session.stderr);
+  assert.doesNotMatch(session.stdout, /settings\.json/, "Codex never applied that file");
+  assert.strictEqual(codexRun(find(hooks, "PostToolUse", "edit")[2], strict, box.root, box.cwd,
+    event({ hook_event_name: "PostToolUse", tool_name: "apply_patch", tool_use_id: "c1",
+      tool_input: { command: "*** Begin Patch\n*** Add File: a.js\n+x\n*** End Patch\n" }, tool_response: "Success." })).status, 0);
+  const stop = codexRun(find(hooks, "Stop", "stop")[2], strict, box.root, box.cwd,
+    event({ hook_event_name: "Stop", stop_hook_active: false }));
+  assert.strictEqual(stop.status, 2, stop.stderr);
+  assert.match(stop.stderr, /Strict verify gate/, "the user's own strict gate must still run");
 });
 
 // Codex runs the command in the user's login shell, whichever it is.
@@ -243,10 +280,31 @@ test("under Codex on Windows a node.cmd in the repository never runs", { skip: !
   const r = codexRun(prompt, env, box.root, box.cwd, event);
   assert.strictEqual(fs.existsSync(marker), false, "the repository's node.cmd ran");
   assert.strictEqual(r.status, 0, r.stderr);
-  // the same command without its first clause runs the planted file: the
-  // clause is what stops it, and this test can tell
-  const guard = 'set "NoDefaultCurrentDirectoryInExePath=1" & ';
-  assert.ok(prompt.commandWindows.startsWith(guard), prompt.commandWindows);
-  const bare = codexRun({ ...prompt, commandWindows: prompt.commandWindows.slice(guard.length) }, env, box.root, box.cwd, event);
+  // the same command without what precedes `node` runs the planted file:
+  // that guard is what stops it, and this test can tell
+  const at = prompt.commandWindows.indexOf("& node ");
+  assert.ok(at > 0, prompt.commandWindows);
+  const bare = codexRun({ ...prompt, commandWindows: prompt.commandWindows.slice(at + 2) }, env, box.root, box.cwd, event);
   assert.strictEqual(fs.existsSync(marker), true, `without the guard cmd.exe ran Node from PATH (status ${bare.status})`);
+});
+
+// The guard above must stay in the hook's own cmd.exe: the strict gate runs
+// the user's command in a cmd.exe of its own, which, like Codex's, looks in
+// the project for a program the command names.
+test("under Codex on Windows the strict gate still runs the repository's own program", { skip: !WINDOWS && "cmd.exe only" }, (t) => {
+  const box = codexBox(t);
+  const env = { ...box.env, LUCIAZERO_STRICT_VERIFY_CMD: "lz-green", LUCIAZERO_STRICT_TIMEOUT: "60" };
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === "NODEFAULTCURRENTDIRECTORYINEXEPATH") delete env[key];
+  }
+  fs.writeFileSync(path.join(box.cwd, "lz-green.cmd"), "@exit /b 0\r\n");
+  const hooks = codexHooks(box.root);
+  const event = (extra) => ({ session_id: "s1", cwd: box.cwd, turn_id: "t1", ...extra });
+  assert.strictEqual(codexRun(find(hooks, "PostToolUse", "edit")[2], env, box.root, box.cwd,
+    event({ hook_event_name: "PostToolUse", tool_name: "apply_patch", tool_use_id: "c1",
+      tool_input: { command: "*** Begin Patch\n*** Add File: a.js\n+x\n*** End Patch\n" }, tool_response: "Success." })).status, 0);
+  const stop = codexRun(find(hooks, "Stop", "stop")[2], env, box.root, box.cwd, event({ hook_event_name: "Stop", stop_hook_active: false }));
+  assert.doesNotMatch(stop.stderr, /Strict verify gate/, "a passing lz-green.cmd was reported red");
+  assert.strictEqual(stop.status, 0, stop.stderr);
+  assert.strictEqual(lastVerify(env, box.cwd), "ok\n");
 });

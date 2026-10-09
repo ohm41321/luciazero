@@ -123,6 +123,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its cleanup before the store commits it, so a signal between that commit
   and `bind_terminal` returning, on a first run that adds the agent to the
   roster too, revokes it as well.
+- Agent Bus: a second SIGTERM, Ctrl+C or Ctrl+Break while `run` cleans up
+  after the first no longer cuts that cleanup short. It escaped `run` and
+  left the binding live until its TTL and, when it landed before the
+  workspace was removed, the provider's configuration on disk. Every handler
+  `run` installs now shares one stop: the first signal ends the run and the
+  ones after it are let go, so a second signal also no longer hurries `run`
+  past the wait for the provider it is stopping. `run` takes Ctrl+C over
+  only from Python's own handler, so a job started with Ctrl+C ignored keeps
+  ignoring it, and a handler installed by someone else stays theirs. This
+  covers signals `run` can catch: SIGKILL, a forced end of the process or a
+  store that fails on its own still skip the cleanup. Ctrl+Break is covered
+  by the Windows CI suite, not tried by hand on a Windows machine.
 - Agent Bus: only a task's creator and assignee spend its turn budget. Any
   sender naming a `task_id` spent a turn, so an agent with no part in a task
   could message itself until the task was exhausted, its dependents blocked

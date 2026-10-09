@@ -84,6 +84,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Codex plugin hooks: the plugin has a Codex manifest
+  (`.codex-plugin/plugin.json`) and Codex wiring (`.codex-plugin/hooks.json`),
+  so Codex no longer reads Claude Code's. Codex runs a hook's `command` string
+  in the user's login shell (`commandWindows` in `cmd.exe`) and has no
+  `args`, so every Claude exec-form hook ran a bare `node`, which exited 1 on
+  the event JSON. Under Codex the hooks also stood down when Claude Code's
+  classic hooks were installed, and the doctrine stayed silent when Claude
+  Code's classic doctrine was; Codex reads neither, so it had no nudge and no
+  doctrine. Its own classic doctrine block in `AGENTS.md` now decides that.
+  Codex's PostToolUse fires for a command that failed as well as one that
+  passed, with only the output, so a verify command there is recorded as run,
+  not green, and the strict gate runs its command instead of trusting a red
+  run as green. `tests/node/codex-plugin.test.js` runs the hooks the way
+  Codex 0.162 does: its manifest order, `${PLUGIN_ROOT}` substitution,
+  `$SHELL -lc` for each POSIX shell present or `%COMSPEC% /C` on Windows,
+  from a plugin path with spaces and shell metacharacters. On Windows,
+  `cmd.exe` no longer runs a `node.cmd` from the repository in Node's place.
+  A plugin path containing `'` still breaks the POSIX command, and a Codex
+  patch counts as a code edit even when it touches only documentation.
 - Release: the workflow publishes only after the whole CI workflow passes at
   the tag, the native Windows suites included, and only for a commit on
   `main`; it ran the Linux suite alone and released any tagged commit. A

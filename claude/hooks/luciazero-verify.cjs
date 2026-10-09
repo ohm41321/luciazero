@@ -97,6 +97,18 @@ function configDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(home(), ".claude");
 }
 
+// Whether Codex's classic install (install-codex.sh) already puts the
+// doctrine in its global AGENTS.md: its marker block's opening line.
+function codexDoctrineInstalled() {
+  const file = path.join(process.env.CODEX_HOME || path.join(home(), ".codex"), "AGENTS.md");
+  if (!isFile(file)) return false;
+  try {
+    return fs.readFileSync(file, "utf8").split(/\r?\n/).includes("<!-- luciazero:start -->");
+  } catch {
+    return false;
+  }
+}
+
 function isFile(file) {
   try {
     return fs.statSync(file).isFile();
@@ -750,13 +762,19 @@ function dropRefused(cwd) {
 
 function main(argv) {
   const mode = argv[0] || "";
+  // The plugin's Codex wiring (.codex-plugin/hooks.json) names its host; a
+  // repository cannot change that argument, as it could an environment
+  // variable. Codex never reads Claude Code's config directory, so nothing
+  // there may stand this copy down.
+  const codex = argv[1] === "codex";
 
   // doctrine mode needs no state and no stdin — handled before the shared
   // setup. It reads the config directory, so a committed one is refused first.
   if (mode === "doctrine") {
     dropRefused(process.env.CLAUDE_PROJECT_DIR || process.env.PWD || process.cwd());
-    // a classic install's CLAUDE.md import already loads this text — never twice
-    if (isFile(path.join(configDir(), "luciazero.md"))) return 0;
+    // a classic install already loads this text — never twice: Claude Code's
+    // through its CLAUDE.md import, Codex's through its AGENTS.md block
+    if (codex ? codexDoctrineInstalled() : isFile(path.join(configDir(), "luciazero.md"))) return 0;
     try {
       process.stdout.write(fs.readFileSync(path.join(__dirname, "..", "luciazero.md")));
     } catch {}
@@ -795,19 +813,22 @@ function main(argv) {
   // PostToolUse only fires for a command that finished with exit 0, a non-zero
   // exit reaches PostToolUseFailure (mode bash-failure) instead, so a
   // completed, uninterrupted response in mode bash is a green. An explicit exit
-  // code still wins.
+  // code still wins. Codex has no failure event: its PostToolUse fires for
+  // every finished command, and its response is only the output, a string, so
+  // there a command ran and nothing says whether it passed.
   let status;
   const response = input.tool_response && typeof input.tool_response === "object" ? input.tool_response : {};
   const code = "exit_code" in response ? response.exit_code : response.exitCode;
   if (Number.isInteger(code)) status = code === 0 ? "ok" : "fail";
   else if (response.is_error === true) status = "fail";
   else if (response.interrupted === true) status = "ran";
-  else status = mode === "bash" ? "ok" : "ran";
+  else status = mode === "bash" && !codex ? "ok" : "ran";
 
   // every mode reads the config directory (classicWired below)
   const refused = dropRefused(cwd);
 
-  if (classicWired(hookPath(process.argv[1] || __filename))) return 0;
+  // Codex's classic install wires no hooks, so under Codex this copy is the only one.
+  if (!codex && classicWired(hookPath(process.argv[1] || __filename))) return 0;
 
   const base = stateBase();
   if (fs.existsSync(base) || (() => {

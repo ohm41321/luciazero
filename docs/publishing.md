@@ -23,7 +23,8 @@ this document or from the manifests alone.
       and in GitHub Actions for `v2.0.0`
 
 Version sync rule: a release bumps `CHANGELOG.md`, `.claude-plugin/plugin.json`,
-and `package.json` together — `test.sh` fails on any mismatch.
+`.codex-plugin/plugin.json` and `package.json` together — `test.sh` fails on
+any mismatch.
 
 **Release-state rule:** the source manifest, Git tag, GitHub Release, and npm
 registry must agree before a version is described as public. Check the registry

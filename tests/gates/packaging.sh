@@ -137,6 +137,24 @@ for event, matcher, h in wired:
     # PowerShell is the shell tool on Windows; a Bash-only matcher never fires there
     if h["args"][1] in ("bash-start", "bash", "bash-failure"):
         assert matcher == "Bash|PowerShell", f"{h['args'][1]} must match Bash|PowerShell, not {matcher!r}"
+# Codex reads .codex-plugin/ first: the same plugin, with hooks it can run.
+# tests/node/codex-plugin.test.js runs them the way Codex does.
+codex = json.load(open(os.path.join(root, ".codex-plugin", "plugin.json")))
+for key in ("name", "version", "description", "author", "license", "homepage", "repository", "keywords", "skills"):
+    assert codex.get(key) == plug.get(key), f".codex-plugin/plugin.json {key} differs from .claude-plugin's"
+assert codex["hooks"] == "./.codex-plugin/hooks.json", "Codex manifest must name the Codex hooks"
+codex_hooks = json.load(open(os.path.join(root, ".codex-plugin", "hooks.json")))
+for event, entries in codex_hooks["hooks"].items():
+    for e in entries:
+        for h in e["hooks"]:
+            # Codex ignores args, and runs `command` in cmd.exe when there is no commandWindows
+            assert h.get("type") == "command" and "args" not in h \
+                and isinstance(h.get("command"), str) and isinstance(h.get("commandWindows"), str), \
+                f"Codex hook must be a command string with commandWindows: {h}"
+            # Codex pastes ${...} in before the shell reads the command, so a
+            # quote or `$(` in the plugin path would run; the shell expands
+            # the variable itself instead
+            assert "${" not in h["command"] + h["commandWindows"], f"Codex hook must not use ${{...}}: {h}"
 PY
 echo "ok  plugin manifests valid + wired"
 

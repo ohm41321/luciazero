@@ -9,8 +9,10 @@
 // - a command hook is `command` (`commandWindows` on Windows) and nothing
 //   else: there is no `args`, so Claude's exec form reaches Codex as a bare
 //   `node` (hook_config.rs HookHandlerConfig::Command);
-// - `${PLUGIN_ROOT}` and its siblings are replaced in that string, and the
-//   same names are set in the environment (engine/discovery.rs);
+// - `${PLUGIN_ROOT}` and its siblings are pasted into that string as they
+//   are, before any shell reads it, and the same names are set in the
+//   environment (engine/discovery.rs), so a command reads the variable from
+//   the environment instead;
 // - the string runs as `$SHELL -lc <command>`, or `%COMSPEC% /C "<command>"`
 //   on Windows, in the session's working directory (engine/command_runner.rs);
 // - CLAUDE_CONFIG_DIR is not set, and a shell command's PostToolUse carries
@@ -61,11 +63,16 @@ function find(hooks, event, mode) {
   return found[0];
 }
 
-// A copy of the plugin under a root whose name a shell would take apart if
-// the command did not keep it whole. POSIX keeps the quote out: a plugin path
-// holding one is a known limit of the single-quoted form.
+// What a command would leave behind in its working directory had the plugin
+// root's name below run as shell code.
+const INJECTED = ["sub-marker", "tick-marker", "quote-marker"];
+
+// A copy of the plugin under a root whose name a shell would take apart, and
+// run, if the command let it: every quote, substitution and separator a file
+// name may hold. cmd.exe would expand %LZ_PCT% (set in codexBox).
 function pluginCopy(box) {
-  const root = path.join(box, WINDOWS ? "plugin root &;$x'(%^!)" : "plugin root &;$x`(%^!)");
+  const root = path.join(box, WINDOWS ? "plugin root &;$x'(%LZ_PCT%^!)"
+    : "plugin root ' \"$(touch sub-marker)\" `touch tick-marker` ; touch quote-marker ; # &(%LZ_PCT%^!)");
   for (const rel of [".codex-plugin", ".claude-plugin", "claude"]) {
     if (fs.existsSync(path.join(ROOT, rel))) fs.cpSync(path.join(ROOT, rel), path.join(root, rel), { recursive: true });
   }
@@ -92,7 +99,7 @@ function codexRun(handler, env, pluginRoot, cwd, event) {
 // and Claude's classic hooks are wired there, as on a machine that has both.
 function codexBox(t) {
   const box = sandbox(t);
-  const env = { ...box.env };
+  const env = { ...box.env, LZ_PCT: "expanded" };
   delete env.CLAUDE_CONFIG_DIR;
   const classic = path.join(box.home, ".claude", "hooks", "luciazero-verify.cjs");
   fs.mkdirSync(path.dirname(classic), { recursive: true });
@@ -119,6 +126,9 @@ test("Codex runs every plugin hook as a command it can parse, in step with Claud
     assert.strictEqual(typeof handler.command, "string", `${event}: no command`);
     assert.strictEqual(typeof handler.commandWindows, "string", `${event}: no commandWindows; Codex would run the POSIX command in cmd.exe`);
     assert.ok(modeOf(handler), `${event}: does not run the verify hook: ${handler.command}`);
+    for (const command of [handler.command, handler.commandWindows]) {
+      assert.doesNotMatch(command, /\$\{/, `${event}: Codex pastes \${...} into the command before the shell reads it: ${command}`);
+    }
   }
   // Claude's wiring, less the events Codex does not have, is Codex's.
   const claude = JSON.parse(fs.readFileSync(path.join(ROOT, "claude", "hooks", "hooks.json"), "utf8")).hooks;
@@ -256,6 +266,8 @@ test("under Codex every POSIX shell there is runs the hook from a plugin root a 
     for (const shell of shells) {
       const r = codexRun(doctrine, { ...box.env, SHELL: shell }, box.root, box.cwd,
         { session_id: "s1", cwd: box.cwd, hook_event_name: "SessionStart", source: "startup" });
+      assert.deepStrictEqual(INJECTED.filter((name) => fs.existsSync(path.join(box.cwd, name))), [],
+        `${shell} ran part of the plugin root's name as a command`);
       assert.strictEqual(r.status, 0, `${shell}: ${r.stderr}`);
       assert.strictEqual(r.stdout, text, `${shell} did not run the hook`);
     }

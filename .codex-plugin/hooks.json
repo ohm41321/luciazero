@@ -1,0 +1,86 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" prompt codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" prompt codex"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" bash-start codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" bash-start codex"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" edit codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" edit codex"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" bash codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" bash codex"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" skill codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" skill codex"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" stop codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" stop codex"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" session codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" session codex"
+          },
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/claude/hooks/luciazero-verify.cjs\" doctrine codex",
+            "commandWindows": "(if not defined NoDefaultCurrentDirectoryInExePath set \"NoDefaultCurrentDirectoryInExePath=luciazero\") & node \"%PLUGIN_ROOT%\\claude\\hooks\\luciazero-verify.cjs\" doctrine codex"
+          }
+        ]
+      }
+    ]
+  }
+}

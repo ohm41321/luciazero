@@ -87,7 +87,8 @@ declined:
 ## Releasing
 
 1. Update `CHANGELOG.md` (move entries from Unreleased, set the date) AND
-   bump `.claude-plugin/plugin.json` + `package.json` to the same version —
+   bump `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and
+   `package.json` to the same version —
    `./test.sh` fails on any mismatch, and the release workflow runs it. Drop
    the "unreleased" notes in both READMEs (the version paragraph near the
    top and the bullets that point to it) for what this release ships, and

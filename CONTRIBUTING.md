@@ -92,8 +92,8 @@ declined:
    the "unreleased" notes in both READMEs (the version paragraph near the
    top and the bullets that point to it) for what this release ships, and
    bring the site's JSON-LD `operatingSystem` in both pages into line: it
-   describes the published version, so it says "Windows (WSL)" until native
-   Windows ships.
+   describes the published version, which runs natively on Windows from
+   2.7.0.
 2. Run `scripts/test-timings.sh --full` on the final release tree, commit the
    release preparation, push `main`, and require CI to pass on that commit.
 3. Tag that commit with `git tag vX.Y.Z`, then push only the intended tag with

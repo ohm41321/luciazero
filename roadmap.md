@@ -4,9 +4,9 @@ Review date: 2026-09-09. Baseline: `d5d2798`.
 
 Source status refreshed 2026-09-22. Findings retain their original rationale;
 dated closure notes and the current-status section supersede old source line
-numbers and pre-release ordering. The manifests and the top `CHANGELOG.md`
-entry are at 2.6.0; the twelve eval fixtures pass offline, and no real-model
-skills-ablation pilot has run.
+numbers and pre-release ordering. On 2026-10-09 the manifests and the top
+`CHANGELOG.md` entry moved to 2.7.0; the twelve eval fixtures pass offline,
+and no real-model skills-ablation pilot has run.
 
 This is a repository-wide review and proposed work queue, not an implementation
 or release approval. Existing local commits belong to their owners. Release

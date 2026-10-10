@@ -26,12 +26,13 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
-checkout นี้คือ tree ของ **2.6.0** บวกการเปลี่ยนแปลงใต้ `[Unreleased]` ใน
-[changelog](CHANGELOG.md) โดย manifest กับรายการที่ release ล่าสุดตรงกัน
-การรองรับ Windows แบบ native และคำแนะนำสำหรับ Windows ทุกข้อด้านล่างคือหนึ่งใน
-การเปลี่ยนแปลงที่ยังไม่ release: 2.6.0 ที่เผยแพร่แล้วยังติดตั้งผ่าน Bash บน Windows
+checkout นี้คือ tree ของ **2.7.0**: manifest กับรายการบนสุดใน
+[changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
 eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
-skills-ablation กับ model จริง
+skills-ablation กับ model จริง การรองรับ Windows แบบ native ซึ่งเพิ่มใน 2.7.0
+ผ่าน CI บน `windows-latest` แล้ว แต่ยังไม่เคยรันบนเครื่อง Windows จริง
+[การทดสอบภาคสนามบน Windows](docs/windows-field-test.md) ระบุสิ่งที่ CI
+ไม่ครอบคลุม
 
 > งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
 > ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
@@ -263,7 +264,7 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 ถ้าต้องการรันครั้งเดียวโดยไม่เก็บคำสั่งไว้ ใช้ `npx luciazero@latest` ได้เหมือน
 เดิม งาน automation ส่ง `global-install --yes` ได้ ส่วนการใช้แบบโต้ตอบจะถาม
 ก่อนติดตั้งแพ็กเกจหรือเปลี่ยนไฟล์เริ่มต้นของ shell
-บน Windows (ยังไม่ release) `global-install` ใช้ global prefix ของ npm เอง
+บน Windows `global-install` ใช้ global prefix ของ npm เอง
 (`%APPDATA%\npm` ถ้าไม่ได้ย้าย) และไม่แก้ไฟล์เริ่มต้นใดหรือ Path ทั้ง
 `global-install` และ `global-status` จะแจ้งถ้า prefix นั้นไม่อยู่ใน Path
 
@@ -421,7 +422,7 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
   การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
   หรือ `.claude/settings.local.json` ของคุณ
-- Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ยังไม่ release; ดูต้นหน้านี้):
+- Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ผ่าน CI เท่านั้น; ดูต้นหน้านี้):
   `npx luciazero` ติดตั้งผ่าน installer ที่ port เป็น Node, `global-install`
   ใช้ global prefix ของ npm เอง และ hook,
   status line และ skill helper เป็น Node ทั้งหมด บน Windows โปรแกรมที่

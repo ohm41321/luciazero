@@ -26,12 +26,13 @@ Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
 
-This checkout is the **2.6.0** tree plus the changes listed under
-`[Unreleased]` in the [changelog](CHANGELOG.md); the manifests and the newest
-released entry agree. Native Windows support, and every Windows instruction
-below, is one of those unreleased changes: the published 2.6.0 still installs
-through Bash on Windows. Its twelve eval fixtures pass offline under
-`./test.sh`; no real-model skills-ablation pilot has run yet.
+This checkout is the **2.7.0** tree: the manifests and the top
+[changelog](CHANGELOG.md) entry agree, and this document describes that
+source. Its twelve eval fixtures pass offline under `./test.sh`; no real-model
+skills-ablation pilot has run yet. Native Windows support, new in 2.7.0, has
+passed CI on `windows-latest` but has not been run on a real Windows machine;
+[the Windows field test](docs/windows-field-test.md) lists what CI does not
+cover.
 
 > Done is proven by a command, not by my judgment. If no verification command
 > exists, that is the first bug.
@@ -271,7 +272,7 @@ luciazero global-uninstall      # remove the command and its exact PATH block
 For a one-off install without keeping the command, `npx luciazero@latest`
 continues to work. Automation may pass `global-install --yes`; interactive use
 asks before installing the package and changing a shell startup file.
-On Windows (unreleased), `global-install` uses npm's own global prefix
+On Windows, `global-install` uses npm's own global prefix
 (`%APPDATA%\npm` unless you moved it) and edits no startup file or Path;
 it and `global-status` say so if that prefix is not on your Path.
 
@@ -436,7 +437,7 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   and named once at `SessionStart`. Your own settings still configure it: the
   search stops at the repo root and at `$HOME`, and never reads your global
   `~/.claude/settings.json` or gitignored `.claude/settings.local.json`.
-- Windows runs natively, without WSL (unreleased; see the top of this
+- Windows runs natively, without WSL (CI-tested only; see the top of this
   page): `npx luciazero` installs through a Node port of the installers,
   `global-install` uses npm's own global prefix, and the hooks, status line
   and skill helpers are Node. There, the programs

@@ -1,6 +1,6 @@
 {
   "name": "luciazero",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Verification-first discipline for coding agents: a 9-rule doctrine, 13 skills, a risk-routed adversarial reviewer, and fail-open enforcement hooks. Done is proven by a command, not by opinion.",
   "author": { "name": "athit", "email": "athitfkm@gmail.com" },
   "license": "MIT",

@@ -5,7 +5,7 @@ about repository behavior were refreshed 2026-09-22. External directory and
 marketplace notes retain their historical verification date (2026-08-13);
 re-check anything marked (†) before relying on it.
 
-The manifests and the top changelog entry declare **2.6.0**. A manifest bump
+The manifests and the top changelog entry declare **2.7.0**. A manifest bump
 is not a publication: the version is public only once the release workflow
 has produced the GitHub Release and npm serves it (see
 [CONTRIBUTING](../CONTRIBUTING.md#releasing)); do not infer public status from

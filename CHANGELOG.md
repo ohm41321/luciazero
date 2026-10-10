@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-10
+
 ### Added
 
 - A project website at <https://ohm41321.github.io/luciazero/>, with a Thai
@@ -32,7 +34,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Luciazero starts by name come from PATH's absolute entries only, never from
   the working directory. CI runs the installers, hooks and skill helpers on
   Windows with Node 18 and 22, and the daemon suite and Lucia Relay checks on
-  Python 3.10 and 3.13.
+  Python 3.10 and 3.13. Nobody has run it on a real Windows machine yet;
+  `docs/windows-field-test.md` lists what CI does not cover.
 
 ### Changed
 

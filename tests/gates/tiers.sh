@@ -58,6 +58,16 @@ OUT="$(sed 's/ seconds=[0-9]*$//' "${TG}/err.1" | tr '\n' ' ' | sed 's/ $//')"
   || fail "LZ_TEST_TIMINGS=1 printed the wrong timing lines: $(tr '\n' '|' < "${TG}/err.1")"
 grep -qE '^TIMING gate=hooks seconds=[1-9][0-9]*$' "${TG}/err.1" \
   || fail "the hooks stub slept a second but its timing line disagrees: $(grep hooks "${TG}/err.1")"
+# A malformed sourced gate must never return success (notably on Bash 3.2).
+printf 'if then\n' > "${TG}/tests/gates/syntax.sh"
+for FLAG in --discipline --fast --full; do
+  RC=0
+  (cd "${TG}" && ./test.sh "${FLAG}") >"${TG}/syntax.out" 2>&1 || RC=$?
+  [ "${RC}" -ne 0 ] || fail "${FLAG} accepted a syntax error in a sourced gate"
+  grep -qF 'FAIL: gate syntax syntax' "${TG}/syntax.out" \
+    || fail "${FLAG} did not report the malformed gate"
+done
+echo "ok  malformed sourced gates return non-zero in every tier"
 rm -rf "${TG}"
 echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST_TIMINGS is opt-in"
 

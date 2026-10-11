@@ -262,6 +262,14 @@ gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
   # parameters first, so a gate sees none, as at the top level of a script.
   local GATE_NAME="$1" GATE_T0="${SECONDS}"
   set --
+  # Bash 3.2 can exit zero on a syntax error in a sourced file. Parse first,
+  # with the shell that will source it, so even a broken syntax gate produces
+  # a failing process status.
+  "${BASH}" -n "${ROOT}/tests/gates/${GATE_NAME}.sh" || {
+    local GATE_RC=$?
+    echo "FAIL: gate ${GATE_NAME} syntax" >&2
+    return "${GATE_RC}"
+  }
   # shellcheck disable=SC1090
   source "${ROOT}/tests/gates/${GATE_NAME}.sh"
   if [ "${LZ_TEST_TIMINGS:-0}" = 1 ]; then

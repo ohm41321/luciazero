@@ -7,6 +7,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `./test.sh` fails when a gate does not parse. Under Bash 3.2, the macOS
+  system shell, sourcing a gate with a syntax error exited 0. A serial gate
+  ended the run there with no PASS line; a full-only gate, which runs in its
+  own subshell, let the run finish on `PASS  all checks green`. The
+  dispatcher now parses each gate with the shell that runs it before sourcing
+  it, and the tiers gate proves a malformed gate fails `--discipline`,
+  `--fast` and `--full`, a full-only gate included.
+
 ## [2.7.0] - 2026-10-10
 
 ### Added

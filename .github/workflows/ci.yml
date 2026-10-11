@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    # windows-native carries the native-Windows port until it merges; drop it
-    # from this list then.
-    branches: [main, windows-native]
+    branches: [main]
   pull_request:
   # release.yml runs this whole workflow at the tagged commit before it
   # publishes anything.

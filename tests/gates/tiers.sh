@@ -80,6 +80,18 @@ if grep -q '^PASS' "${TG}/syntax.out"; then
   fail "--full printed a PASS line over a malformed full-only gate"
 fi
 echo "ok  malformed sourced gates return non-zero in every tier, a full-only gate included"
+# A gate that dies of a shell error must turn every tier red; Bash 3.2 ended
+# such a run with exit 0, or on PASS. The check lives in its own file so CI can
+# run it in its bash:3.2 image; here it runs under this bash and LZ_BASH32.
+for SH in "${BASH}" ${LZ_BASH32:+"${LZ_BASH32}"}; do
+  "${SH}" "${ROOT}/tests/dispatcher-fatal-exit.sh" "${ROOT}" \
+    || fail "a gate that died of a shell error did not turn the run red under ${SH}"
+done
+# A gate's own EXIT trap would replace the dispatcher's, which removes the
+# mktmp directories and turns a shell error into a red exit. Gates use mktmp.
+if grep -nE '^[[:space:]]*trap[[:space:]].*EXIT' "${ROOT}"/tests/gates/*.sh; then
+  fail "a gate sets its own EXIT trap; make its directory with mktmp instead"
+fi
 rm -rf "${TG}"
 echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST_TIMINGS is opt-in"
 

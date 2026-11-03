@@ -31,6 +31,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `./test.sh` no longer passes when a gate dies of a shell error. On Bash 3.2
+  an unset variable under `set -u`, a `${x:?}` or a bad substitution ends the
+  shell with its EXIT trap's status, and `$?` in the trap reads 0: such a gate
+  stopped the discipline or fast tier with exit 0 and no PASS line, and a
+  full-only gate let the full run print `PASS  all checks green`. `bash -n`
+  parses all three clean, so the pre-source syntax check missed them. The
+  dispatcher now marks each intended ending and fails any other, naming the
+  gate; the install and Codex install gates use `mktmp` instead of an EXIT
+  trap of their own, which would have replaced the dispatcher's. CI runs the
+  new `tests/dispatcher-fatal-exit.sh` in its pinned `bash:3.2` image, since
+  the bug is Bash 3.2's and the runner's Bash 5 may not reproduce it.
 - The hook no longer counts reading a test file as running it. The default
   verify regex was matched anywhere on the command line, so `grep -n pytest
   README.md`, `sed -n 1,40p verify.py`, `cat test.sh` or a heredoc that only

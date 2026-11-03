@@ -13,7 +13,7 @@ Applies to every repo, every session. The loop is plan → change → fastest re
 4. **Debugging starts with a hypothesis, not an edit.** State the suspected cause and the command whose output would confirm or refute it — run that command before touching code (procedure: `/debug`). Keep the reproduction as a regression test: red before the fix, green after.
 5. **Orient before editing an unfamiliar repo:** find how to run, test, and lint it — CI is the most honest source of truth.
 6. **Smallest reversible step.** Targeted diff over rewrite; extend an existing helper instead of adding a parallel one.
-7. **Review the diff as a skeptic before saying done.** Tests prove what they cover; the last pass hunts what they do not — edge cases, error paths, changed contracts, files touched by accident. For risky or wide diffs, get an independent adversarial review — the harness's built-in review command when one exists, otherwise the `reviewer` agent — instructed to refute, not approve.
+7. **Review the diff as a skeptic before saying done.** Tests prove what they cover; the last pass hunts what they do not — edge cases, error paths, changed contracts, files touched by accident. For risky or wide diffs, get an independent adversarial review — the harness's built-in review command when one exists, otherwise the `lucia-reviewer` agent — instructed to refute, not approve.
 
 ## Memory
 

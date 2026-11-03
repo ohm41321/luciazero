@@ -583,11 +583,11 @@ if [ -f "${CODEX_HOME}/AGENTS.md" ] && [ -d "${CODEX_HOME}/skills" ]; then
   ARM=doctrine
   PACK=yes
 fi
-# under Codex the reviewer agent is a skill directory too, so the catalog
-# count and the reviewer are audited apart: noskills keeps the reviewer
-CATALOG=$(ls -d "${CODEX_HOME}"/skills/*/SKILL.md 2>/dev/null | grep -vc '/skills/reviewer/' || true)
+# under Codex the lucia-reviewer agent is a skill directory too, so the
+# catalog count and the reviewer are audited apart: noskills keeps the reviewer
+CATALOG=$(ls -d "${CODEX_HOME}"/skills/*/SKILL.md 2>/dev/null | grep -vc '/skills/lucia-reviewer/' || true)
 REVIEWER=no
-[ -f "${CODEX_HOME}/skills/reviewer/SKILL.md" ] && REVIEWER=yes
+[ -f "${CODEX_HOME}/skills/lucia-reviewer/SKILL.md" ] && REVIEWER=yes
 if [ "${PACK}" = yes ] && [ "${CATALOG}" = 0 ]; then ARM=noskills; fi
 AUTH=no
 [ -s "${CODEX_HOME}/auth.json" ] && AUTH=yes
@@ -1117,7 +1117,7 @@ if [ "${1:-}" = --version ]; then
 fi
 CFG="${CLAUDE_CONFIG_DIR:?}"
 DOCTRINE=no; [ -f "${CFG}/luciazero.md" ] && DOCTRINE=yes
-REVIEWER=no; [ -f "${CFG}/agents/reviewer.md" ] && REVIEWER=yes
+REVIEWER=no; [ -f "${CFG}/agents/lucia-reviewer.md" ] && REVIEWER=yes
 HOOKS=no; [ -f "${CFG}/settings.json" ] && grep -q hooks "${CFG}/settings.json" && HOOKS=yes
 SKILLS=$(find "${CFG}/skills" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
 ARM=bare

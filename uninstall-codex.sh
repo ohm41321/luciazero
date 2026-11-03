@@ -275,17 +275,28 @@ remove_managed_tree "${CODEX_DIR}/skills/luciazero-bootstrap" \
   "${SRC}/migrations/luciazero-bootstrap-v2.2.0" \
   "skills/luciazero-bootstrap (retired alias)" 0
 
+# stage_agent <agent.md> <dir>: the skill directory install-codex.sh makes of
+# a Claude agent, to compare an installed copy against
+stage_agent() {
+  mkdir -p "$2"
+  awk 'NR==1 {front=($0=="---")} front && /^(tools|model): / {next} {print} front && NR>1 && $0=="---" {front=0}' \
+    "$1" > "$2/SKILL.md"
+}
 AGENT_STAGE_ROOT="$(mktemp -d)"
 AGENTS_TMP=""
 trap 'rm -rf "${AGENT_STAGE_ROOT}"; [ -z "${AGENTS_TMP}" ] || rm -f "${AGENTS_TMP}"' EXIT
 while IFS= read -r AGENT_NAME; do
   AGENT_SOURCE="${AGENT_STAGE_ROOT}/${AGENT_NAME}"
-  mkdir -p "${AGENT_SOURCE}"
-  awk 'NR==1 {front=($0=="---")} front && /^(tools|model): / {next} {print} front && NR>1 && $0=="---" {front=0}' \
-    "${SRC}/claude/agents/${AGENT_NAME}.md" > "${AGENT_SOURCE}/SKILL.md"
+  stage_agent "${SRC}/claude/agents/${AGENT_NAME}.md" "${AGENT_SOURCE}"
   remove_managed_tree "${CODEX_DIR}/skills/${AGENT_NAME}" \
     "${MANAGED_DIR}/skills/${AGENT_NAME}" "${AGENT_SOURCE}" "skills/${AGENT_NAME}"
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
+
+# The agent's skill name through v2.7.0, for an install this version never
+# updated.
+stage_agent "${SRC}/migrations/reviewer-v2.7.0.md" "${AGENT_STAGE_ROOT}/.retired/reviewer"
+remove_managed_tree "${CODEX_DIR}/skills/reviewer" "${MANAGED_DIR}/skills/reviewer" \
+  "${AGENT_STAGE_ROOT}/.retired/reviewer" "skills/reviewer (renamed lucia-reviewer)"
 
 rmdir "${MANAGED_DIR}/skills" "${MANAGED_DIR}" 2>/dev/null || true
 

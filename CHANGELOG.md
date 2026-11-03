@@ -7,6 +7,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The reviewer agent is now `lucia-reviewer` (plugin: `luciazero:lucia-reviewer`),
+  so it no longer takes the generic name `reviewer` from the user's own agents or
+  other plugins; Codex installs it as the skill `lucia-reviewer`. The rename
+  changes only its `name:` line. Installing over v2.7.0 or older removes the
+  old `agents/reviewer.md` (Claude) or `skills/reviewer/` (Codex) only when it
+  is the untouched Luciazero copy, proved by its managed snapshot or, with no
+  snapshot, by the v2.7.0 copy now kept in `migrations/`; a customized or
+  foreign one stays, with a warning.
+  The uninstallers clean up an untouched old copy the same way, and the Node
+  installers do exactly what the Bash ones do. A prompt or script that names the
+  agent `reviewer` must use `lucia-reviewer`.
+- The reviewer takes fewer steps. It opens with one diff that shows the
+  enclosing functions, batches independent reads, reads line ranges once,
+  probes only when reading cannot decide, never installs dependencies, and
+  budgets about twelve steps, naming what it left unchecked on an `Unchecked:`
+  line. Its description and `/done` tell callers to brief it with only the base
+  ref, focus and changed files. On a 421-line diff with a long caller brief it
+  took 8–9 steps instead of 15–28, a quarter of the cached input and about half
+  the cost (two runs per arm; see `docs/experiments.md`).
+
 ### Fixed
 
 - `./test.sh` fails when a gate does not parse. Under Bash 3.2, the macOS

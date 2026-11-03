@@ -31,6 +31,12 @@ cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
 mkdir -p "${SB}/.luciazero-managed/skills/luciazero-bootstrap"
 cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
   "${SB}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
+# The agent was `reviewer` through v2.7.0: an untouched install of it, file
+# and snapshot, must go once lucia-reviewer is in, while a customized copy
+# below stays.
+mkdir -p "${SB}/agents" "${SB}/.luciazero-managed/agents"
+cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${SB}/agents/reviewer.md"
+cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${SB}/.luciazero-managed/agents/reviewer.md"
 # Generic names may already belong to the user or another plugin. The install
 # must preserve the collision outside the discoverable skills directory.
 mkdir -p "${SB}/skills/plan"
@@ -52,7 +58,10 @@ done
 [ -x "${SB}/skills/lucia-relay/scripts/relay.py" ] || fail "relay.py not installed or not executable"
 [ -f "${SB}/.luciazero-version" ] || fail "version sidecar not written"
 [ ! -d "${SB}/skills/handoff" ] || fail "managed legacy handoff was not migrated"
-[ -f "${SB}/agents/reviewer.md" ] || fail "reviewer agent not installed"
+[ -f "${SB}/agents/lucia-reviewer.md" ] || fail "lucia-reviewer agent not installed"
+[ ! -e "${SB}/agents/reviewer.md" ] || fail "install did not migrate the untouched v2.7.0 reviewer agent"
+[ ! -e "${SB}/.luciazero-managed/agents/reviewer.md" ] \
+  || fail "install left the retired reviewer agent's snapshot behind"
 [ ! -d "${SB}/hooks" ] || fail "hooks installed without --with-hooks"
 [ "$(grep -cxF '@luciazero.md' "${SB}/CLAUDE.md")" = 1 ] || fail "import line not added"
 grep -q 'pre-existing plan owner' "${SB}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
@@ -66,7 +75,13 @@ echo '# customized managed plan' >> "${SB}/skills/plan/SKILL.md"
 mkdir -p "${SB}/skills/luciazero-bootstrap"
 printf '%s\n' '---' 'name: luciazero-bootstrap' '---' '# user-owned alias' \
   > "${SB}/skills/luciazero-bootstrap/SKILL.md"
-CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" >/dev/null
+cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${SB}/agents/reviewer.md"
+echo '# my own reviewer edits' >> "${SB}/agents/reviewer.md"
+IOUT="$(CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/install.sh" 2>&1 >/dev/null)"
+grep -q 'my own reviewer edits' "${SB}/agents/reviewer.md" \
+  || fail "install deleted a customized v2.7.0 reviewer agent"
+grep -qF 'agents/reviewer.md (renamed lucia-reviewer) is customized or not Luciazero-owned; left untouched' <<<"${IOUT}" \
+  || fail "install kept a customized reviewer agent without saying so: ${IOUT}"
 [ "$(grep -cxF '@luciazero.md' "${SB}/CLAUDE.md")" = 1 ] || fail "install is not idempotent"
 grep -q 'user customization' "${SB}/skills/handoff/SKILL.md" || fail "install deleted a customized legacy handoff"
 ! grep -q 'customized managed plan' "${SB}/skills/plan/SKILL.md" \
@@ -91,7 +106,7 @@ echo "ok  --status green/red"
 # Uninstall removes only byte-for-byte managed components; edits made after
 # install are user data and must survive.
 echo '# keep customized bisect' >> "${SB}/skills/bisect/SKILL.md"
-echo '# keep customized reviewer' >> "${SB}/agents/reviewer.md"
+echo '# keep customized reviewer' >> "${SB}/agents/lucia-reviewer.md"
 echo '# keep customized doctrine' >> "${SB}/luciazero.md"
 UOUT="$(CLAUDE_CONFIG_DIR="${SB}" "${ROOT}/uninstall.sh" 2>&1)"
 grep -q 'keep customized doctrine' "${SB}/luciazero.md" \
@@ -106,8 +121,10 @@ while IFS= read -r NS; do
 done < <(skill_inventory)
 grep -q 'user-owned alias' "${SB}/skills/luciazero-bootstrap/SKILL.md" \
   || fail "classic uninstall deleted a customized retired alias"
-grep -q 'keep customized reviewer' "${SB}/agents/reviewer.md" \
+grep -q 'keep customized reviewer' "${SB}/agents/lucia-reviewer.md" \
   || fail "classic uninstall deleted a customized managed agent"
+grep -q 'my own reviewer edits' "${SB}/agents/reviewer.md" \
+  || fail "classic uninstall deleted a customized v2.7.0 reviewer agent"
 grep -q 'not the exact Luciazero-managed copy; left untouched' <<<"${UOUT}" \
   || fail "classic uninstall did not explain preserved customizations"
 [ ! -f "${SB}/.luciazero-version" ] || fail "version sidecar left behind"
@@ -115,6 +132,64 @@ grep -qxF '@RTK.md' "${SB}/CLAUDE.md" || fail "pre-existing CLAUDE.md content da
 grep -qxF '# pre-existing user content' "${SB}/CLAUDE.md" || fail "pre-existing CLAUDE.md content damaged"
 ! grep -qxF '@luciazero.md' "${SB}/CLAUDE.md" || fail "import line left behind"
 echo "ok  uninstall restores CLAUDE.md"
+
+# An install this version never updated still loses its untouched v2.7.0
+# reviewer on uninstall: by its snapshot, or with none, by the shipped copy.
+# One with neither proof is someone's file and stays.
+for RV_CASE in snapshot shipped foreign; do
+  RV="$(mktemp -d)"
+  mkdir -p "${RV}/agents"
+  if [ "${RV_CASE}" = foreign ]; then
+    printf 'a reviewer of my own\n' > "${RV}/agents/reviewer.md"
+  else
+    cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${RV}/agents/reviewer.md"
+  fi
+  if [ "${RV_CASE}" = snapshot ]; then
+    mkdir -p "${RV}/.luciazero-managed/agents"
+    cp "${RV}/agents/reviewer.md" "${RV}/.luciazero-managed/agents/reviewer.md"
+  fi
+  CLAUDE_CONFIG_DIR="${RV}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 \
+    || { rm -rf "${RV}"; fail "uninstall failed over a v2.7.0 reviewer (${RV_CASE})"; }
+  if [ "${RV_CASE}" = foreign ]; then
+    grep -qx 'a reviewer of my own' "${RV}/agents/reviewer.md" \
+      || { rm -rf "${RV}"; fail "uninstall deleted a foreign agents/reviewer.md"; }
+  elif [ -e "${RV}/agents/reviewer.md" ] || [ -e "${RV}/.luciazero-managed" ]; then
+    rm -rf "${RV}"; fail "uninstall left an untouched v2.7.0 reviewer behind (${RV_CASE})"
+  fi
+  rm -rf "${RV}"
+done
+# and an install over one with no snapshot migrates it by the shipped copy,
+# but leaves a foreign one with a warning
+RV="$(mktemp -d)"
+mkdir -p "${RV}/agents"
+cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${RV}/agents/reviewer.md"
+CLAUDE_CONFIG_DIR="${RV}" "${ROOT}/install.sh" >/dev/null 2>&1
+[ ! -e "${RV}/agents/reviewer.md" ] \
+  || { rm -rf "${RV}"; fail "install kept an untouched v2.7.0 reviewer that had no snapshot"; }
+printf 'a reviewer of my own\n' > "${RV}/agents/reviewer.md"
+RV_OUT="$(CLAUDE_CONFIG_DIR="${RV}" "${ROOT}/install.sh" 2>&1 >/dev/null)"
+grep -qx 'a reviewer of my own' "${RV}/agents/reviewer.md" \
+  || { rm -rf "${RV}"; fail "install deleted a foreign agents/reviewer.md"; }
+grep -qF 'agents/reviewer.md (renamed lucia-reviewer) is customized or not Luciazero-owned' <<<"${RV_OUT}" \
+  || { rm -rf "${RV}"; fail "install kept a foreign reviewer without saying so: ${RV_OUT}"; }
+# The snapshot alone proves ownership: an older release's copy goes by it, and
+# a snapshot that exists but differs is not overruled by the v2.7.0 copy.
+{ cat "${ROOT}/migrations/reviewer-v2.7.0.md"; echo '# an older release'; } > "${RV}/agents/reviewer.md"
+cp "${RV}/agents/reviewer.md" "${RV}/.luciazero-managed/agents/reviewer.md"
+CLAUDE_CONFIG_DIR="${RV}" "${ROOT}/install.sh" >/dev/null 2>&1
+if [ -e "${RV}/agents/reviewer.md" ] || [ -e "${RV}/.luciazero-managed/agents/reviewer.md" ]; then
+  rm -rf "${RV}"; fail "install kept an older reviewer that matched its snapshot"
+fi
+cp "${ROOT}/migrations/reviewer-v2.7.0.md" "${RV}/agents/reviewer.md"
+{ cat "${ROOT}/migrations/reviewer-v2.7.0.md"; echo '# an older release'; } \
+  > "${RV}/.luciazero-managed/agents/reviewer.md"
+RV_OUT="$(CLAUDE_CONFIG_DIR="${RV}" "${ROOT}/install.sh" 2>&1 >/dev/null)"
+cmp -s "${ROOT}/migrations/reviewer-v2.7.0.md" "${RV}/agents/reviewer.md" \
+  || { rm -rf "${RV}"; fail "install deleted a reviewer its snapshot did not match"; }
+grep -qF 'agents/reviewer.md (renamed lucia-reviewer) is customized or not Luciazero-owned' <<<"${RV_OUT}" \
+  || { rm -rf "${RV}"; fail "install kept a reviewer its snapshot did not match without saying so: ${RV_OUT}"; }
+rm -rf "${RV}"
+echo "ok  the v2.7.0 reviewer agent migrates to lucia-reviewer only when untouched"
 
 # 5b. fresh-user cycle: no pre-existing CLAUDE.md at all — uninstall must not
 # abort on the import-line-only file (regression: grep no-match + set -e)

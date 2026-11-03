@@ -1,2 +1,2 @@
 # Canonical Claude agent inventory.
-reviewer
+lucia-reviewer

@@ -160,7 +160,7 @@ force-push, การเปลี่ยน public contract และการข
 | ความพัง | กลไกที่จับ |
 |---|---|
 | บอกว่า “เสร็จ” โดยไม่ตรวจ | Stop hook เตือน; strict gate แบบ opt-in บล็อกเมื่อผลแดง |
-| นับ `cat test.sh` ว่ารัน test | จับคู่ `LUCIAZERO_VERIFY_CMD` แบบ exact |
+| นับ `cat test.sh` ว่ารัน test | ตรวจจากโปรแกรมที่คำสั่งรันจริง; ตั้ง `LUCIAZERO_VERIFY_CMD` แบบ exact ได้ |
 | ลดความเข้ม test เพื่อให้เขียว | Doctrine ข้อ 3 + review ใน `/done`; มีตัวอย่าง hook กัน suppression แบบ opt-in |
 | Test ใหม่ผ่านแม้ไม่มี fix | `revert-probe.cjs` รัน test กับโค้ดเก่า |
 | ทำ scope หายเงียบ ๆ | `/done` บังคับให้ส่งครบหรือระบุสิ่งที่เว้นไว้ |

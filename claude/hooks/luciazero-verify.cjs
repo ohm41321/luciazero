@@ -66,16 +66,17 @@ const MAX_DEPTH = 40; // ancestor walk is bounded, never unbounded I/O
 const ALL_KNOBS = ["LUCIAZERO_VERIFY_CMD", "LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_DOC_REGEX",
   "LUCIAZERO_STRICT_VERIFY_CMD", "LUCIAZERO_STRICT_TIMEOUT", "LUCIAZERO_RELAY_STALE_DAYS",
   "LUCIAZERO_HANDOFF_STALE_DAYS", "LUCIAZERO_EDIT_DIAG", "CLAUDE_CONFIG_DIR"];
-// What counts as a verify run. Deliberately broad; override per-shell with
-// LUCIAZERO_VERIFY_REGEX (extended regex, matched against each line of the
-// Bash tool command). When LUCIAZERO_VERIFY_CMD is set (the repo's exact verify
-// command, e.g. "./test.sh"), only commands that ARE it or START with it count
-// — the broad regex also marks `cat test.sh` or `grep pytest README` as a
-// verify run, flipping the state green without any test having run. The
-// default also knows `python -m unittest` and this repository's timing
-// collector, scripts/test-timings.sh, which runs a tier -- except with
-// --report, which only reads the samples kept so far; that case is carved out
-// of the default below and is no concern of a regex somebody set themselves.
+// What counts as a verify run. By default this regex is matched against the
+// program each simple command runs (see defaultVerify below), so reading a
+// test file -- `cat test.sh`, `grep pytest README` -- is not running it.
+// LUCIAZERO_VERIFY_REGEX (extended regex) replaces it and keeps its own
+// meaning: matched against each line of the Bash tool command. When
+// LUCIAZERO_VERIFY_CMD is set (the repo's exact verify command, e.g.
+// "./test.sh"), only commands that ARE it or START with it count. The default
+// also knows `python -m unittest` and this repository's timing collector,
+// scripts/test-timings.sh, which runs a tier -- except with --report, which
+// only reads the samples kept so far; that case is carved out of the default
+// below and is no concern of a regex somebody set themselves.
 const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timings\\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)";
 // .txt is not on it: requirements.txt, CMakeLists.txt and constraints.txt
 // are build inputs, and a nudge after editing notes.txt costs less than none
@@ -340,6 +341,246 @@ function ere(source) {
 function anyLine(text, source) {
   const re = ere(source);
   return re !== null && text.split("\n").some((line) => re.test(line));
+}
+
+// The default detection asks what each simple command RUNS, not whether a
+// word on the line matches. Matched anywhere, the default regex counted
+// `grep -n pytest README`, `sed -n 1,40p verify.py`, a heredoc that writes
+// notes mentioning a test, or `python -c` writing into a verify/ folder:
+// in ten days of local transcripts 44% of its matches ran nothing, and such
+// a match after an edit silenced the stop nudge in 21 of 91 unverified edit
+// episodes (docs/experiments.md, 2026-11-03). Here the default regex is
+// matched against the program a simple command runs: the executable's name,
+// an interpreter's script or `-m` module, a package manager's script or
+// subcommand, a task runner's targets. Wrappers (`timeout 600`, `env X=1`),
+// leading assignments and redirections are skipped; `bash -c '...'`, `npx`,
+// `uv run` and the like are followed into the command they run. Inline code
+// (`python -c`, `node -e`, `python - <<EOF`) and heredoc bodies fed to
+// anything but a shell are data. Containers and remote shells (`docker`,
+// `ssh`, ...) run a command this cannot parse, so for those every argument
+// counts, as before.
+const WRAPPERS = new Set(["time", "timeout", "gtimeout", "env", "nice", "ionice", "nohup", "caffeinate",
+  "command", "exec", "builtin", "noglob", "stdbuf", "unbuffer", "sudo", "doas", "xargs", "chronic"]);
+const KEYWORDS = new Set(["!", "{", "}", "do", "then", "else", "elif", "if", "while", "until"]);
+const PYTHON_OR_JS = /^(python[0-9.]*|py|pypy[0-9.]*|node|nodejs|tsx|ts-node)$/;
+const POSIX_SHELLS = /^(bash|sh|zsh|dash|ksh|fish)$/;
+const POWERSHELLS = /^(pwsh|powershell)$/;
+// run whatever command follows (after their own flags, or after a subcommand)
+const DELEGATES = { npx: [], bunx: [], pnpx: [], uvx: [], corepack: [], uv: ["run", "tool"], pipx: ["run"],
+  poetry: ["run"], pipenv: ["run"], pdm: ["run"], hatch: ["run"], rye: ["run"], bundle: ["exec"],
+  npm: ["exec", "x"], pnpm: ["exec", "dlx"], yarn: ["exec", "dlx"] };
+const DELEGATE_VALUE_FLAGS = new Set(["-p", "--package", "--with", "--python", "--project", "--directory",
+  "--extra", "--group", "--env-file", "--from", "-e", "--env"]);
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const TASK_RUNNERS = new Set(["make", "gmake", "cargo", "go", "gradle", "gradlew", "mvn", "mvnw", "dotnet",
+  "mix", "rake", "tox", "nox", "just", "task", "invoke", "ctest", "deno"]);
+const PASS_THROUGH = new Set(["docker", "podman", "kubectl", "ssh", "nix-shell", "devbox", "vagrant", "watch",
+  "entr", "nodemon", "parallel", "cross-env", "dotenv", "xvfb-run"]);
+
+// The shell words of each simple command, split on unquoted ; & | ( ) and
+// newlines, quotes removed, comments dropped; a heredoc body goes to the
+// command whose `<<` opened it. A backslash escapes only what a shell
+// separator or quote would otherwise take, so a Windows path keeps its own.
+function simpleCommands(text) {
+  const commands = [];
+  let cur = { words: [], bodies: [] };
+  let word = null;
+  let pending = [];
+  const endWord = () => {
+    if (word !== null) cur.words.push(word);
+    word = null;
+  };
+  const endCommand = () => {
+    endWord();
+    if (cur.words.length || cur.bodies.length) commands.push(cur);
+    cur = { words: [], bodies: [] };
+  };
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === "'") {
+      const close = text.indexOf("'", i + 1);
+      const end = close < 0 ? n : close;
+      word = (word || "") + text.slice(i + 1, end);
+      i = end + 1;
+    } else if (ch === "\"") {
+      let j = i + 1;
+      let s = "";
+      while (j < n && text[j] !== "\"") {
+        if (text[j] === "\\" && j + 1 < n && "\"\\$`\n".includes(text[j + 1])) {
+          if (text[j + 1] !== "\n") s += text[j + 1];
+          j += 2;
+        } else {
+          s += text[j];
+          j += 1;
+        }
+      }
+      word = (word || "") + s;
+      i = j + 1;
+    } else if (ch === "\\") {
+      const next = text[i + 1];
+      if (next === "\n") i += 2;
+      else if (next !== undefined && " \t;&|()<>\"'#$`".includes(next)) {
+        word = (word || "") + next;
+        i += 2;
+      } else {
+        word = (word || "") + ch;
+        i += 1;
+      }
+    } else if (ch === "#" && word === null) {
+      while (i < n && text[i] !== "\n") i += 1;
+    } else if (ch === "<" && text[i + 1] === "<" && text[i + 2] !== "<") {
+      endWord();
+      i += 2;
+      if (text[i] === "-") i += 1;
+      while (text[i] === " " || text[i] === "\t") i += 1;
+      // a delimiter is a word (`EOF`, 'PY', \END); `1<<2` is arithmetic
+      const m = /^\\?(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)\1/.exec(text.slice(i, i + 256));
+      if (m) {
+        pending.push({ delimiter: m[2], owner: cur });
+        i += m[0].length;
+      }
+    } else if (ch === "\n") {
+      i += 1;
+      for (const { delimiter, owner } of pending) {
+        const lines = [];
+        while (i < n) {
+          let end = text.indexOf("\n", i);
+          if (end < 0) end = n;
+          const line = text.slice(i, end);
+          i = end + 1;
+          if (line.replace(/^\t+/, "").trimEnd() === delimiter) break;
+          lines.push(line);
+        }
+        owner.bodies.push(lines.join("\n"));
+      }
+      pending = [];
+      endCommand();
+    } else if (";&|()".includes(ch)) {
+      // `2>&1`, `&>file` and `>&2` are redirections, not separators
+      if (ch === "&" && (text[i - 1] === ">" || text[i - 1] === "<" || text[i + 1] === ">")) word = (word || "") + ch;
+      else endCommand();
+      i += 1;
+    } else if (ch === " " || ch === "\t" || ch === "\r") {
+      endWord();
+      i += 1;
+    } else {
+      word = (word || "") + ch;
+      i += 1;
+    }
+  }
+  endCommand();
+  return commands;
+}
+
+function programName(word) {
+  return word.split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|com)$/i, "");
+}
+
+// What a simple command runs, as the strings the default regex is tried on.
+function runs(words, bodies, depth) {
+  if (depth > 4) return [];
+  const w = [];
+  for (let j = 0; j < words.length; j++) {
+    const t = words[j];
+    if (/^\d*(<<<|<>|<|>>|>\||>|&>>|&>)$/.test(t)) j += 1; // operator, then its target
+    else if (!/^(\d*[<>]|&>)/.test(t)) w.push(t);
+  }
+  let k = 0;
+  while (k < w.length) {
+    const t = w[k];
+    if (KEYWORDS.has(t) || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(t) || /^\$env:[A-Za-z_][A-Za-z0-9_]*=/i.test(t)) {
+      k += 1;
+    } else if (WRAPPERS.has(programName(t).toLowerCase())) {
+      // `command -v pytest` asks where pytest is; it runs nothing
+      if (programName(t).toLowerCase() === "command" && /^-[vV]$/.test(w[k + 1] || "")) return [];
+      k += 1;
+      while (k < w.length && (w[k].startsWith("-") || /^\d+(\.\d+)?[smhd]?$/.test(w[k])
+        || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[k]))) k += 1;
+    } else {
+      break;
+    }
+  }
+  if (k >= w.length) return [];
+  const rest = w.slice(k + 1);
+  // the timing collector's --report only reads the samples kept so far
+  if (w.slice(k).some((t) => programName(t) === "test-timings.sh") && rest.includes("--report")) return [];
+  const raw = programName(w[k]);
+  const first = raw.toLowerCase();
+  const fromBodies = () => bodies.flatMap((body) => verifyRuns(body, depth + 1));
+
+  if (PYTHON_OR_JS.test(first) || first.startsWith("$")) {
+    const shown = first.startsWith("$") ? raw : first;
+    for (let j = 0; j < rest.length; j++) {
+      const t = rest[j];
+      if (["-c", "-e", "-p", "--eval", "--print", "-"].includes(t)) return [];
+      if (t === "-m") return j + 1 < rest.length ? [`${shown} -m ${rest[j + 1]}`] : [];
+      if (/^-m\w/.test(t) && !first.startsWith("node")) return [`${shown} -m ${t.slice(2)}`];
+      if (t.startsWith("-")) {
+        if (["-W", "-X", "-r", "--require", "--import", "--loader"].includes(t)) j += 1;
+        continue;
+      }
+      return [`${shown} ${programName(t)}`];
+    }
+    return [shown];
+  }
+  if (POSIX_SHELLS.test(first) || POWERSHELLS.test(first)) {
+    const ps = POWERSHELLS.test(first);
+    for (let j = 0; j < rest.length; j++) {
+      const t = rest[j];
+      if (ps ? /^-c(ommand)?$/i.test(t) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(t)) {
+        return j + 1 < rest.length ? verifyRuns(rest[j + 1], depth + 1) : [];
+      }
+      if (!ps && t === "-n") return []; // a syntax check runs nothing
+      if (!ps && /^[-+][a-z]*o$/.test(t)) j += 1; // `-o pipefail`, `-euo pipefail`
+      if (ps && /^-f(ile)?$/i.test(t)) return j + 1 < rest.length ? [`${first} ${programName(rest[j + 1])}`] : [];
+      if (t.startsWith("-")) {
+        if (ps && /^-(executionpolicy|workingdirectory|outputformat|inputformat|windowstyle)$/i.test(t)) j += 1;
+        continue;
+      }
+      return [`${first} ${programName(t)}`];
+    }
+    return [first, ...fromBodies()];
+  }
+  if (first === "cmd") {
+    const at = rest.findIndex((t) => /^\/[ck]$/i.test(t));
+    return at >= 0 ? verifyRuns(rest.slice(at + 1).join(" "), depth + 1) : [];
+  }
+  const nonFlags = rest.filter((t) => !t.startsWith("-"));
+  if (Object.prototype.hasOwnProperty.call(DELEGATES, first)) {
+    const subs = DELEGATES[first];
+    let j = 0;
+    if (subs.length) {
+      while (j < rest.length && rest[j].startsWith("-")) j += 1;
+      if (j >= rest.length || !subs.includes(rest[j])) j = -1;
+      else j += rest[j] === "tool" && rest[j + 1] === "run" ? 2 : 1;
+    }
+    if (j >= 0) {
+      while (j < rest.length && rest[j].startsWith("-")) {
+        j += DELEGATE_VALUE_FLAGS.has(rest[j]) ? 2 : 1;
+      }
+      return runs(rest.slice(j), bodies, depth + 1);
+    }
+  }
+  if (PACKAGE_MANAGERS.has(first)) {
+    if (!nonFlags.length) return [first];
+    const sub = nonFlags[0];
+    if (sub === "run" || sub === "run-script") return [`${first} run${nonFlags[1] ? " " + nonFlags[1] : ""}`];
+    return [`${first} ${sub}`];
+  }
+  if (TASK_RUNNERS.has(first)) return [first, ...nonFlags.slice(0, 4).map((t) => `${first} ${t}`)];
+  if (PASS_THROUGH.has(first)) return [rest.join(" "), ...fromBodies()];
+  return [raw];
+}
+
+function verifyRuns(text, depth = 0) {
+  return simpleCommands(text).flatMap((c) => runs(c.words, c.bodies, depth));
+}
+
+function defaultVerify(command) {
+  const re = ere(DEFAULT_VERIFY_RE);
+  return verifyRuns(command).some((run) => re.test(run));
 }
 
 // A repository's COMMITTED .claude/settings.json can put anything in its `env`
@@ -986,10 +1227,11 @@ function main(argv) {
         if (verifyCmd) {
           // exact mode: the command must BE or START WITH the configured command
           isVerify = command === verifyCmd || command.startsWith(verifyCmd + " ");
-        } else if (anyLine(command, verifyRe)) {
-          isVerify = true;
-          // the collector's report runs nothing
-          if (!process.env.LUCIAZERO_VERIFY_REGEX && anyLine(command, "test-timings\\.sh +--report")) isVerify = false;
+        } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
+          // a regex of one's own keeps its documented meaning: any line
+          isVerify = anyLine(command, verifyRe);
+        } else {
+          isVerify = defaultVerify(command);
         }
       }
       // A command started in the background has no result yet: its
@@ -1128,7 +1370,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin };
+module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns };
 
 if (require.main === module) {
   try {

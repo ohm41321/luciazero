@@ -90,7 +90,7 @@ reviewer_contracts = {
     "__description__": ("Prefer built-in review; otherwise use this agent independently.",),
     "__intro__": ("Refute the change; do not approve or praise it.",),
     "Route the search": (
-        "rank risks by impact and reachability",
+        "rank risks by impact and reachability", "never reread what it shows",
         "trace each changed trust boundary from external input to a sensitive sink",
         "identify the old observable shape, then search callers, consumers, fixtures, docs, serializers, migrations, and compatibility code",
         "prioritize error paths, state transitions, concurrency, resource cleanup, and material edge cases",
@@ -100,8 +100,10 @@ reviewer_contracts = {
         "Confirm each suspected defect in source before reporting it.",
         "Never edit, commit, or push.", "Stay inside the diff's causal scope.",
         "Report every verified `blocker`/`major`; report at most three `minor` findings",
+        "Put independent reads and searches in one step.", "never install dependencies",
+        "Budget about twelve steps",
     ),
-    "Output": ("output exactly `No findings.`",),
+    "Output": ("output exactly `No findings.`", "`Unchecked:` line"),
 }
 ready_sections = (
     "1. Detect", "2. Establish verification", "3. Add smoke tests only when absent",

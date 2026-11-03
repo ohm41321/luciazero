@@ -77,7 +77,18 @@ const ALL_KNOBS = ["LUCIAZERO_VERIFY_CMD", "LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_
 // scripts/test-timings.sh, which runs a tier -- except with --report, which
 // only reads the samples kept so far; that case is carved out of the default
 // below and is no concern of a regex somebody set themselves.
-const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timings\\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)";
+// Type checkers, linters and a project's own check scripts -- a script with
+// the word check or validate in its name and a script extension -- count too
+// (`node --test`, `tsc`, `eslint`, `npm run check`, `python
+// scripts/check-skill.py`, `node build/stt-check.mjs`): in ten days of local
+// transcripts 20 of 93 stop nudges came after one of them, and 21 of 26
+// hand-graded ones had checked the edited work (docs/experiments.md,
+// 2026-11-03). A program run with nothing but --version, --help or -h (or its
+// own short version flag, `tsc -v`) runs no check and never counts.
+const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timings\\.sh|pytest|npm (run )?test|pnpm test|yarn test|bun test|deno test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)"
+  + "|(node|nodejs|tsx) --test|playwright test|(^| )(vue-)?tsc$|(^| )(mypy|pyright)$|-m mypy$|(^| )eslint$|ruff check|(^| )shellcheck$|cargo clippy|go vet"
+  + "|(npm|pnpm|yarn|bun) (run )?(check|lint|typecheck|type-check)([:_-][A-Za-z0-9:_-]*)?$"
+  + "|(^|[ _-])(check|validate)s?[0-9]*([-_.][A-Za-z0-9_.-]*)?\\.(py|sh|bash|js|mjs|cjs|ts|rb|pl)$";
 // .txt is not on it: requirements.txt, CMakeLists.txt and constraints.txt
 // are build inputs, and a nudge after editing notes.txt costs less than none
 // after editing requirements.txt.
@@ -152,6 +163,43 @@ function projectOf(cwd, project = process.env.CLAUDE_PROJECT_DIR || "") {
   if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return cwd;
   const own = cwd.slice(0, cwd.length - rel.length).replace(/[\\/]+$/, "");
   return own && path.relative(own, project) === "" ? own : path.resolve(project);
+}
+
+// Whether file lies strictly below dir (path.win32 compares case-blind).
+function inside(file, dir) {
+  const rel = path.relative(dir, file);
+  return rel !== "" && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel);
+}
+
+// An agent keeps its own scratch files -- probes, measurement scripts, mock
+// data -- in a temporary directory, Claude Code's per-session scratchpad
+// among them. An edit there is not the project's code, so it does not re-arm
+// the nudge: in ten days of local transcripts 16 of 93 stop nudges followed
+// such an edit, every one a scratchpad tool (docs/experiments.md,
+// 2026-11-03). An edit still counts when it lies inside the session's cwd
+// or project (CLAUDE_PROJECT_DIR), wherever that lives, or inside any git
+// work tree -- a worktree or clone under /tmp holds code, not scratch. A
+// temporary directory that is the filesystem root or holds the home
+// directory is no scratch area and is skipped.
+function scratchEdit(file, cwd, project) {
+  if (!file || !cwd || !path.isAbsolute(cwd)) return false;
+  const abs = path.resolve(cwd, file);
+  const spellings = [abs, real(abs)];
+  const within = (dir) => [dir, real(dir)].some((d) => spellings.some((f) => inside(f, d)));
+  const owned = [cwd, project, process.env.CLAUDE_PROJECT_DIR || ""];
+  if (owned.some((dir) => dir && path.isAbsolute(dir) && within(dir))) return false;
+  const roots = [os.tmpdir(), process.env.TMPDIR || ""];
+  if (!WINDOWS) roots.push("/tmp", "/var/tmp", "/private/tmp", "/var/folders", "/private/var/folders");
+  const homeDir = real(home());
+  if (!roots.some((dir) => dir && path.isAbsolute(dir) && path.dirname(dir) !== dir
+    && !samePath(real(dir), homeDir) && !inside(homeDir, real(dir)) && within(dir))) return false;
+  for (let dir = path.dirname(real(abs)), n = 0; n < MAX_DEPTH; n++) {
+    if (fs.existsSync(path.join(dir, ".git"))) return false;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return true;
 }
 
 // Where the per-user state lives. POSIX keeps the shell's spelling,
@@ -387,9 +435,17 @@ const PACKAGE_MANAGERS = {
   yarn: ["--cwd", "--cache-folder", "--registry"],
   bun: ["--cwd", "--filter", "-F", "--config"],
 };
-// the first word is a subcommand (`go build ./cmd/verify` builds)
-const SUBCOMMAND_RUNNERS = { go: ["-C"], dotnet: [], mix: [], deno: [],
+// the first word is a subcommand (`go build ./cmd/verify` builds, `ruff
+// format` formats, `ruff check` and `playwright test` check)
+const SUBCOMMAND_RUNNERS = { go: ["-C"], dotnet: [], mix: [], deno: [], ruff: ["--config"],
+  playwright: ["-c", "--config"],
   cargo: ["--manifest-path", "-p", "--package", "-Z", "--config", "-C", "--target-dir"] };
+// Arguments that only ask a program about itself: it runs no check. Short
+// version flags differ per program -- `pytest -v` and `ctest -V` do run tests.
+const INFO_ARGS = { shellcheck: ["-V"], mypy: ["-V"], ruff: ["-V"], playwright: ["-V"],
+  tsc: ["-v", "--init", "--showConfig"], "vue-tsc": ["-v"], eslint: ["-v", "--init", "--env-info"] };
+const infoOnly = (words, name = "") => words.length > 0 && words.every((t) => /^(--version|--help|-h)$/.test(t)
+  || (Object.prototype.hasOwnProperty.call(INFO_ARGS, name) && INFO_ARGS[name].includes(t)));
 // every word is a target or task
 const MAKE_VALUES = ["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-o", "--old-file",
   "-W", "--what-if", "--new-file", "--assume-new", "-l", "--load-average"];
@@ -585,7 +641,10 @@ function positional(words, valued) {
   return out;
 }
 
-// an interpreter: its `-m` module or script, or nothing for inline code
+// an interpreter: its `-m` module or script, or nothing for inline code.
+// Node's own test runner (`node --test`, before any script) shows as `node
+// --test`; `node --check` only parses, and a script or module asked only for
+// --help or --version runs nothing.
 function interpreter(shown, rest, python) {
   const flags = "bBdEhiIOPqsSuvVx";
   for (let j = 0; j < rest.length; j++) {
@@ -596,16 +655,22 @@ function interpreter(shown, rest, python) {
       const m = new RegExp(`^-[${flags}]*m(.*)$`).exec(t);
       if (m) {
         const module = m[1] || rest[j + 1];
+        if (infoOnly(rest.slice(m[1] ? j + 1 : j + 2))) return [];
         return module ? [`${shown} -m ${module}`] : [];
       }
     } else if (/^(-e|-p|-pe|-ep|--eval|--print)$/.test(t) || /^--(eval|print)=/.test(t)) {
       return [];
+    } else if (t === "--test") {
+      return [`${shown} --test`];
+    } else if (t === "-c" || t === "--check") {
+      return []; // a syntax check runs nothing
     }
     if (t.startsWith("-")) {
       if (python ? new RegExp(`^-[${flags}]*[WX]$`).test(t)
         : /^(-r|--require|--import|--loader|--experimental-loader|-C|--conditions)$/.test(t)) j += 1;
       continue;
     }
+    if (infoOnly(rest.slice(j + 1))) return [];
     return [`${shown} ${programName(t)}`];
   }
   return [shown];
@@ -636,7 +701,7 @@ function shell(first, rest, cmd, depth) {
     if (t === "-n") return []; // a syntax check runs nothing
     if (/^[-+][a-zA-Z]*[oO]$/.test(t)) j += 1; // `-o pipefail`, `-euo pipefail`
     else if (t.startsWith("-") || t.startsWith("+")) continue;
-    else return [`${first} ${programName(t)}`];
+    else return infoOnly(rest.slice(j + 1)) ? [] : [`${first} ${programName(t)}`];
   }
   return [first, ...stdinBodies(cmd, depth)];
 }
@@ -679,6 +744,7 @@ function runs(cmd, depth, from = 0) {
   if (w.slice(k).some((t) => programName(t) === "test-timings.sh") && rest.includes("--report")) return [];
   const raw = programName(w[k]);
   const first = raw.toLowerCase();
+  if (infoOnly(rest, first)) return []; // `shellcheck --version`, `./test.sh --help`, `tsc -v`
 
   if (first.startsWith("$")) { // a program held in a variable
     const name = first.replace(/^\$\{?/, "").replace(/\}$/, "");
@@ -1327,6 +1393,7 @@ function main(argv) {
       let counted = "yes";
       if (relay) counted = "no";
       else if (filePath && anyLine(filePath, docRe)) counted = "no"; // doc-only write; verify state unchanged
+      else if (scratchEdit(filePath, cwd, project)) counted = "no"; // the agent's own scratch file
       else {
         // The first edit this copy records keeps the time of the last one an
         // older copy recorded, which no session's edited/ entry carries.

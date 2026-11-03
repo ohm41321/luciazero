@@ -31,6 +31,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The stop nudge no longer fires after a real check the default did not know,
+  or after an edit to the agent's own scratch file.
+  - The default verify detection now also counts:
+    - `node --test`, `bun test`, `deno test` and `playwright test`;
+    - the type checkers `tsc`, `mypy` and `pyright`;
+    - the linters `eslint`, `ruff check`, `shellcheck`, `cargo clippy` and
+      `go vet`;
+    - `npm`, `pnpm`, `yarn` or `bun` running a `check`, `lint` or
+      `typecheck` script;
+    - a script whose name has the word `check` or `validate` in it and ends
+      in a script extension (`.py`, `.sh`, `.js`, `.mjs`, `.ts` and similar),
+      such as `python scripts/check-skill.py`, `node build/check.mjs` or
+      `python build/stt-check.py`.
+  - These no longer count:
+    - a program run with nothing but `--version`, `--help` or `-h`;
+    - a short version flag of the program's own, such as `tsc -v` or
+      `shellcheck -V`;
+    - `tsc --init` and `eslint --init`;
+    - `node --check`, which only parses.
+  - Edit and Write targets in a temporary directory (`/tmp`, `/private/tmp`,
+    `/var/tmp`, `/var/folders` or the session's `TMPDIR`) no longer re-arm the
+    nudge, with three exceptions that still count:
+    - a target inside the session's working directory or its
+      `CLAUDE_PROJECT_DIR`;
+    - a target inside a git work tree, such as a worktree or clone under
+      `/tmp`;
+    - a target in a temporary directory that holds the home directory.
+    Claude Code's per-session scratchpad is one such directory.
+  - On ten days of local transcripts, the two changes cut stop nudges from 93
+    to about 60. Before the change, 21 of 26 hand-graded nudges that a check
+    would now close came after a real check of the edited work. Every one of
+    the 16 nudges the temporary-directory rule removes followed an edit to a
+    scratchpad tool. See `docs/experiments.md`.
+  - Bash commands that write files still do not count as edits.
 - `./test.sh` no longer passes when a gate dies of a shell error. On Bash 3.2
   an unset variable under `set -u`, a `${x:?}` or a bad substitution ends the
   shell with its EXIT trap's status, and `$?` in the trap reads 0: such a gate

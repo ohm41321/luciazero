@@ -1,5 +1,53 @@
 # Experiment log
 
+## 2026-11-03 — verify regex precision and repeated greens (measurement only)
+
+question: should the hook tell the agent that a verify already passed with no
+edit since, to save repeated runs? Its `redundant_green_count` suggested most
+greens were repeats.
+
+method: replayed local transcripts from 2026-10-24 to 2026-11-03 (main
+sessions and subagents, 13 projects, 10,417 Bash calls) in time order, one
+state per project as the hook keeps it. A command counts as a real verify only
+when the program it runs matches the regex: the executable plus its script,
+`-m` module or subcommand (`pytest`, `npm test`, `./test.sh`, `node
+verify-seek.mjs`). Readers such as `grep`, `sed`, `cat` and `wc`, inline
+`python -c` code and heredoc bodies do not count. Bash commands that write
+files (`sed -i`, redirects, heredoc scripts that write, `cp`/`mv`, `git
+checkout`) count as edits. A hand reading of 50 random regex matches agreed
+with the classifier on all 50. The person who wrote the classifier did that
+reading, so it is not an independent check.
+
+result:
+- Regex precision: 834 commands matched `DEFAULT_VERIFY_RE` and 469 (56%) ran
+  a verify. The false positives were mostly reads of files named `verify*` or
+  containing `pytest`: `grep` 102, `sed` 89, heredoc bodies 87, `wc` 20 and
+  inline `python -c` 17.
+- Repeated greens under the hook's own rule: 628 of 807 (78%).
+- Repeated greens, real verifies only and Bash writes counted as edits: 35 of
+  442 (8%).
+- Repeated greens, the same check in the same directory and no edit since: 22
+  of 442 (5%). That is 5.1 of 194 minutes of verify wall time and about 4k
+  output tokens over ten days. All 22 came within 30 minutes of the earlier
+  green.
+- Missed nudges: at turn ends, 91 edit episodes were left without a real
+  verify after the last Edit/Write. In 21 of them (23%) a false-positive match
+  had already marked the edits verified, so the stop nudge stayed silent.
+  Examples are a `grep` for `pytest` in a doc, a `python -c` montage that
+  writes into a `verify/` folder, and a memory note containing "verify".
+
+verdict: NULL for the hint. Real repeated greens are about 5–8% and cost
+minutes, not hours. With today's detection a "verify already green" hint would
+be correct about 22 times in 628. It would also invite skipping verification
+right after a heredoc or `sed -i` edit, which the hook does not see.
+`redundant_green_count` overstates repeats by about 15 times.
+
+decision: no hint. The larger problem is precision: false-positive verifies
+silence the stop nudge. A detector based on the executable and its script,
+module or subcommand fixes most of the false positives. That needs its own
+change with tests. Counting Bash writes as edits is noisy (scratch files, logs)
+and would need a project-path filter first.
+
 ## 2026-11-03 — reviewer step budget and caller brief
 
 change: the reviewer opens with `git diff -W`, batches independent reads,

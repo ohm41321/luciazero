@@ -26,8 +26,14 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
 และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
 
-checkout นี้คือ tree ของ **2.7.0**: manifest กับรายการบนสุดใน
+checkout นี้คือ tree ของ **3.0.0**: manifest กับรายการบนสุดใน
 [changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
+3.0.0 เป็น major release เพราะ reviewer agent เปลี่ยนชื่อเป็น
+`lucia-reviewer` (ใน plugin คือ `luciazero:lucia-reviewer`) prompt หรือ
+script ที่เรียก `reviewer` ต้องเปลี่ยนไปใช้ชื่อใหม่ stop hook ตัดสินคำสั่งจาก
+โปรแกรมที่มันรันจริง การอ่านไฟล์ test จึงไม่นับแล้ว ส่วน type checker, linter
+และ check script ของ project นับ การแก้ไฟล์ scratch ใน temporary directory
+ไม่ปลุก nudge อีก
 eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
 skills-ablation กับ model จริง การรองรับ Windows แบบ native ซึ่งเพิ่มใน 2.7.0
 ผ่าน CI บน `windows-latest` แล้ว แต่ยังไม่เคยรันบนเครื่อง Windows จริง
@@ -69,7 +75,7 @@ npx skills add ohm41321/luciazero
 ```
 
 เรียกใช้ skill `ready` ด้วย syntax ของ agent ที่ใช้ (ถ้าเป็น Codex CLI ให้ใช้
-`$ready`) ช่องทางนี้ตั้งใจไม่ติดตั้ง doctrine, reviewer หรือ hook
+`$ready`) ช่องทางนี้ตั้งใจไม่ติดตั้ง doctrine, `lucia-reviewer` หรือ hook
 
 ## ดูลูปการทำงาน
 
@@ -214,7 +220,7 @@ Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใ
 <details>
 <summary><strong>แนะนำ · Claude Code plugin</strong></summary>
 
-ได้ doctrine, skill ทั้งหมด, reviewer และ hook ติดตาม verify:
+ได้ doctrine, skill ทั้งหมด, `lucia-reviewer` และ hook ติดตาม verify:
 
 ```text
 /plugin marketplace add ohm41321/luciazero
@@ -233,7 +239,7 @@ Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใ
 npx skills add ohm41321/luciazero
 ```
 
-ช่องทางนี้ติดตั้งเฉพาะ skill 13 ตัว ไม่มี doctrine, reviewer หรือ hook
+ช่องทางนี้ติดตั้งเฉพาะ skill 13 ตัว ไม่มี doctrine, `lucia-reviewer` หรือ hook
 
 </details>
 
@@ -409,6 +415,14 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   wall time ของ turn/Bash/verify, จำนวน green ซ้ำโดยไม่มี edit คั่น และจำนวน
   Bash, verify, skill ที่ model/user เรียก โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
   ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
+- โดย default hook นับคำสั่งเป็น verify จากโปรแกรมที่มันรันจริง ได้แก่
+  test runner (`pytest`, `npm test`, `node --test`, `go test`, `./test.sh`),
+  type checker (`tsc`, `mypy`), linter (`eslint`, `ruff check`, `shellcheck`)
+  และ check script ของ project (`npm run check`,
+  `python scripts/check-site.py`) การอ่านไฟล์ test ไม่นับ การรันโปรแกรมด้วย
+  `--help` หรือ `--version` อย่างเดียวก็ไม่นับ การแก้ไฟล์ใน temporary directory
+  ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
+  ไม่ปลุก nudge ส่วนคำสั่ง Bash ที่เขียนไฟล์ไม่ถูกนับเป็น edit
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,

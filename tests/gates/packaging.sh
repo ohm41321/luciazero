@@ -111,7 +111,7 @@ assert plug["version"] == ver, f"plugin.json version {plug['version']} != CHANGE
 assert "agents" not in plug, "plugin must use default root agents/ discovery"
 for p in [plug["skills"], plug["hooks"]]:
     assert os.path.exists(os.path.join(root, p)), f"plugin.json path missing: {p}"
-assert os.path.isfile(os.path.join(root, "agents", "reviewer.md")), "default plugin reviewer missing"
+assert os.path.isfile(os.path.join(root, "agents", "lucia-reviewer.md")), "default plugin reviewer missing"
 mkt = json.load(open(os.path.join(root, ".claude-plugin", "marketplace.json")))
 assert mkt["name"] == "luciazero" and mkt["owner"]["name"], "marketplace name/owner"
 assert mkt["plugins"][0]["name"] == "luciazero", "marketplace plugin entry"
@@ -277,6 +277,11 @@ actual_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.
 assert sorted(skills + aliases) == actual_skills, \
     f"skill inventory drift: {skills + aliases} != {actual_skills}"
 assert sorted(agents) == actual_agents, f"agent catalog drift: {agents} != {actual_agents}"
+# the plugin loads every agent in agents/, so one left there under an old name
+# ships as a second agent
+plugin_agents = sorted(os.path.splitext(name)[0] for name in os.listdir(os.path.join(root, "agents"))
+                       if name.endswith(".md"))
+assert plugin_agents == actual_agents, f"plugin agents/ drift: {plugin_agents} != {actual_agents}"
 assert len(skills) == 13, f"expected 13 cataloged skills, found {len(skills)}"
 assert aliases == [], f"unexpected compatibility aliases: {aliases}"
 for metadata in ("package.json", ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):

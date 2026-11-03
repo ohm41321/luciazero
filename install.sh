@@ -4,7 +4,7 @@
 # before editing. Writes nothing outside ~/.claude/ unless LUCIAZERO_BIN_DIR
 # names another directory for the Agent Bus launcher.
 #
-#   ./install.sh               doctrine + skills + reviewer agent
+#   ./install.sh               doctrine + skills + lucia-reviewer agent
 #   ./install.sh --with-hooks  also wire the enforcement pack: verify-tracking
 #                              hooks + statusline into ~/.claude/settings.json
 #                              (Claude Code 2.1.139+ only; requires Node 18+)
@@ -88,7 +88,7 @@ version_of() {
     "${SRC}/package.json" 2>/dev/null || true
 }
 # A plugin install of Luciazero beside this classic one loads every skill and
-# the reviewer agent twice in each session, as `/x` and `/luciazero:x` (the
+# the lucia-reviewer agent twice in each session, as `/x` and `/luciazero:x` (the
 # hook and the doctrine dedupe themselves; skills and agents cannot). Only the
 # harness's own registry is consulted, read-only; when it is absent or says
 # nothing, nothing is printed.
@@ -96,7 +96,7 @@ plugin_double_install_note() {
   REGISTRY="${CLAUDE_DIR}/plugins/installed_plugins.json"
   [ -f "${REGISTRY}" ] && grep -q '"luciazero@' "${REGISTRY}" 2>/dev/null || return 0
   echo "  !!    Luciazero is also installed as a Claude Code plugin: every skill and the"
-  echo "        reviewer agent load twice per session. Keep one channel — /plugin uninstall"
+  echo "        lucia-reviewer agent load twice per session. Keep one channel — /plugin uninstall"
   echo "        luciazero@luciazero for the plugin, or ./uninstall.sh for this copy."
 }
 
@@ -437,6 +437,29 @@ remove_legacy_tree() {
   fi
 }
 
+# The same for a retired file, under the rule the uninstaller applies to a
+# managed file: its snapshot proves ownership, and only with no snapshot at
+# all may the copy a release shipped (kept under migrations/) prove it.
+remove_legacy_file() {
+  LF_DST="$1"; LF_SNAPSHOT="$2"; LF_SHIPPED="$3"; LF_LABEL="$4"
+  if [ ! -e "${LF_DST}" ] && [ ! -L "${LF_DST}" ]; then
+    if [ ! -L "$(dirname "${LF_SNAPSHOT}")" ]; then
+      rm -f "${LF_SNAPSHOT}"
+    fi
+    return
+  fi
+  if [ -L "$(dirname "${LF_DST}")" ] || [ -L "$(dirname "${LF_SNAPSHOT}")" ]; then
+    echo "  !!  ${LF_LABEL} has a symlinked parent; left untouched" >&2
+  elif [ -f "${LF_DST}" ] && [ ! -L "${LF_DST}" ] \
+    && { { [ -f "${LF_SNAPSHOT}" ] && cmp -s "${LF_DST}" "${LF_SNAPSHOT}"; } \
+      || { [ ! -e "${LF_SNAPSHOT}" ] && cmp -s "${LF_DST}" "${LF_SHIPPED}"; }; }; then
+    rm -f "${LF_DST}" "${LF_SNAPSHOT}"
+    echo "  ok  migrated ${LF_LABEL}"
+  else
+    echo "  !!  ${LF_LABEL} is customized or not Luciazero-owned; left untouched" >&2
+  fi
+}
+
 install_file() {
   IF_SRC="$1"; IF_DST="$2"; IF_SNAPSHOT="$3"; IF_LABEL="$4"
   if [ -e "${IF_DST}" ] || [ -L "${IF_DST}" ]; then
@@ -504,6 +527,12 @@ while IFS= read -r AGENT_NAME; do
     "${MANAGED_DIR}/agents/${AGENT_NAME}.md" "agents/${AGENT_NAME}.md"
   echo "  ok  agents/${AGENT_NAME}.md"
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
+
+# Rename migration: the agent shipped as `reviewer` through v2.7.0. Only an
+# untouched Luciazero copy goes; a customized or foreign one stays.
+remove_legacy_file "${CLAUDE_DIR}/agents/reviewer.md" \
+  "${MANAGED_DIR}/agents/reviewer.md" "${SRC}/migrations/reviewer-v2.7.0.md" \
+  "agents/reviewer.md (renamed lucia-reviewer)"
 
 # 3b. Agent Bus launcher, so the daemon has a public command instead of
 # `cd agentd && python3 -m luciazero_agentd`. Only from a checkout: the npm

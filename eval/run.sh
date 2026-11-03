@@ -28,12 +28,13 @@
 #                 TMPDIR for inspection (the sandbox config never survives
 #                 the run either way — with --use-login it holds credentials)
 # --arms LIST     which arms every task runs, comma-separated, from
-#                 doctrine (the full pack: doctrine, catalog skills, reviewer
-#                 agent; no hooks), noskills (the same install with the
-#                 catalog skills removed — doctrine and reviewer stay, so the
-#                 pair doctrine,noskills isolates the skills) and bare (empty
-#                 config). Default doctrine,bare. The arm set is part of a
-#                 campaign: --resume refuses another one.
+#                 doctrine (the full pack: doctrine, catalog skills,
+#                 lucia-reviewer agent; no hooks), noskills (the same install
+#                 with the catalog skills removed — doctrine and
+#                 lucia-reviewer stay, so the pair doctrine,noskills isolates
+#                 the skills) and bare (empty config). Default doctrine,bare.
+#                 The arm set is part of a campaign: --resume refuses another
+#                 one.
 # --with-lessons  add a third arm (lessons) to every task that ships a
 #                 lessons.md: same doctrine install, plus the task's ledger
 #                 pre-seeded as docs/lessons.md in the work copy — measures
@@ -520,8 +521,8 @@ for TASK in "${TASKS[@]}"; do
       fi
       # noskills: the full install minus the catalog skills, removed by name
       # so that everything else the installer put there — the doctrine, the
-      # reviewer agent (a skill directory of its own under Codex) — stays.
-      # Both harnesses keep skills under <config>/skills/<name>/.
+      # lucia-reviewer agent (a skill directory of its own under Codex) —
+      # stays. Both harnesses keep skills under <config>/skills/<name>/.
       if [ "${ARM}" = noskills ]; then
         while IFS= read -r SKILL; do
           rm -rf "${CFG}/skills/${SKILL}" "${CFG}/.luciazero-managed/skills/${SKILL}"

@@ -217,6 +217,7 @@ def scenarios(top):
         os.symlink(os.path.join(box, "outside", "debug"), cfg(box, "skills", "debug"))
         write(cfg(box, "luciazero.md"), "my own doctrine notes\n", 0o640)
         write(cfg(box, "agents", "reviewer.md"), "someone's reviewer\n")
+        write(cfg(box, "agents", "lucia-reviewer.md"), "someone's lucia-reviewer\n")
         write(cfg(box, "settings.json"),
               '{\n  "statusLine": {"type": "command", "command": "my-status"},\n'
               '  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "my-stop"}]}]}\n}\n', 0o600)
@@ -287,6 +288,66 @@ def scenarios(top):
     s.both(lambda box: write(cfg(box, "skills", "luciazero-bootstrap", "SKILL.md"), b"changed by the user\n"))
     s.run("claude")
     s.run("claude-uninstall")
+
+    # The agent shipped as `reviewer` through v2.7.0. An untouched copy goes,
+    # proved by its snapshot or, with none, by the shipped copy; a customized
+    # one stays through install and uninstall, with a warning each time. An
+    # older release's copy goes by its snapshot alone, and a snapshot that
+    # exists but differs is not overruled by the shipped copy.
+    old_reviewer = open(os.path.join(ROOT, "migrations", "reviewer-v2.7.0.md"), "rb").read()
+    old_skill = b"".join(l for l in old_reviewer.splitlines(True) if not l.startswith((b"tools: ", b"model: ")))
+
+    def renamed(box):
+        write(cfg(box, "agents", "reviewer.md"), old_reviewer)
+        write(cfg(box, ".luciazero-managed", "agents", "reviewer.md"), old_reviewer)
+        write(codex(box, "skills", "reviewer", "SKILL.md"), old_skill)
+        write(codex(box, ".luciazero-managed", "skills", "reviewer", "SKILL.md"), old_skill)
+
+    def renamed_bare(box):
+        write(cfg(box, "agents", "reviewer.md"), old_reviewer)
+        write(codex(box, "skills", "reviewer", "SKILL.md"), old_skill)
+
+    older = old_reviewer + b"# an older release\n"
+    older_skill = old_skill + b"# an older release\n"
+
+    def renamed_older(box):
+        write(cfg(box, "agents", "reviewer.md"), older)
+        write(cfg(box, ".luciazero-managed", "agents", "reviewer.md"), older)
+        write(codex(box, "skills", "reviewer", "SKILL.md"), older_skill)
+        write(codex(box, ".luciazero-managed", "skills", "reviewer", "SKILL.md"), older_skill)
+
+    def renamed_stale(box):
+        write(cfg(box, "agents", "reviewer.md"), old_reviewer)
+        write(cfg(box, ".luciazero-managed", "agents", "reviewer.md"), older)
+        write(codex(box, "skills", "reviewer", "SKILL.md"), old_skill)
+        write(codex(box, ".luciazero-managed", "skills", "reviewer", "SKILL.md"), older_skill)
+
+    def renamed_edited(box):
+        write(cfg(box, "agents", "reviewer.md"), old_reviewer + b"# mine\n")
+        write(codex(box, "skills", "reviewer", "SKILL.md"), old_skill + b"# mine\n")
+
+    for run, undo in (("claude", "claude-uninstall"), ("codex", "codex-uninstall")):
+        s = Pair(top, run + "-renamed")
+        s.both(renamed)
+        s.run(run)
+        s.both(renamed_bare)
+        s.run(run)
+        s.both(renamed_older)
+        s.run(run)
+        s.both(renamed_stale)
+        s.run(run)
+        s.both(renamed_edited)
+        s.run(run)
+        s.run(undo)
+        s = Pair(top, run + "-renamed-uninstall")
+        s.both(renamed)
+        s.run(undo)
+        s.both(renamed_bare)
+        s.run(undo)
+        s.both(renamed_older)
+        s.run(undo)
+        s.both(renamed_stale)
+        s.run(undo)
 
     s = Pair(top, "codex-fresh")
     s.run("codex")

@@ -19,6 +19,14 @@ cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
 mkdir -p "${CX}/.luciazero-managed/skills/luciazero-bootstrap"
 cp "${ROOT}/migrations/luciazero-bootstrap-v2.2.0/SKILL.md" \
   "${CX}/.luciazero-managed/skills/luciazero-bootstrap/SKILL.md"
+# v2.7.0 installed the agent as the skill `reviewer`: the agent file minus its
+# Claude-only tools:/model: lines. Untouched (it matches its snapshot), it goes.
+old_codex_reviewer() {
+  mkdir -p "$1"
+  grep -vE '^(tools|model): ' "${ROOT}/migrations/reviewer-v2.7.0.md" > "$1/SKILL.md"
+}
+old_codex_reviewer "${CX}/skills/reviewer"
+old_codex_reviewer "${CX}/.luciazero-managed/skills/reviewer"
 
 CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" >/dev/null
 grep -q '^# Luciazero' "${CX}/AGENTS.md" || fail "doctrine not in AGENTS.md"
@@ -36,16 +44,26 @@ done
 [ -x "${CX}/skills/bisect/scripts/safe-bisect.sh" ] || fail "codex safe-bisect.sh not installed or not executable"
 [ -x "${CX}/skills/lucia-relay/scripts/relay.py" ] || fail "codex relay.py not installed or not executable"
 [ -f "${CX}/.luciazero-version" ] || fail "codex version sidecar not written"
-[ -f "${CX}/skills/reviewer/SKILL.md" ] || fail "codex reviewer skill not installed"
+[ -f "${CX}/skills/lucia-reviewer/SKILL.md" ] || fail "codex lucia-reviewer skill not installed"
+[ ! -e "${CX}/skills/reviewer" ] || fail "codex install did not migrate the untouched v2.7.0 reviewer skill"
+[ ! -e "${CX}/.luciazero-managed/skills/reviewer" ] \
+  || fail "codex install left the retired reviewer skill's snapshot behind"
 [ ! -d "${CX}/hooks" ] || fail "Claude-only hooks leaked into codex install"
-grep -q '^name: reviewer$' "${CX}/skills/reviewer/SKILL.md" || fail "reviewer skill lost frontmatter"
-! grep -q '^tools: ' "${CX}/skills/reviewer/SKILL.md" || fail "Claude-only tools: line leaked into codex skill"
-! grep -q '^model: ' "${CX}/skills/reviewer/SKILL.md" || fail "Claude-only model: line leaked into codex skill"
+grep -q '^name: lucia-reviewer$' "${CX}/skills/lucia-reviewer/SKILL.md" || fail "lucia-reviewer skill lost frontmatter"
+! grep -q '^tools: ' "${CX}/skills/lucia-reviewer/SKILL.md" || fail "Claude-only tools: line leaked into codex skill"
+! grep -q '^model: ' "${CX}/skills/lucia-reviewer/SKILL.md" || fail "Claude-only model: line leaked into codex skill"
 grep -q 'pre-existing codex plan' "${CX}/.luciazero-backups"/skills/plan.bak.*/SKILL.md \
   || fail "codex install did not back up a colliding generic skill"
 
 cp "${CX}/AGENTS.md" "${CX}/AGENTS.md.snap"
-CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" >/dev/null
+old_codex_reviewer "${CX}/skills/reviewer"
+echo '# my own reviewer edits' >> "${CX}/skills/reviewer/SKILL.md"
+CXOUT="$(CODEX_HOME="${CX}" "${ROOT}/install-codex.sh" 2>&1 >/dev/null)"
+grep -q 'my own reviewer edits' "${CX}/skills/reviewer/SKILL.md" \
+  || fail "codex install deleted a customized v2.7.0 reviewer skill"
+grep -qF 'skills/reviewer (renamed lucia-reviewer) is customized or not Luciazero-owned; left untouched' <<<"${CXOUT}" \
+  || fail "codex install kept a customized reviewer skill without saying so: ${CXOUT}"
+rm -rf "${CX}/skills/reviewer"
 [ "$(grep -cF 'luciazero:start' "${CX}/AGENTS.md")" = 1 ] || fail "codex install is not idempotent"
 cmp -s "${CX}/AGENTS.md" "${CX}/AGENTS.md.snap" \
   || fail "codex reinstall changed AGENTS.md content (regression: accumulating blank lines)"
@@ -71,7 +89,7 @@ while IFS= read -r NS; do
 done < <(skill_inventory)
 [ ! -e "${CX}/skills/luciazero-bootstrap" ] \
   || fail "codex uninstall left the retired compatibility alias"
-[ ! -d "${CX}/skills/reviewer" ] || fail "codex reviewer skill left behind"
+[ ! -d "${CX}/skills/lucia-reviewer" ] || fail "codex lucia-reviewer skill left behind"
 # Output is matched from a here-string, never `echo | grep -q`: grep -q
 # leaves at the first match, and under pipefail an echo still writing a
 # long uninstall report into the closed pipe fails the check that passed.
@@ -81,6 +99,55 @@ grep -q 'not the exact Luciazero-managed copy; left untouched' <<<"${COUT}" \
 grep -qxF '# pre-existing codex rules' "${CX}/AGENTS.md" || fail "pre-existing AGENTS.md content damaged"
 ! grep -qF 'luciazero:start' "${CX}/AGENTS.md" || fail "marker block left behind"
 echo "ok  codex uninstall restores AGENTS.md"
+
+# An install this version never updated: its untouched v2.7.0 reviewer skill
+# goes on uninstall, by its snapshot or, with none, by the shipped copy; one
+# with neither proof is someone's skill and stays. An install with no
+# snapshot migrates the untouched one by the shipped copy too.
+for RV_CASE in snapshot shipped foreign; do
+  RV="$(mktemp -d)"
+  if [ "${RV_CASE}" = foreign ]; then
+    mkdir -p "${RV}/skills/reviewer"
+    printf 'a reviewer of my own\n' > "${RV}/skills/reviewer/SKILL.md"
+  else
+    old_codex_reviewer "${RV}/skills/reviewer"
+  fi
+  if [ "${RV_CASE}" = snapshot ]; then old_codex_reviewer "${RV}/.luciazero-managed/skills/reviewer"; fi
+  CODEX_HOME="${RV}" "${ROOT}/uninstall-codex.sh" >/dev/null 2>&1 \
+    || { rm -rf "${RV}"; fail "codex uninstall failed over a v2.7.0 reviewer (${RV_CASE})"; }
+  if [ "${RV_CASE}" = foreign ]; then
+    grep -qx 'a reviewer of my own' "${RV}/skills/reviewer/SKILL.md" \
+      || { rm -rf "${RV}"; fail "codex uninstall deleted a foreign skills/reviewer"; }
+  elif [ -e "${RV}/skills/reviewer" ] || [ -e "${RV}/.luciazero-managed" ]; then
+    rm -rf "${RV}"; fail "codex uninstall left an untouched v2.7.0 reviewer behind (${RV_CASE})"
+  fi
+  rm -rf "${RV}"
+done
+RV="$(mktemp -d)"
+old_codex_reviewer "${RV}/skills/reviewer"
+CODEX_HOME="${RV}" "${ROOT}/install-codex.sh" >/dev/null 2>&1
+[ ! -e "${RV}/skills/reviewer" ] \
+  || { rm -rf "${RV}"; fail "codex install kept an untouched v2.7.0 reviewer that had no snapshot"; }
+# The snapshot alone proves ownership: an older release's skill goes by it,
+# and a snapshot that exists but differs is not overruled by the v2.7.0 copy.
+old_codex_reviewer "${RV}/skills/reviewer"
+echo '# an older release' >> "${RV}/skills/reviewer/SKILL.md"
+mkdir -p "${RV}/.luciazero-managed/skills"
+cp -R "${RV}/skills/reviewer" "${RV}/.luciazero-managed/skills/reviewer"
+CODEX_HOME="${RV}" "${ROOT}/install-codex.sh" >/dev/null 2>&1
+if [ -e "${RV}/skills/reviewer" ] || [ -e "${RV}/.luciazero-managed/skills/reviewer" ]; then
+  rm -rf "${RV}"; fail "codex install kept an older reviewer that matched its snapshot"
+fi
+old_codex_reviewer "${RV}/skills/reviewer"
+old_codex_reviewer "${RV}/.luciazero-managed/skills/reviewer"
+echo '# an older release' >> "${RV}/.luciazero-managed/skills/reviewer/SKILL.md"
+RV_OUT="$(CODEX_HOME="${RV}" "${ROOT}/install-codex.sh" 2>&1 >/dev/null)"
+[ -f "${RV}/skills/reviewer/SKILL.md" ] \
+  || { rm -rf "${RV}"; fail "codex install deleted a reviewer its snapshot did not match"; }
+grep -qF 'skills/reviewer (renamed lucia-reviewer) is customized or not Luciazero-owned' <<<"${RV_OUT}" \
+  || { rm -rf "${RV}"; fail "codex install kept a reviewer its snapshot did not match without saying so: ${RV_OUT}"; }
+rm -rf "${RV}"
+echo "ok  the v2.7.0 reviewer skill migrates to lucia-reviewer only when untouched"
 
 # R12b: an install/uninstall cycle has to hand AGENTS.md back byte for byte.
 # The installer used to trim trailing blank lines it had never written, paying
@@ -192,11 +259,14 @@ rm -rf "${SM}"
 # managed files carry the same policy as managed trees
 SM="$(mktemp -d)"
 mkdir -p "${SM}/.luciazero-managed" "${SM}/outside-agents"
+# both names: the cataloged agent and the one it was renamed from
+printf 'sentinel\n' > "${SM}/outside-agents/lucia-reviewer.md"
 printf 'sentinel\n' > "${SM}/outside-agents/reviewer.md"
 ln -s "${SM}/outside-agents" "${SM}/.luciazero-managed/agents"
 CLAUDE_CONFIG_DIR="${SM}" "${ROOT}/uninstall.sh" >/dev/null 2>&1 || true
-[ -f "${SM}/outside-agents/reviewer.md" ] \
-  || { rm -rf "${SM}"; fail "uninstall deleted through a symlinked agent-snapshot parent"; }
+if [ ! -f "${SM}/outside-agents/lucia-reviewer.md" ] || [ ! -f "${SM}/outside-agents/reviewer.md" ]; then
+  rm -rf "${SM}"; fail "uninstall deleted through a symlinked agent-snapshot parent"
+fi
 rm -rf "${SM}"
 
 # Ambiguous marker structure is refused, and the refusal leaves the user's

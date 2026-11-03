@@ -168,7 +168,7 @@ runs a pair whose only difference is those skills:
 
 `noskills` is the same installer run as `doctrine`, followed by removing
 each name in `skills/catalog.txt` (and `aliases.txt`) from the sandbox's
-`skills/` directory — under Codex the reviewer is a skill directory too, and
+`skills/` directory — under Codex `lucia-reviewer` is a skill directory too, and
 it stays. Nothing else about the arms differs; the eval gate proves the
 arrangement for both harnesses with fake CLIs that audit their sandbox. Two
 caveats travel with the pair: the doctrine text names the skills

@@ -269,7 +269,7 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 `global-install` และ `global-status` จะแจ้งถ้า prefix นั้นไม่อยู่ใน Path
 
 ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่ง เพราะติดตั้งทั้งคู่
-จะโหลด skill และ reviewer ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้
+จะโหลด skill และ `lucia-reviewer` ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้
 Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไม่มี hook/statusline
 เฉพาะ Claude Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
 ยืนยันความเป็นเจ้าของได้
@@ -334,7 +334,7 @@ GitHub **Watch → Custom → Releases**
 ผู้ใช้ plugin เรียก `/luciazero:imouto-mode focus`; ผู้ใช้ Codex เรียก
 `$imouto-mode focus`
 
-Diff เสี่ยงจะผ่าน `reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
+Diff เสี่ยงจะผ่าน `lucia-reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
 หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจรอบเดียวโดยระบุทั้งสอง
 focus ไม่ใช่รอบละ focus diff เล็กที่ไม่เข้า route ใดไม่ต้อง review
 

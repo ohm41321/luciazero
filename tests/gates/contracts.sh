@@ -29,13 +29,13 @@ while IFS= read -r AGENT_NAME; do
     || fail "${AGENT_NAME}.md description is ${AGENT_DESC_WORDS} words (limit 40)"
   grep -q '^model: inherit$' "${AGENT}" || fail "${AGENT_NAME}.md must inherit the authoring model"
 done < <(catalog "${ROOT}/claude/agents/catalog.txt")
-cmp -s "${ROOT}/agents/reviewer.md" "${ROOT}/claude/agents/reviewer.md" \
-  || fail "plugin agents/reviewer.md drifted from the classic reviewer source"
+cmp -s "${ROOT}/agents/lucia-reviewer.md" "${ROOT}/claude/agents/lucia-reviewer.md" \
+  || fail "plugin agents/lucia-reviewer.md drifted from the classic reviewer source"
 python3 - "${ROOT}" <<'PY' || fail "reviewer/ready prompt budget or contract drift"
 import pathlib, re, sys
 
 root = pathlib.Path(sys.argv[1])
-reviewer = (root / "claude/agents/reviewer.md").read_text()
+reviewer = (root / "claude/agents/lucia-reviewer.md").read_text()
 ready = (root / "skills/ready/SKILL.md").read_text()
 
 def normalized(text):
@@ -87,10 +87,11 @@ def validate(text, label, expected_name, expected_fields, expected, contracts, c
 
 reviewer_sections = ("Route the search", "Evidence discipline", "Output")
 reviewer_contracts = {
-    "__description__": ("Prefer built-in review; otherwise use this agent independently.",),
+    "__description__": ("Prefer built-in review; otherwise use this agent independently.",
+                        "brief it with only the base ref, focus, and changed files, never conclusions"),
     "__intro__": ("Refute the change; do not approve or praise it.",),
     "Route the search": (
-        "rank risks by impact and reachability",
+        "rank risks by impact and reachability", "never reread what it shows",
         "trace each changed trust boundary from external input to a sensitive sink",
         "identify the old observable shape, then search callers, consumers, fixtures, docs, serializers, migrations, and compatibility code",
         "prioritize error paths, state transitions, concurrency, resource cleanup, and material edge cases",
@@ -100,8 +101,10 @@ reviewer_contracts = {
         "Confirm each suspected defect in source before reporting it.",
         "Never edit, commit, or push.", "Stay inside the diff's causal scope.",
         "Report every verified `blocker`/`major`; report at most three `minor` findings",
+        "Put independent reads and searches in one step.", "never install dependencies",
+        "Budget about twelve steps",
     ),
-    "Output": ("output exactly `No findings.`",),
+    "Output": ("output exactly `No findings.`", "`Unchecked:` line"),
 }
 ready_sections = (
     "1. Detect", "2. Establish verification", "3. Add smoke tests only when absent",
@@ -131,7 +134,7 @@ ready_contracts = {
 reviewer_code = (("Output", "```\npath:line — severity — problem. Concrete fix.\n```"),)
 ready_code = (("1. Detect", "```\nnode <this-skill-dir>/scripts/detect.cjs <repo-root>\n```"),)
 reviewer_fields = {"tools": "Read, Grep, Glob, Bash", "model": "inherit"}
-validate(reviewer, "reviewer", "reviewer", reviewer_fields, reviewer_sections,
+validate(reviewer, "reviewer", "lucia-reviewer", reviewer_fields, reviewer_sections,
          reviewer_contracts, reviewer_code, 400)
 validate(ready, "ready", "ready", {}, ready_sections, ready_contracts, ready_code, 1000)
 
@@ -143,31 +146,31 @@ def assert_rejected(text, label, expected_name, expected_fields, expected, contr
     raise AssertionError(f"{label} validator accepted adversarial stuffing")
 
 all_reviewer_clauses = " ".join(clause for clauses in reviewer_contracts.values() for clause in clauses)
-reviewer_frame = ("---\nname: reviewer\n"
+reviewer_frame = ("---\nname: lucia-reviewer\n"
                   "description: Prefer built-in review; otherwise use this agent independently.\n"
                   "tools: Read, Grep, Glob, Bash\nmodel: inherit\n---\n")
 reviewer_headings = "\n".join(f"## {section}" for section in reviewer_sections)
 assert_rejected(reviewer_frame + reviewer_headings + f"\n<!-- {all_reviewer_clauses} -->",
-                "reviewer comment bag", "reviewer", reviewer_fields, reviewer_sections,
+                "reviewer comment bag", "lucia-reviewer", reviewer_fields, reviewer_sections,
                 reviewer_contracts, reviewer_code, 400)
 assert_rejected(reviewer_frame + reviewer_headings + f"\n```\n{all_reviewer_clauses}\n```",
-                "reviewer code bag", "reviewer", reviewer_fields, reviewer_sections,
+                "reviewer code bag", "lucia-reviewer", reviewer_fields, reviewer_sections,
                 reviewer_contracts, reviewer_code, 400)
 wrong_section = (reviewer_frame + "\nRefute the change; do not approve or praise it.\n"
                  + f"## Route the search\n{all_reviewer_clauses}\n"
                  + "## Evidence discipline\n\n## Output\n```\npath:line — severity — problem. Concrete fix.\n```\n")
-assert_rejected(wrong_section, "reviewer wrong-section bag", "reviewer", reviewer_fields, reviewer_sections,
+assert_rejected(wrong_section, "reviewer wrong-section bag", "lucia-reviewer", reviewer_fields, reviewer_sections,
                 reviewer_contracts, reviewer_code, 400)
-fenced_description = reviewer.replace(
-    "description: Adversarial reviewer with general, security, and contract routes. Use for diffs or risky closeout. Prefer built-in review; otherwise use this agent independently. Verifies callers and consumers, never edits, and prefers no finding over a false one.\n",
-    "",
-).replace("# Reviewer\n", "```yaml\ndescription: moved outside frontmatter\n```\n\n# Reviewer\n")
-assert_rejected(fenced_description, "reviewer fenced description", "reviewer", reviewer_fields, reviewer_sections,
+fenced_description = re.sub(r"(?m)^description:.*\n", "", reviewer, count=1).replace(
+    "# Reviewer\n", "```yaml\ndescription: moved outside frontmatter\n```\n\n# Reviewer\n")
+assert fenced_description != reviewer and "description: Adversarial" not in fenced_description, \
+    "fenced-description probe no longer removes the frontmatter description"
+assert_rejected(fenced_description, "reviewer fenced description", "lucia-reviewer", reviewer_fields, reviewer_sections,
                 reviewer_contracts, reviewer_code, 400)
 fenced_tools = reviewer.replace("tools: Read, Grep, Glob, Bash\n", "").replace(
     "# Reviewer\n", "```yaml\ntools: Read, Grep, Glob, Bash\n```\n\n# Reviewer\n",
 )
-assert_rejected(fenced_tools, "reviewer fenced tools", "reviewer", reviewer_fields, reviewer_sections,
+assert_rejected(fenced_tools, "reviewer fenced tools", "lucia-reviewer", reviewer_fields, reviewer_sections,
                 reviewer_contracts, reviewer_code, 400)
 print(f"ok  prompt budgets (reviewer {len(reviewer.split())}/400; ready {len(ready.split())}/1000 words)")
 PY

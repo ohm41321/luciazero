@@ -262,6 +262,11 @@ while IFS= read -r AGENT_NAME; do
     "${SRC}/claude/agents/${AGENT_NAME}.md" "agents/${AGENT_NAME}.md"
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
 
+# The agent's name through v2.7.0, for an install this version never updated.
+remove_managed_file "${CLAUDE_DIR}/agents/reviewer.md" \
+  "${MANAGED_DIR}/agents/reviewer.md" "${SRC}/migrations/reviewer-v2.7.0.md" \
+  "agents/reviewer.md (renamed lucia-reviewer)"
+
 rmdir "${MANAGED_DIR}/skills" "${MANAGED_DIR}/agents" "${MANAGED_DIR}" 2>/dev/null || true
 
 # Agent Bus launcher. Only a regular file carrying the ownership marker is

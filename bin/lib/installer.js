@@ -39,6 +39,9 @@ const AGENTD_SERVICE_MARKER = "luciazero-managed: agentd-service";
 const START = "<!-- luciazero:start -->";
 const END = "<!-- luciazero:end -->";
 const ADDED_NL_MARK = "<!-- luciazero:added-final-newline -->";
+// The agent shipped as `reviewer` through v2.7.0; that release's copy proves
+// an old install untouched when no snapshot of it is left.
+const RETIRED_REVIEWER = j(SRC, "migrations", "reviewer-v2.7.0.md");
 
 class Exit extends Error {
   constructor(code) {
@@ -431,16 +434,39 @@ function installers(home, backupDir) {
     rmFile(snapshot);
     copyFileNew(src, snapshot, false);
   }
-  function removeLegacyTree(dst, snapshot, label) {
+  // `shipped`, when given, is the tree a release shipped: with no snapshot at
+  // all, it proves ownership too.
+  function removeLegacyTree(dst, snapshot, label, shipped = null) {
     if (!exists(dst)) {
       if (!isLink(path.dirname(snapshot))) rmTree(snapshot);
       return;
     }
     if (isLink(path.dirname(dst)) || isLink(path.dirname(snapshot))) {
       warn(`  !!  ${label} has a symlinked parent; left untouched`);
-    } else if (sameTree(dst, snapshot)) {
+    } else if (sameTree(dst, snapshot) || (shipped !== null && stat(snapshot) === null && sameTree(dst, shipped))) {
       rmTree(dst);
       rmTree(snapshot);
+      say(`  ok  migrated ${label}`);
+    } else {
+      warn(`  !!  ${label} is customized or not Luciazero-owned; left untouched`);
+    }
+  }
+  // A retired file: its snapshot proves ownership, or with no snapshot at
+  // all, the copy a release shipped.
+  function removeLegacyFile(dst, snapshot, shipped, label) {
+    if (!exists(dst)) {
+      if (!isLink(path.dirname(snapshot))) rmFile(snapshot);
+      return;
+    }
+    if (isLink(path.dirname(dst)) || isLink(path.dirname(snapshot))) {
+      warn(`  !!  ${label} has a symlinked parent; left untouched`);
+    } else if (
+      isFile(dst) &&
+      !isLink(dst) &&
+      ((isFile(snapshot) && cmp(dst, snapshot)) || (stat(snapshot) === null && cmp(dst, shipped)))
+    ) {
+      rmFile(dst);
+      rmFile(snapshot);
       say(`  ok  migrated ${label}`);
     } else {
       warn(`  !!  ${label} is customized or not Luciazero-owned; left untouched`);
@@ -457,7 +483,7 @@ function installers(home, backupDir) {
       }
     }
   }
-  return { installTree, installFile, removeLegacyTree, migrateHandoff };
+  return { installTree, installFile, removeLegacyTree, removeLegacyFile, migrateHandoff };
 }
 
 // A symlink anywhere between the config dir and a path about to be deleted
@@ -573,7 +599,7 @@ function pluginDoubleInstallNote(dir) {
   const t = isFile(registry) ? readRaw(registry) : null;
   if (t === null || !t.includes('"luciazero@')) return;
   say("  !!    Luciazero is also installed as a Claude Code plugin: every skill and the");
-  say("        reviewer agent load twice per session. Keep one channel — /plugin uninstall");
+  say("        lucia-reviewer agent load twice per session. Keep one channel — /plugin uninstall");
   say("        luciazero@luciazero for the plugin, or ./uninstall.sh for this copy.");
 }
 
@@ -756,7 +782,7 @@ function claudeInstall(args) {
   const dir = claudeDir();
   if (statusOnly) return claudeStatus(dir);
   const managed = j(dir, ".luciazero-managed");
-  const { installTree, installFile, removeLegacyTree, migrateHandoff } = installers(dir, j(dir, ".luciazero-backups"));
+  const { installTree, installFile, removeLegacyTree, removeLegacyFile, migrateHandoff } = installers(dir, j(dir, ".luciazero-backups"));
 
   say(`Installing into ${dir}`);
   mkdirp(j(dir, "skills"));
@@ -776,6 +802,7 @@ function claudeInstall(args) {
     installFile(j(SRC, "claude", "agents", agent + ".md"), j(dir, "agents", agent + ".md"), j(managed, "agents", agent + ".md"), `agents/${agent}.md`);
     say(`  ok  agents/${agent}.md`);
   }
+  removeLegacyFile(j(dir, "agents", "reviewer.md"), j(managed, "agents", "reviewer.md"), RETIRED_REVIEWER, "agents/reviewer.md (renamed lucia-reviewer)");
 
   const ad = agentdLayout(dir);
   if (isFile(j(SRC, "agentd", "luciazero_agentd", "__init__.py")) && isFile(ad.source)) {
@@ -966,6 +993,7 @@ function claudeUninstall(args) {
   for (const agent of catalog(j(SRC, "claude", "agents", "catalog.txt"))) {
     removeManagedFile(j(dir, "agents", agent + ".md"), j(managed, "agents", agent + ".md"), j(SRC, "claude", "agents", agent + ".md"), `agents/${agent}.md`);
   }
+  removeManagedFile(j(dir, "agents", "reviewer.md"), j(managed, "agents", "reviewer.md"), RETIRED_REVIEWER, "agents/reviewer.md (renamed lucia-reviewer)");
   rmdirQuiet(j(managed, "skills"), j(managed, "agents"), managed);
 
   // The service is stopped before the launcher it runs is removed, or the
@@ -1243,12 +1271,18 @@ function agentAsSkill(text) {
   return out.join("");
 }
 
+// The skill directory a Claude agent file becomes, at `dir`.
+function stageAgent(file, dir) {
+  mkdirp(dir);
+  fs.writeFileSync(path.join(dir, "SKILL.md"), Buffer.from(agentAsSkill(readRaw(file)), "latin1"));
+}
+
+// Every cataloged agent as a skill, and the retired `reviewer` as v2.7.0
+// installed it, at <root>/.retired/reviewer.
 function stageAgents(agents) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "luciazero-agents-"));
-  for (const agent of agents) {
-    mkdirp(path.join(root, agent));
-    fs.writeFileSync(path.join(root, agent, "SKILL.md"), Buffer.from(agentAsSkill(readRaw(j(SRC, "claude", "agents", agent + ".md"))), "latin1"));
-  }
+  for (const agent of agents) stageAgent(j(SRC, "claude", "agents", agent + ".md"), path.join(root, agent));
+  stageAgent(RETIRED_REVIEWER, path.join(root, ".retired", "reviewer"));
   return root;
 }
 
@@ -1302,6 +1336,12 @@ function codexInstall(args) {
       installTree(path.join(stage, agent), j(dir, "skills", agent), j(managed, "skills", agent), `skills/${agent}`);
       say(`  ok  skills/${agent}`);
     }
+    removeLegacyTree(
+      j(dir, "skills", "reviewer"),
+      j(managed, "skills", "reviewer"),
+      "skills/reviewer (renamed lucia-reviewer)",
+      path.join(stage, ".retired", "reviewer")
+    );
   } finally {
     rmTree(stage);
   }
@@ -1346,6 +1386,12 @@ function codexUninstall(args) {
     for (const agent of agents) {
       removeManagedTree(j(dir, "skills", agent), j(managed, "skills", agent), path.join(stage, agent), `skills/${agent}`);
     }
+    removeManagedTree(
+      j(dir, "skills", "reviewer"),
+      j(managed, "skills", "reviewer"),
+      path.join(stage, ".retired", "reviewer"),
+      "skills/reviewer (renamed lucia-reviewer)"
+    );
   } finally {
     rmTree(stage);
   }

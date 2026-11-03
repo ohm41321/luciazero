@@ -259,6 +259,7 @@ SPECS = {
                                      "Test honesty", "revert-probe.cjs"),
             "3. Risk-routed independent review": ("`security`", "`contract`", "`general`",
                                                    "built-in review command", "no review is the default", "run **one** pass", "never two",
+                                                   "Brief only the base ref, focus, and changed files",
                                                    "blocker", "major", "minor", "with no routed risk"),
             "4. Scope check": ("`/lucia-bus`", "`completed` or `blocked`", "Re-read the original request.", "delivered, or named as left out"),
             "5. Lessons": ("run `/retro`", "`/lucia-relay` instead"),

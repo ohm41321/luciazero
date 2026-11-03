@@ -38,10 +38,10 @@ Choose focus:
 - `general`: money, concurrency, resources, or a wide uncertain diff.
 
 A small, well-understood diff with no routed risk stops after the skeptic
-pass: no review is the default, not an exception. Otherwise run **one** pass —
-the harness's built-in review command when it exists, else one reviewer agent
-— scoped to the diff and its direct callers, naming both `security` and
-`contract` when both apply; never two.
+pass: no review is the default. Otherwise run **one** pass — the harness's
+built-in review command when it exists, else one `lucia-reviewer` agent —
+naming both `security` and `contract` when both apply; never two. Brief only
+the base ref, focus, and changed files; conclusions anchor it.
 
 Fix and re-verify every `blocker` or `major`, unless the user explicitly
 accepts the named risk. A `minor` may be deferred only when reported.

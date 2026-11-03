@@ -204,9 +204,11 @@ install_tree() {
 # Remove a retired Luciazero skill only when its managed snapshot proves
 # ownership. A customized or colliding directory is user data and must survive
 # the migration with an explicit warning. Symlinked skill parents are refused
-# so the deletion cannot escape the configured directory.
+# so the deletion cannot escape the configured directory. An optional fourth
+# argument names the tree a release shipped: with no snapshot at all, that
+# proves ownership too, as it does for the uninstaller's managed copies.
 remove_legacy_tree() {
-  LT_DST="$1"; LT_SNAPSHOT="$2"; LT_LABEL="$3"
+  LT_DST="$1"; LT_SNAPSHOT="$2"; LT_LABEL="$3"; LT_SHIPPED="${4:-}"
   if [ ! -e "${LT_DST}" ] && [ ! -L "${LT_DST}" ]; then
     if [ ! -L "$(dirname "${LT_SNAPSHOT}")" ]; then
       rm -rf "${LT_SNAPSHOT}"
@@ -215,7 +217,8 @@ remove_legacy_tree() {
   fi
   if [ -L "$(dirname "${LT_DST}")" ] || [ -L "$(dirname "${LT_SNAPSHOT}")" ]; then
     echo "  !!  ${LT_LABEL} has a symlinked parent; left untouched" >&2
-  elif same_tree "${LT_DST}" "${LT_SNAPSHOT}"; then
+  elif same_tree "${LT_DST}" "${LT_SNAPSHOT}" \
+    || { [ -n "${LT_SHIPPED}" ] && [ ! -e "${LT_SNAPSHOT}" ] && same_tree "${LT_DST}" "${LT_SHIPPED}"; }; then
     rm -rf "${LT_DST}" "${LT_SNAPSHOT}"
     echo "  ok  migrated ${LT_LABEL}"
   else
@@ -357,17 +360,27 @@ if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then
 fi
 
 # 3. Claude agents as Codex skills, minus Claude-only tools:/model: lines
+# stage_agent <agent.md> <dir>: the skill directory a Claude agent becomes
+stage_agent() {
+  mkdir -p "$2"
+  awk 'NR==1 {front=($0=="---")} front && /^(tools|model): / {next} {print} front && NR>1 && $0=="---" {front=0}' \
+    "$1" > "$2/SKILL.md"
+}
 AGENT_STAGE_ROOT="$(mktemp -d)"
 trap 'rm -rf "${AGENT_STAGE_ROOT}"' EXIT
 while IFS= read -r AGENT_NAME; do
   AGENT_SOURCE="${AGENT_STAGE_ROOT}/${AGENT_NAME}"
-  mkdir -p "${AGENT_SOURCE}"
-  awk 'NR==1 {front=($0=="---")} front && /^(tools|model): / {next} {print} front && NR>1 && $0=="---" {front=0}' \
-    "${SRC}/claude/agents/${AGENT_NAME}.md" > "${AGENT_SOURCE}/SKILL.md"
+  stage_agent "${SRC}/claude/agents/${AGENT_NAME}.md" "${AGENT_SOURCE}"
   install_tree "${AGENT_SOURCE}" "${CODEX_DIR}/skills/${AGENT_NAME}" \
     "${MANAGED_DIR}/skills/${AGENT_NAME}" "skills/${AGENT_NAME}"
   echo "  ok  skills/${AGENT_NAME}"
 done < <(catalog "${SRC}/claude/agents/catalog.txt")
+
+# Rename migration: the agent shipped as the `reviewer` skill through v2.7.0.
+# Only an untouched Luciazero copy goes; a customized or foreign one stays.
+stage_agent "${SRC}/migrations/reviewer-v2.7.0.md" "${AGENT_STAGE_ROOT}/.retired/reviewer"
+remove_legacy_tree "${CODEX_DIR}/skills/reviewer" "${MANAGED_DIR}/skills/reviewer" \
+  "skills/reviewer (renamed lucia-reviewer)" "${AGENT_STAGE_ROOT}/.retired/reviewer"
 
 # 4. version sidecar (informational; removed by uninstall-codex.sh)
 V_NEW="$(version_of)"

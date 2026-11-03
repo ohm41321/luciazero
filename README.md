@@ -277,7 +277,7 @@ On Windows, `global-install` uses npm's own global prefix
 it and `global-status` say so if that prefix is not on your Path.
 
 Pick either plugin or classic for Claude Code: installing both loads every
-skill and the reviewer twice, even though hooks and doctrine deduplicate.
+skill and `lucia-reviewer` twice, even though hooks and doctrine deduplicate.
 Classic installs support `--status`; Codex receives the doctrine and skills but
 not Claude-only hooks/statusline. Installers back up name collisions and remove
 only exact Luciazero-managed copies on uninstall.
@@ -344,7 +344,7 @@ rest activate when their moment arrives.
 technical evidence plain. Plugin users invoke `/luciazero:imouto-mode focus`;
 Codex users invoke `$imouto-mode focus`.
 
-Risky diffs also pass through one read-only `reviewer` with `security`,
+Risky diffs also pass through one read-only `lucia-reviewer` with `security`,
 `contract`, or `general` focus. Security and contract risk together get one
 pass that names both focuses, never two. A small diff with no routed risk gets
 no review.

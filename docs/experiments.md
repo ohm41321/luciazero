@@ -1,5 +1,47 @@
 # Experiment log
 
+## 2026-11-03 — reviewer step budget and caller brief
+
+change: the reviewer opens with `git diff -W`, batches independent reads,
+reads line ranges once, probes only when reading cannot decide, never installs
+dependencies, budgets about twelve steps and reports an `Unchecked:` line.
+`/done` and the agent description tell callers to brief it with only the base
+ref, focus and changed files.
+
+baseline: 227 local reviewer subagent transcripts. Tool calls per run: p10 21,
+median 43, p90 75, at 1.04 calls per step. Median peak context was 194k tokens
+and median cache reads 4.2M tokens per run. Half the runs read one file more
+than once. Caller briefs had a median of 3.5k characters, and the heavy ones
+covered a whole app, listed five focus areas and invited a full verify run.
+
+result: headless `claude -p` runs with the old and the new prompt as the
+system prompt (`--setting-sources project`, Opus 5.5, tools Read/Grep/Glob/
+Bash). Each run used a fresh clone.
+- Seeded fixture (a 95-line change with three planted defects, short brief, 3
+  runs per arm): both arms took 4–5 steps. Both found the path traversal and the
+  `None` config crash in 3/3. The test that passes on revert: old 1/3, new 2/3.
+  Cost: old $0.13–0.14, new $0.08–0.09.
+- `8360f8e` (421 lines, 10 files, short brief, 1 run per arm): 7 steps each.
+  Cost: old $0.38, new $0.26.
+- `8360f8e` with a long caller-style brief (2 runs per arm): steps old 28 and
+  15, new 8 and 9. Cache reads old 1.31M and 508k, new 200k and 244k. Cost old
+  $1.14 and $0.66, new $0.52 and $0.57. Wall time old 648s and 306s, new 94s and
+  128s.
+  Of the three real findings that `48e03f9` recorded, old found 2/6 and new
+  1/6. Neither arm found the `AGENTS.override.md` one.
+
+verdict: WIN on cost (fewer steps, about 4x fewer cached tokens, about 4x
+faster) when the brief invites a wide review. The brief itself is the larger
+lever: with a short brief both prompts took 7 steps. Recall is UNRESOLVED.
+Real-diff recall dropped from 2/6 to 1/6, and two runs per arm cannot separate
+that from noise. Calls per step stayed near 1.0, so the batching clause did not
+change behaviour; the savings came from the step budget and the scope.
+
+decision: kept. Caveats: headless runs omit the user-level CLAUDE.md a real
+subagent receives, so absolute step counts are lower than the transcripts show.
+Re-measure with the transcript scan after real use, and run more real-diff
+pairs before claiming recall parity.
+
 ## 2026-08-20 — cross-machine Relay schema 3
 
 change: replaced artifact-declared trust with a sender/receiver protocol. The

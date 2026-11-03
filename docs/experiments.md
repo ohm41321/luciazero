@@ -1,5 +1,93 @@
 # Experiment log
 
+## 2026-11-03 — verify detector recall and edits the hook should not count (measurement only)
+
+question: now that the detector counts the program a command runs, which
+nudges fire after a real check the default does not know, which fire after
+edits that were never project code, and would counting Bash writes as edits
+pay for itself?
+
+method: replayed Claude transcripts from 2026-10-24 to 2026-11-03 (10,525
+Bash calls, 659 turn ends, one state per project) through the merged
+`defaultVerify` from `claude/hooks/luciazero-verify.cjs`. Commands it did not
+count were sorted into families by the program they run: test (`node --test`,
+`playwright test`), typecheck (`tsc --noEmit`, `npm run typecheck`), lint
+(`eslint`, `shellcheck`, `npm run lint`), check-script (`npm run check`,
+scripts named `check*`, `validate*`, `smoke*`, `selftest*`), syntax (`node
+--check`, `py_compile`, `bash -n`) and build. Each variant below replays the
+stop nudge with one change. A nudge episode is an edit left without a counted
+verify at a turn end. The person who wrote the classifier also graded the
+episodes by hand, so the grading is not independent. Codex transcripts were
+not scanned.
+
+result:
+- Nudge episodes today: 93.
+- Counting test, typecheck, lint and check-script: 73. Adding build changes
+  nothing; adding syntax gives 66.
+- Of that drop, test, typecheck and lint alone account for 3. The rest are
+  project check scripts, mostly from two repositories: `npm run check`, `node
+  build/check.mjs`, `check-skill.py`, `check-run.py` and `check-package.mjs`.
+- Hand grading of the 26 episodes a test, lint or check-script command
+  closed: 21 ran a real check of the edited work. 3 ran a check of something
+  else (a skill's `check-skill.py` after editing a video's
+  `publish-copy.txt`; one skill's package check after editing another
+  skill). 1 was a project check after a `.txt` edit. 1 was `shellcheck
+  --version`.
+- Precision across the corpus: every test (256) and typecheck (16) match ran
+  the tool. Lint was 17 of 20; the other 3 were `shellcheck --version`.
+  Check-script was about 222 of 230. The misses were ad hoc `check*.py`
+  probes in scratch directories, one `--help` and one `npm ci` that the
+  family pattern wrongly took for `ci`.
+- Ignoring edits under the temp directory (`/tmp`, `/private/tmp`,
+  `/var/folders`) outside the session's project: 77. All 16 removed episodes
+  were the agent's own scratchpad tools (measurement scripts, probes, mock
+  data builders). No session had its project under a temp directory, so
+  exempting the project root changed nothing here.
+- Both changes together: 59, 37% fewer than today.
+- Ignoring every edit outside the project root instead: 52 with no other
+  change. It is too broad, because about 28 of the 41 episodes it drops
+  were real edits to a sibling repository, a worktree's main checkout or
+  `~/.agents/skills`.
+- Counting Bash writes to source-like files as edits: 149 episodes (+56), or
+  101 on top of both changes, mostly in media pipelines where a render is the
+  check. 19 episodes had a Bash write after the last verify that the hook
+  never saw; in 5 of them an uncounted check ran afterwards.
+
+verdict: PASS for ignoring temp-directory edits outside the project: it
+removes 17% of nudges, and every one removed was noise. PASS for counting
+project check scripts and the generic test, typecheck and lint commands. 81%
+of the nudges they close followed a real check. The generic commands are
+precise but barely move this corpus. NULL for counting Bash writes as edits:
+the nudge count rises by 60% and the extra nudges are mostly noise.
+
+decision: two hook changes, each with tests:
+- Ignore Edit and Write targets under the temp directory unless they are
+  inside the session's cwd or `CLAUDE_PROJECT_DIR`, or inside a git work
+  tree.
+- Widen `DEFAULT_VERIFY_RE` to `node --test`, `tsc`, `playwright test`,
+  `eslint`, `ruff check`, `shellcheck`, `npm run check|lint|typecheck`, and
+  scripts with the word `check` or `validate` in a name that ends in a
+  script extension. `bun test`, `deno test`, `mypy`, `pyright`, `cargo
+  clippy` and `go vet` were added with them, though none appeared in this
+  corpus. These do not count:
+  - a program run with nothing but `--version`, `--help` or `-h`;
+  - a program's own short version flag (`tsc -v`, `shellcheck -V`);
+  - `node --check`.
+
+The corpus was replayed with the first implementation, before review added
+the git work tree and `CLAUDE_PROJECT_DIR` exceptions and the short version
+flags. Those additions can only add nudges back. The wider detector gave 74
+nudge episodes, and 60 with the temporary-directory rule as well.
+Of the 423 commands it newly counts, about 8 were ad hoc `check*.py`
+probes of a database in a scratch directory. The rest ran tests, type
+checkers, linters or a project's check script. It stopped counting 2
+commands, both `verify.py --help`.
+
+Bash writes stay uncounted. `.txt` stays a non-document on purpose (see
+`DEFAULT_DOC_RE`). The check-script gain is concentrated in one person's two
+repositories. A repeat over other users' transcripts or Codex sessions could
+change it.
+
 ## 2026-11-03 — verify regex precision and repeated greens (measurement only)
 
 question: should the hook tell the agent that a verify already passed with no

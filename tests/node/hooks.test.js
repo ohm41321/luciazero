@@ -205,6 +205,73 @@ test("default verify detection counts what a command runs, not what it reads", (
   for (const command of runs) assert.strictEqual(defaultVerify(command), true, `not read as a verify run: ${command}`);
 });
 
+// Test runners, type checkers, linters and a project's own check scripts are
+// verify runs too: in ten days of local transcripts 20 of 93 stop nudges came
+// after one of them (docs/experiments.md, 2026-11-03). A program asked only
+// for --version or --help, a syntax check, a formatter and a script whose name
+// merely starts with "check" run none.
+test("default verify detection counts checks, type checkers and linters", () => {
+  const { defaultVerify } = require(VERIFY);
+  const checks = [
+    "node --test --test-timeout=8000 tests/a.test.cjs > /tmp/out.log 2>&1", "node -r ts-node/register --test x.ts",
+    "npx tsc --noEmit -p . 2>&1 | head", "npx vue-tsc --noEmit", "npx playwright test e2e/03.spec.ts",
+    "npx eslint src/a.ts", "uv run ruff check .", "shellcheck install.sh", "python -m mypy src", "pyright",
+    "cargo clippy -- -D warnings", "go vet ./...", "bun test", "deno test -A", "npm run check",
+    "npm run check:1 > logs/check.log 2>&1", "pnpm lint", "yarn typecheck", "bun run lint", "npm run -s lint:fix",
+    "python3 ~/.claude/skills/x/scripts/check-skill.py 2>&1", "node build/check.mjs 2", "python build/stt-check.py",
+    "node tools/check-package.mjs ui --code", "./scripts/check-site.py", "bash scripts/check.sh",
+    "python3 tools/check_script.py", "python validate_schema.py x.json", "pytest -v",
+  ];
+  const others = [
+    "shellcheck --version", "npx tsc --version", "eslint --help", "./test.sh --help", "pytest --version",
+    "python -m pytest --help", "python3 scripts/check-run.py -h", "node --check build/check.mjs", "node -c verify.mjs",
+    "git checkout -b check", "python checkout.py", "python precheck.py", "npm ci", "npm install eslint",
+    "npm run checkout-flow", "ruff format .", "playwright install chromium", "node script.js --test",
+    "node tsconfig-gen.js", "cat check.py", "grep -n tsc README.md", "shellcheck -V", "npx tsc -v", "eslint -v",
+    "mypy -V", "npx tsc --init", "npx eslint --init", "bash test.sh --help", "sh ./verify.sh -h",
+  ];
+  for (const command of checks) assert.strictEqual(defaultVerify(command), true, `not read as a verify run: ${command}`);
+  for (const command of others) assert.strictEqual(defaultVerify(command), false, `read as a verify run: ${command}`);
+});
+
+// An agent's scratch file in a temporary directory is not the project's code:
+// editing one does not re-arm the stop nudge (docs/experiments.md,
+// 2026-11-03). A project that itself lives in a temporary directory still
+// counts, through its cwd or through CLAUDE_PROJECT_DIR.
+test("an edit in a temporary directory outside the project does not re-arm the nudge", (t) => {
+  const box = sandbox(t);
+  const stopAfter = (cwd, file, env = box.env) => {
+    const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+    assert.strictEqual(node(env, [VERIFY, "prompt"], event({ prompt: "go" })).status, 0);
+    const edit = node(env, [VERIFY, "edit"], event({ tool_name: "Write", tool_input: { file_path: file } }));
+    assert.strictEqual(edit.status, 0, edit.stderr);
+    return node(env, [VERIFY, "stop"], event()).status;
+  };
+  const project = path.join(box.box, "project");
+  const scratch = path.join(box.tmp, "claude-1", "session", "scratchpad", "probe.py");
+  fs.mkdirSync(path.dirname(scratch), { recursive: true });
+  fs.writeFileSync(scratch, "");
+  assert.strictEqual(stopAfter(project, scratch), 0, "a scratchpad edit nudged");
+  assert.strictEqual(stopAfter(project, path.join(project, "a.py")), 2, "a project edit after it did not nudge");
+
+  const inTmp = path.join(box.tmp, "repo");
+  assert.strictEqual(stopAfter(inTmp, path.join(inTmp, "a.py")), 2, "an edit in a project under the temporary directory did not nudge");
+  const env = { ...box.env, CLAUDE_PROJECT_DIR: path.join(box.tmp, "repo2") };
+  assert.strictEqual(stopAfter(path.join(box.tmp, "repo2", "sub"), path.join(box.tmp, "repo2", "lib", "a.py"), env), 2,
+    "an edit in CLAUDE_PROJECT_DIR outside the cwd did not nudge");
+  // the session moved into its scratchpad, outside the project
+  const env3 = { ...box.env, CLAUDE_PROJECT_DIR: path.join(box.tmp, "repo3") };
+  assert.strictEqual(stopAfter(path.dirname(scratch), path.join(box.tmp, "repo3", "a.py"), env3), 2,
+    "an edit in CLAUDE_PROJECT_DIR from a cwd outside it did not nudge");
+  // a git worktree or clone under the temporary directory holds code
+  const worktree = path.join(box.tmp, "wt");
+  fs.mkdirSync(path.join(worktree, "src"), { recursive: true });
+  fs.writeFileSync(path.join(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n");
+  fs.writeFileSync(path.join(worktree, "src", "a.py"), "");
+  assert.strictEqual(stopAfter(path.join(box.box, "main"), path.join(worktree, "src", "a.py")), 2,
+    "an edit in a git worktree under the temporary directory did not nudge");
+});
+
 // A verify proves the code as it was when the run started: an edit that
 // lands while it runs -- another session, a background agent -- is after it.
 test("an edit made while a verify runs is still unverified", (t) => {

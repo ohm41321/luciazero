@@ -821,6 +821,13 @@ verify_counts 'cat test.sh' 2 "reading test.sh was read as a verify run"
 verify_counts "$(printf "python3 - <<'EOF'\nopen('verify.log', 'w').write('x')\nEOF")" 2 "a heredoc script that names a verify file was read as a verify run"
 verify_counts 'grep -n x a.py; ./test.sh --fast' 0 "a verify after a read in one command was missed"
 verify_counts "bash -lc './test.sh --fast'" 0 "a verify inside bash -c was missed"
+# a commit message is data, even when an unpaired quote in it is followed by a
+# line that names the verify command
+# (printf -v, not $(...): bash 3.2 cannot parse a heredoc-like `$(cat <<` in
+# single quotes inside a command substitution, and dies at run time)
+# shellcheck disable=SC2016  # the literal is the command as typed, $( and all
+printf -v COMMIT_CMD 'git commit -m "%scat <<%sEOF%s\nfix 5" screen\n./test.sh passes\nEOF\n%s"' '$(' "'" "'" ')'
+verify_counts "${COMMIT_CMD}" 2 "a commit message was read as a verify run"
 # a regex of one's own keeps its own meaning: any line, reads included
 CJ='{"cwd":"/hook/test/detect"}'
 echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit

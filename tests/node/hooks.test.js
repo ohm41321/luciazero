@@ -179,6 +179,11 @@ test("default verify detection counts what a command runs, not what it reads", (
     "/x/.venv/bin/python -I -c \"from PIL import Image\nImage.new('RGB', (1, 1)).save('/s/verify/a.png')\"",
     "echo hi # then pytest", "scripts/test-timings.sh --report | head -20", "command -v pytest",
     "cat <<\\EOF\npytest\nEOF", "cmd /c dir verify",
+    // a commit body is data, even with an unpaired quote in it
+    "git commit -m \"$(cat <<'EOF'\nfix 5\" screen\n./test.sh passes\nEOF\n)\"",
+    "cat <<EOF\n\tEOF\n./test.sh\nEOF", "$GREP -n pytest README.md", "$EDITOR verify.py",
+    "python -Bc \"import verify\"", "go build ./cmd/verify", "cargo add verify-crate",
+    "make -C verify-tools build", "./gradlew build -x test",
   ];
   const runs = [
     "./test.sh", "npm test", "pytest", "cd sub && .venv/bin/python -m pytest -q 2>&1 | tail -5",
@@ -191,6 +196,10 @@ test("default verify detection counts what a command runs, not what it reads", (
     "cargo test --release", "go test ./...", "./gradlew test", "poetry run pytest", "pnpm exec vitest",
     "yarn jest", "bun run verify", "tox -e py311", "env -i PATH=/bin ./test.sh", "x=$((1<<2))\n./test.sh",
     "bash -euo pipefail -c './test.sh'", "cmd /c npm test", "uv tool run pytest",
+    "R=\"$(./test.sh --fast 2>&1)\"; echo \"$R\" | tail", "out=`pytest -q`", "wc -l <<< hello\n./test.sh --fast",
+    "npm --prefix video run verify", "pnpm -C video run verify", "yarn --cwd sub test", "source scripts/verify.sh",
+    ". ./test.sh", "nix develop -c pytest", "sudo -u ci ./test.sh", "timeout --signal KILL 60 ./test.sh",
+    "cat <<'EOF' | bash\n./test.sh\nEOF", "cargo +nightly test",
   ];
   for (const command of reads) assert.strictEqual(defaultVerify(command), false, `read as a verify run: ${command}`);
   for (const command of runs) assert.strictEqual(defaultVerify(command), true, `not read as a verify run: ${command}`);

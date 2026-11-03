@@ -40,9 +40,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is now matched against the program each simple command runs: the
   executable, an interpreter's script or `-m` module, a package manager's
   script, or a task runner's target. Wrappers, assignments and redirections
-  are skipped, and `bash -c`, `npx` and `uv run` are followed into the command
-  they run. Inline code and heredoc bodies are data unless a shell reads them.
-  `docker`, `ssh` and similar runners still count on any argument. On those
+  are skipped, and `bash -c`, `npx`, `uv run` and `$(...)` are followed into
+  the command they run. Inline code and heredoc bodies, a commit message's
+  included, are data unless a shell reads them. `docker`, `ssh`, `conda run`
+  and similar runners still count on any argument. On those
   transcripts it stopped counting 371 commands, and hand-checked samples of
   them were reads, not runs. A `LUCIAZERO_VERIFY_REGEX` of your own keeps its
   meaning and is still matched against each line.

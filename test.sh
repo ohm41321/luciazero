@@ -177,7 +177,25 @@ mktmp() {
   printf -v "$1" '%s' "${D}"
   TMP_DIRS+=("${D}")
 }
-cleanup() { rm -rf ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; }
+# Bash 3.2 ends a shell on a fatal error -- an unset variable under set -u,
+# `${x:?}`, a bad substitution -- with its EXIT trap's own status, and $? in
+# the trap reads 0: a gate that died that way ended the run green, and a
+# full-only one ended it on PASS. Every intended ending sets RUN_ENDED=1, so
+# the trap turns any other ending with status 0 red, naming the gate. A signal
+# before the full tier's handlers also reaches the trap as 0; its status is
+# kept (143, 129) and the line names a signal as one possible cause.
+# tests/dispatcher-fatal-exit.sh is the regression check.
+RUN_ENDED=0
+GATE_NOW=""
+cleanup() {
+  local RC=$?
+  rm -rf ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}
+  if [ "${RC}" -eq 0 ] && [ "${RUN_ENDED}" != 1 ]; then
+    echo "FAIL: the run stopped${GATE_NOW:+ in gate ${GATE_NOW}} before it finished (a shell error or a signal, above)" >&2
+    exit 1
+  fi
+  return "${RC}"
+}
 trap cleanup EXIT
 mktmp CLAUDE_CONFIG_DIR
 export CLAUDE_CONFIG_DIR
@@ -229,7 +247,8 @@ SCRIPTS=(install.sh uninstall.sh install-codex.sh uninstall-codex.sh test.sh
          skills/ready/scripts/detect.sh
          skills/bisect/scripts/safe-bisect.sh
          skills/done/scripts/revert-probe.sh
-         eval/run.sh eval/report.sh eval/check-result.sh)
+         eval/run.sh eval/report.sh eval/check-result.sh
+         tests/dispatcher-fatal-exit.sh)
 # every task grader, auto-discovered — a new task cannot skip the lint net
 for G in "${ROOT}"/eval/tasks/*/grade.sh; do SCRIPTS+=("${G#"${ROOT}"/}"); done
 # optional deterministic task setup runs in both real and offline evaluation
@@ -270,8 +289,10 @@ gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
     echo "FAIL: gate ${GATE_NAME} syntax" >&2
     return "${GATE_RC}"
   }
+  GATE_NOW="${GATE_NAME}"
   # shellcheck disable=SC1090
   source "${ROOT}/tests/gates/${GATE_NAME}.sh"
+  GATE_NOW=""
   if [ "${LZ_TEST_TIMINGS:-0}" = 1 ]; then
     echo "TIMING gate=${GATE_NAME} seconds=$((SECONDS - GATE_T0))" >&2
   fi
@@ -288,6 +309,7 @@ gate hooks
 if [ "${TIER}" = discipline ]; then
   echo
   echo "PASS  discipline checks green"
+  RUN_ENDED=1
   exit 0
 fi
 
@@ -299,6 +321,7 @@ gate astra-luna
 if [ "${TIER}" = fast ]; then
   echo
   echo "PASS  fast checks green"
+  RUN_ENDED=1
   exit 0
 fi
 
@@ -320,6 +343,7 @@ gate_sub() { # gate_sub <name>: run a gate in this subshell, which does not run
   TMP_DIRS=()
   trap cleanup EXIT
   gate "$1"
+  RUN_ENDED=1
 }
 gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
   if [ $# -gt 1 ]; then
@@ -387,3 +411,4 @@ fi
 
 echo
 echo "PASS  all checks green"
+RUN_ENDED=1

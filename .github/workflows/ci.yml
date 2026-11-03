@@ -37,6 +37,14 @@ jobs:
               echo "parsed $n scripts under $BASH_VERSION"
               [ "$n" -gt 0 ] || rc=1
               exit $rc'
+      - name: Fail a run whose gate dies of a shell error, under Bash 3.2
+        # Bash 3.2 exits 0 on a fatal shell error when an EXIT trap is armed;
+        # the runner's Bash 5 may not, so only this image is sure to show the
+        # dispatcher's guard is still there. Same pinned image as above.
+        run: |
+          docker run --rm --network=none -v "$PWD":/w:ro \
+            bash:3.2@sha256:0fd7cb8499c63a3c9345e7088a9cd83bb69f6e895e83833859aff838a0312091 \
+            bash /w/tests/dispatcher-fatal-exit.sh /w
       - name: Run verify
         run: ./test.sh
 

@@ -26,9 +26,15 @@ Luciazero is the verification and handoff layer for Claude Code, Codex CLI, and
 compatible skill runtimes. It helps agents prove tests, preserve scope, and
 move unfinished work with evidence.
 
-This checkout is the **2.7.0** tree: the manifests and the top
+This checkout is the **3.0.0** tree: the manifests and the top
 [changelog](CHANGELOG.md) entry agree, and this document describes that
-source. Its twelve eval fixtures pass offline under `./test.sh`; no real-model
+source. 3.0.0 is a major release because the reviewer agent is renamed
+`lucia-reviewer` (`luciazero:lucia-reviewer` in the plugin): a prompt or
+script that names `reviewer` must use the new name. The stop hook now judges a
+command by the program it runs, so reading a test file no longer counts, while
+type checkers, linters and a project's own check scripts do. Edits to scratch
+files in a temporary directory no longer re-arm the nudge.
+Its twelve eval fixtures pass offline under `./test.sh`; no real-model
 skills-ablation pilot has run yet. Native Windows support, new in 2.7.0, has
 passed CI on `windows-latest` but has not been run on a real Windows machine;
 [the Windows field test](docs/windows-field-test.md) lists what CI does not
@@ -70,8 +76,8 @@ npx skills add ohm41321/luciazero
 ```
 
 Invoke the installed `ready` skill using your agent's syntax (for Codex CLI,
-use `$ready`). This path intentionally does not install the doctrine, reviewer,
-or hooks.
+use `$ready`). This path intentionally does not install the doctrine,
+`lucia-reviewer`, or hooks.
 
 ## See the loop
 
@@ -221,7 +227,7 @@ installation path that matches your workflow.
 <details>
 <summary><strong>Recommended · Claude Code plugin</strong></summary>
 
-Carries the doctrine, all skills, reviewer, and verify-tracking hooks:
+Carries the doctrine, all skills, `lucia-reviewer`, and verify-tracking hooks:
 
 ```text
 /plugin marketplace add ohm41321/luciazero
@@ -241,7 +247,7 @@ cannot set one.
 npx skills add ohm41321/luciazero
 ```
 
-This installs the 13 skills: no doctrine, reviewer, or hooks.
+This installs the 13 skills: no doctrine, `lucia-reviewer`, or hooks.
 
 </details>
 
@@ -423,6 +429,15 @@ only one run per arm per task. See the [full benchmark](https://github.com/ohm41
   turn/Bash/verify wall time, redundant-green counts, and Bash, verify, and
   model/user skill counts—never raw commands, skill names, or paths. Older rows
   without verify timing are reported as not measured, not zero.
+- By default the hook counts a command as a verify run by the program it
+  runs. That covers test runners (`pytest`, `npm test`, `node --test`,
+  `go test`, `./test.sh`), type checkers (`tsc`, `mypy`), linters (`eslint`,
+  `ruff check`, `shellcheck`) and a project's own check scripts
+  (`npm run check`, `python scripts/check-site.py`). Reading a test file does
+  not count, and neither does running a program with only `--help` or
+  `--version`. Editing a file in a temporary directory outside your project
+  and outside any git work tree, such as an agent's scratchpad, does not
+  re-arm the nudge. Bash commands that write files are not tracked as edits.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
   edit event in its state directory (tool name, opaque key, whether

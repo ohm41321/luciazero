@@ -7,11 +7,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-03
+
 ### Changed
 
-- The reviewer agent is now `lucia-reviewer` (plugin: `luciazero:lucia-reviewer`),
-  so it no longer takes the generic name `reviewer` from the user's own agents or
-  other plugins; Codex installs it as the skill `lucia-reviewer`. The rename
+- **Breaking: the reviewer agent is now `lucia-reviewer`** (plugin:
+  `luciazero:lucia-reviewer`), so it no longer takes the generic name
+  `reviewer` from the user's own agents or other plugins; Codex installs it
+  as the skill `lucia-reviewer`. The rename
   changes only its `name:` line. Installing over v2.7.0 or older removes the
   old `agents/reviewer.md` (Claude) or `skills/reviewer/` (Codex) only when it
   is the untouched Luciazero copy, proved by its managed snapshot or, with no

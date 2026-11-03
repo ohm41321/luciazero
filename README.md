@@ -164,7 +164,7 @@ as you. The project trust boundary is in
 | Failure mode | Mechanism |
 |---|---|
 | “Done” without running a check | Stop-hook nudge; optional strict gate blocks a red stop |
-| `cat test.sh` counted as testing | Exact `LUCIAZERO_VERIFY_CMD` matching |
+| `cat test.sh` counted as testing | Detection reads the program a command runs; optional exact `LUCIAZERO_VERIFY_CMD` |
 | Tests weakened to reach green | Doctrine rule 3 + the `/done` review; an opt-in suppression-guard hook example |
 | New tests that pass without the fix | `revert-probe.cjs` runs them against the old code |
 | Scope silently dropped | `/done` requires every item delivered or named as left out |

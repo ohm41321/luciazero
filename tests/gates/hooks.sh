@@ -444,10 +444,15 @@ RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='./no-suc
 grep -q 'Doctrine rule 1' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command message wrong: ${ERR}"; }
 ! grep -q 'Strict verify gate' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict missing-command fabricated a RED verdict: ${ERR}"; }
 # a broad-regex false green (`cat test.sh` exits 0) must NOT disarm the gate:
-# the fast path only trusts a green the strict command itself produced
+# the fast path only trusts a green the strict command itself produced. The
+# default detection no longer reads `cat test.sh` as a run; a regex of one's
+# own still can, so this green comes from one.
 echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 printf '{"cwd":"%s","tool_input":{"command":"cat test.sh"},"tool_response":{"exit_code":0}}' "${SPJ}" \
-  | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+  | TMPDIR="${HT}" LUCIAZERO_VERIFY_REGEX='test\.sh' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+[ "$(cat "$(TMPDIR="${HT}" node -e 'const v = require(process.argv[1]); console.log(require("path").join(v.stateBase(), v.stateKey(v.projectOf(process.argv[2]))))' \
+  "${ROOT}/claude/hooks/luciazero-verify.cjs" "${SPJ}")/last_verify" 2>/dev/null)" = ok ] \
+  || { rm -rf "${HT}" "${SPJ}"; fail "the broad-regex false green was not recorded, so the gate's fast path went untested"; }
 RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='echo poisoned; exit 1' \
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "broad-regex green disarmed the strict gate (rc=${RC})"; }
@@ -809,14 +814,34 @@ verify_counts 'PATH=/x/bin:$PATH LZ_BASH32=/bin/bash scripts/test-timings.sh --f
 verify_counts 'scripts/test-timings.sh' 0 "the collector with no tier (full) was not read as a verify run"
 verify_counts 'scripts/test-timings.sh --report' 2 "the collector's --report, which runs nothing, was read as a verify run"
 verify_counts 'scripts/test-timings.sh --report | head -20' 2 "the collector's --report in a pipeline was read as a verify run"
-# a regex of one's own keeps its own meaning, carve-out included
+# reading a test file is not running it: each of these once flipped the state
+# green and silenced the nudge (the full table is in tests/node/hooks.test.js)
+verify_counts 'grep -n pytest README.md' 2 "a grep for pytest was read as a verify run"
+verify_counts 'cat test.sh' 2 "reading test.sh was read as a verify run"
+verify_counts "$(printf "python3 - <<'EOF'\nopen('verify.log', 'w').write('x')\nEOF")" 2 "a heredoc script that names a verify file was read as a verify run"
+verify_counts 'grep -n x a.py; ./test.sh --fast' 0 "a verify after a read in one command was missed"
+verify_counts "bash -lc './test.sh --fast'" 0 "a verify inside bash -c was missed"
+# a commit message is data, even when an unpaired quote in it is followed by a
+# line that names the verify command
+# (printf -v, not $(...): bash 3.2 cannot parse a heredoc-like `$(cat <<` in
+# single quotes inside a command substitution, and dies at run time)
+# shellcheck disable=SC2016  # the literal is the command as typed, $( and all
+printf -v COMMIT_CMD 'git commit -m "%scat <<%sEOF%s\nfix 5" screen\n./test.sh passes\nEOF\n%s"' '$(' "'" "'" ')'
+verify_counts "${COMMIT_CMD}" 2 "a commit message was read as a verify run"
+# a regex of one's own keeps its own meaning: any line, reads included
 CJ='{"cwd":"/hook/test/detect"}'
+echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+echo '{"cwd":"/hook/test/detect","tool_input":{"command":"cat test.sh"}}' \
+  | TMPDIR="${VD}" LUCIAZERO_VERIFY_REGEX='test\.sh' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
+[ "${RC}" = 0 ] || fail "a regex the user set no longer matches any line of the command (stop rc=${RC})"
+# and its carve-out-free meaning too
 echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
 echo '{"cwd":"/hook/test/detect","tool_input":{"command":"scripts/test-timings.sh --report"}}' \
   | TMPDIR="${VD}" LUCIAZERO_VERIFY_REGEX='test-timings' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
 RC=0; echo "${CJ}" | TMPDIR="${VD}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || fail "the --report carve-out leaked into a regex the user set (stop rc=${RC})"
-echo "ok  default verify detection covers unittest and the timing collector, not its --report"
+echo "ok  default verify detection counts what runs (unittest, the timing collector), not reads or --report"
 
 # 4c6b. Input that arrives late is still read. Opening process.stdin made the
 # pipe non-blocking, so a hook started before its writer had written read

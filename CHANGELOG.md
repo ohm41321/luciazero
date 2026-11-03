@@ -31,6 +31,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The hook no longer counts reading a test file as running it. The default
+  verify regex was matched anywhere on the command line, so `grep -n pytest
+  README.md`, `sed -n 1,40p verify.py`, `cat test.sh` or a heredoc that only
+  names a verify file marked the edits verified and silenced the stop nudge.
+  In ten days of local transcripts 44% of its matches ran nothing, and such a
+  match silenced the nudge in 21 of 91 unverified edit episodes. The default
+  is now matched against the program each simple command runs: the
+  executable, an interpreter's script or `-m` module, a package manager's
+  script, or a task runner's target. Wrappers, assignments and redirections
+  are skipped, and `bash -c`, `npx`, `uv run` and `$(...)` are followed into
+  the command they run. Inline code and heredoc bodies, a commit message's
+  included, are data unless a shell reads them. `docker`, `ssh`, `conda run`
+  and similar runners still count on any argument. On those
+  transcripts it stopped counting 371 commands, and hand-checked samples of
+  them were reads, not runs. A `LUCIAZERO_VERIFY_REGEX` of your own keeps its
+  meaning and is still matched against each line.
 - `./test.sh` fails when a gate does not parse. Under Bash 3.2, the macOS
   system shell, sourcing a gate with a syntax error exited 0. A serial gate
   ended the run there with no PASS line; a full-only gate, which runs in its

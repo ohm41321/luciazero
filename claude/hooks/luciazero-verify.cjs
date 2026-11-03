@@ -66,16 +66,17 @@ const MAX_DEPTH = 40; // ancestor walk is bounded, never unbounded I/O
 const ALL_KNOBS = ["LUCIAZERO_VERIFY_CMD", "LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_DOC_REGEX",
   "LUCIAZERO_STRICT_VERIFY_CMD", "LUCIAZERO_STRICT_TIMEOUT", "LUCIAZERO_RELAY_STALE_DAYS",
   "LUCIAZERO_HANDOFF_STALE_DAYS", "LUCIAZERO_EDIT_DIAG", "CLAUDE_CONFIG_DIR"];
-// What counts as a verify run. Deliberately broad; override per-shell with
-// LUCIAZERO_VERIFY_REGEX (extended regex, matched against each line of the
-// Bash tool command). When LUCIAZERO_VERIFY_CMD is set (the repo's exact verify
-// command, e.g. "./test.sh"), only commands that ARE it or START with it count
-// — the broad regex also marks `cat test.sh` or `grep pytest README` as a
-// verify run, flipping the state green without any test having run. The
-// default also knows `python -m unittest` and this repository's timing
-// collector, scripts/test-timings.sh, which runs a tier -- except with
-// --report, which only reads the samples kept so far; that case is carved out
-// of the default below and is no concern of a regex somebody set themselves.
+// What counts as a verify run. By default this regex is matched against the
+// program each simple command runs (see defaultVerify below), so reading a
+// test file -- `cat test.sh`, `grep pytest README` -- is not running it.
+// LUCIAZERO_VERIFY_REGEX (extended regex) replaces it and keeps its own
+// meaning: matched against each line of the Bash tool command. When
+// LUCIAZERO_VERIFY_CMD is set (the repo's exact verify command, e.g.
+// "./test.sh"), only commands that ARE it or START with it count. The default
+// also knows `python -m unittest` and this repository's timing collector,
+// scripts/test-timings.sh, which runs a tier -- except with --report, which
+// only reads the samples kept so far; that case is carved out of the default
+// below and is no concern of a regex somebody set themselves.
 const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timings\\.sh|pytest|npm (run )?test|pnpm test|yarn test|cargo test|go test|vitest|jest|make (test|check)|tox|rake test|mix test|dotnet test|gradlew? (test|check)";
 // .txt is not on it: requirements.txt, CMakeLists.txt and constraints.txt
 // are build inputs, and a nudge after editing notes.txt costs less than none
@@ -340,6 +341,403 @@ function ere(source) {
 function anyLine(text, source) {
   const re = ere(source);
   return re !== null && text.split("\n").some((line) => re.test(line));
+}
+
+// The default detection asks what each simple command RUNS, not whether a
+// word on the line matches. Matched anywhere, the default regex counted
+// `grep -n pytest README`, `sed -n 1,40p verify.py`, a heredoc that writes
+// notes mentioning a test, or `python -c` writing into a verify/ folder:
+// in ten days of local transcripts 44% of its matches ran nothing, and such
+// a match after an edit silenced the stop nudge in 21 of 91 unverified edit
+// episodes (docs/experiments.md, 2026-11-03). Here the default regex is
+// matched against the program a simple command runs: the executable's name,
+// an interpreter's script or `-m` module, a package manager's script or
+// subcommand, a task runner's targets. Wrappers (`timeout 600`, `env X=1`),
+// leading assignments and redirections are skipped; `bash -c '...'`, `npx`,
+// `uv run`, `$(...)` and the like are followed into the command they run.
+// Inline code (`python -c`, `node -e`, `python - <<EOF`) and heredoc bodies
+// fed to anything but a shell are data. Containers, remote shells and
+// environment managers (`docker`, `ssh`, `conda run`, ...) run a command this
+// cannot follow, so for those every argument counts, as before.
+// Commands that run the rest of their words, after their own flags; the
+// flags listed take a value.
+const WRAPPERS = {
+  time: [], timeout: ["-s", "--signal", "-k", "--kill-after"], gtimeout: ["-s", "--signal", "-k", "--kill-after"],
+  env: ["-u", "--unset", "-C", "--chdir"], nice: ["-n", "--adjustment"], ionice: ["-c", "-n", "-p", "--class", "--classdata"],
+  nohup: [], caffeinate: ["-t", "-w"], command: [], exec: ["-a"], builtin: [], noglob: [], stdbuf: ["-i", "-o", "-e"],
+  unbuffer: [], chronic: [], doas: ["-u", "-C"],
+  sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "--user", "--group", "--host", "--prompt", "--chdir"],
+  xargs: ["-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file"],
+};
+const KEYWORDS = new Set(["!", "{", "}", "do", "then", "else", "elif", "if", "while", "until"]);
+const PYTHON = /^(python[0-9.]*|py|pypy[0-9.]*)$/;
+const JS = /^(node|nodejs|tsx|ts-node)$/;
+const POSIX_SHELLS = /^(bash|sh|zsh|dash|ksh|fish)$/;
+const POWERSHELLS = /^(pwsh|powershell)$/;
+// run the command that follows their flags, or a subcommand of theirs
+const DELEGATES = { npx: [], bunx: [], pnpx: [], uvx: [], corepack: [], uv: ["run", "tool"], pipx: ["run"],
+  poetry: ["run"], pipenv: ["run"], pdm: ["run"], hatch: ["run"], rye: ["run"], bundle: ["exec"],
+  npm: ["exec", "x"], pnpm: ["exec", "dlx"], yarn: ["exec", "dlx"], bun: ["x"] };
+const DELEGATE_VALUES = ["-p", "--package", "--with", "--python", "--project", "--directory", "--extra", "--group",
+  "--env-file", "--from", "-e", "--env", "-n", "--name", "--spec", "-C", "--cwd", "--dir", "--filter", "-F"];
+// a package manager's first word is its subcommand or a script name
+const PACKAGE_MANAGERS = {
+  npm: ["--prefix", "-w", "--workspace", "--cache", "--registry", "--loglevel", "--userconfig"],
+  pnpm: ["-C", "--dir", "--filter", "-F", "--loglevel", "--registry"],
+  yarn: ["--cwd", "--cache-folder", "--registry"],
+  bun: ["--cwd", "--filter", "-F", "--config"],
+};
+// the first word is a subcommand (`go build ./cmd/verify` builds)
+const SUBCOMMAND_RUNNERS = { go: ["-C"], dotnet: [], mix: [], deno: [],
+  cargo: ["--manifest-path", "-p", "--package", "-Z", "--config", "-C", "--target-dir"] };
+// every word is a target or task
+const MAKE_VALUES = ["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-o", "--old-file",
+  "-W", "--what-if", "--new-file", "--assume-new", "-l", "--load-average"];
+const GRADLE_VALUES = ["-p", "-b", "-c", "-g", "-I", "-x", "--project-dir", "--exclude-task", "--init-script",
+  "--settings-file", "--build-file", "--gradle-user-home"];
+const MAVEN_VALUES = ["-f", "-pl", "-P", "-s", "-rf", "-gs", "--file", "--projects", "--activate-profiles", "--settings"];
+const TARGET_RUNNERS = { make: MAKE_VALUES, gmake: MAKE_VALUES, gradle: GRADLE_VALUES, gradlew: GRADLE_VALUES,
+  mvn: MAVEN_VALUES, mvnw: MAVEN_VALUES, just: ["-f", "--justfile", "-d", "--working-directory", "--set"],
+  task: ["-d", "--dir", "-t", "--taskfile"], invoke: ["-c", "--collection", "-r", "--search-root"],
+  rake: ["-f", "-C", "-I", "-r", "--rakefile", "--directory", "--libdir", "--require"],
+  tox: ["-e", "-c", "--conf", "-x", "--override"], nox: ["-s", "--session", "-k", "-f", "--noxfile", "-t"],
+  ctest: ["-R", "-E", "-L", "-LE", "-j", "-C", "--test-dir", "--parallel"] };
+// containers, remote shells, environment managers and watchers run a command
+// this cannot follow, so every argument of theirs counts
+const PASS_THROUGH = new Set(["docker", "podman", "kubectl", "ssh", "nix-shell", "nix", "devbox", "vagrant",
+  "watch", "entr", "nodemon", "parallel", "cross-env", "dotenv", "xvfb-run", "conda", "mamba", "micromamba",
+  "pixi", "direnv", "script", "op", "doppler", "aws-vault", "devcontainer", "distrobox", "toolbox", "flox"]);
+const own = (map, key) => Object.prototype.hasOwnProperty.call(map, key);
+const assignment = (word) => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(word) || /^\$env:[A-Za-z_][A-Za-z0-9_]*=/i.test(word);
+
+// Shell words of each simple command: split on unquoted ; & | ( ) and
+// newlines, quotes removed, comments dropped. A heredoc body goes to the
+// command whose `<<` opened it, and a command remembers the one piped into
+// it. Command substitutions -- `$(...)` and backticks, inside double quotes
+// too -- are lexed as commands of their own, which they are. A backslash
+// escapes only what a separator or quote would otherwise take, so a Windows
+// path keeps its own.
+function lex(text, start, inner, depth) {
+  const commands = [];
+  const substituted = [];
+  let cur = { words: [], bodies: [], pipedFrom: null };
+  let word = null;
+  let pending = [];
+  let parens = 0;
+  const add = (s) => {
+    word = (word || "") + s;
+  };
+  const endWord = () => {
+    if (word !== null) cur.words.push(word);
+    word = null;
+  };
+  const endCommand = (piped) => {
+    endWord();
+    const kept = cur.words.length > 0 || cur.bodies.length > 0;
+    if (kept) commands.push(cur);
+    cur = { words: [], bodies: [], pipedFrom: piped && kept ? commands[commands.length - 1] : null };
+  };
+  // `$(` at j (the `$`): lex what it runs, return the index after its `)`
+  const substitution = (j) => {
+    if (text[j + 2] === "(") { // $(( arithmetic )): nothing runs
+      let open = 0;
+      let k = j + 1;
+      for (; k < text.length; k++) {
+        if (text[k] === "(") open += 1;
+        else if (text[k] === ")" && --open === 0) break;
+      }
+      return k + 1;
+    }
+    if (depth >= 8) return j + 2;
+    const sub = lex(text, j + 2, true, depth + 1);
+    substituted.push(...sub.commands);
+    return sub.end;
+  };
+  const backticks = (j) => {
+    let k = j + 1;
+    while (k < text.length && text[k] !== "`") k += text[k] === "\\" ? 2 : 1;
+    if (depth < 8) substituted.push(...lex(text.slice(j + 1, k), 0, false, depth + 1).commands);
+    return k + 1;
+  };
+  const n = text.length;
+  let i = start;
+  while (i < n) {
+    const ch = text[i];
+    if (ch === "'") {
+      const close = text.indexOf("'", i + 1);
+      const end = close < 0 ? n : close;
+      add(text.slice(i + 1, end));
+      i = end + 1;
+    } else if (ch === "\"") {
+      let j = i + 1;
+      let s = "";
+      while (j < n && text[j] !== "\"") {
+        if (text[j] === "\\" && j + 1 < n && "\"\\$`\n".includes(text[j + 1])) {
+          if (text[j + 1] !== "\n") s += text[j + 1];
+          j += 2;
+        } else if (text[j] === "$" && text[j + 1] === "(") {
+          j = substitution(j);
+          s += "$()";
+        } else if (text[j] === "`") {
+          j = backticks(j);
+          s += "``";
+        } else {
+          s += text[j];
+          j += 1;
+        }
+      }
+      add(s);
+      i = j + 1;
+    } else if (ch === "$" && text[i + 1] === "(") {
+      i = substitution(i);
+      add("$()");
+    } else if (ch === "`") {
+      i = backticks(i);
+      add("``");
+    } else if (ch === "\\") {
+      const next = text[i + 1];
+      if (next === "\n") i += 2;
+      else if (next !== undefined && " \t;&|()<>\"'#$`".includes(next)) {
+        add(next);
+        i += 2;
+      } else {
+        add(ch);
+        i += 1;
+      }
+    } else if (ch === "#" && word === null) {
+      while (i < n && text[i] !== "\n") i += 1;
+    } else if (ch === "<" && text.startsWith("<<<", i)) {
+      add("<<<");
+      i += 3;
+    } else if (ch === "<" && text[i + 1] === "<") {
+      // a delimiter is a word (`EOF`, 'PY', \END), never `1<<2`
+      const dash = text[i + 2] === "-";
+      let j = i + (dash ? 3 : 2);
+      while (text[j] === " " || text[j] === "\t") j += 1;
+      const m = /^\\?(['"]?)([A-Za-z_][A-Za-z0-9_.-]*)\1/.exec(text.slice(j, j + 256));
+      if (m) {
+        endWord();
+        pending.push({ delimiter: m[2], dash, owner: cur });
+        i = j + m[0].length;
+      } else {
+        add("<<");
+        i += 2;
+      }
+    } else if (ch === "\n") {
+      i += 1;
+      for (const { delimiter, dash, owner } of pending) {
+        const lines = [];
+        while (i < n) {
+          let end = text.indexOf("\n", i);
+          if (end < 0) end = n;
+          const line = text.slice(i, end).replace(/\r$/, "");
+          i = end + 1;
+          if ((dash ? line.replace(/^\t+/, "") : line) === delimiter) break;
+          lines.push(line);
+        }
+        owner.bodies.push(lines.join("\n"));
+      }
+      pending = [];
+      endCommand(false);
+    } else if (ch === ")" && inner && parens === 0) {
+      endCommand(false);
+      return { commands: commands.concat(substituted), end: i + 1 };
+    } else if (ch === "(" || ch === ")") {
+      if (inner) parens += ch === "(" ? 1 : -1;
+      endCommand(false);
+      i += 1;
+    } else if (ch === "|") {
+      const or = text[i + 1] === "|";
+      endCommand(!or);
+      i += or || text[i + 1] === "&" ? 2 : 1;
+    } else if (ch === "&") {
+      // `2>&1`, `&>file` and `>&2` are redirections, not separators
+      if (text[i - 1] === ">" || text[i - 1] === "<" || text[i + 1] === ">") add(ch);
+      else endCommand(false);
+      i += 1;
+    } else if (ch === ";") {
+      endCommand(false);
+      i += 1;
+    } else if (ch === " " || ch === "\t" || ch === "\r") {
+      endWord();
+      i += 1;
+    } else {
+      add(ch);
+      i += 1;
+    }
+  }
+  endCommand(false);
+  return { commands: commands.concat(substituted), end: n };
+}
+
+function programName(word) {
+  return word.split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|com)$/i, "");
+}
+
+// non-flag words, skipping the values of the flags listed
+function positional(words, valued) {
+  const out = [];
+  for (let j = 0; j < words.length; j++) {
+    const t = words[j];
+    if (valued.includes(t)) j += 1;
+    else if (!t.startsWith("-") && !t.startsWith("+") && !assignment(t)) out.push(t);
+  }
+  return out;
+}
+
+// an interpreter: its `-m` module or script, or nothing for inline code
+function interpreter(shown, rest, python) {
+  const flags = "bBdEhiIOPqsSuvVx";
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j];
+    if (t === "-") return [];
+    if (python) {
+      if (new RegExp(`^-[${flags}]*c`).test(t)) return [];
+      const m = new RegExp(`^-[${flags}]*m(.*)$`).exec(t);
+      if (m) {
+        const module = m[1] || rest[j + 1];
+        return module ? [`${shown} -m ${module}`] : [];
+      }
+    } else if (/^(-e|-p|-pe|-ep|--eval|--print)$/.test(t) || /^--(eval|print)=/.test(t)) {
+      return [];
+    }
+    if (t.startsWith("-")) {
+      if (python ? new RegExp(`^-[${flags}]*[WX]$`).test(t)
+        : /^(-r|--require|--import|--loader|--experimental-loader|-C|--conditions)$/.test(t)) j += 1;
+      continue;
+    }
+    return [`${shown} ${programName(t)}`];
+  }
+  return [shown];
+}
+
+// heredoc bodies a command reads on stdin: its own, and those piped into it
+function stdinBodies(cmd, depth) {
+  const bodies = [];
+  for (let c = cmd; c; c = c.pipedFrom) bodies.push(...c.bodies);
+  return bodies.flatMap((body) => verifyRuns(body, depth + 1));
+}
+
+function shell(first, rest, cmd, depth) {
+  const ps = POWERSHELLS.test(first);
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j];
+    if (ps) {
+      if (/^-c(ommand)?$/i.test(t)) return verifyRuns(rest.slice(j + 1).join(" "), depth + 1);
+      if (/^-f(ile)?$/i.test(t)) return j + 1 < rest.length ? [`${first} ${programName(rest[j + 1])}`] : [];
+      if (/^-(e|ec|encodedcommand)$/i.test(t)) return [];
+      if (t.startsWith("-")) {
+        if (/^-(executionpolicy|ex|ep|workingdirectory|wd|outputformat|of|inputformat|if|windowstyle|w|version|v)$/i.test(t)) j += 1;
+        continue;
+      }
+      return [`${first} ${programName(t)}`];
+    }
+    if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(t)) return j + 1 < rest.length ? verifyRuns(rest[j + 1], depth + 1) : [];
+    if (t === "-n") return []; // a syntax check runs nothing
+    if (/^[-+][a-zA-Z]*[oO]$/.test(t)) j += 1; // `-o pipefail`, `-euo pipefail`
+    else if (t.startsWith("-") || t.startsWith("+")) continue;
+    else return [`${first} ${programName(t)}`];
+  }
+  return [first, ...stdinBodies(cmd, depth)];
+}
+
+// What one simple command runs, as the strings the default regex is tried on.
+function runs(cmd, depth, from = 0) {
+  if (depth > 8) return [];
+  const w = [];
+  for (let j = from; j < cmd.words.length; j++) {
+    const t = cmd.words[j];
+    if (/^\d*(<<<|<>|<|>>|>\||>|&>>|&>)$/.test(t)) j += 1; // operator, then its target
+    else if (!/^(\d*[<>]|&>)/.test(t)) w.push(t);
+  }
+  let k = 0;
+  while (k < w.length) {
+    const t = w[k];
+    const name = programName(t).toLowerCase();
+    if (KEYWORDS.has(t) || assignment(t)) {
+      k += 1;
+    } else if (own(WRAPPERS, name)) {
+      // `command -v pytest` asks where pytest is; it runs nothing
+      if (name === "command" && /^-[vV]$/.test(w[k + 1] || "")) return [];
+      k += 1;
+      while (k < w.length) {
+        const f = w[k];
+        if (name === "env" && (f === "-S" || f === "--split-string")) {
+          return k + 1 < w.length ? verifyRuns(w[k + 1], depth + 1) : [];
+        }
+        if (WRAPPERS[name].includes(f)) k += 2;
+        else if (f.startsWith("-") || /^\d+(\.\d+)?[smhd]?$/.test(f) || assignment(f)) k += 1;
+        else break;
+      }
+    } else {
+      break;
+    }
+  }
+  if (k >= w.length) return [];
+  const rest = w.slice(k + 1);
+  // the timing collector's --report only reads the samples kept so far
+  if (w.slice(k).some((t) => programName(t) === "test-timings.sh") && rest.includes("--report")) return [];
+  const raw = programName(w[k]);
+  const first = raw.toLowerCase();
+
+  if (first.startsWith("$")) { // a program held in a variable
+    const name = first.replace(/^\$\{?/, "").replace(/\}$/, "");
+    if (/py/.test(name)) return interpreter(raw, rest, true);
+    if (/node/.test(name)) return interpreter(raw, rest, false);
+    const m = rest.findIndex((t) => !t.startsWith("-") || t === "-m");
+    return m >= 0 && rest[m] === "-m" && rest[m + 1] ? [`${raw} -m ${rest[m + 1]}`] : [raw];
+  }
+  if (PYTHON.test(first)) return interpreter(first, rest, true);
+  if (JS.test(first)) return interpreter(first, rest, false);
+  if (POSIX_SHELLS.test(first) || POWERSHELLS.test(first)) return shell(first, rest, cmd, depth);
+  if (first === "source" || first === ".") return rest.length ? [programName(rest[0])] : [];
+  if (first === "cmd") {
+    const at = rest.findIndex((t) => /^\/[ck]$/i.test(t));
+    return at >= 0 ? verifyRuns(rest.slice(at + 1).join(" "), depth + 1) : [];
+  }
+  if (own(DELEGATES, first)) {
+    const subs = DELEGATES[first];
+    let j = 0;
+    const skipFlags = () => {
+      while (j < rest.length && rest[j].startsWith("-")) j += DELEGATE_VALUES.includes(rest[j]) ? 2 : 1;
+    };
+    skipFlags();
+    let delegated = subs.length === 0;
+    if (!delegated && j < rest.length && subs.includes(rest[j])) {
+      j += rest[j] === "tool" && rest[j + 1] === "run" ? 2 : 1;
+      skipFlags();
+      delegated = true;
+    }
+    if (delegated) return runs({ words: rest.slice(j), bodies: cmd.bodies, pipedFrom: cmd.pipedFrom }, depth + 1);
+  }
+  if (own(PACKAGE_MANAGERS, first)) {
+    let pos = positional(rest, PACKAGE_MANAGERS[first]);
+    if (first === "yarn" && pos[0] === "workspace") pos = pos.slice(2);
+    if (!pos.length) return [first];
+    if (pos[0] === "run" || pos[0] === "run-script") return [`${first} run${pos[1] ? " " + pos[1] : ""}`];
+    return [`${first} ${pos[0]}`];
+  }
+  if (own(SUBCOMMAND_RUNNERS, first)) {
+    const pos = positional(rest, SUBCOMMAND_RUNNERS[first]);
+    if (!pos.length) return [first];
+    if (first === "deno" && (pos[0] === "run" || pos[0] === "task") && pos[1]) return [`deno ${pos[0]} ${programName(pos[1])}`];
+    return [`${first} ${pos[0]}`];
+  }
+  if (own(TARGET_RUNNERS, first)) {
+    return [first, ...positional(rest, TARGET_RUNNERS[first]).slice(0, 8).map((t) => `${first} ${t}`)];
+  }
+  if (PASS_THROUGH.has(first)) return [rest.join(" "), ...stdinBodies(cmd, depth)];
+  return [raw];
+}
+
+function verifyRuns(text, depth = 0) {
+  if (depth > 8) return [];
+  return lex(text, 0, false, depth).commands.flatMap((cmd) => runs(cmd, depth));
+}
+
+function defaultVerify(command) {
+  const re = ere(DEFAULT_VERIFY_RE);
+  return verifyRuns(command).some((run) => re.test(run));
 }
 
 // A repository's COMMITTED .claude/settings.json can put anything in its `env`
@@ -986,10 +1384,11 @@ function main(argv) {
         if (verifyCmd) {
           // exact mode: the command must BE or START WITH the configured command
           isVerify = command === verifyCmd || command.startsWith(verifyCmd + " ");
-        } else if (anyLine(command, verifyRe)) {
-          isVerify = true;
-          // the collector's report runs nothing
-          if (!process.env.LUCIAZERO_VERIFY_REGEX && anyLine(command, "test-timings\\.sh +--report")) isVerify = false;
+        } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
+          // a regex of one's own keeps its documented meaning: any line
+          isVerify = anyLine(command, verifyRe);
+        } else {
+          isVerify = defaultVerify(command);
         }
       }
       // A command started in the background has no result yet: its
@@ -1128,7 +1527,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin };
+module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns };
 
 if (require.main === module) {
   try {

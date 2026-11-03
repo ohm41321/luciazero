@@ -164,6 +164,47 @@ test("a verify run in the background is not recorded as green", (t) => {
   assert.strictEqual(node(box.env, [VERIFY, "stop"], event()).status, 2, "the edit is still unverified");
 });
 
+// The default detection counts what a simple command runs, not a word it
+// reads. Each read below once counted as a verify, and after an edit it
+// silenced the stop nudge (docs/experiments.md, 2026-11-03). Every run below
+// must still count, Windows paths and PowerShell's call operator included.
+test("default verify detection counts what a command runs, not what it reads", () => {
+  const { defaultVerify } = require(VERIFY);
+  const reads = [
+    "cat test.sh", "grep -n pytest README.md", "sed -n 1,40p build/verify.py", "wc -l verify.py",
+    "git grep -n verify", "/usr/bin/grep -n \"a\\|pytest\" x.py | head", "python3 -c \"print('verify')\"",
+    "cat > notes.txt <<'EOF'\nrun pytest later\nEOF", "python3 - <<'EOF'\nopen('verify.log', 'w')\nEOF",
+    "echo \"verify deeply\" >> notes.md", "for f in verify.py; do wc -l \"$f\"; done", "bash -n test.sh",
+    "gpg --verify x.sig", "python -m py_compile build/verify-join.py", "npm install verify-thing",
+    "/x/.venv/bin/python -I -c \"from PIL import Image\nImage.new('RGB', (1, 1)).save('/s/verify/a.png')\"",
+    "echo hi # then pytest", "scripts/test-timings.sh --report | head -20", "command -v pytest",
+    "cat <<\\EOF\npytest\nEOF", "cmd /c dir verify",
+    // a commit body is data, even with an unpaired quote in it
+    "git commit -m \"$(cat <<'EOF'\nfix 5\" screen\n./test.sh passes\nEOF\n)\"",
+    "cat <<EOF\n\tEOF\n./test.sh\nEOF", "$GREP -n pytest README.md", "$EDITOR verify.py",
+    "python -Bc \"import verify\"", "go build ./cmd/verify", "cargo add verify-crate",
+    "make -C verify-tools build", "./gradlew build -x test",
+  ];
+  const runs = [
+    "./test.sh", "npm test", "pytest", "cd sub && .venv/bin/python -m pytest -q 2>&1 | tail -5",
+    "HF_HUB_OFFLINE=1 timeout 600 python -m pytest tests", "npm run -s verify:plan",
+    "caffeinate -i node build/verify-seek.mjs", "uv run pytest -q", "npx vitest run", "make -C sub check",
+    "bash -lc './test.sh --fast'", "grep -n x a.py; ./test.sh --fast",
+    "python3 - <<'EOF'\nprint(1)\nEOF\n./test.sh --fast", "$PY -m pytest -q", "docker compose run --rm app pytest",
+    "bash <<'EOF'\n./test.sh\nEOF", "{ pytest -q; } 2>&1", "& \"C:\\Py\\python.exe\" -m pytest",
+    "C:\\Py\\Scripts\\pytest.exe -q", "$env:CI=\"1\"; npm test", "pwsh -NoProfile -Command \"npm test\"",
+    "cargo test --release", "go test ./...", "./gradlew test", "poetry run pytest", "pnpm exec vitest",
+    "yarn jest", "bun run verify", "tox -e py311", "env -i PATH=/bin ./test.sh", "x=$((1<<2))\n./test.sh",
+    "bash -euo pipefail -c './test.sh'", "cmd /c npm test", "uv tool run pytest",
+    "R=\"$(./test.sh --fast 2>&1)\"; echo \"$R\" | tail", "out=`pytest -q`", "wc -l <<< hello\n./test.sh --fast",
+    "npm --prefix video run verify", "pnpm -C video run verify", "yarn --cwd sub test", "source scripts/verify.sh",
+    ". ./test.sh", "nix develop -c pytest", "sudo -u ci ./test.sh", "timeout --signal KILL 60 ./test.sh",
+    "cat <<'EOF' | bash\n./test.sh\nEOF", "cargo +nightly test",
+  ];
+  for (const command of reads) assert.strictEqual(defaultVerify(command), false, `read as a verify run: ${command}`);
+  for (const command of runs) assert.strictEqual(defaultVerify(command), true, `not read as a verify run: ${command}`);
+});
+
 // A verify proves the code as it was when the run started: an edit that
 // lands while it runs -- another session, a background agent -- is after it.
 test("an edit made while a verify runs is still unverified", (t) => {

@@ -656,7 +656,7 @@ const infoOnly = (words, name = "") => words.length > 0 && words.every((t) => /^
 const MAKE_VALUES = ["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-o", "--old-file",
   "-W", "--what-if", "--new-file", "--assume-new", "-l", "--load-average"];
 const GRADLE_VALUES = ["-p", "-b", "-c", "-g", "-I", "-x", "--project-dir", "--exclude-task", "--init-script",
-  "--settings-file", "--build-file", "--gradle-user-home"];
+  "--settings-file", "--build-file", "--gradle-user-home", "--tests"];
 const MAVEN_VALUES = ["-f", "-pl", "-P", "-s", "-rf", "-gs", "--file", "--projects", "--activate-profiles", "--settings"];
 const TARGET_RUNNERS = { make: MAKE_VALUES, gmake: MAKE_VALUES, gradle: GRADLE_VALUES, gradlew: GRADLE_VALUES,
   mvn: MAVEN_VALUES, mvnw: MAVEN_VALUES, just: ["-f", "--justfile", "-d", "--working-directory", "--set"],
@@ -794,7 +794,7 @@ function lex(text, start, inner, depth) {
         add("<<");
         i += 2;
       }
-    } else if (ch === ">" && text[i + 1] !== "(" && cur.words[0] !== "[[") {
+    } else if (ch === ">" && text[i + 1] !== "(" && cur.words.find((t) => !KEYWORDS.has(t)) !== "[[") {
       // not `>(...)`, nor a comparison in `[[ ... ]]`; a descriptor number
       // or `&` before it is part of the operator
       if (word !== null && !/^(\d+|&)$/.test(word)) endWord();
@@ -1106,28 +1106,52 @@ function mayWrite(cmd) {
 function stepWrites(cmd) {
   const { w } = plainWords(cmd);
   if (w.some((t) => FIX_FLAGS.test(t))) return true;
+  const manager = (i) => i >= 0 && own(PACKAGE_MANAGERS, programName(w[i]).toLowerCase());
   const runner = w.findIndex((t, i) => /^(jest|vitest)$/.test(programName(t).toLowerCase())
-    || (t === "test" && i > 0 && own(PACKAGE_MANAGERS, programName(w[i - 1]).toLowerCase())));
+    || (/^test([:_-]|$)/.test(t) && (manager(i - 1) || (w[i - 1] === "run" && manager(i - 2)))));
   if (runner >= 0 && w.slice(runner + 1).some((t) => UPDATE_FLAGS.test(t))) return true;
-  const fixes = (name) => /(^|[:_-])fix|Fix/.test(name)
-    || (/(^|[:_-])(format|fmt|apply)|Format|Fmt|Apply/.test(name) && !/check|verify/i.test(name));
+  // a whole word of a name: `lint:fix`, `spotlessApply`, not `test:fixtures`
+  const named = (name, words) => new RegExp(`(^|[:_-])(${words})([:_-]|$)`, "i").test(name)
+    || new RegExp(`(^|[a-z0-9])(${words.replace(/\b[a-z]/g, (c) => c.toUpperCase())})([A-Z0-9]|$)`).test(name);
+  const fixes = (name) => named(name, "fix|generate|gen|codegen")
+    || (named(name, "format|fmt|apply") && !/check|verify/i.test(name));
   return runs(cmd, 0).some((run) => {
     const parts = run.split(" ");
     return parts.length > 1 && fixes(parts[parts.length - 1]);
   });
 }
 
-// With a regex of one's own, a simple command whose words or heredoc
-// bodies it matches is a verify step (`pytest -q`, `./test.sh --fast >
-// test.sh.log`). A redirection's target is no word, so `echo x > test.sh`
-// is no step, and neither is a command that edits the file the regex names
-// (`sed -i ... test.sh`, `cp new.sh test.sh`).
+// With a regex of one's own, a simple command is a verify step when the
+// regex matches its words and takes in what it runs (`pytest -q`,
+// `./test.sh --fast > test.sh.log`, `npm run test:unit`), when it matches a
+// heredoc the command reads, or when the command writes nothing (`cat
+// test.sh`). A command that writes and only names the file (`git checkout
+// -- test.sh`, `curl -o test.sh ...`, `sed -i ... test.sh`) is no step, and
+// a redirection's target is no word, so neither is `echo x > test.sh`.
 const COPIES = new Set(["cp", "mv", "tee", "install", "ln", "rsync"]);
 function regexStep(cmd, re) {
-  const { w } = plainWords(cmd);
-  if (!anyLine([w.join(" "), ...cmd.bodies].join("\n"), re)) return false;
+  const { w, toFile } = plainWords(cmd);
   const p = programOf(w);
-  return p === null || !(inPlace(p) || COPIES.has(p.name));
+  if (p !== null && (inPlace(p) || COPIES.has(p.name))) return false;
+  if (!toFile && cmd.bodies.some((body) => anyLine(body, re))) return true;
+  const line = w.join(" ");
+  if (!anyLine(line, re)) return false;
+  if (!mayWrite(cmd)) return true;
+  const ran = new Set(runs(cmd, 0).flatMap((run) => run.split(" ")));
+  const spans = [];
+  let at = 0;
+  for (const t of w) {
+    if (ran.has(t) || ran.has(programName(t))) spans.push([at, at + t.length]);
+    at += t.length + 1;
+  }
+  const g = ere(re);
+  const all = new RegExp(g.source, `${g.flags}g`);
+  for (let m = all.exec(line); m !== null; m = all.exec(line)) {
+    const end = m.index + Math.max(m[0].length, 1);
+    if (spans.some(([a, b]) => m.index < b && end > a)) return true;
+    if (m[0].length === 0) all.lastIndex += 1;
+  }
+  return false;
 }
 
 // Whether a verify command also changes a file up to its last verify step

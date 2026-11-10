@@ -63,13 +63,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and then tests (`sed -i ... && npm test`) and fails is red too, and one
   that tests and then edits (`npm test && sed -i ...`) leaves that edit
   unverified; a check that fixes what it checks (`eslint --fix`, `npm run
-  lint:fix`) counts as an edit too. A failing command that only tests, with
+  lint:fix`) or generates code (`make generate test`) counts as an edit too. A failing command that only tests, with
   `cd`, `mkdir`, reads or an environment's activation beside it, counts
   nothing the run wrote itself, so a session that edited nothing is not made
   red by its own test output. With `LUCIAZERO_VERIFY_REGEX`, the test step is
-  the command whose words the regex matches, unless that command edits the
-  file the regex names (`sed -i ... test.sh`); a verify command with no such
-  step counts what it changed as unverified, never as red.
+  a command the regex matches on what it runs, not one that writes a file
+  the regex names (`git checkout -- test.sh`, `sed -i ... test.sh`); a verify
+  command with no such step counts what it changed as unverified, never as
+  red.
   Outside a git work tree nothing changes. git runs read-only: no optional
   locks, fsmonitor off.
 - **A committed `.claude/settings.local.json` is refused** like a committed

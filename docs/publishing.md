@@ -90,7 +90,11 @@ One-time setup, in this order:
       this; keep it that way.
 - [x] npmjs.com does not resolve relative image paths in READMEs — README image
       tags use immutable-revision `cdn.jsdelivr.net` URLs shared with GitHub,
-      avoiding mutable branch paths and raw GitHub rate limits.
+      avoiding mutable branch paths and raw GitHub rate limits. No gate checks
+      that a pinned commit exists on GitHub: commit a new image first, pin the
+      README to that commit, push it before opening the PR, and merge with a
+      merge commit. A squash merge or a rebase drops the pinned commit and
+      breaks the image on GitHub and npm.
 - [x] npm treats every root README variant as mandatory and npm 11 selected
       `README.th.md` for 2.3.0. The release job now publishes from a disposable
       staged package containing only `README.md`; the repository keeps the Thai
@@ -430,7 +434,11 @@ The mascot on the site is `site/lucia-3d.png`, a copy of
 `docs/assets/lucia-3d.png` (the site publishes only `site/`, so it cannot
 reference `docs/`). `site/og.png` is rendered from `docs/assets/og-card.html`;
 the render command is in that file. When the mascot changes, update both copies,
-re-render the card, and upload it again as the social preview.
+re-render the card, and upload it again as the social preview. The README
+banners (`docs/assets/readme-banner-*.svg`) carry the mascot too, embedded as
+WebP because an SVG shown through `<img>` cannot load other files; redraw them
+with `docs/assets/readme-banner.py` (its docstring has the commands) when it
+changes.
 
 ## Channel honesty
 

@@ -1,55 +1,77 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@f10ec1e360be25bed98f48e50dd582fba986e20c/docs/assets/readme-banner-dark.svg">
+    <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@f10ec1e360be25bed98f48e50dd582fba986e20c/docs/assets/readme-banner-light.svg" width="100%" alt="Luciazero: ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ ลูเซีย มาสคอตของโปรเจกต์ ยืนข้างเทอร์มินัลที่ agent บอกว่าเทสต์ผ่านหมด ./test.sh ออกด้วย exit 1 แก้พร้อม regression test แล้ว ./test.sh ออกด้วย exit 0 จากนั้น /done รัน full verify แล้วตามด้วย revert probe ที่แสดงว่าเทสต์ใหม่ไม่ผ่านถ้าไม่มี fix">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/dw/luciazero" alt="npm weekly downloads"></a>
+  <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/ohm41321/luciazero/stargazers"><img src="https://img.shields.io/github/stars/ohm41321/luciazero?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/ohm41321/luciazero/network/members"><img src="https://img.shields.io/github/forks/ohm41321/luciazero?style=flat" alt="GitHub forks"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
+</p>
+
 <div align="center">
-  <a href="https://ohm41321.github.io/luciazero/th/#intro"><img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/intro-cover.jpg" width="720" alt="ดูวิดีโอแนะนำ Luciazero ความยาวสองนาที"></a>
-  <h1>Luciazero</h1>
-  <p>
-    <strong>ให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ</strong><br>
-    <code>วางแผน → แก้ → ตรวจ → แก้ซ้ำ</code>
-  </p>
-  <p>
-    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/v/luciazero" alt="npm version"></a>
-    <a href="https://www.npmjs.com/package/luciazero"><img src="https://img.shields.io/npm/dw/luciazero" alt="npm weekly downloads"></a>
-    <a href="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml"><img src="https://github.com/ohm41321/luciazero/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-    <a href="https://github.com/ohm41321/luciazero/stargazers"><img src="https://img.shields.io/github/stars/ohm41321/luciazero?style=flat" alt="GitHub stars"></a>
-    <a href="https://github.com/ohm41321/luciazero/network/members"><img src="https://img.shields.io/github/forks/ohm41321/luciazero?style=flat" alt="GitHub forks"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/ohm41321/luciazero" alt="MIT license"></a>
-  </p>
+
+[English](README.md) · **ภาษาไทย** · [เว็บไซต์](https://ohm41321.github.io/luciazero/th/) · [วิดีโอแนะนำสองนาที](https://ohm41321.github.io/luciazero/th/#intro)
+
 </div>
 
-[English](README.md) · **ภาษาไทย** · [เว็บไซต์](https://ohm41321.github.io/luciazero/th/)
+<p align="center">
+  <a href="#เริ่มใช้ใน-30-วินาที">เริ่มใช้</a> ·
+  <a href="#ปกป้องอะไร">ปกป้องอะไร</a> ·
+  <a href="#ดูลูปการทำงาน">ลูป</a> ·
+  <a href="#ภาพรวม-skill-ทั้ง-13-ตัว">Skill</a> ·
+  <a href="#ส่งต่องานข้าม-agent">Relay</a> ·
+  <a href="#ให้-agent-สองตัวส่งงานหากัน">Agent Bus</a> ·
+  <a href="#ติดตั้ง">ติดตั้ง</a> ·
+  <a href="#หลักฐานและข้อจำกัด">หลักฐาน</a> ·
+  <a href="#ความปลอดภัยและ-requirement">ความปลอดภัย</a>
+</p>
+
+---
+
+Luciazero เป็นชั้น verification และ handoff สำหรับ **Claude Code, Codex CLI
+และ runtime ที่ใช้ skill ได้** เหมาะกับทีมที่อยากให้ coding agent
+พิสูจน์งานก่อนบอกว่าเสร็จ นี่คือชั้นวินัย ไม่ใช่ agent runtime
+
+> งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
+> ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
+
+| งาน | ทำอย่างไร |
+|---|---|
+| **พิสูจน์** | Stop hook เตือนเมื่อ agent จะหยุดทั้งที่มีการแก้หลังการตรวจครั้งล่าสุด; strict gate แบบ opt-in บล็อกเมื่อผลแดง `/done` รัน full verify และ skeptic diff pass เพิ่ม revert probe เมื่อมีการแก้ test และ review อิสระหนึ่งรอบเมื่อ diff เสี่ยง |
+| **รักษา&nbsp;scope** | `/done` บังคับให้ส่งครบทุกข้อหรือระบุสิ่งที่เว้นไว้ scope ที่หลุดจึงถูกบอกออกมาแทนที่จะหายเงียบ ๆ |
+| **จำบทเรียน** | `/retro` บันทึกทางตันและกับดัก `/debug` อ่านก่อนลองรอบถัดไป |
+| **ส่งต่องาน** | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge ไปยัง session, agent หรือเครื่องอื่น |
 
 <p align="center">
   <strong>13 skills</strong> · <strong>Relay fixture 6/6</strong> · <strong>Claude + Codex</strong> · <strong>MIT</strong>
 </p>
 <p align="center"><sub>Relay 6/6 เป็นการตรวจ protocol ด้วยเครื่อง ส่วนผลด้านพฤติกรรมรายงานแยกต่างหาก</sub></p>
 
-Luciazero เป็นชั้น verification และ handoff สำหรับ Claude Code, Codex CLI
-และ runtime ที่ใช้ skill ได้ ช่วยให้ agent พิสูจน์ test, รักษา scope
-และส่งต่องานที่ยังไม่เสร็จพร้อมหลักฐาน
-
-checkout นี้คือ tree ของ **3.0.0**: manifest กับรายการบนสุดใน
+**checkout นี้คือ tree ของ 3.0.0** manifest กับรายการบนสุดใน
 [changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
-3.0.0 เป็น major release เพราะ reviewer agent เปลี่ยนชื่อเป็น
-`lucia-reviewer` (ใน plugin คือ `luciazero:lucia-reviewer`) prompt หรือ
-script ที่เรียก `reviewer` ต้องเปลี่ยนไปใช้ชื่อใหม่ stop hook ตัดสินคำสั่งจาก
-โปรแกรมที่มันรันจริง การอ่านไฟล์ test จึงไม่นับแล้ว ส่วน type checker, linter
-และ check script ของ project นับ การแก้ไฟล์ scratch ใน temporary directory
-ไม่ปลุก nudge อีก
-eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
-skills-ablation กับ model จริง การรองรับ Windows แบบ native ซึ่งเพิ่มใน 2.7.0
-ผ่าน CI บน `windows-latest` แล้ว แต่ยังไม่เคยรันบนเครื่อง Windows จริง
-[การทดสอบภาคสนามบน Windows](docs/windows-field-test.md) ระบุสิ่งที่ CI
-ไม่ครอบคลุม
 
-> งานเสร็จต้องพิสูจน์ด้วยคำสั่ง ไม่ใช่คำตัดสินของ agent
-> ถ้ายังไม่มีคำสั่งตรวจ นั่นคือบั๊กแรก
-
-Luciazero เหมาะกับทีมที่อยากให้ coding agent พิสูจน์งานก่อนบอกว่าเสร็จ
-ช่วยป้องกันการ verify แบบ false-green และ scope ที่หาย เก็บบทเรียนจากทางตันเดิม
-และส่ง context ข้าม handoff ได้เมื่อใช้ `/lucia-relay` นี่คือชั้นวินัย ไม่ใช่ agent runtime
+- **Breaking:** reviewer agent เปลี่ยนชื่อเป็น `lucia-reviewer`
+  (ใน plugin คือ `luciazero:lucia-reviewer`) prompt หรือ script ที่เรียก
+  `reviewer` ต้องเปลี่ยนไปใช้ชื่อใหม่
+- stop hook ตัดสินคำสั่งจากโปรแกรมที่มันรันจริง การอ่านไฟล์ test จึงไม่นับแล้ว
+  ส่วน type checker, linter และ check script ของ project นับ การแก้ไฟล์ scratch
+  ใน temporary directory ไม่ปลุก nudge อีก
+- eval fixture ทั้ง 12 ชุดผ่าน offline ใน `./test.sh` แต่ยังไม่มี pilot
+  skills-ablation กับ model จริง
+- การรองรับ Windows แบบ native ซึ่งเพิ่มใน 2.7.0 ผ่าน CI บน `windows-latest`
+  แล้ว แต่ยังไม่เคยรันบนเครื่อง Windows จริง
+  [การทดสอบภาคสนามบน Windows](docs/windows-field-test.md) ระบุสิ่งที่ CI
+  ไม่ครอบคลุม
 
 ## เริ่มใช้ใน 30 วินาที
 
-เลือกช่องทางตาม agent ที่ใช้ แล้วเริ่ม session ใหม่:
+เลือกช่องทางตาม agent ที่ใช้ แล้วเริ่ม session ใหม่
 
 **Claude Code · full pack**
 
@@ -76,6 +98,27 @@ npx skills add ohm41321/luciazero
 
 เรียกใช้ skill `ready` ด้วย syntax ของ agent ที่ใช้ (ถ้าเป็น Codex CLI ให้ใช้
 `$ready`) ช่องทางนี้ตั้งใจไม่ติดตั้ง doctrine, `lucia-reviewer` หรือ hook
+ดูตารางเทียบทุกช่องทางที่[ติดตั้ง](#ติดตั้ง)
+
+## ปกป้องอะไร
+
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-false-green.gif" width="720" alt="agent ถูกสั่งให้แก้บั๊ก login แล้วตอบว่า Fixed. All tests pass. Done. เครื่องหมายถูกสีเขียวขึ้นว่ารันไป 0 ครั้ง วิดีโอถามว่า Actually tested? แล้วเครื่องหมายถูกก็แตก">
+  <br><sub>ความพังข้อแรกในตาราง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
+</p>
+
+| ความพัง | กลไกที่จับ |
+|---|---|
+| บอกว่า “เสร็จ” โดยไม่ตรวจ | Stop hook เตือน; strict gate แบบ opt-in บล็อกเมื่อผลแดง |
+| นับ `cat test.sh` ว่ารัน test | ตรวจจากโปรแกรมที่คำสั่งรันจริง; ตั้ง `LUCIAZERO_VERIFY_CMD` แบบ exact ได้ |
+| ลดความเข้ม test เพื่อให้เขียว | Doctrine ข้อ 3 + review ใน `/done`; มีตัวอย่าง hook กัน suppression แบบ opt-in |
+| Test ใหม่ผ่านแม้ไม่มี fix | `revert-probe.cjs` รัน test กับโค้ดเก่า |
+| ทำ scope หายเงียบ ๆ | `/done` บังคับให้ส่งครบหรือระบุสิ่งที่เว้นไว้ |
+| เดินเข้าทางตันเดิมอีกรอบ | `/retro` บันทึก และ `/debug` อ่านก่อนเริ่ม |
+| Context หายตอนเปลี่ยน agent | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge |
+
+กลไกที่ตรวจด้วยเครื่องรันใน `test.sh`; ข้ออ้างด้านพฤติกรรมวัดด้วย
+[eval harness](eval/README.md)
 
 ## ดูลูปการทำงาน
 
@@ -99,19 +142,91 @@ https://github.com/user-attachments/assets/e18f6092-12ae-4113-bfec-47765956bb49
 ✅ verify 3m   → การตรวจผ่านเมื่อสามนาทีก่อน
 ```
 
-รัน hook driver ตัวจริงในเครื่องเพื่อดูมันเปลี่ยนได้โดยไม่ใช้ model หรือ API:
+ดูมันเปลี่ยนบนเครื่องของคุณ ทั้งสอง script ใช้ directory ชั่วคราวและรัน
+implementation จริง โดยไม่ใช้ model หรือ API
 
 ```bash
-bash docs/assets/statusline-demo.sh
+bash docs/assets/statusline-demo.sh   # hook driver กับ statusline ตัวจริง
+bash docs/assets/relay-demo.sh        # การส่งต่องานข้าม session
 ```
 
-สำหรับ demo การส่งต่องานข้าม session:
+## ภาพรวม skill ทั้ง 13 ตัว
+
+เรียกใช้ `ready` ก่อนหนึ่งครั้ง (`/ready` สำหรับ agent ที่ใช้ slash และ `$ready`
+ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน
+
+| จังหวะ | Skill | ผลลัพธ์ |
+|---|---|---|
+| เข้า repository | `/ready` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
+| โครงสร้างหรือหลักฐานไล่อ่านยาก | `/show` | แสดงความเชื่อมโยง สิ่งที่เปลี่ยน และหลักฐานด้วยภาพที่เล็กที่สุด |
+| อยากได้เสียงพูดแบบลูเซียระหว่างเขียนโค้ด | `/imouto-mode focus` | เพิ่มน้ำเสียงน้องสาวซึนเดเระแบบอ่อน ๆ; ต้องเปิดเองและค่าเริ่มต้นปิด |
+| ก่อนงานเสี่ยง กำกวม หรือแตะหลาย module | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
+| บั๊กที่มองรอบแรกไม่ออก | `/debug` | Reproduction, hypothesis ledger, regression test |
+| รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |
+| ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
+| ต้องส่งงานไปที่อื่น | `/lucia-relay` | State แบบ JSON + Markdown พร้อมตรวจ drift |
+| มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง ([วิธีตั้งค่าและ demo](docs/agent-bus.md)) |
+| อยากให้ agent สอง session คุยกัน (beta) | `/lucia-chat` | บอกว่าใครรออะไร เปิดหนึ่งหน้าต่างต่อ agent และเปิดหน้าต่างดูบทสนทนาได้ถ้าต้องการ |
+| ปรับ performance | `/experiment` | Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม |
+| ดูนิสัยการ verify ในเครื่อง | `/discipline-report` | รายงาน outcome กรองตามเวลา/โปรเจกต์ |
+| หลังงานยาก | `/retro` | เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก |
+
+`/imouto-mode` จะไม่เปิดตัวเอง ใช้ `focus` (แนะนำ), `on` หรือ `off` โดยโหมดมีผล
+เฉพาะ invocation นั้น ไม่เขียน config และหลักฐานทางเทคนิคจะใช้ภาษาตรงเสมอ
+ผู้ใช้ plugin เรียก `/luciazero:imouto-mode focus`; ผู้ใช้ Codex เรียก
+`$imouto-mode focus`
+
+Diff เสี่ยงจะผ่าน `lucia-reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
+หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจรอบเดียวโดยระบุทั้งสอง
+focus ไม่ใช่รอบละ focus diff เล็กที่ไม่เข้า route ใดไม่ต้อง review
+
+ไฟล์คำสั่งของ agent โตขึ้นเรื่อย ๆ [context-weight](https://github.com/ohm41321/context-weight)
+เป็น skill แยกจากผู้สร้างคนเดียวกัน ใช้วัดว่า `CLAUDE.md`, `AGENTS.md` และรายการ
+skill กิน context เท่าไรก่อนเริ่มงาน แล้วช่วยตัดให้เล็กลงพร้อมพิสูจน์ว่าไม่มีบรรทัดไหนหาย
+
+## ส่งต่องานข้าม agent
+
+`/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต
+Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พร้อม human view
+ส่วน Session B ตรวจ repository identity, HEAD และ manifest digest จากช่องทางที่เชื่อถือได้
+อ่าน next action และ negative knowledge รัน verification ที่อนุมัติแล้วซ้ำ
+ใน coding harness ของเครื่องรับ แล้วจึง consume อย่างชัดเจน
+
+ทั้งหมดเหลือสองคำสั่งต่อฝั่ง:
 
 ```bash
-bash docs/assets/relay-demo.sh
+# ฝั่งส่ง (session A)
+luciazero relay draft --write     # เพิ่ม --recipient cross-machine --base <base> เมื่อต้อง publish transfer tag
+                                  # ...กรอก JSON แล้วรัน:
+luciazero relay finalize          # validate และสร้าง human view; ถ้าเป็น cross-machine จะพิมพ์
+                                  # trusted envelope ให้ด้วย (--envelope-out <file> บันทึกเป็นไฟล์)
+
+# ฝั่งรับ (session B)
+luciazero relay inspect --trusted-envelope <file>
+                                  # ...รันหลักฐานซ้ำให้ครบ แล้วจึง:
+luciazero relay consume --verified --trusted-envelope <file>
 ```
 
-ทั้งสอง script ใช้ directory ชั่วคราวและรัน implementation จริง
+เครื่องเดิมยังใช้ local path และ schema 1/2 ได้ ส่วน cross-machine schema 3
+สร้างหลัง commit/push เท่านั้น โดย publish transfer tag ที่ตั้งชื่อตาม commit
+และบันทึก clone URL ที่ตัด credential แล้ว, head/base OID, committed changed files
+และ inline knowledge
+ฝั่งรับต้องระบุ route, trusted HEAD และ manifest digest เอง จึง downgrade validation ด้วย
+artifact ปลอมไม่ได้ รองรับ detached checkout และ Relay ไม่ execute command
+จาก artifact ผู้รับต้องรันเองให้ครบก่อนใช้ `consume --verified`
+envelope เชื่อถือได้ต่อเมื่อมาจากช่องทางที่ยืนยันตัวตนแล้วและระบุ path จากนอก clone
+อย่างชัดเจน ไฟล์ที่ส่งมาพร้อม artifact จะถูกปฏิเสธ
+
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-relay.gif" width="720" alt="Lucia Relay มาถึง session ใหม่บนเครื่องใหม่ รันหลักฐานซ้ำแล้วได้ความล้มเหลวเดิมตามที่บันทึกไว้ หลังแก้ price() รันซ้ำผ่านด้วย exit 0">
+  <br><sub>relay มาถึงปลายทาง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
+</p>
+
+วิดีโอเป็นแอนิเมชัน [relay demo](docs/assets/relay-demo.sh) รัน implementation ที่ ship จริง
+ใน Git repository ชั่วคราว Fixture `relay-transfer` ใน CI ให้ reference ที่สมบูรณ์
+6/6 และปฏิเสธ handoff Markdown ทั่วไป (1/6) กับ relay ที่เนื้อหาครบแต่
+fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป็นการตรวจ protocol ด้วยเครื่อง
+**ไม่ใช่ผล uplift ของโมเดล** อ่าน [วิธีวัดและข้อจำกัด](docs/benchmark.md#skill-protocol-evidence)
 
 ## ให้ agent สองตัวส่งงานหากัน
 
@@ -156,66 +271,17 @@ force-push, การเปลี่ยน public contract และการข
 ([approvals](docs/agent-bus.md#approvals)) ส่วน trust boundary ของโปรเจกต์อยู่ใน
 [SECURITY.md](SECURITY.md)
 
-## ปกป้องอะไร
-
-<p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-false-green.gif" width="720" alt="agent ถูกสั่งให้แก้บั๊ก login แล้วตอบว่า Fixed. All tests pass. Done. เครื่องหมายถูกสีเขียวขึ้นว่ารันไป 0 ครั้ง วิดีโอถามว่า Actually tested? แล้วเครื่องหมายถูกก็แตก">
-  <br><sub>ความพังข้อแรกในตาราง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
-</p>
-
-| ความพัง | กลไกที่จับ |
-|---|---|
-| บอกว่า “เสร็จ” โดยไม่ตรวจ | Stop hook เตือน; strict gate แบบ opt-in บล็อกเมื่อผลแดง |
-| นับ `cat test.sh` ว่ารัน test | ตรวจจากโปรแกรมที่คำสั่งรันจริง; ตั้ง `LUCIAZERO_VERIFY_CMD` แบบ exact ได้ |
-| ลดความเข้ม test เพื่อให้เขียว | Doctrine ข้อ 3 + review ใน `/done`; มีตัวอย่าง hook กัน suppression แบบ opt-in |
-| Test ใหม่ผ่านแม้ไม่มี fix | `revert-probe.cjs` รัน test กับโค้ดเก่า |
-| ทำ scope หายเงียบ ๆ | `/done` บังคับให้ส่งครบหรือระบุสิ่งที่เว้นไว้ |
-| เดินเข้าทางตันเดิมอีกรอบ | `/retro` บันทึก และ `/debug` อ่านก่อนเริ่ม |
-| Context หายตอนเปลี่ยน agent | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge |
-
-กลไกที่ตรวจด้วยเครื่องรันใน `test.sh`; ข้ออ้างด้านพฤติกรรมวัดด้วย
-[eval harness](eval/README.md)
-
-## ส่งต่องานข้าม agent
-
-`/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต
-Session A สร้าง `LUCIA_RELAY.json` ที่เป็น canonical พร้อม human view
-ส่วน Session B ตรวจ repository identity, HEAD และ manifest digest จากช่องทางที่เชื่อถือได้
-อ่าน next action และ negative knowledge รัน verification ที่อนุมัติแล้วซ้ำ
-ใน coding harness ของเครื่องรับ แล้วจึง consume อย่างชัดเจน
-
-เครื่องเดิมยังใช้ local path และ schema 1/2 ได้ ส่วน cross-machine schema 3
-สร้างหลัง commit/push เท่านั้น โดย publish transfer tag ที่ตั้งชื่อตาม commit
-และบันทึก clone URL ที่ตัด credential แล้ว, head/base OID, committed changed files
-และ inline knowledge
-ฝั่งรับต้องระบุ route, trusted HEAD และ manifest digest เอง จึง downgrade validation ด้วย
-artifact ปลอมไม่ได้ รองรับ detached checkout และ Relay ไม่ execute command
-จาก artifact ผู้รับต้องรันเองให้ครบก่อนใช้ `consume --verified`
-
-ทั้งหมดเหลือสองคำสั่งต่อฝั่ง ฝั่งส่งรัน `luciazero relay draft --write`
-(เพิ่ม `--recipient cross-machine --base <base>` เมื่อต้อง publish transfer tag)
-กรอก JSON แล้วรัน `luciazero relay finalize` ซึ่ง validate, สร้าง human view
-และถ้าเป็น cross-machine จะพิมพ์ trusted envelope ให้ (`--envelope-out <file>`
-บันทึกเป็นไฟล์) ฝั่งรับรัน `luciazero relay inspect --trusted-envelope <file>`
-และหลังรันหลักฐานซ้ำแล้วจึง `luciazero relay consume --verified --trusted-envelope <file>`
-envelope เชื่อถือได้ต่อเมื่อมาจากช่องทางที่ยืนยันตัวตนแล้วและระบุ path จากนอก clone
-อย่างชัดเจน ไฟล์ที่ส่งมาพร้อม artifact จะถูกปฏิเสธ
-
-<p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/ohm41321/luciazero@40d27aae08150e5fab87ca14af1cf7e8569cd0a1/docs/assets/film-relay.gif" width="720" alt="Lucia Relay มาถึง session ใหม่บนเครื่องใหม่ รันหลักฐานซ้ำแล้วได้ความล้มเหลวเดิมตามที่บันทึกไว้ หลังแก้ price() รันซ้ำผ่านด้วย exit 0">
-  <br><sub>relay มาถึงปลายทาง จาก<a href="https://ohm41321.github.io/luciazero/th/#intro">วิดีโอแนะนำ</a></sub>
-</p>
-
-วิดีโอเป็นแอนิเมชัน [relay demo](docs/assets/relay-demo.sh) รัน implementation ที่ ship จริง
-ใน Git repository ชั่วคราว Fixture `relay-transfer` ใน CI ให้ reference ที่สมบูรณ์
-6/6 และปฏิเสธ handoff Markdown ทั่วไป (1/6) กับ relay ที่เนื้อหาครบแต่
-fingerprint เก่า (5/6) ตัวเลขเหล่านี้เป็นการตรวจ protocol ด้วยเครื่อง
-**ไม่ใช่ผล uplift ของโมเดล** อ่าน [วิธีวัดและข้อจำกัด](docs/benchmark.md#skill-protocol-evidence)
-
 ## ติดตั้ง
 
-Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใช้ skill ได้ เลือกช่องทาง
-ที่เหมาะกับ workflow ของคุณ
+Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใช้ skill ได้ แต่ละช่องทาง
+ได้ส่วนของ pack ไม่เท่ากัน:
+
+| ช่องทาง | Doctrine | skill ทั้ง 13 ตัว | `lucia-reviewer` | Hook + statusline |
+|---|:---:|:---:|:---:|:---:|
+| Claude Code plugin | ✓ | ✓ | ✓ | เฉพาะ hook |
+| Classic, Claude Code | ✓ | ✓ | ✓ | เมื่อใช้ `--with-hooks` |
+| Classic, Codex CLI | ✓ | ✓ | ✓ (เป็น skill) | — |
+| เฉพาะ skill | — | ✓ | — | — |
 
 <details>
 <summary><strong>แนะนำ · Claude Code plugin</strong></summary>
@@ -284,7 +350,14 @@ Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไ
 
 ## อัปเดตอย่างปลอดภัย
 
-Luciazero จะไม่แก้ไฟล์ของ classic หรือ Codex อยู่เบื้องหลัง
+Luciazero จะไม่แก้ไฟล์ของ classic หรือ Codex อยู่เบื้องหลัง แต่ละช่องทางใช้ตัว
+อัปเดตของตัวเอง:
+
+| ติดตั้งด้วย | อัปเดตด้วย |
+|---|---|
+| Classic หรือ Codex | `luciazero update` (`luciazero check-update` อ่านอย่างเดียว) |
+| Claude Code plugin | `claude plugin update luciazero@luciazero` แล้วรัน `/reload-plugins` |
+| เฉพาะ skill | `npx skills update` หรือ `npx skills update done -g` สำหรับ skill เดียว |
 
 ```bash
 luciazero check-update   # อ่านอย่างเดียว ติดต่อ npm เฉพาะตอนนี้
@@ -298,14 +371,6 @@ luciazero update         # อัปเดต classic/Codex ทุกชุด�
 เก่า จะไม่เริ่มติดตั้งใหม่ถ้าหา installation เดิมไม่พบ และจะหยุดเมื่อพบเวอร์ชัน
 ที่ใหม่กว่าหรือข้อมูลเวอร์ชันเสีย หลังอัปเดตให้เริ่ม agent session ใหม่
 
-ช่องทางอื่นใช้ตัวอัปเดตของช่องทางนั้น:
-
-```bash
-claude plugin update luciazero@luciazero   # แล้วรัน /reload-plugins
-npx skills update                          # ทุก skill ใน scope ที่เลือก
-npx skills update done -g                 # เฉพาะ skill "done" แบบ global
-```
-
 คำสั่ง skills จะอัปเดต skill ทุกตัวใน scope ที่เลือก ไม่ใช่เฉพาะ Luciazero
 จึงควรตรวจ prompt ก่อนยืนยัน ถ้าต้องการอัปเดตเพียงตัวเดียวให้ใช้รูปแบบ targeted
 
@@ -313,36 +378,6 @@ Claude Code อัปเดต plugin ตอนเริ่มโปรแกร
 **Marketplaces** → **luciazero** → **Enable auto-update** โดย marketplace
 ภายนอกจะปิดตัวเลือกนี้เป็นค่าเริ่มต้น ถ้าต้องการเพียงการแจ้งเตือน release ให้ใช้
 GitHub **Watch → Custom → Releases**
-
-## ภาพรวม skill ทั้ง 13 ตัว
-
-เรียกใช้ `ready` ก่อนหนึ่งครั้ง (`/ready` สำหรับ agent ที่ใช้ slash และ `$ready`
-ใน Codex) ที่เหลือใช้เมื่อถึงจังหวะของมัน
-
-| จังหวะ | Skill | ผลลัพธ์ |
-|---|---|---|
-| เข้า repository | `/ready` | หาหรือสร้างคำสั่ง verify และพิสูจน์ว่าแดงได้ |
-| โครงสร้างหรือหลักฐานไล่อ่านยาก | `/show` | แสดงความเชื่อมโยง สิ่งที่เปลี่ยน และหลักฐานด้วยภาพที่เล็กที่สุด |
-| อยากได้เสียงพูดแบบลูเซียระหว่างเขียนโค้ด | `/imouto-mode focus` | เพิ่มน้ำเสียงน้องสาวซึนเดเระแบบอ่อน ๆ; ต้องเปิดเองและค่าเริ่มต้นปิด |
-| ก่อนงานเสี่ยง กำกวม หรือแตะหลาย module | `/plan` | ล็อก scope และหลักฐานยอมรับที่สังเกตได้ |
-| บั๊กที่มองรอบแรกไม่ออก | `/debug` | Reproduction, hypothesis ledger, regression test |
-| รู้ revision ดีและเสีย | `/bisect` | หา first bad commit ใน worktree ชั่วคราว |
-| ก่อนบอกว่าเสร็จ | `/done` | Full verify, skeptic review และรายงาน scope |
-| ต้องส่งงานไปที่อื่น | `/lucia-relay` | State แบบ JSON + Markdown พร้อมตรวจ drift |
-| มีงานจาก agent อื่นรออยู่ในคิว (beta) | `/lucia-bus` | ลงทะเบียน อ่าน inbox claim ทำงาน และส่งผลผ่าน Agent Bus ในเครื่อง ([วิธีตั้งค่าและ demo](docs/agent-bus.md)) |
-| อยากให้ agent สอง session คุยกัน (beta) | `/lucia-chat` | บอกว่าใครรออะไร เปิดหนึ่งหน้าต่างต่อ agent และเปิดหน้าต่างดูบทสนทนาได้ถ้าต้องการ |
-| ปรับ performance | `/experiment` | Baseline, เกณฑ์ชนะ และการวัดแบบควบคุม |
-| ดูนิสัยการ verify ในเครื่อง | `/discipline-report` | รายงาน outcome กรองตามเวลา/โปรเจกต์ |
-| หลังงานยาก | `/retro` | เก็บบทเรียนและแนวทางที่พิสูจน์แล้วว่าไม่เวิร์ก |
-
-`/imouto-mode` จะไม่เปิดตัวเอง ใช้ `focus` (แนะนำ), `on` หรือ `off` โดยโหมดมีผล
-เฉพาะ invocation นั้น ไม่เขียน config และหลักฐานทางเทคนิคจะใช้ภาษาตรงเสมอ
-ผู้ใช้ plugin เรียก `/luciazero:imouto-mode focus`; ผู้ใช้ Codex เรียก
-`$imouto-mode focus`
-
-Diff เสี่ยงจะผ่าน `lucia-reviewer` แบบอ่านอย่างเดียวใน focus `security`, `contract`
-หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจรอบเดียวโดยระบุทั้งสอง
-focus ไม่ใช่รอบละ focus diff เล็กที่ไม่เข้า route ใดไม่ต้อง review
 
 ## หลักฐานและข้อจำกัด
 
@@ -394,20 +429,21 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
 
 ## ความปลอดภัยและ requirement
 
-- Node.js 18+ สำหรับ CLI, discipline report, hook และ status line รวมถึง helper
-  ที่ `/ready`, `/done` และ `/bisect` เรียก (`node <skill-dir>/scripts/*.cjs`;
-  ชื่อ `.sh` เดิมเป็น wrapper ที่ต้องใช้ Node เช่นกัน)
-- Bash สำหรับ classic installer บน macOS และ Linux; hook ถูกต่อแบบ exec form
-  จึงต้องใช้ Claude Code 2.1.139 ขึ้นไป (`install.sh --with-hooks` ปฏิเสธ Node
-  ที่เก่ากว่า 18)
-- Python 3.9+ สำหรับ Lucia Relay: `python3 <skill-dir>/scripts/relay.py` หรือ
-  `python` / `py -3` บน Windows
-- Agent Bus daemon (beta, opt-in) ต้องใช้ Python 3.10+ และ checkout: ไม่อยู่ใน
-  npm payload และ `npx luciazero` ไม่เคยเริ่ม daemon จาก checkout ให้รัน
-  `./install.sh` (บน Windows ใช้ `node bin\luciazero.js`) เพื่อติดตั้ง launcher
-  `luciazero-agentd` และ `lucia` ไว้ที่ `~/.claude/bin` แล้ว
-  `luciazero-agentd service install` จะรัน daemon ผ่าน launchd, systemd `--user`
-  หรือ Task Scheduler บน Windows ดู [docs/agent-bus.md](docs/agent-bus.md)
+| ต้องมี | ใช้กับ |
+|---|---|
+| Node.js 18+ | CLI, discipline report, hook และ status line รวมถึง helper ที่ `/ready`, `/done` และ `/bisect` เรียก (`node <skill-dir>/scripts/*.cjs`; ชื่อ `.sh` เดิมเป็น wrapper ที่ต้องใช้ Node เช่นกัน) |
+| Bash | classic installer บน macOS และ Linux |
+| Claude Code 2.1.139+ | hook ซึ่งต่อแบบ exec form (`install.sh --with-hooks` ปฏิเสธ Node ที่เก่ากว่า 18) |
+| Python 3.9+ | Lucia Relay: `python3 <skill-dir>/scripts/relay.py` หรือ `python` / `py -3` บน Windows |
+| Python 3.10+ และ checkout | Agent Bus daemon (beta, opt-in) |
+
+Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazero` ไม่เคยเริ่ม daemon
+จาก checkout ให้รัน `./install.sh` (บน Windows ใช้ `node bin\luciazero.js`)
+เพื่อติดตั้ง launcher `luciazero-agentd` และ `lucia` ไว้ที่ `~/.claude/bin`
+(`LUCIAZERO_BIN_DIR` เลือกไดเรกทอรีอื่นได้ และการรันครั้งต่อไปจะจำไว้) แล้ว
+`luciazero-agentd service install` จะรัน daemon ผ่าน launchd, systemd `--user`
+หรือ Task Scheduler บน Windows ดู [docs/agent-bus.md](docs/agent-bus.md)
+
 - Installer, hook, helper และ grader หลักรัน offline ส่วน behavioral eval จริง
   เรียก model CLI และใช้เครดิต API หรือโควตา subscription
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
@@ -415,19 +451,6 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   wall time ของ turn/Bash/verify, จำนวน green ซ้ำโดยไม่มี edit คั่น และจำนวน
   Bash, verify, skill ที่ model/user เรียก โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
   ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
-- โดย default hook นับคำสั่งเป็น verify จากโปรแกรมที่มันรันจริง ได้แก่
-  test runner (`pytest`, `npm test`, `node --test`, `go test`, `./test.sh`),
-  type checker (`tsc`, `mypy`), linter (`eslint`, `ruff check`, `shellcheck`)
-  และ check script ของ project (`npm run check`,
-  `python scripts/check-site.py`) การอ่านไฟล์ test ไม่นับ การรันโปรแกรมด้วย
-  `--help` หรือ `--version` อย่างเดียวก็ไม่นับ การแก้ไฟล์ใน temporary directory
-  ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
-  ไม่ปลุก nudge ส่วนคำสั่ง Bash ที่เขียนไฟล์ไม่ถูกนับเป็น edit
-- ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
-- `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
-  ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,
-  นามสกุล, อยู่ใต้ cwd หรือไม่, นับเป็น edit หรือไม่ — ไม่เก็บ path หรือเนื้อหา)
-  ไว้หาว่าอะไร re-arm nudge ทั้งที่ไม่เห็น edit
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
@@ -443,6 +466,25 @@ pilot มีเพียง 1 run ต่อ arm ต่อ task ดู [ผลเ
   Luciazero เรียกด้วยชื่อ — git, node, npm, Python, provider CLI, PowerShell,
   schtasks — ค้นจาก PATH เท่านั้น ไม่ค้นใน working directory ซึ่ง Windows
   จะค้นก่อน
+
+<details>
+<summary><strong>hook นับอะไรเป็น verify</strong></summary>
+
+- โดย default hook นับคำสั่งเป็น verify จากโปรแกรมที่มันรันจริง ได้แก่
+  test runner (`pytest`, `npm test`, `node --test`, `go test`, `./test.sh`),
+  type checker (`tsc`, `mypy`), linter (`eslint`, `ruff check`, `shellcheck`)
+  และ check script ของ project (`npm run check`,
+  `python scripts/check-site.py`) การอ่านไฟล์ test ไม่นับ การรันโปรแกรมด้วย
+  `--help` หรือ `--version` อย่างเดียวก็ไม่นับ การแก้ไฟล์ใน temporary directory
+  ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
+  ไม่ปลุก nudge ส่วนคำสั่ง Bash ที่เขียนไฟล์ไม่ถูกนับเป็น edit
+- ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
+- `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
+  ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,
+  นามสกุล, อยู่ใต้ cwd หรือไม่, นับเป็น edit หรือไม่ — ไม่เก็บ path หรือเนื้อหา)
+  ไว้หาว่าอะไร re-arm nudge ทั้งที่ไม่เห็น edit
+
+</details>
 
 อ่าน trust boundary ฉบับเต็มใน [SECURITY.md](SECURITY.md)
 

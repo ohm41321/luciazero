@@ -79,9 +79,12 @@
 - systemd reads `WorkingDirectory=` and `StandardOutput=append:` whole, with
   no unquoting: a quoted path is not absolute and the unit is refused as a
   bad setting (`config_parse_working_directory`, read 2026-11-10). Only
-  `ExecStart=` and `Environment=` unquote. `agentd/tests/test_service.py`
-  checks the unit text, not a real systemd: nothing here loads a unit, so
-  the quoted form shipped from 2.5.0 through 3.0.0 unnoticed.
+  `ExecStart=` and `Environment=` unquote. The quoted form shipped from 2.5.0
+  through 3.0.0 because every test read only the unit's text. Now
+  `SystemdRunTests` in `agentd/tests/test_service.py` runs `systemd-analyze
+  verify` on Linux, and its negative control proves that check refuses the
+  quoted form. With `LUCIAZERO_TEST_SYSTEMD=1` it also starts a linked copy
+  under a user manager. The verify CI job does both; no systemd on macOS.
 - `ps -o lstart=` prints in the caller's `LANG` and `TZ` (`de_DE` gives
   `Di. 10 Nov.`, an exported `TZ` another hour; probed 2026-11-10 on macOS).
   A start time one process records and another compares must come from

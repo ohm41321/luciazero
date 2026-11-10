@@ -21,6 +21,7 @@ import io
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,9 @@ from luciazero_agentd.__main__ import main
 from tests.fixtures import private_problem
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+#: Starts and stops a real systemd user service, under a unique name, on a
+#: throwaway machine. The verify CI job sets it; a developer need not.
+LIVE_SYSTEMD = os.environ.get("LUCIAZERO_TEST_SYSTEMD") == "1"
 
 
 class FakeRunner:
@@ -87,6 +91,18 @@ class ServiceCase(unittest.TestCase):
         kwargs.setdefault("which", lambda name: None)
         return service.plan(state_dir=str(self.state), root=self.root,
                             platform=platform, uid=501, **kwargs)
+
+    def wait_for_endpoint(self, seconds: float = 30.0) -> dict:
+        from luciazero_agentd.statedir import read_endpoint
+
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            endpoint = read_endpoint(self.state)
+            if endpoint:
+                return endpoint
+            time.sleep(0.1)
+        log = plan_log.read_text(encoding="utf-8") if (plan_log := self.state / "daemon.log").exists() else ""
+        self.fail(f"the daemon never wrote endpoint.json; log:\n{log}")
 
 
 class PlanTests(ServiceCase):
@@ -492,18 +508,6 @@ class WindowsTaskRunTests(ServiceCase):
         self.assertIn("listening on", plan.log.read_text(encoding="utf-8"))
         self.assertIsNone(private_problem(self.state / "token"))
 
-    def wait_for_endpoint(self, seconds: float = 30.0) -> dict:
-        from luciazero_agentd.statedir import read_endpoint
-
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            endpoint = read_endpoint(self.state)
-            if endpoint:
-                return endpoint
-            time.sleep(0.1)
-        log = plan_log.read_text(encoding="utf-8") if (plan_log := self.state / "daemon.log").exists() else ""
-        self.fail(f"the daemon never wrote endpoint.json; log:\n{log}")
-
     @staticmethod
     def stop(process: "subprocess.Popen[bytes]") -> None:
         process.kill()
@@ -556,6 +560,81 @@ class WindowsTaskRunTests(ServiceCase):
 
         winproc.kill(pid)
         cls.wait_gone(pid)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux only; the verify CI job runs it")
+class SystemdRunTests(ServiceCase):
+    """What systemd would load and start, loaded and started by systemd. The
+    tests above read the unit's text; only systemd can say it accepts it.
+    WorkingDirectory= was written quoted from 2.5.0 to 3.0.0, which systemd
+    refuses as a bad setting, and every one of them passed."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        if shutil.which("systemd-analyze") is None:
+            if LIVE_SYSTEMD:
+                self.fail("LUCIAZERO_TEST_SYSTEMD=1, but systemd-analyze is not installed here")
+            self.skipTest("no systemd here")
+
+    def unit(self) -> str:
+        """The unit `service install` would write here, with the daemon run
+        from this checkout rather than any launcher on PATH."""
+        plan = service.plan(state_dir=str(self.state), root=self.root, platform="linux", port=0,
+                            environ=dict(os.environ), which=lambda name: None)
+        return plan.files[0][1]
+
+    def unit_file(self, content: str, name: str) -> Path:
+        path = Path(self._tmp.name) / "units" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def verify(self, content: str) -> str:
+        """systemd-analyze's verdict on a unit: "" when it loads cleanly."""
+        path = self.unit_file(content, f"luciazero-agentd-verify-{uuid.uuid4().hex[:8]}.service")
+        done = subprocess.run(["systemd-analyze", "verify", "--man=no", str(path)],
+                              capture_output=True, text=True, timeout=120)
+        out = (done.stdout + done.stderr).strip()
+        return "" if done.returncode == 0 and path.name not in out else f"rc={done.returncode}\n{out}"
+
+    def test_systemd_loads_the_unit(self) -> None:
+        self.assertEqual("", self.verify(self.unit()))
+
+    def test_the_check_rejects_the_unit_as_it_shipped(self) -> None:
+        """The check above can fail on this systemd: the quoted
+        WorkingDirectory= that 2.5.0 to 3.0.0 wrote is refused."""
+        content = self.unit()
+        line, = [line for line in content.splitlines() if line.startswith("WorkingDirectory=")]
+        verdict = self.verify(content.replace(line, f'WorkingDirectory="{line.split("=", 1)[1]}"'))
+        self.assertIn("WorkingDirectory", verdict)
+
+    @unittest.skipUnless(LIVE_SYSTEMD, "starts a real user service; set LUCIAZERO_TEST_SYSTEMD=1 "
+                                       "on a throwaway machine (CI does)")
+    def test_a_linked_unit_starts_in_its_package_logs_and_stops(self) -> None:
+        name = f"luciazero-agentd-test-{uuid.uuid4().hex[:8]}.service"
+        path = self.unit_file(self.unit(), name)
+
+        def systemctl(*args: str, check: bool = True) -> str:
+            done = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=120)
+            if check:
+                self.assertEqual(0, done.returncode,
+                                 f"systemctl --user {' '.join(args)}: {done.stdout}{done.stderr}")
+            return done.stdout.strip()
+
+        systemctl("link", str(path))
+        self.addCleanup(systemctl, "daemon-reload", check=False)
+        self.addCleanup(systemctl, "disable", name, check=False)
+        self.addCleanup(systemctl, "stop", name, check=False)
+        systemctl("start", name)
+        endpoint = self.wait_for_endpoint(60.0)
+        pid = int(systemctl("show", "--property=MainPID", "--value", name))
+        self.assertEqual(pid, endpoint["pid"])
+        self.assertEqual("active", systemctl("is-active", name, check=False))
+        self.assertEqual(str(service._package_home()), os.readlink(f"/proc/{pid}/cwd"))
+        self.assertIn("listening on", (self.state / "daemon.log").read_text(encoding="utf-8"))
+        systemctl("stop", name)
+        self.assertNotEqual("active", systemctl("is-active", name, check=False))
+        self.assertFalse(Path(f"/proc/{pid}").exists(), "stop left the daemon running")
 
 
 class InstallTests(ServiceCase):

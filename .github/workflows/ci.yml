@@ -63,6 +63,23 @@ jobs:
         run: |
           shellcheck --version
           ./test.sh
+      - name: The systemd user unit loads, starts and stops under the runner's systemd
+        # The suite reads the unit's text; only systemd can say it accepts
+        # it. WorkingDirectory= was written quoted from 2.5.0 to 3.0.0, which
+        # systemd refuses, and every text check passed. test.sh unsets
+        # LUCIAZERO_*, so this runs the tests directly. Linger gives the
+        # runner a user manager; the test links a uniquely named copy of the
+        # unit and unlinks it.
+        working-directory: agentd
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          LUCIAZERO_TEST_SYSTEMD: "1"
+        run: |
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 0.1; done
+          systemd-analyze --version | head -1
+          python3 -m unittest tests.test_service.SystemdRunTests -v
 
   macos:
     # Stock macOS: /bin/bash 3.2 runs the suite itself, not only parses it,

@@ -623,7 +623,8 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   const writesA = (dir) => () => fs.writeFileSync(path.join(dir, "a.js"), "b\n");
   const writers = ["npx eslint --fix .", "pnpm lint:fix && pnpm test", "npm test -- -u", "npx vitest run --update",
     "./gradlew spotlessApply check", "echo b>a.js && npm test", "echo b> a.js && npm test", 'echo "a b">a.js && npm test',
-    "echo b >& a.js && npm test", ". ./gen.sh && npm test", "npm run test -- -u", "pnpm run test -u", "make generate test"];
+    "echo b >& a.js && npm test", ". ./gen.sh && npm test", "npm run test -- -u", "pnpm run test -u", "make generate test",
+    "make fixall test", "npm run lint:fixes && npm test"];
   writers.forEach((command, i) => {
     const { dir, s } = fresh(`p13-${i}`);
     s.shell("v1", command, writesA(dir), "Exit code 1");
@@ -648,7 +649,7 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   // or Format leave the run's output its own
   ["./gradlew clean test", "make lint test", "timeout 600 python3 -u -m pytest", 'rg "Vec<String>" src && cargo test',
     '[[ "$CI" > "" ]] && npm test', 'if [[ "$CI" > "" ]]; then npm test; fi', "npm run test:fixtures", "make test-fixtures",
-    "./gradlew test --tests '*FormatterTest'"]
+    "./gradlew test --tests '*FormatterTest'", "make verify-codegen", "npm run verify:gen"]
     .forEach((command, i) => {
       const { dir, s } = fresh(`p17-${i}`);
       s.shell("v1", command, () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"), "Exit code 1");
@@ -666,6 +667,7 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     ["test\\.sh", "cp new.sh test.sh && ./test.sh", "test.sh"],
     ["test\\.sh", "git checkout -- test.sh && ./test.sh", "test.sh"],
     ["test\\.sh", "curl -fsSo test.sh http://127.0.0.1:9/x; ./test.sh", "test.sh"],
+    ["test\\.sh", "wget http://127.0.0.1:9/test.sh; ./test.sh", "test.sh"],
     ["test\\.sh", "sed -i s/a/b/ test.sh", "test.sh"],
     ["test", "sed -i s/a/b/ a.test.js && npx jest", "a.test.js"]].forEach(([re, command, file], i) => {
     const { dir, s } = fresh(`p15-${i}`, regex(re));
@@ -684,6 +686,10 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     ["pytest -q", "pytest -q", "junit.xml", "Exit code 1", 0],
     ["pytest -q", "python3 -m pytest -q", "junit.xml", "Exit code 1", 0],
     ["test:unit", "npm run test:unit", "junit.xml", "Exit code 1", 0],
+    ["pytest", 'bash -c "pytest -q"', "junit.xml", "Exit code 1", 0],
+    ["pytest", 'bash -c "pytest -q"', "junit.xml", undefined, 0],
+    ["npm test", 'cmd /c "npm test"', "junit.xml", "Exit code 1", 0],
+    ["tests/unit", "pytest tests/unit", "junit.xml", "Exit code 1", 0],
     ["test\\.sh", "cat > run.sh <<'EOF'\n./test.sh\nEOF", "run.sh", undefined, 2],
     ["test\\.sh", "./test.sh > test.sh.log", "test.sh.log", "Exit code 1", 0]].forEach(([re, command, file, result, want], i) => {
     const { dir, s } = fresh(`p19-${i}`, regex(re));

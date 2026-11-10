@@ -24,7 +24,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   red run after a `sed -i` is red too. Documentation (in a new folder as
   well), ignored files, what a verify writes while it runs, and another
   session's edit made between two of its commands do not count; a file
-  removed before the last verify does not make a later file beside it count.
+  removed before the session's commands began does not make a later file
+  beside it count, once the hook has looked at that project before.
   Outside a git work tree nothing changes. git runs read-only: no optional
   locks, fsmonitor off.
 - **A committed `.claude/settings.local.json` is refused** like a committed

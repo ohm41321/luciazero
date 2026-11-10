@@ -400,25 +400,41 @@ function noteShell(state, key, startMs, endMs) {
 }
 
 // At a verify run, before it is recorded, and at stop: the files this
-// session's shell commands changed after the last verify ended, recorded as
-// its edit at the time they changed. git names the candidates -- what differs
-// from HEAD, every untracked file it does not ignore, what commits made since
-// then touched -- and one counts when it is code, as codeEdit says, and
-// changed while one of those commands ran. A removed file has no time of its
-// own: it counts by its directory's time, and only if it was not already gone
-// at the last look, so a later file beside an old deletion is not taken for
-// it. `look` asks git even with no command to account for, to keep that list
-// of removed files current. Anything git cannot answer, a directory outside
-// any work tree among them, leaves the edit state as it was.
-function shellEdits(state, cwd, project, key, look = false) {
+// session's shell commands changed, recorded as its edit at the time they
+// changed. git names the candidates -- what differs from HEAD, every untracked
+// file it does not ignore, what commits made since then touched -- and one
+// counts when it is code, as codeEdit says, and changed while one of those
+// commands ran, after the last verify ended. A command that overlapped that
+// run counts from its start instead: what the run wrote then may count too,
+// an extra nudge, never a missed one.
+//
+// At a verify run (runStart, when it started) only what changed before it
+// started counts, so nothing the run itself writes is taken for an edit; a
+// command still within reach of that start stays for the stop to look at
+// again. That look happens even with no command to account for, to keep the
+// list of removed files current.
+//
+// A removed file has no time of its own: it counts by its directory's time,
+// unless a look saw it gone before the session's first command started, so a
+// later file beside an old deletion is not taken for it. A project's first
+// look has no such list, and counts a file written beside an older deletion:
+// an extra nudge again. Anything git cannot answer, a directory outside any
+// work tree among them, leaves the edit state as it was.
+function shellEdits(state, cwd, project, key, runStart = null) {
   const file = path.join(state, "shell", key);
   const spans = shellSpans(file);
-  removeFile(file);
-  if (!spans.length && !look) return;
+  const keep = runStart === null ? [] : spans.filter(([, end]) => end + SHELL_SLACK_MS >= runStart);
+  if (keep.length) write(file, keep.map((span) => span.join(" ")).join("\n") + "\n");
+  else removeFile(file);
+  if (!spans.length && runStart === null) return;
+  const runFrom = mtime(path.join(state, "last_verify"));
   const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
-  const verified = ended > 0 ? ended : mtime(path.join(state, "last_verify"));
-  const counts = (at) => at !== null && (verified === null || at > verified)
-    && spans.some(([start, end]) => at >= start - SHELL_SLACK_MS && at <= end + SHELL_SLACK_MS);
+  const runTo = ended > 0 ? ended : runFrom;
+  const floor = (start, end) => (runTo === null ? -Infinity
+    : runFrom !== null && start <= runTo && end >= runFrom ? runFrom : runTo);
+  const counts = (at) => at !== null && (runStart === null || at < runStart)
+    && spans.some(([start, end]) => at >= start - SHELL_SLACK_MS && at <= end + SHELL_SLACK_MS
+      && at > floor(start, end));
   const top = (gitOut(project, ["rev-parse", "--show-toplevel"]) || "").trim();
   if (!top) return;
   const status = gitOut(top, ["status", "--porcelain", "-z", "--untracked-files=all"]);
@@ -430,16 +446,19 @@ function shellEdits(state, cwd, project, key, look = false) {
     names.push(fields[i].slice(3));
     if (/^[RC]/.test(fields[i])) i += 1; // a rename's second field is the old name
   }
-  if (spans.length) {
-    const first = Math.min(...spans.map(([start]) => start));
-    const since = verified === null ? first : Math.max(first, verified + 1);
-    const log = gitOut(top, ["log", `--since=@${Math.floor(since / 1000)}`, "--name-only", "--format=", "-z"]);
+  const first = spans.length ? Math.min(...spans.map(([start]) => start)) : null;
+  if (first !== null) {
+    const log = gitOut(top, ["log", `--since=@${Math.floor((first - SHELL_SLACK_MS) / 1000)}`, "--name-only", "--format=", "-z"]);
     if (log !== null) names.push(...log.split(/[\0\n]/).filter(Boolean));
   }
-  // digests, not names: hook state keeps no paths
+  // Removed files as "<digest> <when a look first saw it gone>": digests, not
+  // names, since hook state keeps no paths. One list for the project, so what
+  // one session saw first is old only for a session whose commands began later.
   const goneFile = path.join(state, "gone");
-  const goneBefore = new Set(readTrimmed(goneFile).split("\n").filter(Boolean));
-  const gone = [];
+  const seen = new Map(readTrimmed(goneFile).split("\n").map((line) => line.split(" "))
+    .filter(([digest, at]) => digest && Number(at) >= 0).map(([digest, at]) => [digest, Number(at)]));
+  const gone = new Map();
+  const now = Date.now();
   let newest = null;
   for (const name of [...new Set(names)].slice(0, 20000)) {
     const abs = path.join(top, name.replace(/\/$/, ""));
@@ -448,12 +467,13 @@ function shellEdits(state, cwd, project, key, look = false) {
       at = fs.statSync(abs).mtimeMs;
     } catch {
       const digest = sha256(name, 16);
-      gone.push(digest);
-      if (!goneBefore.has(digest)) at = mtime(path.dirname(abs));
+      const was = seen.has(digest) ? seen.get(digest) : now;
+      gone.set(digest, was);
+      if (first === null || was >= first) at = mtime(path.dirname(abs));
     }
     if (counts(at) && codeEdit(abs, cwd, project) && (newest === null || at > newest)) newest = at;
   }
-  write(goneFile, gone.join("\n") + "\n");
+  write(goneFile, [...gone].map(([digest, at]) => `${digest} ${at}`).join("\n") + "\n");
   if (newest !== null) recordEdit(state, key, newest);
 }
 
@@ -1677,7 +1697,7 @@ function main(argv) {
         touch(path.join(telemetry, "verify_count", toolKey));
         // what this session's shell commands changed before the run is what
         // it tested, so a red run makes those edits red
-        shellEdits(state, cwd, project, editorKey, true);
+        shellEdits(state, cwd, project, editorKey, /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : nowMs);
         // Red/green came from the tool response; failure hooks are red.
         if (mode === "bash-failure") status = "fail";
         // A green that follows a green with no code edit between them proved

@@ -569,6 +569,27 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   s8.shell("e2", "rm src/gone.js", () => fs.rmSync(path.join(p8, "src", "gone.js")));
   assert.strictEqual(s8.stop(), 2, "a code file removed by the shell after the last verify did not count");
 
+  // what a green run writes is no edit, even right after a shell edit it tested
+  const p9 = path.join(box.box, "p9");
+  gitRepo(p9, files);
+  const s9 = session(p9);
+  s9.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p9, "a.js"), "b\n"));
+  s9.shell("v1", "npm test", () => fs.writeFileSync(path.join(p9, "report.js"), "x\n"));
+  assert.strictEqual(s9.stop(), 0, "a file the green run wrote was taken for an edit after it");
+
+  // one session's look at a removal does not make it old for the session
+  // that removed it
+  const p10 = path.join(box.box, "p10");
+  gitRepo(p10, { ...files, "src/x.js": "x\n" });
+  const a10 = session(p10, "a");
+  const b10 = session(p10, "b");
+  a10.shell("v1", "npm test");
+  b10.shell("e1", "rm src/x.js", () => fs.rmSync(path.join(p10, "src", "x.js")));
+  pause(1100);
+  a10.shell("e2", "ls");
+  assert.strictEqual(a10.stop(), 0, "a session was nudged for a removal another session made");
+  assert.strictEqual(b10.stop(), 2, "another session's look hid this session's removal");
+
   // outside a git work tree there is nothing to ask, and nothing breaks
   const p5 = path.join(box.box, "p5");
   fs.mkdirSync(p5);

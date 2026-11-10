@@ -22,6 +22,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can now fail an audio hit that is early: it looked for the loudest moment
   in a window narrower than its own tolerance, and audio 80 ms early passed
   15 of 16 hits.
+- The suite now fails when a tracked shell script is missing from the lint
+  list in `test.sh`; three were never linted (two eval task verifiers and
+  `video/web.sh`).
+- An eval grader must score its task's unfixed project and every cheat tree
+  red with a `SCORE` line. A grader that crashed on one used to count as
+  rejecting it, though `eval/run.sh` books a crash INVALID, not failed.
+- CI pins ShellCheck by version and checksum (0.9.0, what the Linux runner
+  shipped) instead of taking the runner image's, and a new macOS job runs the
+  fast tier under the stock `/bin/bash` 3.2 with ShellCheck 0.10.0.
 
 ### Removed
 

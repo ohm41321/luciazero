@@ -5,11 +5,12 @@
   the narrower loop; for `agentd/` and the Agent Bus scripts, `./test.sh --bus`
   (`--fast` no longer runs the daemon suite). Coverage and prerequisites:
   `CONTRIBUTING.md`.
-- CI runs the ubuntu runner's own ShellCheck and fails on any finding, style
-  included; locally `tests/gates/core.sh` skips ShellCheck when it is not
-  installed. A newer local ShellCheck can pass what the older CI one flags
-  (0.11.0 accepts `A && [ "$(cmd)" = x ] || C`, CI reports SC2015): write
-  multi-command assertions as if/then, and set `LZ_REQUIRE_LINT=1` locally.
+- CI pins ShellCheck (0.9.0 on Linux, 0.10.0 on the macOS job, the first
+  arm64 build) and fails on any finding, style included; locally
+  `tests/gates/core.sh` skips ShellCheck when it is not installed. A newer
+  local ShellCheck can pass what the older CI one flags (0.11.0 accepts
+  `A && [ "$(cmd)" = x ] || C`, 0.9.0 reports SC2015): write multi-command
+  assertions as if/then, and set `LZ_REQUIRE_LINT=1` locally.
 - Site changes also need `python3 scripts/check-site.py` in the loop: only
   the full tier runs it (packaging gate), and the Pages workflow runs it
   again before it deploys.

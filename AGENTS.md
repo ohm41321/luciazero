@@ -68,6 +68,14 @@
   HEAD (2026-10-07). Since 53441d9 the turns that end get 30 seconds and only
   the timeout case keeps 1, but why the host took that long is unknown. Same
   rule as the nudge test: rerun before blaming.
+- The stop hook's shell-edit rules (`aroundSteps`, `stepWrites` and
+  `regexStep` in `claude/hooks/luciazero-verify.cjs`) are heuristics tuned
+  over ten review rounds (PR #26), and almost every narrowing fix broke a
+  shape an earlier rule handled: a regex step that is any match loses a
+  writer's edit, one that must match the program loses `bash -c "pytest"`.
+  When the order is unknown, prefer an extra nudge to a red. Revert-probe a
+  new assertion against the last two or three commits of the hook, not only
+  the latest. In zsh, quote `"${rev}:path"`: `$rev:c...` is a modifier.
 - Claude Code silently drops an agent whose `name:` contains a colon
   (`lucia:reviewer` never loads; checked against the `claude -p` init event's
   agent list, 2.1.317). `x:y` only comes from plugin namespacing.

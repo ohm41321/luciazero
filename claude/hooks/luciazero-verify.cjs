@@ -1024,24 +1024,27 @@ const KEEPS_TREE = new Set(["cd", "pushd", "popd", "export", "unset", "set", "sh
 const GIT_KEEPS_TREE = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame",
   "describe", "add", "commit", "push", "fetch", "tag", "branch", "remote", "config"]);
 // A verify step that rewrites what it checks: `eslint --fix`, `ruff check
-// --fix`, `npm run lint:fix`, `jest -u`.
-const FIX_FLAGS = /^(--fix|--fix-only|--fix=.*|--write|--update-snapshots|--updateSnapshot)$/;
+// --fix`, `jest -u`, `vitest --update` (`python -u` only unbuffers).
+const FIX_FLAGS = /^(--fix|--fix-only|--fix=.*|--write|--update|--update-snapshots|--updateSnapshot|-u)$/;
 
 // A simple command's words without its redirections, and whether one sends
 // output to a file rather than /dev/null or another descriptor. lex keeps
-// an unspaced redirection inside its word (`echo b>a.js`).
+// an unspaced redirection inside its word (`echo b>a.js`, `echo b> a.js`)
+// and drops quotes, so a `>` in a word with a space is taken for quoted
+// text (`echo "==> tests"`), not a redirection.
 function plainWords(cmd) {
   const w = [];
   let toFile = false;
   for (let j = 0; j < cmd.words.length; j++) {
     const t = cmd.words[j];
     const op = /^\d*(>>|>\||>|&>>|&>)$/.test(t);
-    const attached = op ? null : t.match(/^(.*?)\d*(?:>>|>\||&>>|&>|>)(.+)$/);
+    const attached = op || /\s/.test(t) ? null : t.match(/^(.*?)\d*(?:>>|>\||&>>|&>|>)(.*)$/);
     if (op || attached) {
-      const target = op ? cmd.words[j + 1] || "" : attached[2];
+      const next = op || attached[2] === ""; // the target is the next word
+      const target = next ? cmd.words[j + 1] || "" : attached[2];
       if (!/^(&\d*-?|\/dev\/null|\/dev\/std(out|err))$/.test(target)) toFile = true;
-      if (op) j += 1;
-      else if (attached[1]) w.push(attached[1]);
+      if (!op && attached[1]) w.push(attached[1]);
+      if (next) j += 1;
     } else if (/^\d*(<<<|<>|<)$/.test(t)) {
       j += 1;
     } else if (!/^\d*</.test(t)) {
@@ -1080,22 +1083,34 @@ function mayWrite(cmd) {
   return !KEEPS_TREE.has(p.name);
 }
 
-// Whether a simple command is an explicit file edit: `sed -i`, `perl -i`, or
-// a plain program such as `echo` sending its output to a file. A regex of
-// one's own may match the file it edits (`sed -i ... test.sh`); that is no
-// verify step.
-function editsFile(cmd) {
-  const { w, toFile } = plainWords(cmd);
-  const p = programOf(w);
-  return p !== null && (inPlace(p) || (toFile && KEEPS_TREE.has(p.name)));
-}
-
-// Whether a verify step rewrites files itself.
+// Whether a verify step rewrites files itself: a fixing flag, a script
+// named for fixing or formatting (`npm run lint:fix`, `pnpm format`), or a
+// task runner's target that is no check (`./gradlew spotlessApply check`).
 function stepWrites(cmd) {
   const { w } = plainWords(cmd);
-  if (w.some((t) => FIX_FLAGS.test(t))) return true;
-  if (w.includes("-u") && w.some((t) => /^(jest|vitest)$/.test(programName(t).toLowerCase()))) return true;
-  return runs(cmd, 0).some((run) => / run [^ ]*[:_-]?\b(fix|format)\b/.test(" " + run));
+  const p = programOf(w);
+  const python = p !== null && PYTHON.test(p.name);
+  if (w.some((t) => FIX_FLAGS.test(t) && !(python && t === "-u"))) return true;
+  const check = ere(DEFAULT_VERIFY_RE);
+  const fixes = (name) => /(^|[:_-])fix([:_-]|$)/i.test(name)
+    || (/(^|[:_-])(format|fmt)([:_-]|$)/i.test(name) && !/check|verify/i.test(name));
+  return runs(cmd, 0).some((run) => {
+    const parts = run.split(" ");
+    if (parts.length < 2) return false;
+    return fixes(parts[parts.length - 1]) || (own(TARGET_RUNNERS, parts[0]) && !check.test(run));
+  });
+}
+
+// With a regex of one's own, a simple command its words match is a verify
+// step when the program it runs matches too (`./test.sh > out.log`), or when
+// it writes nothing (`cat test.sh`). `sed -i ... test.sh`, `cp new.sh
+// test.sh` and `echo x > test.sh` only name the file.
+function regexStep(cmd, re) {
+  if (!anyLine(cmd.words.join(" "), re)) return false;
+  const { w } = plainWords(cmd);
+  const p = programOf(w);
+  const raw = p === null ? "" : w[w.length - p.rest.length - 1];
+  return runs(cmd, 0).some((run) => anyLine(run, re)) || anyLine(raw, re) || !mayWrite(cmd);
 }
 
 // Whether a verify command also changes a file up to its last verify step
@@ -1104,7 +1119,9 @@ function stepWrites(cmd) {
 // what a step pipes into is part of it, so `npm test | tee log` writes the
 // run's own log, no edit. A step hidden inside one simple command (`bash -c
 // 'sed -i ... && npm test'`) is not looked into, and lex lists the commands
-// of a `$(...)` after the rest, so a step inside one counts as the last.
+// of a `$(...)` after the rest, so a step inside one counts as the last. A
+// verify command with no step this can find (a regex matched across simple
+// commands, or only the file an edit names) counts every writer it runs.
 function aroundSteps(command, step) {
   try {
     const commands = lex(command, 0, false, 0).commands;
@@ -1114,6 +1131,7 @@ function aroundSteps(command, step) {
       at.push(Boolean(step(cmd, i)) || (from >= 0 && at[from]));
     });
     const last = at.lastIndexOf(true);
+    if (last < 0) return { before: commands.some((cmd) => mayWrite(cmd)), after: false };
     const writes = (i) => (at[i] ? stepWrites(commands[i]) : mayWrite(commands[i]));
     return {
       before: last >= 0 && commands.slice(0, last + 1).some((_, i) => writes(i)),
@@ -1811,7 +1829,7 @@ function main(argv) {
         } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
           // a regex of one's own keeps its documented meaning: any line
           isVerify = anyLine(command, verifyRe);
-          step = (cmd) => !editsFile(cmd) && anyLine(cmd.words.join(" "), verifyRe);
+          step = (cmd) => regexStep(cmd, verifyRe);
         } else {
           isVerify = defaultVerify(command);
           const re = ere(DEFAULT_VERIFY_RE);

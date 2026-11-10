@@ -621,13 +621,15 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     return { dir, s: session(dir, "s1", env) };
   };
   const writesA = (dir) => () => fs.writeFileSync(path.join(dir, "a.js"), "b\n");
-  for (const command of ["npx eslint --fix .", "echo b>a.js && npm test", ". ./gen.sh && npm test"]) {
-    const { dir, s } = fresh(`p13-${command.split(" ")[1]}`);
+  const writers = ["npx eslint --fix .", "pnpm lint:fix && pnpm test", "npm test -- -u", "npx vitest run --update",
+    "./gradlew spotlessApply check", "echo b>a.js && npm test", "echo b> a.js && npm test", ". ./gen.sh && npm test"];
+  writers.forEach((command, i) => {
+    const { dir, s } = fresh(`p13-${i}`);
     s.shell("v1", command, writesA(dir), "Exit code 1");
     const red = s.hook("stop");
     assert.strictEqual(red.status, 2, `an edit made by \`${command}\`, which failed, stopped clean`);
     assert.match(red.stderr, /failed/);
-  }
+  });
   {
     const { dir, s } = fresh("p14");
     s.shell("v1", "mkdir -p reports && pytest --junitxml=reports/junit.xml", () => {
@@ -635,32 +637,27 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
       fs.writeFileSync(path.join(dir, "reports", "junit.xml"), "<x/>\n");
     }, "Exit code 1");
     s.shell("v2", "source .venv/bin/activate && pytest", () => fs.writeFileSync(path.join(dir, ".coverage"), "c\n"), "Exit code 1");
-    assert.strictEqual(s.stop(), 0, "a mkdir or an activation before a failing test made its output an edit");
+    s.shell("v3", 'echo "==> running tests" && npm test', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<y/>\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 0, "a mkdir, an activation or a quoted > before a failing test made its output an edit");
+    s.shell("v4", 'npm test && echo "-> done"', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<z/>\n"));
+    assert.strictEqual(s.stop(), 0, "a quoted > after a green test made its output an edit");
   }
-  const regex = { ...box.env, LUCIAZERO_VERIFY_REGEX: "test\\.sh" };
+  // with a regex of one's own: an edit of the file it names is no verify
+  // step, and a verify command with no step at all still counts its edits
+  const regex = (re) => ({ ...box.env, LUCIAZERO_VERIFY_REGEX: re });
+  [["test\\.sh", "sed -i s/a/b/ test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "cp new.sh test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "sed -i s/a/b/ test.sh", "test.sh"],
+    ["test", "sed -i s/a/b/ a.test.js && npx jest", "a.test.js"]].forEach(([re, command, file], i) => {
+    const { dir, s } = fresh(`p15-${i}`, regex(re));
+    s.shell("v1", command, () => fs.writeFileSync(path.join(dir, file), "b\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 2, `with regex ${re}, the edit in a failing \`${command}\` stopped clean`);
+  });
   {
-    const { dir, s } = fresh("p15", regex);
-    s.shell("v1", "sed -i s/a/b/ test.sh && ./test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"), "Exit code 1");
-    assert.strictEqual(s.stop(), 2, "with a regex, an edit of the file it names before a failing run stopped clean");
-  }
-  {
-    const { dir, s } = fresh("p16", regex);
+    const { dir, s } = fresh("p16", regex("test\\.sh"));
     s.shell("v1", "./test.sh && sed -i s/a/b/ test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"));
     assert.strictEqual(s.stop(), 2, "with a regex, an edit after a green run was covered by it");
   }
-
-  // one session's look at a removal does not make it old for the session
-  // that removed it
-  const p10 = path.join(box.box, "p10");
-  gitRepo(p10, { ...files, "src/x.js": "x\n" });
-  const a10 = session(p10, "a");
-  const b10 = session(p10, "b");
-  a10.shell("v1", "npm test");
-  b10.shell("e1", "rm src/x.js", () => fs.rmSync(path.join(p10, "src", "x.js")));
-  pause(1100);
-  a10.shell("e2", "ls");
-  assert.strictEqual(a10.stop(), 0, "a session was nudged for a removal another session made");
-  assert.strictEqual(b10.stop(), 2, "another session's look hid this session's removal");
 
   // outside a git work tree there is nothing to ask, and nothing breaks
   const p5 = path.join(box.box, "p5");

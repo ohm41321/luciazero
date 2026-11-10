@@ -129,7 +129,10 @@ not end the walk: it goes on up to the project root. On Windows, where
 environment names ignore case, a key is refused in any case
 (`luciazero_strict_verify_cmd` too). A global `~/.claude/settings.json` and
 the gitignored `.claude/settings.local.json` are the user's scope and keep
-configuring the hook.
+configuring the hook. A `.claude/settings.local.json` that git tracks was
+committed by the repository, so its keys are refused like those of
+`.claude/settings.json`; git is asked (`git ls-files --error-unmatch`, read
+only) only when that file sets a refused key.
 
 Only the **default** `~/.claude` counts as that user scope. Honouring
 `CLAUDE_CONFIG_DIR` here would be self-defeating: pointed at `<repo>/.claude`,
@@ -146,8 +149,11 @@ hook a plugin label so it stood itself down, and a committed
 
 Limits, stated plainly:
 
-- The personal, gitignored `.claude/settings.local.json` is deliberately not
-  inspected — that scope is the user's own.
+- The personal, untracked `.claude/settings.local.json` is deliberately
+  honored — that scope is the user's own. One shipped outside git (an archive
+  with no `.git`) cannot be told apart from it, and neither can a tracked one
+  when git cannot answer (not installed, or a repository git refuses as owned
+  by another user): the check fails open and honors the file.
 - Env exported by the shell, a parent process, or a global settings file is
   indistinguishable from a legitimate personal setting and is still honored.
 - A repository that hides configuration outside a committed

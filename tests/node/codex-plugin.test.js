@@ -176,6 +176,40 @@ test("under Codex an edit nudges once at stop, beside a classic Claude install",
   assert.strictEqual(quiet.status, 0, `a verify ran after the edit (stderr: ${quiet.stderr})`);
 });
 
+// apply_patch carries no file_path: the files are named inside the patch.
+// One that touches only documentation is no code edit, as under Claude.
+test("under Codex a patch that only touches documentation does not re-arm the nudge", (t) => {
+  const box = codexBox(t);
+  const hooks = codexHooks(box.root);
+  const event = (extra) => ({ session_id: "s1", transcript_path: null, cwd: box.cwd, model: "gpt", permission_mode: "default", turn_id: "t1", ...extra });
+  const run = (eventName, mode, extra = {}) =>
+    codexRun(find(hooks, eventName, mode)[2], box.env, box.root, box.cwd, event({ hook_event_name: eventName, ...extra }));
+  const patch = (id, body) => assert.strictEqual(run("PostToolUse", "edit", { tool_name: "apply_patch", tool_use_id: id,
+    tool_input: { command: `*** Begin Patch\n${body}*** End Patch\n` }, tool_response: "Success." }).status, 0);
+  const verify = (id) => {
+    const shell = { tool_name: "Bash", tool_use_id: id, tool_input: { command: "npm test" } };
+    assert.strictEqual(run("PreToolUse", "bash-start", shell).status, 0);
+    assert.strictEqual(run("PostToolUse", "bash", { ...shell, tool_response: "1 passing\n" }).status, 0);
+  };
+  const stop = () => {
+    const r = run("Stop", "stop", { stop_hook_active: false });
+    assert.strictEqual(run("Stop", "stop", { stop_hook_active: true }).status, 0);
+    return r.status;
+  };
+  patch("c1", "*** Update File: a.js\n@@\n-a\n+b\n");
+  verify("c2");
+  patch("c3", "*** Update File: README.md\n@@\n-a\n+b\n*** Add File: docs/notes.md\n+x\n");
+  assert.strictEqual(stop(), 0, "a documentation-only patch after the verify re-armed the nudge");
+  patch("c4", "*** Update File: README.md\n@@\n-b\n+c\n*** Delete File: src/old.js\n");
+  assert.strictEqual(stop(), 2, "a patch that deletes code beside a doc change did not re-arm the nudge");
+  verify("c5");
+  patch("c6", "*** Update File: notes.md\n*** Move to: src/notes.js\n@@\n-a\n+b\n");
+  assert.strictEqual(stop(), 2, "a doc moved to a code file did not re-arm the nudge");
+  verify("c7");
+  patch("c8", "no file is named here\n");
+  assert.strictEqual(stop(), 2, "a patch that names no file must count, as every edit did");
+});
+
 test("under Codex a verify command is recorded as run, never as green", (t) => {
   const box = codexBox(t);
   const hooks = codexHooks(box.root);

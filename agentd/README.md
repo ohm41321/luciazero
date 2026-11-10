@@ -44,7 +44,7 @@ at a temporary directory and never touch the developer's real state.
 Verify (ordinary tier runs go through the timing collector):
 
 ```bash
-scripts/test-timings.sh --fast     # from repository root; includes daemon tests
+scripts/test-timings.sh --bus      # from repository root; daemon suite and offline Bus gates
 scripts/test-timings.sh --full     # closeout; also covers offline Bus gates
 ./test.sh --agent-bus-store        # from the repository root
 ./test.sh --agent-bus-mcp          # optional real CLI discovery; separate from offline tiers

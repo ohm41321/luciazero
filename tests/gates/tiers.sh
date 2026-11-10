@@ -10,14 +10,15 @@ set -euo pipefail
 # 7. tiers. (a) Which gates each tier sources, in which order: the real
 # test.sh over a directory whose gates only print their own name. This pins
 # the output order of every tier and proves the discipline tier never reaches
-# the agentd suite, Relay, bisect, evidence, Astra/Luna, eval, packaging or an
-# install cycle — not by running them and looking, but by showing they are
-# not sourced at all.
+# the agentd suite, Relay, bisect, evidence, eval, packaging or an install
+# cycle, that the fast tier never reaches the agentd suite or the Agent Bus
+# gates, and that the bus tier runs those and nothing past syntax — not by
+# running them and looking, but by showing they are not sourced at all.
 TG="$(mktemp -d)"
 mkdir -p "${TG}/tests/gates" "${TG}/scripts"
 cp "${ROOT}/test.sh" "${TG}/test.sh"
 cp "${ROOT}/scripts/sanitize-luciazero-env.sh" "${TG}/scripts/"
-for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}"; do
+for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${BUS_GATES[@]}" "${FULL_GATES[@]}"; do
   printf 'echo "gate %s"\n' "$(basename "${G}" .sh)" > "${TG}/${G}"
 done
 # The child runs drop LZ_TEST_TIMINGS: an outer timed run must see its own
@@ -29,10 +30,17 @@ OUT="$(tier_gates --discipline)" || fail "discipline tier over stub gates exited
 [ "${OUT}" = "syntax core contracts hooks" ] \
   || fail "discipline tier sources the wrong gates: ${OUT}"
 OUT="$(tier_gates --fast)" || fail "fast tier over stub gates exited red"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna" ] \
+[ "${OUT}" = "syntax core contracts hooks relay bisect evidence" ] \
   || fail "fast tier sources the wrong gates: ${OUT}"
+OUT="$(tier_gates --bus)" || fail "bus tier over stub gates exited red"
+[ "${OUT}" = "syntax agentd agent-bus" ] \
+  || fail "bus tier sources the wrong gates: ${OUT}"
+if ! BOUT="$(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --bus)" \
+  || ! grep -q '^PASS  agent bus checks green$' <<<"${BOUT}"; then
+  fail "bus tier over stub gates printed no PASS line"
+fi
 OUT="$(tier_gates --full)" || fail "full tier over stub gates exited red"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "full tier sources the wrong gates: ${OUT}"
 if ! DOUT="$(cd "${TG}" && env -u LZ_TEST_TIMINGS ./test.sh --discipline)" \
   || ! grep -q '^PASS  discipline checks green$' <<<"${DOUT}"; then
@@ -60,7 +68,7 @@ grep -qE '^TIMING gate=hooks seconds=[1-9][0-9]*$' "${TG}/err.1" \
   || fail "the hooks stub slept a second but its timing line disagrees: $(grep hooks "${TG}/err.1")"
 # A malformed sourced gate must never return success (notably on Bash 3.2).
 printf 'if then\n' > "${TG}/tests/gates/syntax.sh"
-for FLAG in --discipline --fast --full; do
+for FLAG in --discipline --fast --bus --full; do
   RC=0
   (cd "${TG}" && ./test.sh "${FLAG}") >"${TG}/syntax.out" 2>&1 || RC=$?
   [ "${RC}" -ne 0 ] || fail "${FLAG} accepted a syntax error in a sourced gate"
@@ -221,7 +229,7 @@ TP="$(mktemp -d)"
 mkdir -p "${TP}/repo/tests/gates" "${TP}/repo/scripts" "${TP}/tmp"
 cp "${ROOT}/test.sh" "${TP}/repo/test.sh"
 cp "${ROOT}/scripts/sanitize-luciazero-env.sh" "${TP}/repo/scripts/"
-for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}"; do
+for G in "${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${BUS_GATES[@]}"; do
   printf 'echo "gate %s"\n' "$(basename "${G}" .sh)" > "${TP}/repo/${G}"
 done
 stub() { # stub <gate>: a gate body that writes both streams and takes a mktmp directory
@@ -253,7 +261,7 @@ gone_with_gates "a green serial run"
 cmp -s "${TP}/parallel.out" "${TP}/serial.out" || fail "parallel gates changed stdout: $(diff "${TP}/serial.out" "${TP}/parallel.out" | head -3)"
 cmp -s "${TP}/parallel.err" "${TP}/serial.err" || fail "parallel gates changed stderr: $(diff "${TP}/serial.err" "${TP}/parallel.err" | head -3)"
 OUT="$(sed -n 's/^gate //p' "${TP}/parallel.out" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier replayed stdout out of order: ${OUT}"
 OUT="$(sed -n 's/^err //p' "${TP}/parallel.err" | tr '\n' ' ' | sed 's/ $//')"
 [ "${OUT}" = "tiers agent-bus eval packaging install codex-install parity" ] \
@@ -263,7 +271,7 @@ OUT="$(sed -n 's/^err //p' "${TP}/parallel.err" | tr '\n' ' ' | sed 's/ $//')"
 # timing lines: one per gate, still in order, still named right
 par_full timed LZ_TEST_TIMINGS=1 || fail "stub full tier exited red with LZ_TEST_TIMINGS=1"
 OUT="$(sed -n 's/^TIMING gate=\([a-z-]*\) seconds=[0-9]*$/\1/p' "${TP}/timed.err" | tr '\n' ' ' | sed 's/ $//')"
-[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence astra-luna tiers agent-bus eval packaging install codex-install parity" ] \
+[ "${OUT}" = "syntax agentd core contracts hooks relay bisect evidence tiers agent-bus eval packaging install codex-install parity" ] \
   || fail "parallel full tier printed the wrong timing lines: ${OUT}"
 grep -qE '^TIMING gate=eval seconds=[2-9]$' "${TP}/timed.err" \
   || fail "the eval stub slept 2 s but its timing line disagrees: $(grep 'gate=eval' "${TP}/timed.err")"

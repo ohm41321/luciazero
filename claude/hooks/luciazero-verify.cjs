@@ -19,11 +19,15 @@
 //             prompt inside an open turn is a background-task notice: kept)
 //   bash-start — PreToolUse on Bash: start shell-command timing
 //   edit    — PostToolUse on Edit|Write|NotebookEdit : record "an edit happened"
-//   bash    — PostToolUse on Bash: record duration, verify runs, and status
+//   bash    — PostToolUse on Bash: record duration, verify runs, and status;
+//             for any other command, when it ran; before a verify run, what
+//             this session's shell commands changed (asked of git)
 //   bash-failure — PostToolUseFailure on Bash: record failed commands
 //   skill   — PostToolUse on Skill: count model-invoked skills
 //   skill-prompt — UserPromptExpansion: count user-invoked slash skills
 //   stop    — Stop                                   : warn once if edits are unverified
+//             or red; files the session's shell commands changed (asked of
+//             git) count as its edits
 //   session — SessionStart                           : point at an existing Lucia Relay
 //   doctrine— SessionStart (plugin installs only)    : emit the doctrine as context
 //             (plugins cannot add a CLAUDE.md import line; this is the same
@@ -47,9 +51,11 @@
 // one schema-versioned JSON line per stop outcome (stop-clean / nudge /
 // strict-block) to luciazero-stats.log in the harness config dir — local only,
 // capped at ~250 lines, fail-open. It records a privacy-preserving project
-// hash, verify mode, and aggregate latency/counts — including how long verify
-// commands ran and how many came back green with no edit since the previous
-// green (schema 3) — never the project path, command, or skill name.
+// hash, the project folder's own name (for the report), verify mode, and
+// aggregate latency/counts — including how long verify commands ran and how
+// many came back green with no edit since the previous green (schema 3) —
+// never the project path, command, or skill name. Reading git at stop runs
+// read-only commands only (no optional locks, no fsmonitor).
 // Uninstall keeps it.
 "use strict";
 
@@ -94,6 +100,7 @@ const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timin
 // after editing requirements.txt.
 const DEFAULT_DOC_RE = "\\.(md|markdown|rst)$";
 const NUDGE_TEXT = "Doctrine rule 1: edits were made but no verify command has run since the last edit. Run the repo's verify command and quote its decisive line — or finish anyway and say plainly that the change is unverified. (This nudge fires once.)";
+const RED_TEXT = "Doctrine rule 3: the last verify run after these edits failed or could not run, and none has passed since. Fix the cause and run it again — or finish anyway and say plainly that the work is red. (This nudge fires once.)";
 
 function home() {
   // os.homedir() reads HOME on POSIX and USERPROFILE on Windows, which is
@@ -107,6 +114,23 @@ function home() {
 
 function configDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(home(), ".claude");
+}
+
+// Whether Claude Code already loads the doctrine from its classic install:
+// the file, and a line in CLAUDE.md that imports it. Uninstall keeps a
+// customized copy and removes the line, so the file alone loads nothing.
+function claudeDoctrineInstalled() {
+  const dir = configDir();
+  if (!isFile(path.join(dir, "luciazero.md"))) return false;
+  const file = path.join(dir, "CLAUDE.md");
+  let text;
+  try {
+    if (!isFile(file) || fs.statSync(file).size > LIMIT) return false;
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return false;
+  }
+  return text.split(/\r?\n/).some((line) => /^@(.*[\\/])?luciazero\.md$/.test(line.trim()));
 }
 
 // Whether Codex already loads the doctrine from its classic install
@@ -283,7 +307,189 @@ function recordVerify(state, status, startMs, command) {
   // Keep only an opaque digest for strict-gate equality; raw commands may
   // contain paths or secrets and must never persist in shared state.
   write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
+  // When the run ended: what a verify writes while it runs (coverage, a
+  // report) is no edit after it, for the shell-edit check at stop.
+  write(path.join(state, "last_verify_end"), Date.now() + "\n");
+  // The latest run that did not fail, stamped like last_verify: edits made
+  // before it are the ones a red after it does not make red again.
+  if (status !== "fail") {
+    const pass = path.join(state, "last_pass");
+    write(pass, status + "\n");
+    if (startMs !== null) stampAt(pass, startMs);
+  }
   return true;
+}
+
+// `touch`, or with atMs, a time of at least atMs, never moved back.
+function stamp(file, atMs) {
+  const was = mtime(file);
+  if (atMs === null || was === null) touch(file);
+  if (atMs !== null && (was === null || was < atMs)) stampAt(file, atMs);
+}
+
+// A code edit by the session `key`, made now or at atMs. The first edit this
+// copy records keeps the time of the last one an older copy recorded, which
+// no session's edited/ entry carries. It re-arms this session's nudge, and an
+// older copy's.
+function recordEdit(state, key, atMs = null) {
+  const edited = path.join(state, "edited");
+  const before = fs.existsSync(edited) ? null : mtime(path.join(state, "last_edit"));
+  stamp(path.join(state, "last_edit"), atMs);
+  if (mkdirs(edited)) {
+    if (before !== null) {
+      try {
+        fs.writeFileSync(path.join(state, "legacy_edit"), "", { flag: "wx" });
+        stampAt(path.join(state, "legacy_edit"), before);
+      } catch {}
+    }
+    stamp(path.join(edited, key), atMs);
+  }
+  removeFile(path.join(state, "nudged-sessions", key));
+  removeOlderMarker(state);
+}
+
+// Whether a file an edit wrote is code: neither a relay artifact, nor
+// documentation (closeout skills write docs AFTER the final green verify),
+// nor the agent's own scratch file outside the project.
+function codeEdit(file, cwd, project) {
+  const name = file.split(WINDOWS ? /[\\/]/ : /\//).pop();
+  if (file !== name && (name === "LUCIA_RELAY.json" || name === "LUCIA_RELAY.md")) return false;
+  if (file && anyLine(file, process.env.LUCIAZERO_DOC_REGEX || DEFAULT_DOC_RE)) return false;
+  return !scratchEdit(file, cwd, project);
+}
+
+// Codex's apply_patch names its files inside the patch, not in file_path.
+function patchFiles(text) {
+  const names = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/.exec(line);
+    if (m && m[1].trim()) names.push(m[1].trim());
+  }
+  return names;
+}
+
+// A session's shell commands since its last stop or verify, one
+// "<start> <end>" line each in shell/<key>. A command can change files with
+// no Edit or Write (sed -i, a heredoc, a formatter, a commit hook). Past
+// SHELL_SPANS lines the file folds into one span from the first start to the
+// last end: that counts more, never less.
+const SHELL_SPANS = 200;
+// A file time can be a whole second coarse (HFS+, FAT, some network file
+// systems), and a write can land as a file closes after its command reports
+// done: a change this close to a command counts as made while it ran. A
+// change another session makes that close is counted too: an extra nudge,
+// never a missed one.
+const SHELL_SLACK_MS = 1000;
+function shellSpans(file) {
+  return readTrimmed(file).split("\n").map((line) => line.split(" ").map(Number))
+    .filter(([start, end]) => start > 0 && end >= start);
+}
+function noteShell(state, key, startMs, endMs) {
+  const dir = path.join(state, "shell");
+  if (!mkdirs(dir)) return;
+  const file = path.join(dir, key);
+  try {
+    fs.appendFileSync(file, `${startMs} ${endMs}\n`);
+  } catch {
+    return;
+  }
+  const spans = shellSpans(file);
+  if (spans.length > SHELL_SPANS) {
+    write(file, `${Math.min(...spans.map(([start]) => start))} ${Math.max(...spans.map(([, end]) => end))}\n`);
+  }
+}
+
+// At a verify run, before it is recorded, and at stop: the files this
+// session's shell commands changed, recorded as its edit at the time they
+// changed. git names the candidates -- what differs from HEAD, every untracked
+// file it does not ignore, what commits made since then touched -- and one
+// counts when it is code, as codeEdit says, and changed while one of those
+// commands ran, after the last verify ended. A command that overlapped that
+// run counts from its start instead: what the run wrote then may count too,
+// an extra nudge, never a missed one.
+//
+// At a verify run (`run`: when it started and ended, whether it failed, and
+// whether the command may also change a file before its last verify step or
+// after it, as aroundSteps says) only what changed before it started counts,
+// so nothing a run writes is taken for an edit; a command still within reach
+// of that start stays for the stop to look at again. The run's own time
+// counts as well when the command edits around its test. Edit, then test
+// (`sed -i ... && npm test`) and fail: what changed in it is recorded just
+// before the run, so the red is that edit's. Test, then edit (`npm test &&
+// sed -i ...`): what changed in it is recorded when it changed, after the run
+// started, so no verify covers it. Either way what the run writes itself, and
+// another session's edit while it ran, count the same: an extra nudge. A
+// plain test run counts nothing from its own time, so a session that edited
+// nothing is never made red by what its failing run wrote. That look happens
+// even with no command to account for, to keep the list of removed files
+// current.
+//
+// A removed file has no time of its own: it counts by its directory's time,
+// unless a look saw it gone before the session's first command started, so a
+// later file beside an old deletion is not taken for it. A removal no look
+// has seen yet -- at a project's first look, or one made outside any command
+// since the last -- still counts when the shell writes a file beside it: an
+// extra nudge again. Anything git cannot answer, a directory outside any work
+// tree among them, leaves the edit state as it was.
+function shellEdits(state, cwd, project, key, run = null) {
+  const file = path.join(state, "shell", key);
+  const commands = shellSpans(file);
+  const keep = run === null ? [] : commands.filter(([, end]) => end + SHELL_SLACK_MS >= run.start);
+  if (keep.length) write(file, keep.map((span) => span.join(" ")).join("\n") + "\n");
+  else removeFile(file);
+  const red = run !== null && run.failed && run.before;
+  const during = red || (run !== null && run.after);
+  const spans = during ? [...commands, [run.start, run.end]] : commands;
+  const cap = run === null ? Infinity : during ? run.end + SHELL_SLACK_MS + 1 : run.start;
+  if (!spans.length && run === null) return;
+  const runFrom = mtime(path.join(state, "last_verify"));
+  const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
+  const runTo = ended > 0 ? ended : runFrom;
+  const floor = (start, end) => (runTo === null ? -Infinity
+    : runFrom !== null && start <= runTo && end >= runFrom ? runFrom : runTo);
+  const counts = (at) => at !== null && at < cap
+    && spans.some(([start, end]) => at >= start - SHELL_SLACK_MS && at <= end + SHELL_SLACK_MS
+      && at > floor(start, end));
+  const top = (gitOut(project, ["rev-parse", "--show-toplevel"]) || "").trim();
+  if (!top) return;
+  const status = gitOut(top, ["status", "--porcelain", "-z", "--untracked-files=all"]);
+  if (status === null) return;
+  const names = [];
+  const fields = status.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    if (fields[i].length < 4) continue;
+    names.push(fields[i].slice(3));
+    if (/^[RC]/.test(fields[i])) i += 1; // a rename's second field is the old name
+  }
+  const first = spans.length ? Math.min(...spans.map(([start]) => start)) : null;
+  if (first !== null) {
+    const log = gitOut(top, ["log", `--since=@${Math.floor((first - SHELL_SLACK_MS) / 1000)}`, "--name-only", "--format=", "-z"]);
+    if (log !== null) names.push(...log.split(/[\0\n]/).filter(Boolean));
+  }
+  // Removed files as "<digest> <when a look first saw it gone>": digests, not
+  // names, since hook state keeps no paths. One list for the project, so what
+  // one session saw first is old only for a session whose commands began later.
+  const goneFile = path.join(state, "gone");
+  const seen = new Map(readTrimmed(goneFile).split("\n").map((line) => line.split(" "))
+    .filter(([digest, at]) => digest && Number(at) >= 0).map(([digest, at]) => [digest, Number(at)]));
+  const gone = new Map();
+  const now = Date.now();
+  let newest = null;
+  for (const name of [...new Set(names)].slice(0, 20000)) {
+    const abs = path.join(top, name.replace(/\/$/, ""));
+    let at = null;
+    try {
+      at = fs.statSync(abs).mtimeMs;
+    } catch {
+      const digest = sha256(name, 16);
+      const was = seen.has(digest) ? seen.get(digest) : now;
+      gone.set(digest, was);
+      if (first === null || was >= first) at = mtime(path.dirname(abs));
+    }
+    if (counts(at) && codeEdit(abs, cwd, project) && (newest === null || at > newest)) newest = at;
+  }
+  write(goneFile, [...gone].map(([digest, at]) => `${digest} ${at}`).join("\n") + "\n");
+  if (newest !== null) recordEdit(state, key, red ? Math.min(newest, run.start - 1) : newest);
 }
 
 function readTrimmed(file) {
@@ -450,7 +656,7 @@ const infoOnly = (words, name = "") => words.length > 0 && words.every((t) => /^
 const MAKE_VALUES = ["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-o", "--old-file",
   "-W", "--what-if", "--new-file", "--assume-new", "-l", "--load-average"];
 const GRADLE_VALUES = ["-p", "-b", "-c", "-g", "-I", "-x", "--project-dir", "--exclude-task", "--init-script",
-  "--settings-file", "--build-file", "--gradle-user-home"];
+  "--settings-file", "--build-file", "--gradle-user-home", "--tests"];
 const MAVEN_VALUES = ["-f", "-pl", "-P", "-s", "-rf", "-gs", "--file", "--projects", "--activate-profiles", "--settings"];
 const TARGET_RUNNERS = { make: MAKE_VALUES, gmake: MAKE_VALUES, gradle: GRADLE_VALUES, gradlew: GRADLE_VALUES,
   mvn: MAVEN_VALUES, mvnw: MAVEN_VALUES, just: ["-f", "--justfile", "-d", "--working-directory", "--set"],
@@ -472,26 +678,35 @@ const assignment = (word) => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(word) || /^\$env
 // it. Command substitutions -- `$(...)` and backticks, inside double quotes
 // too -- are lexed as commands of their own, which they are. A backslash
 // escapes only what a separator or quote would otherwise take, so a Windows
-// path keeps its own.
+// path keeps its own. An unquoted output redirection (`>`, `2>>`, `&>`) is a
+// word of its own, and so is its target, which the command also keeps in
+// `outputs`; one onto a descriptor (`2>&1`, `>&2`) stays one word, and
+// `>(...)` or a comparison in `[[ ... ]]` is no redirection.
 function lex(text, start, inner, depth) {
   const commands = [];
   const substituted = [];
-  let cur = { words: [], bodies: [], pipedFrom: null };
+  let cur = { words: [], bodies: [], pipedFrom: null, outputs: [] };
   let word = null;
+  let target = false; // the next word is a redirection's target
   let pending = [];
   let parens = 0;
   const add = (s) => {
     word = (word || "") + s;
   };
   const endWord = () => {
-    if (word !== null) cur.words.push(word);
+    if (word !== null) {
+      cur.words.push(word);
+      if (target) cur.outputs.push(word);
+      target = false;
+    }
     word = null;
   };
   const endCommand = (piped) => {
     endWord();
     const kept = cur.words.length > 0 || cur.bodies.length > 0;
     if (kept) commands.push(cur);
-    cur = { words: [], bodies: [], pipedFrom: piped && kept ? commands[commands.length - 1] : null };
+    cur = { words: [], bodies: [], pipedFrom: piped && kept ? commands[commands.length - 1] : null, outputs: [] };
+    target = false;
   };
   // `$(` at j (the `$`): lex what it runs, return the index after its `)`
   const substitution = (j) => {
@@ -578,6 +793,23 @@ function lex(text, start, inner, depth) {
       } else {
         add("<<");
         i += 2;
+      }
+    } else if (ch === ">" && text[i + 1] !== "(" && cur.words.find((t) => !KEYWORDS.has(t)) !== "[[") {
+      // not `>(...)`, nor a comparison in `[[ ... ]]`; a descriptor number
+      // or `&` before it is part of the operator
+      if (word !== null && !/^(\d+|&)$/.test(word)) endWord();
+      let j = i + 1;
+      let dup = false; // `2>&1`, `>&2`, `>&-` go on as one word; `>& file` is `&> file`
+      if (text[j] === ">" || text[j] === "|") j += 1;
+      else if (text[j] === "&") {
+        j += 1;
+        dup = /[\d$-]/.test(text[j] || "");
+      }
+      add(text.slice(i, j));
+      i = j;
+      if (!dup) {
+        endWord();
+        target = true;
       }
     } else if (ch === "\n") {
       i += 1;
@@ -806,6 +1038,170 @@ function defaultVerify(command) {
   return verifyRuns(command).some((run) => re.test(run));
 }
 
+// Programs that change no file in the work tree when a command runs one
+// beside its verify (`cd sub && npm test`, `npm test; echo $?`); an output
+// redirection to a file still makes one a writer. `sed` and `perl` write
+// with `-i`, git subcommands outside GIT_KEEPS_TREE may rewrite files, and
+// a sourced script is a writer unless it activates an environment.
+const KEEPS_TREE = new Set(["cd", "pushd", "popd", "export", "unset", "set", "shopt", "ulimit", "umask", "true",
+  "false", ":", "pwd", "ls", "echo", "printf", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "sort",
+  "uniq", "cut", "tr", "column", "less", "more", "jq", "which", "type", "hash", "test", "[", "[[", "sleep", "date",
+  "clear", "mkdir", "exit", "return", "wait", "fi", "done", "esac"]);
+const GIT_KEEPS_TREE = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame",
+  "describe", "add", "commit", "push", "fetch", "tag", "branch", "remote", "config"]);
+// A verify step that rewrites what it checks: `eslint --fix`, `ruff check
+// --fix`, `jest --updateSnapshot`. `-u` and `--update` count only after a
+// test runner (`jest -u`, `npm test -- -u`, `vitest run --update`), since
+// `python -u` and `docker run -u` mean something else.
+const FIX_FLAGS = /^(--fix|--fix-only|--fix=.*|--write|--update-snapshots|--updateSnapshot)$/;
+const UPDATE_FLAGS = /^(-u|--update)$/;
+
+// A simple command's words without its redirections, and whether one sends
+// output to a file rather than /dev/null or another descriptor; lex has
+// split them off.
+function plainWords(cmd) {
+  const w = [];
+  for (let j = 0; j < cmd.words.length; j++) {
+    const t = cmd.words[j];
+    if (/^\d*(<<<|<>|<|>>|>\||>|&>>|&>)$/.test(t)) j += 1; // operator, then its target
+    else if (!/^(\d*[<>]|&>)/.test(t)) w.push(t);
+  }
+  const toFile = (cmd.outputs || []).some((t) => !/^(\/dev\/null|\/dev\/std(out|err)|nul)$/i.test(t));
+  return { w, toFile };
+}
+
+// The program a simple command runs and its arguments, past keywords,
+// assignments and `time`; null for assignments alone or `command -v`.
+function programOf(w) {
+  let k = 0;
+  while (k < w.length && (KEYWORDS.has(w[k]) || assignment(w[k]) || w[k] === "time" || w[k] === "builtin"
+    || (w[k] === "command" && !/^-[vV]$/.test(w[k + 1] || "")))) k += 1;
+  if (k >= w.length || w[k] === "command") return null;
+  return { name: programName(w[k]).toLowerCase(), rest: w.slice(k + 1) };
+}
+
+const inPlace = (p) => (p.name === "sed" && p.rest.some((t) => /^-[^-]*i/.test(t) || t.startsWith("--in-place")))
+  || (p.name === "perl" && p.rest.some((t) => /^-[^-]*i/.test(t)));
+
+// Whether one simple command may change a file in the work tree.
+function mayWrite(cmd) {
+  const { w, toFile } = plainWords(cmd);
+  if (toFile) return true;
+  const p = programOf(w);
+  if (p === null) return false;
+  if (p.name === "sed" || p.name === "perl") return inPlace(p);
+  if (p.name === "git") {
+    let j = 0;
+    while (j < p.rest.length && p.rest[j].startsWith("-")) j += /^-[Cc]$/.test(p.rest[j]) ? 2 : 1;
+    return !GIT_KEEPS_TREE.has(p.rest[j] || "");
+  }
+  if (p.name === "source" || p.name === ".") return !/(^|\/)activate(\.[a-z]+)?$/.test(p.rest[0] || "");
+  return !KEEPS_TREE.has(p.name);
+}
+
+// Script and task names that rewrite files, as a whole word of the name in
+// kebab or camel case (`lint:fix`, `make fixall`, `spotlessApply`), so
+// `test:fixtures` and `FormatterTest` are none.
+const kebabName = (words) => new RegExp(`(^|[:_-])(${words})([:_-]|$)`, "i");
+const camelName = (words) => new RegExp(`(^|[a-z0-9])(${words})([A-Z0-9]|$)`);
+const FIX_NAMES = [kebabName("fix|fixes|fixall|fixup"), camelName("Fix|Fixes|FixAll|Fixup|FixUp")];
+const WRITE_NAMES = [kebabName("format|fmt|apply|generate|gen|codegen"),
+  camelName("Format|Fmt|Apply|Generate|Gen|Codegen|CodeGen")];
+
+// Whether a verify step rewrites files itself: a fixing flag, or a script
+// or task named for fixing, formatting, applying or generating (`npm run
+// lint:fix`, `pnpm format`, `./gradlew spotlessApply check`, `make generate
+// test`) but, except for a fix, not for checking them (`format:check`,
+// `verify-codegen`).
+function stepWrites(cmd) {
+  const { w } = plainWords(cmd);
+  if (w.some((t) => FIX_FLAGS.test(t))) return true;
+  const manager = (i) => i >= 0 && own(PACKAGE_MANAGERS, programName(w[i]).toLowerCase());
+  const runner = w.findIndex((t, i) => /^(jest|vitest)$/.test(programName(t).toLowerCase())
+    || (/^test([:_-]|$)/.test(t) && (manager(i - 1) || (w[i - 1] === "run" && manager(i - 2)))));
+  if (runner >= 0 && w.slice(runner + 1).some((t) => UPDATE_FLAGS.test(t))) return true;
+  const fixes = (name) => FIX_NAMES.some((re) => re.test(name))
+    || (WRITE_NAMES.some((re) => re.test(name)) && !/check|verify/i.test(name));
+  return runs(cmd, 0).some((run) => {
+    const parts = run.split(" ");
+    return parts.length > 1 && fixes(parts[parts.length - 1]);
+  });
+}
+
+// With a regex of one's own, a simple command the regex matches is a verify
+// step when it writes nothing (`cat test.sh`), when it is a test runner the
+// default regex knows (`pytest tests/unit`, `bash -c "pytest -q"`), or when
+// the match takes in what it runs (`./test.sh > test.sh.log`, `pytest -q`),
+// a shell's heredoc included. A command that writes and only names the file
+// (`git checkout -- test.sh`, `curl -o test.sh ...`, `cat a > test.sh`,
+// `black tests/`) is no step: its edit counts, and a verify command left
+// with no step is nudged, never made red.
+const COPIES = new Set(["cp", "mv", "tee", "install", "ln", "rsync"]);
+const NAMES_WRITE = new Set([...COPIES, "patch", "ed", "dd"]);
+function regexStep(cmd, re) {
+  const { w } = plainWords(cmd);
+  const p = programOf(w);
+  if (p !== null && (inPlace(p) || NAMES_WRITE.has(p.name))) return false;
+  if (p !== null && POSIX_SHELLS.test(p.name) && cmd.bodies.some((body) => anyLine(body, re))) return true;
+  const line = w.join(" ");
+  if (!anyLine(line, re)) return false;
+  if (!mayWrite(cmd)) return true;
+  const ran = runs(cmd, 0);
+  const tests = ere(DEFAULT_VERIFY_RE);
+  if (ran.some((run) => tests.test(run))) return true;
+  // where the match falls must take in a word the command runs, or a word
+  // holding one (`bash -c "./ci.sh --fast"`)
+  const named = new Set(ran.flatMap((run) => run.split(" ")));
+  const runsIt = (t) => t.split(/\s+/).some((x) => named.has(x) || named.has(programName(x)));
+  const spans = [];
+  let at = 0;
+  for (const t of w) {
+    if (runsIt(t)) spans.push([at, at + t.length]);
+    at += t.length + 1;
+  }
+  const g = ere(re);
+  const all = new RegExp(g.source, `${g.flags}g`);
+  for (let m = all.exec(line); m !== null; m = all.exec(line)) {
+    const end = m.index + Math.max(m[0].length, 1);
+    if (spans.some(([a, b]) => m.index < b && end > a)) return true;
+    if (m[0].length === 0) all.lastIndex += 1;
+  }
+  return false;
+}
+
+// Whether a verify command also changes a file up to its last verify step
+// (`sed -i ... && npm test`, `eslint --fix .`), and after it (`npm test &&
+// sed -i ...`). `step(cmd, i)` says which simple commands are verify steps;
+// what a step pipes into is part of it, so `npm test | tee log` writes the
+// run's own log, no edit. A step hidden inside one simple command (`bash -c
+// 'sed -i ... && npm test'`) is not looked into, and lex lists the commands
+// of a `$(...)` after the rest, so a step inside one counts as the last. A
+// verify command with no step this can find (a regex matched across simple
+// commands, or only the file an edit names) counts every writer it runs as
+// after its test: their order is unknown, and an unverified edit is nudged
+// where a red one would claim a failure nobody saw.
+function aroundSteps(command, step) {
+  try {
+    const commands = lex(command, 0, false, 0).commands;
+    const at = [];
+    commands.forEach((cmd, i) => {
+      const from = cmd.pipedFrom === null ? -1 : commands.indexOf(cmd.pipedFrom);
+      at.push(Boolean(step(cmd, i)) || (from >= 0 && at[from]));
+    });
+    const last = at.lastIndexOf(true);
+    if (last < 0) {
+      return { before: false, after: commands.some((cmd) => mayWrite(cmd)) };
+    }
+    const writes = (i) => (at[i] ? stepWrites(commands[i]) : mayWrite(commands[i]));
+    return {
+      before: last >= 0 && commands.slice(0, last + 1).some((_, i) => writes(i)),
+      after: last >= 0 && commands.slice(last + 1).some((_, i) => writes(last + 1 + i)),
+    };
+  } catch {
+    return { before: false, after: false };
+  }
+}
+
 // A repository's COMMITTED .claude/settings.json can put anything in its `env`
 // block, and that env reaches this hook — so NO LUCIAZERO_* knob is accepted
 // from that scope. Each one is a way to disable enforcement while the
@@ -823,7 +1219,7 @@ function defaultVerify(command) {
 // and at the home directory, and it never reads the user's
 // own config directory. Personal settings (global `~/.claude/settings.json`,
 // gitignored `.claude/settings.local.json`) are the user's scope and keep
-// working.
+// working; a settings.local.json that git tracks is committed, and refused.
 //
 // Refusal only ever falls back to this file's own defaults, never to a block,
 // and a parse error leaves the configured values untouched. Every mode pays for
@@ -868,6 +1264,55 @@ function samePath(a, b) {
   return WINDOWS ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+// git by its full path on Windows, where a bare name is looked for in the
+// working directory -- the project a hook looks at -- before PATH. Only
+// PATH's absolute entries are searched, and only for a program: a batch file
+// would need cmd.exe, which searches the working directory too.
+function gitProgram() {
+  if (!WINDOWS) return "git";
+  const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+  const exts = (process.env.PATHEXT || ".COM;.EXE").split(";").map((ext) => ext.toLowerCase())
+    .filter((ext) => ext === ".com" || ext === ".exe");
+  for (const entry of (key ? process.env[key] : "").split(path.delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
+    if (!dir || !path.isAbsolute(dir)) continue;
+    for (const ext of exts) {
+      const file = path.join(dir, `git${ext}`);
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+// One read-only git call in dir: its stdout on exit 0, else null. No
+// optional locks, so it never rewrites the index of the repository it reads,
+// and no fsmonitor, which would run a program the repository's config names.
+function gitOut(dir, args) {
+  const git = gitProgram();
+  if (git === null) return null;
+  try {
+    const r = childProcess.spawnSync(git, ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir, ...args], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 3000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return r.status === 0 && !r.error ? r.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
+// .claude/settings.local.json is the user's own file, which Claude Code keeps
+// out of git. A repository that commits one has made it project scope. git is
+// asked only when the file sets a refused key, so most hook calls start no
+// process for this.
+function committedLocalKeys(claudeDir) {
+  const keys = keysIn(path.join(claudeDir, "settings.local.json"));
+  if (!keys.length) return [];
+  return gitOut(claudeDir, ["ls-files", "--error-unmatch", "--", "settings.local.json"]) === null ? [] : keys;
+}
+
 function refusedKeys(start) {
   const homeDir = real(home() || path.sep);
   // Only the DEFAULT config directory counts as user scope. CLAUDE_CONFIG_DIR
@@ -878,6 +1323,8 @@ function refusedKeys(start) {
   const userConfig = real(path.join(homeDir, ".claude"));
   const projectDir = process.env.CLAUDE_PROJECT_DIR ? real(process.env.CLAUDE_PROJECT_DIR) : null;
   const found = [];
+  // which files set them, for the one line SessionStart prints
+  found.files = [];
   let directory = real(start || ".");
   // Inside the session's project the walk goes on up to it: a submodule or
   // nested checkout below the project root does not end the project's scope.
@@ -886,8 +1333,12 @@ function refusedKeys(start) {
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const claudeDir = path.join(directory, ".claude");
     if (!samePath(directory, homeDir) && !samePath(real(claudeDir), userConfig)) {
-      for (const key of keysIn(path.join(claudeDir, "settings.json"))) {
-        if (!found.includes(key)) found.push(key);
+      for (const [name, keys] of [["settings.json", keysIn(path.join(claudeDir, "settings.json"))],
+        ["settings.local.json", committedLocalKeys(claudeDir)]]) {
+        if (keys.length && !found.files.includes(".claude/" + name)) found.files.push(".claude/" + name);
+        for (const key of keys) {
+          if (!found.includes(key)) found.push(key);
+        }
       }
     }
     if (samePath(directory, homeDir)) break;
@@ -1223,9 +1674,10 @@ function runStrict(state, cwd, command, timeout) {
 // Drop every knob the project's committed settings set (see refusedKeys);
 // the names refused.
 function dropRefused(cwd) {
-  let refused = refusedKeys(cwd);
+  const found = refusedKeys(cwd);
   // `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
-  if (refused.includes("LUCIAZERO_*")) refused = ALL_KNOBS.slice();
+  const refused = found.includes("LUCIAZERO_*") ? ALL_KNOBS.slice() : found;
+  refused.files = found.files;
   for (const name of refused) {
     if (/^LUCIAZERO_[A-Z_]+$/.test(name) || name === "CLAUDE_CONFIG_DIR") delete process.env[name];
   }
@@ -1254,7 +1706,7 @@ function main(argv) {
     if (!codex) dropRefused(process.env.CLAUDE_PROJECT_DIR || process.env.PWD || process.cwd());
     // a classic install already loads this text — never twice: Claude Code's
     // through its CLAUDE.md import, Codex's through its AGENTS.md block
-    if (codex ? codexDoctrineInstalled() : isFile(path.join(configDir(), "luciazero.md"))) return 0;
+    if (codex ? codexDoctrineInstalled() : claudeDoctrineInstalled()) return 0;
     try {
       process.stdout.write(fs.readFileSync(path.join(__dirname, "..", "luciazero.md")));
     } catch {}
@@ -1383,36 +1835,16 @@ function main(argv) {
       return 0;
     }
     case "edit": {
-      // Documentation writes do not re-arm the nudge: closeout skills write
-      // docs AFTER the final green verify. Relay's JSON is also a transient
-      // knowledge artifact, not implementation code.
-      const docRe = process.env.LUCIAZERO_DOC_REGEX || DEFAULT_DOC_RE;
-      const separators = WINDOWS ? /[\\/]/ : /\//;
-      const base = filePath.split(separators).pop();
-      const relay = filePath !== base && (base === "LUCIA_RELAY.json" || base === "LUCIA_RELAY.md");
-      let counted = "yes";
-      if (relay) counted = "no";
-      else if (filePath && anyLine(filePath, docRe)) counted = "no"; // doc-only write; verify state unchanged
-      else if (scratchEdit(filePath, cwd, project)) counted = "no"; // the agent's own scratch file
-      else {
-        // The first edit this copy records keeps the time of the last one an
-        // older copy recorded, which no session's edited/ entry carries.
-        const edited = path.join(state, "edited");
-        const before = fs.existsSync(edited) ? null : mtime(path.join(state, "last_edit"));
-        touch(path.join(state, "last_edit"));
-        if (mkdirs(edited)) {
-          if (before !== null) {
-            try {
-              fs.writeFileSync(path.join(state, "legacy_edit"), "", { flag: "wx" });
-              stampAt(path.join(state, "legacy_edit"), before);
-            } catch {}
-          }
-          touch(path.join(edited, editorKey));
-        }
-        // a new code edit re-arms this session's nudge, and an older copy's
-        removeFile(path.join(state, "nudged-sessions", editorKey));
-        removeOlderMarker(state);
-      }
+      // Documentation, relay and scratch writes do not re-arm the nudge (see
+      // codeEdit). A patch with no file_path (Codex's apply_patch) is code
+      // when any file it names is; one that names none counts, as every
+      // edit did.
+      const patched = filePathState === "missing" && toolInput && typeof toolInput.command === "string"
+        ? patchFiles(toolInput.command).map((name) => path.resolve(cwd, name)) : [];
+      const base = filePath.split(WINDOWS ? /[\\/]/ : /\//).pop();
+      const counted = (patched.length ? patched.some((file) => codeEdit(file, cwd, project))
+        : codeEdit(filePath, cwd, project)) ? "yes" : "no";
+      if (counted === "yes") recordEdit(state, editorKey);
       // Opt-in diagnostic (LUCIAZERO_EDIT_DIAG=1): one line per edit event in
       // the state directory, next to last_edit, saying what the event carried
       // and what the hook made of it -- the tool's name, the opaque tool key,
@@ -1447,15 +1879,21 @@ function main(argv) {
       const verifyCmd = process.env.LUCIAZERO_VERIFY_CMD || "";
       const verifyRe = process.env.LUCIAZERO_VERIFY_REGEX || DEFAULT_VERIFY_RE;
       let isVerify = false;
+      // which simple commands of a verify command are its verify steps
+      let step = () => false;
       if (command) {
         if (verifyCmd) {
           // exact mode: the command must BE or START WITH the configured command
           isVerify = command === verifyCmd || command.startsWith(verifyCmd + " ");
+          step = (cmd, i) => i < lex(verifyCmd, 0, false, 0).commands.length;
         } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
           // a regex of one's own keeps its documented meaning: any line
           isVerify = anyLine(command, verifyRe);
+          step = (cmd) => regexStep(cmd, verifyRe);
         } else {
           isVerify = defaultVerify(command);
+          const re = ere(DEFAULT_VERIFY_RE);
+          step = (cmd) => runs(cmd, 0).some((run) => re.test(run));
         }
       }
       // A command started in the background has no result yet: its
@@ -1468,6 +1906,13 @@ function main(argv) {
       } else if (isVerify) {
         mkdirs(path.join(telemetry, "verify_count"));
         touch(path.join(telemetry, "verify_count", toolKey));
+        // what this session's shell commands changed before the run is what
+        // it tested, so a red run makes those edits red
+        const runStart = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : nowMs;
+        shellEdits(state, cwd, project, editorKey, {
+          start: runStart, end: nowMs, failed: mode === "bash-failure" || status === "fail",
+          ...aroundSteps(command, step),
+        });
         // Red/green came from the tool response; failure hooks are red.
         if (mode === "bash-failure") status = "fail";
         // A green that follows a green with no code edit between them proved
@@ -1483,7 +1928,11 @@ function main(argv) {
           }
         }
         const started = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : null;
-        if (recordVerify(state, status || "ran", started, command)) settleNudged(state);
+        // A red run settles no nudge: the edits it covers are still not
+        // proven, and a session already nudged for them is not nudged again.
+        if (recordVerify(state, status || "ran", started, command) && status !== "fail") settleNudged(state);
+      } else if (!background && /^\d+$/.test(startMs) && nowMs >= Number(startMs)) {
+        noteShell(state, editorKey, Number(startMs), nowMs);
       }
       return 0;
     }
@@ -1502,6 +1951,9 @@ function main(argv) {
         endTurn();
         return 0;
       }
+      // what this session's shell commands changed is an edit like any other,
+      // for the strict gate's fast path too
+      shellEdits(state, cwd, project, editorKey);
       // Strict gate (opt-in, see header): actually run the user's verify
       // command unless the tracked state is already green-after-last-edit. Any
       // internal error — timeout, missing command, unparseable state — degrades
@@ -1542,12 +1994,20 @@ function main(argv) {
       // clean while another session's edit waits for a verify.
       const lastEdit = lastEditOf(state, editorKey);
       const lastVerify = mtime(path.join(state, "last_verify"));
-      const nudge = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
+      const unverified = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
+      // Doctrine rule 3: a red check proves nothing either. The session's
+      // edits are red when the latest run failed -- or could not find its
+      // command -- and no run since they were made has passed. A red in
+      // another session does not reach edits a green already covered.
+      const lastPass = mtime(path.join(state, "last_pass"));
+      const red = !unverified && lastEdit !== null && readTrimmed(path.join(state, "last_verify")) === "fail"
+        && (lastPass === null || lastEdit > lastPass);
+      const nudge = unverified || red;
       const nudged = path.join(state, "nudged-sessions");
       if (nudge && !isFile(path.join(nudged, editorKey))) {
         if (mkdirs(nudged)) touch(path.join(nudged, editorKey));
         statLog("nudge", ctx);
-        process.stderr.write(NUDGE_TEXT + "\n");
+        process.stderr.write((red ? RED_TEXT : NUDGE_TEXT) + "\n");
         return 2;
       }
       // a genuinely clean stop logs a row; yes-but-already-nudged logs nothing
@@ -1568,7 +2028,8 @@ function main(argv) {
       // ships these keys is either mistaken or hostile. Names the keys, never
       // their values.
       if (refused.length) {
-        process.stdout.write(`This repository's committed .claude/settings.json sets ${refused.join(" ")} — Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo.\n`);
+        const files = (refused.files && refused.files.length ? refused.files : [".claude/settings.json"]).join(" and ");
+        process.stdout.write(`This repository's committed ${files} sets ${refused.join(" ")} — Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo.\n`);
       }
       // SessionStart emits ONE pointer, never the relay contents. A legacy
       // HANDOFF.md gets a migration warning but is not silently rewritten.
@@ -1594,7 +2055,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns };
+module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns, gitProgram };
 
 if (require.main === module) {
   try {

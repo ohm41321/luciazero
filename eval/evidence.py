@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import textwrap
 from pathlib import Path
 from typing import Optional
 
@@ -290,6 +291,107 @@ def valid_range(rows: list[dict], tasks: list[str], arms=("doctrine", "bare")) -
     return str(counts[0]) if len(set(counts)) == 1 else f"{min(counts)}–{max(counts)}"
 
 
+def mean_of(rows: list[dict], key: str) -> Optional[float]:
+    """The mean of one resource field, or None unless every row recorded it."""
+    values = [row.get(key) for row in rows]
+    if not values or any(value is None for value in values):
+        return None
+    return sum(values) / len(values)
+
+
+def median_of(rows: list[dict], key: str) -> Optional[float]:
+    values = sorted(row[key] for row in rows if row.get(key) is not None)
+    if not values or len(values) != len(rows):
+        return None
+    middle = len(values) // 2
+    return values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
+
+
+def resource_cells(doctrine: list[dict], bare: list[dict]) -> tuple[str, str]:
+    """Mean cost and wall-clock time per run, Luciazero arm against bare."""
+    cost = (mean_of(doctrine, "cost_usd"), mean_of(bare, "cost_usd"))
+    time = (mean_of(doctrine, "duration_s"), mean_of(bare, "duration_s"))
+    return ("—" if None in cost else f"${cost[0]:.2f} vs ${cost[1]:.2f}",
+            "—" if None in time else f"{time[0]:.0f} s vs {time[1]:.0f} s")
+
+
+def canonical_claude(claude: list[dict]) -> dict:
+    """The published Claude campaign with the most tasks: the one quoted."""
+    published = [campaign for campaign in claude if campaign["status"] == "published"]
+    return max(published, key=lambda campaign: (len(campaign["tasks"]), campaign["date"]))
+
+
+def short_label(campaign: dict) -> str:
+    label = campaign["display_model"]
+    return label[len("Claude "):] if label.startswith("Claude ") else label
+
+
+def difference_sources(campaign: dict, rows: list[dict]) -> dict:
+    """Where a campaign's difference comes from, computed from its rows: the
+    two tasks with the largest gain in passing runs, the difference without
+    relay-transfer (whose grader wants Luciazero's own relay format, which
+    its prompt never names), and the median time per run of each arm."""
+    gains = []
+    for task in campaign["tasks"]:
+        gain = (sum(passed(row) for row in arm_rows(rows, "doctrine", task))
+                - sum(passed(row) for row in arm_rows(rows, "bare", task)))
+        gains.append((gain, task))
+    gains.sort(key=lambda item: -item[0])
+    top = gains[:2]
+    without = None
+    if "relay-transfer" in campaign["tasks"]:
+        kept = [row for row in rows if row["task"] != "relay-transfer"]
+        without = percent(arm_rows(kept, "doctrine")) - percent(arm_rows(kept, "bare"))
+    return {
+        "label": short_label(campaign),
+        "total": sum(gain for gain, _ in gains),
+        "top": [task for _, task in top],
+        "top_gain": sum(gain for gain, _ in top),
+        "without_relay": without,
+        "median_time": (median_of(arm_rows(rows, "doctrine"), "duration_s"),
+                        median_of(arm_rows(rows, "bare"), "duration_s")),
+    }
+
+
+def wrap(text: str) -> list[str]:
+    return textwrap.wrap(text, 80, break_on_hyphens=False, break_long_words=False)
+
+
+def sources_text(src: dict) -> str:
+    first, second = src["top"]
+    lead = ("Two tasks carry most of" if 2 * src["top_gain"] > src["total"]
+            else "The two largest gains in")
+    text = (f"{lead} the {src['label']} difference: `{first}` and `{second}` give "
+            f"{src['top_gain']} of its {src['total']} extra passing runs. No uncertainty "
+            "interval is computed, so read the difference as a direction more than a size.")
+    if src["without_relay"] is not None:
+        text += (" `relay-transfer` grades Luciazero's own relay format (`LUCIA_RELAY.json`),"
+                 " which its prompt never names, so it favors the Luciazero arm; without it"
+                 f" the {src['label']} difference is {src['without_relay']:+d}pp.")
+    text += " Cost per run is the mean API price the CLI reported; time per run is the mean wall-clock time"
+    median = src["median_time"]
+    text += ("." if None in median else
+             f" (medians for {src['label']}: {median[0]:.0f} s vs {median[1]:.0f} s).")
+    return text
+
+
+def sources_text_th(src: dict) -> str:
+    first, second = src["top"]
+    lead = "ส่วนต่างส่วนใหญ่ของ" if 2 * src["top_gain"] > src["total"] else "ส่วนต่างที่มากที่สุดของ"
+    text = (f"{lead} {src['label']} มาจาก 2 task: `{first}` กับ `{second}` ให้ "
+            f"{src['top_gain']} จาก {src['total']} run ที่ผ่านเพิ่มขึ้น และไม่ได้คำนวณช่วงความไม่แน่นอน "
+            "จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด")
+    if src["without_relay"] is not None:
+        text += (" `relay-transfer` ตรวจตาม format relay ของ Luciazero เอง (`LUCIA_RELAY.json`)"
+                 " ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง Luciazero ถ้าตัด task นี้ออก"
+                 f" ส่วนต่างของ {src['label']} เป็น {src['without_relay']:+d}pp")
+    text += " ต้นทุนต่อ run คือค่าเฉลี่ยราคา API ที่ CLI รายงาน เวลาต่อ run คือค่าเฉลี่ยเวลาจริง"
+    median = src["median_time"]
+    if None not in median:
+        text += f" (median ของ {src['label']}: {median[0]:.0f} s กับ {median[1]:.0f} s)"
+    return text
+
+
 def with_arms(campaigns: list[dict], *arms: str) -> list[dict]:
     """The campaigns that ran every one of these arms: a table comparing two
     arms lists only campaigns that have both."""
@@ -399,8 +501,8 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.",
         "All-criteria pass rate generated from checked-in raw rows:",
         "",
-        "| Claude model | Tasks | Luciazero | Bare | Difference |",
-        "|---|---:|---:|---:|---:|",
+        "| Claude model | Tasks | Luciazero | Bare | Difference | Cost per run | Time per run |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for campaign in claude:
         rows = data[campaign["id"]]
@@ -415,10 +517,11 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         valid_rows = sum(not row["invalid"] for row in rows)
         if campaign["expected_model_rows"] < valid_rows:
             label += "†"
+        cost, time = resource_cells(doctrine, bare)
         lines.append(
             f"| {label}, {n} valid/task{suffix} | {len(campaign['tasks'])} | "
             f"{rate_cell(doctrine)} | "
-            f"{rate_cell(bare)} | {percent(doctrine) - percent(bare):+d}pp |"
+            f"{rate_cell(bare)} | {percent(doctrine) - percent(bare):+d}pp | {cost} | {time} |"
         )
     lines += [
         "",
@@ -430,6 +533,11 @@ def english_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "arms at four valid runs; the 2026-09-02 campaign supersedes it with five valid",
         "runs in every cell and no invalid rows. The previously stated `+37pp` top-up",
         "remains retired because its replacement raw rows could not be recovered.",
+        "",
+    ]
+    canonical = canonical_claude(claude)
+    lines += wrap(sources_text(difference_sources(canonical, data[canonical["id"]])))
+    lines += [
         "",
         "†Model provenance is incomplete for Haiku: only 70/140 rows encode model",
         "identity. The other 70 are attributed at campaign-file/report level and",
@@ -483,7 +591,12 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
     claude_table = (english[table_start:table_end]
                     .replace("Claude model", "โมเดล Claude")
                     .replace("| Tasks |", "| จำนวน task |")
-                    .replace("Difference", "ผลต่าง"))
+                    .replace("Difference", "ผลต่าง")
+                    .replace("Cost per run", "ต้นทุนต่อ run")
+                    .replace("Time per run", "เวลาต่อ run"))
+    claude = claude_campaigns(campaigns)
+    canonical = canonical_claude(claude)
+    sources = wrap(sources_text_th(difference_sources(canonical, data[canonical["id"]])))
     gpt_start = english.index("| Model | Valid invocations")
     gpt_table_end = english.index("\n\n*One Luciazero", gpt_start)
     gpt_table = (english[gpt_start:gpt_table_end]
@@ -509,6 +622,10 @@ def thai_readme(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
             "valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 มาแทนที่ด้วย valid run",
             "ครบ 5 รอบทุก cell และไม่มี invalid เลย ส่วนผล top-up `+37pp` เดิมยังถูกยกเลิก",
             "เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้",
+            "",
+        ]
+        + sources
+        + [
             "",
             "†Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก",
             "model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign",
@@ -540,17 +657,18 @@ def benchmark_doc(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.",
         "Tables below are generated from digest-verified raw JSONL.",
         "",
-        "| Model | Tasks | Luciazero | Bare | Difference | Valid runs per task | Status |",
-        "|---|---:|---:|---:|---:|---:|---|",
+        "| Model | Tasks | Luciazero | Bare | Difference | Cost per run | Time per run | Valid runs per task | Status |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for campaign in claude:
         rows = data[campaign["id"]]
         doctrine = arm_rows(rows, "doctrine")
         bare = arm_rows(rows, "bare")
+        cost, time = resource_cells(doctrine, bare)
         lines.append(
             f"| {campaign['display_model']} | {len(campaign['tasks'])} | "
             f"{rate_cell(doctrine)} | {rate_cell(bare)} | "
-            f"{percent(doctrine) - percent(bare):+d}pp | "
+            f"{percent(doctrine) - percent(bare):+d}pp | {cost} | {time} | "
             f"{valid_range(rows, campaign['tasks'])} | {campaign['status']} |"
         )
     lines += [
@@ -566,6 +684,12 @@ def benchmark_doc(campaigns: list[dict], data: dict[str, list[dict]]) -> str:
         "> (`archive-security`, `schema-migration`, `paginated-sync`, `relay-transfer`)",
         "> that did not exist on 2026-08-11. Model rows are not like-for-like; each arm",
         "> is only comparable with the bare arm of its own campaign.",
+        "",
+    ]
+    canonical = canonical_claude(claude)
+    lines += ["> " + line for line in wrap("**Where the difference comes from:** "
+                                           + sources_text(difference_sources(canonical, data[canonical["id"]])))]
+    lines += [
         "",
         "> **Haiku model-provenance limitation:** only 70/140 rows encode model",
         "> identity. Attribution of the other 70 comes from the original campaign",

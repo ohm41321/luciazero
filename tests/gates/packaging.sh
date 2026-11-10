@@ -165,6 +165,13 @@ OUT="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cj
 [ "${OUT}" = "$(cat "${ROOT}/claude/luciazero.md")" ] \
   || fail "doctrine mode output does not match claude/luciazero.md"
 touch "${DCT}/luciazero.md"
+# a doctrine file nothing imports loads nothing (uninstall keeps a customized
+# copy and removes the import), so the plugin still emits it
+OUT1="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
+  || fail "doctrine mode (unimported doctrine file) exited non-zero"
+[ "${OUT1}" = "$(cat "${ROOT}/claude/luciazero.md")" ] \
+  || fail "doctrine mode went silent for a doctrine file CLAUDE.md does not import"
+printf '# mine\n@luciazero.md\n' > "${DCT}/CLAUDE.md"
 OUT2="$(CLAUDE_CONFIG_DIR="${DCT}" node "${ROOT}/claude/hooks/luciazero-verify.cjs" doctrine </dev/null)" \
   || fail "doctrine mode (classic install present) exited non-zero"
 [ -z "${OUT2}" ] || fail "doctrine mode must stay silent when a classic install exists (double-load)"

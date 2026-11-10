@@ -16,7 +16,9 @@ Must pass before any PR. It covers:
 
 The collector runs `./test.sh --full` and saves stdout, stderr, and revision
 metadata under `.test-timings/`. Use `--discipline` for hook/report/prompt
-iterations and `--fast` for the broader loop. Collect samples during ordinary
+iterations, `--fast` for the broader loop, and `--bus` for changes under
+`agentd/` or to the Agent Bus scripts (the daemon suite and the
+fake-provider M4-M6 gates, which `--fast` does not run). Collect samples during ordinary
 work; do not rerun just to fill a sample quota. Compare timings only within a
 matching gate configuration and revision; one `sha+dirty` can represent
 different trees. `scripts/test-timings.sh --report` lists revisions and warns

@@ -39,11 +39,13 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
     "${TDIR}setup.sh" "${EWORK}"
     "${TDIR}setup.sh" "${EWORK}"
   fi
-  if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
-    rm -rf "${EWORK}"
-    fail "eval grader ${TN} passes the unfixed project (grader cannot go red)"
-  fi
+  # Red means scored red: a grader that crashes prints no SCORE, and run.sh
+  # books that run INVALID instead of failed, so a crash proves nothing.
+  RC=0
+  OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" || RC=$?
   rm -rf "${EWORK}"
+  [ "${RC}" != 0 ] || fail "eval grader ${TN} passes the unfixed project (grader cannot go red)"
+  grep -q '^SCORE ' <<<"${OUT}" || fail "eval grader ${TN} crashes on the unfixed project instead of scoring it (rc=${RC}): ${OUT}"
   # every gamed*/ cheat variant must be rejected, and at least one must exist —
   # an untested "cannot be gamed" grader may not ship
   GAMED_SEEN=0
@@ -57,11 +59,12 @@ for TDIR in "${ROOT}/eval/tasks"/*/; do
       "${TDIR}setup.sh" "${EWORK}"
     fi
     cp -R "${GD}." "${EWORK}/"
-    if "${TDIR}grade.sh" "${EWORK}" >/dev/null 2>&1; then
-      rm -rf "${EWORK}"
-      fail "eval grader ${TN} passes its checked-in cheat tree ($(basename "${GD}")/)"
-    fi
+    RC=0
+    OUT="$("${TDIR}grade.sh" "${EWORK}" 2>&1)" || RC=$?
     rm -rf "${EWORK}"
+    [ "${RC}" != 0 ] || fail "eval grader ${TN} passes its checked-in cheat tree ($(basename "${GD}")/)"
+    grep -q '^SCORE ' <<<"${OUT}" \
+      || fail "eval grader ${TN} crashes on its cheat tree ($(basename "${GD}")/) instead of scoring it (rc=${RC}): ${OUT}"
   done
   [ "${GAMED_SEEN}" = 1 ] || fail "eval task ${TN}: missing gamed/ cheat tree"
   echo "ok  eval grader ${TN} red/green/anti-gamed"

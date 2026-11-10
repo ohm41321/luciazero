@@ -43,7 +43,7 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 
 | งาน | ทำอย่างไร |
 |---|---|
-| **พิสูจน์** | Stop hook เตือนเมื่อ agent จะหยุดทั้งที่มีการแก้หลังการตรวจครั้งล่าสุด; strict gate แบบ opt-in บล็อกเมื่อผลแดง `/done` รัน full verify และ skeptic diff pass เพิ่ม revert probe เมื่อมีการแก้ test และ review อิสระหนึ่งรอบเมื่อ diff เสี่ยง |
+| **พิสูจน์** | Stop hook เตือนเมื่อ agent จะหยุดทั้งที่มีการแก้หลังการตรวจครั้งล่าสุด หรือการตรวจนั้นแดง; strict gate แบบ opt-in บล็อกเมื่อผลแดง `/done` รัน full verify และ skeptic diff pass เพิ่ม revert probe เมื่อมีการแก้ test และ review อิสระหนึ่งรอบเมื่อ diff เสี่ยง |
 | **รักษา&nbsp;scope** | `/done` บังคับให้ส่งครบทุกข้อหรือระบุสิ่งที่เว้นไว้ scope ที่หลุดจึงถูกบอกออกมาแทนที่จะหายเงียบ ๆ |
 | **จำบทเรียน** | `/retro` บันทึกทางตันและกับดัก `/debug` อ่านก่อนลองรอบถัดไป |
 | **ส่งต่องาน** | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge ไปยัง session, agent หรือเครื่องอื่น |
@@ -392,11 +392,11 @@ GitHub **Watch → Custom → Releases**
 Snapshot: 2026-08-11 สำหรับ Haiku และ Sonnet pilot, 2026-09-02 สำหรับ Sonnet
 อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:
 
-| โมเดล Claude | จำนวน task | Luciazero | Bare | ผลต่าง |
-|---|---:|---:|---:|---:|
-| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp |
-| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp |
+| โมเดล Claude | จำนวน task | Luciazero | Bare | ผลต่าง | ต้นทุนต่อ run | เวลาต่อ run |
+|---|---:|---:|---:|---:|---:|---:|
+| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | $0.08 vs $0.07 | 54 s vs 48 s |
+| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | $0.21 vs $0.18 | 38 s vs 33 s |
+| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | $0.39 vs $0.22 | 93 s vs 47 s |
 
 Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ
 doctrine เพียงอย่างเดียว และแต่ละแถวเทียบข้ามกันตรงๆ ไม่ได้ เพราะ campaign
@@ -406,6 +406,14 @@ Sonnet วันที่ 2026-09-02 เพิ่ม task ที่ยากข�
 valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 มาแทนที่ด้วย valid run
 ครบ 5 รอบทุก cell และไม่มี invalid เลย ส่วนผล top-up `+37pp` เดิมยังถูกยกเลิก
 เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้
+
+ส่วนต่างส่วนใหญ่ของ Sonnet มาจาก 2 task: `merge-conflict` กับ `pipeline` ให้ 10
+จาก 16 run ที่ผ่านเพิ่มขึ้น และไม่ได้คำนวณช่วงความไม่แน่นอน
+จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด `relay-transfer` ตรวจตาม format relay
+ของ Luciazero เอง (`LUCIA_RELAY.json`) ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง
+Luciazero ถ้าตัด task นี้ออก ส่วนต่างของ Sonnet เป็น +31pp ต้นทุนต่อ run
+คือค่าเฉลี่ยราคา API ที่ CLI รายงาน เวลาต่อ run คือค่าเฉลี่ยเวลาจริง (median ของ
+Sonnet: 45 s กับ 40 s)
 
 †Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก
 model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign
@@ -449,16 +457,18 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
 - Telemetry ของ hook อยู่ใน private state แยกตาม session ภายในเครื่อง เก็บเวลา
   wall time ของ turn/Bash/verify, จำนวน green ซ้ำโดยไม่มี edit คั่น และจำนวน
-  Bash, verify, skill ที่ model/user เรียก โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
+  Bash, verify, skill ที่ model/user เรียก แต่ละแถวของสถิติระบุ project ด้วย hash
+  และชื่อโฟลเดอร์ไว้ใช้ใน report โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
   ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
   คีย์ `LUCIAZERO_*` ทุกตัว (รวม `CLAUDE_CONFIG_DIR`) ที่ประกาศไว้ที่นั่น — ทั้งใน
   ไดเรกทอรีที่เปิด session และไดเรกทอรีแม่จนถึง root ของ repo — จะถูกปฏิเสธ
-  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
+  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน `.claude/settings.local.json`
+  ที่ git track อยู่ก็ถูกปฏิเสธแบบเดียวกัน settings ของคุณเองยังใช้ได้:
   การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
-  หรือ `.claude/settings.local.json` ของคุณ
+  หรือ `.claude/settings.local.json` ที่ไม่ได้ track
 - Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ผ่าน CI เท่านั้น; ดูต้นหน้านี้):
   `npx luciazero` ติดตั้งผ่าน installer ที่ port เป็น Node, `global-install`
   ใช้ global prefix ของ npm เอง และ hook,
@@ -477,7 +487,16 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
   `python scripts/check-site.py`) การอ่านไฟล์ test ไม่นับ การรันโปรแกรมด้วย
   `--help` หรือ `--version` อย่างเดียวก็ไม่นับ การแก้ไฟล์ใน temporary directory
   ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
-  ไม่ปลุก nudge ส่วนคำสั่ง Bash ที่เขียนไฟล์ไม่ถูกนับเป็น edit
+  ไม่ปลุก nudge
+- ไฟล์ที่คำสั่ง shell แก้ (`sed -i`, heredoc, formatter, commit hook) นับเป็น edit
+  ด้วย ก่อน verify แต่ละรอบและตอน stop hook ถาม git ว่าไฟล์ไหนเปลี่ยนระหว่างที่คำสั่ง
+  shell ของ session นั้นรันอยู่ หลัง verify ครั้งล่าสุดจบ ไม่นับเอกสาร ไฟล์ที่ ignore
+  สิ่งที่ verify เขียนเอง และ edit ของ session อื่นที่เกิดระหว่างสองคำสั่ง คำสั่งที่
+  test ก่อนแล้วค่อยแก้ (`npm test && sed -i ...`) ถือว่า edit นั้นยังไม่ได้ verify
+  ถ้าอยู่นอก git work tree จะไม่ตามการเขียนผ่าน shell
+- ถ้า verify ล่าสุดของ edit ใน session นั้นล้ม หรือหาคำสั่งไม่เจอ stop จะถูกเตือน
+  หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน เฉพาะ Claude Code: Codex ส่ง output ของคำสั่ง
+  ให้ hook แต่ไม่บอกว่าผ่านหรือไม่
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,
@@ -492,7 +511,8 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 
 ```bash
 ./test.sh --discipline  # แก้ hook, report หรือ skill prompt: ราว 30 วินาที
-./test.sh --fast        # loop ระหว่างทำ: เพิ่ม agentd suite, Relay, bisect, evidence
+./test.sh --fast        # loop ระหว่างทำ: เพิ่ม Relay, bisect, evidence
+./test.sh --bus         # แก้ agentd/ หรือ script ของ Bus: daemon suite กับ gate ที่ใช้ fake provider
 ./test.sh               # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # เพิ่มบรรทัด `TIMING gate=<name> seconds=<n>` ต่อ gate ทาง stderr
 scripts/test-timings.sh --fast       # รันแบบเดียวกัน และเก็บ stdout/stderr/meta ไว้ใต้ .test-timings/

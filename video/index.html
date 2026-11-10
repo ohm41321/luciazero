@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Luciazero intro</title>
+<style>
+@font-face { font-family: "M PLUS Rounded 1c"; font-weight: 500; src: url(node_modules/@fontsource/m-plus-rounded-1c/files/m-plus-rounded-1c-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "M PLUS Rounded 1c"; font-weight: 700; src: url(node_modules/@fontsource/m-plus-rounded-1c/files/m-plus-rounded-1c-latin-700-normal.woff2) format("woff2"); }
+@font-face { font-family: "M PLUS Rounded 1c"; font-weight: 800; src: url(node_modules/@fontsource/m-plus-rounded-1c/files/m-plus-rounded-1c-latin-800-normal.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; src: url(node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; src: url(node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 600; src: url(node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-600-normal.woff2) format("woff2"); }
+
+/* Lucia's palette: the white and silver of her hair and jacket, the cyan of her ear
+   lights, her blue and amber eyes, her blush, and the navy of her straps (ink). */
+:root {
+  --bg: #e3f1fb;
+  --card: #ffffff;
+  --ink: #1f2a44;
+  --soft: #5b6b82;
+  --dim: #8a99ad;
+  --rule: #d5dee8;
+  --teal: #3cc8ec;
+  --deep: #1b8fc0;
+  --halo: #8fe6f8;
+  --blue: #2e8fe0;
+  --pink: #ff93ab;
+  --amber: #d98a1c;
+  --amber-bg: #f2a93b;
+  --red: #e0456b;
+  --green: #1fa876;
+  --display: "M PLUS Rounded 1c", system-ui, sans-serif;
+  --body: "M PLUS Rounded 1c", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --lift: 0 8px 0 rgba(31, 42, 68, 0.13);
+}
+html, body { margin: 0; background: #000; overflow: hidden; }
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); transform-origin: 0 0; }
+#gl { position: absolute; inset: 0; width: 1920px; height: 1080px; display: block; }
+#ui { position: absolute; inset: 0; color: var(--ink); font-family: var(--body); -webkit-font-smoothing: antialiased; }
+.layer { position: absolute; opacity: 0; visibility: hidden; }
+.row { position: absolute; left: 0; right: 0; display: flex; justify-content: center; }
+.row > .layer { position: relative; }
+
+/* Cards: white, a navy outline, a cyan title bar, and two cat ears on top. */
+#term, .rpanel { background: var(--card); border: 3px solid var(--ink); border-radius: 22px; box-shadow: var(--lift); }
+#term::before, .rpanel::before, #term::after, .rpanel::after { content: ""; position: absolute; top: -21px; width: 34px; height: 24px; background: var(--ink); clip-path: polygon(0 100%, 50% 0, 100% 100%); }
+#term::before, .rpanel::before { left: 34px; }
+#term::after, .rpanel::after { left: 78px; }
+#term .bar, .rpanel .bar { display: flex; gap: 9px; align-items: center; padding: 12px 22px; border-radius: 19px 19px 0 0; background: var(--teal); border-bottom: 3px solid var(--ink); font: 700 19px/1.2 var(--body); color: #fff; }
+#term .bar i, .rpanel .bar i { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2px solid var(--ink); }
+#term .bar i:nth-child(1), .rpanel .bar i:nth-child(1) { background: var(--pink); }
+#term .bar i:nth-child(2), .rpanel .bar i:nth-child(2) { background: #ffd27a; }
+#term .bar span, .rpanel .bar span { margin-left: 10px; }
+
+/* 1 · false green */
+#term { left: 470px; top: 395px; width: 980px; font: 500 34px/1.55 var(--mono); color: var(--ink); transform-origin: 50% 0; }
+#term .body { padding: 24px 34px 28px; min-height: 162px; }
+.ps { color: var(--deep); }
+#typed { color: var(--green); }
+#caret { color: var(--teal); }
+#zero { color: var(--red); opacity: 0; visibility: hidden; }
+#question { top: 812px; font: 800 76px/1.1 var(--display); color: var(--ink); }
+
+/* 2 · failures */
+.fail { left: 150px; top: 350px; width: 1640px; }
+.fail .tag { display: inline-block; padding: 8px 20px; border-radius: 999px; background: var(--red); font: 600 25px/1 var(--mono); letter-spacing: 0.24em; color: #fff; margin-bottom: 30px; }
+.fail h2 { margin: 0; font: 800 124px/1.06 var(--display); color: var(--ink); transform-origin: 0 50%; }
+.fail p { margin: 34px 0 0; font: 500 34px/1.4 var(--body); color: var(--soft); }
+
+/* 3 · Lucia */
+#title { left: 866px; top: 318px; font: 800 176px/1 var(--display); color: var(--ink); perspective: 800px; text-shadow: 0 8px 0 rgba(60, 200, 236, 0.4); }
+#tagline { left: 874px; top: 540px; width: 1010px; font: 700 50px/1.2 var(--body); color: var(--ink); }
+#subline { left: 876px; top: 640px; padding: 10px 22px; border-radius: 999px; background: var(--card); border: 3px solid var(--ink); box-shadow: var(--lift); font: 600 30px/1 var(--mono); color: var(--deep); }
+
+/* 4 · loop */
+.node-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.node-label { position: absolute; white-space: nowrap; opacity: 0; visibility: hidden; }
+.node-label b { display: block; font: 800 46px/1 var(--display); color: var(--ink); }
+.node-label span { display: block; margin-top: 9px; font: 500 22px/1 var(--body); color: var(--soft); }
+#nl-plan .node-label { transform: translate(-50%, -100%); text-align: center; top: -40px; }
+#nl-change .node-label { left: 40px; top: -30px; }
+#nl-verify .node-label { left: 84px; top: -8px; }
+#nl-fix .node-label { right: 40px; top: -30px; text-align: right; }
+#status { display: flex; align-items: center; gap: 26px; padding: 16px 30px; border-radius: 999px; background: var(--card); border: 3px solid var(--ink); box-shadow: var(--lift); font: 500 30px/1 var(--mono); color: var(--ink); }
+#status .sep { width: 3px; height: 30px; border-radius: 2px; background: var(--rule); }
+#exit { min-width: 5.5em; }
+#quote { top: 92px; text-align: center; }
+#quote h2 { margin: 0; font: 800 84px/1.12 var(--display); color: var(--ink); }
+#quote p { display: inline-block; margin: 22px 0 0; padding: 8px 20px; border-radius: 999px; background: var(--teal); font: 600 24px/1 var(--mono); color: #fff; letter-spacing: 0.06em; }
+
+/* 5 · relay: session A on a laptop (left) hands a relay card to session B on a desktop (right) */
+#relayHead { left: 90px; top: 60px; }
+#relayHead .n { font: 800 100px/1 var(--display); color: var(--ink); }
+#relayHead .d { margin-top: 16px; font: 700 40px/1.15 var(--body); color: var(--soft); }
+.rpanel { font: 500 24px/1.5 var(--mono); color: var(--ink); }
+.rpanel .bar b { font-weight: 800; color: #fff; }
+.rpanel .body { padding: 18px 28px 22px; }
+.rpanel .ln { white-space: pre; opacity: 0; }
+.rpanel .ln.out { color: var(--soft); }
+.rpanel .ln.ok { color: var(--green); }
+.rpanel .ln.bad { color: var(--red); }
+.rpanel .ln.dim { color: var(--dim); }
+.rpanel .caret { color: var(--teal); }
+.rpanel .pill { margin-left: 18px; padding: 2px 12px; border: 2px solid var(--rule); border-radius: 999px; font: 600 17px var(--body); color: var(--soft); vertical-align: 2px; }
+#relayA { left: 90px; top: 290px; width: 720px; }
+#relayB { left: 1030px; top: 410px; width: 800px; }
+/* two machines: a laptop deck under A, a monitor stand under B */
+.rpanel .dev { position: absolute; left: 50%; top: calc(100% + 3px); transform: translateX(-50%); background: var(--card); border: 3px solid var(--ink); }
+.rpanel .dev.laptop { width: calc(100% + 70px); height: 22px; border-radius: 4px 4px 18px 18px; box-shadow: var(--lift); }
+.rpanel .dev.laptop::before { content: ""; position: absolute; left: 50%; top: -3px; width: 120px; height: 9px; transform: translateX(-50%); border-radius: 0 0 9px 9px; background: var(--rule); }
+.rpanel .dev.stand { width: 84px; height: 30px; border-top: 0; }
+.rpanel .dev.stand::after { content: ""; position: absolute; left: 50%; top: 100%; width: 250px; height: 14px; transform: translateX(-50%); border: 3px solid var(--ink); border-radius: 10px 10px 4px 4px; background: var(--card); box-shadow: var(--lift); }
+#relayFoot { left: 90px; top: 836px; }
+#relayFoot .x { display: flex; gap: 16px; }
+#relayFoot .x span { position: relative; display: flex; align-items: center; gap: 12px; padding: 9px 22px 9px 16px; border-radius: 999px; background: var(--card); border: 3px solid var(--ink); box-shadow: var(--lift); font: 800 28px/1 var(--body); color: var(--ink); white-space: nowrap; }
+#relayFoot .x span::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: var(--teal); border: 2px solid var(--ink); }
+#relayFoot .d { margin-top: 22px; font: 700 28px/1 var(--body); color: var(--deep); }
+
+/* 6 · skills */
+#skillsHead { left: 120px; top: 776px; }
+#skillsHead .n { font: 800 120px/1 var(--display); color: var(--ink); }
+#skillsHead .d { margin-top: 12px; font: 700 46px/1.1 var(--body); color: var(--soft); }
+#agents { left: 124px; top: 990px; font: 700 28px/1 var(--body); color: var(--deep); }
+
+/* 7 · call to action */
+#cta { left: 900px; top: 104px; width: 940px; }
+#cta .word { font: 800 128px/1 var(--display); color: var(--ink); text-shadow: 0 6px 0 rgba(60, 200, 236, 0.35); }
+#cta .tag { margin-top: 18px; font: 700 42px/1.2 var(--body); color: var(--soft); }
+#cta .install { position: relative; margin-top: 44px; padding: 22px 34px; border-radius: 22px; background: var(--card); border: 3px solid var(--ink); box-shadow: var(--lift); font: 500 28px/1.6 var(--mono); color: var(--ink); }
+#cta .install::before, #cta .install::after { content: ""; position: absolute; top: -21px; width: 34px; height: 24px; background: var(--ink); clip-path: polygon(0 100%, 50% 0, 100% 100%); }
+#cta .install::before { left: 34px; }
+#cta .install::after { left: 78px; }
+#cta .install .c { color: var(--dim); }
+#cta .first { margin-top: 28px; font: 700 30px/1.4 var(--body); color: var(--ink); }
+#cta .first code, #cta .more code { font: 600 28px/1 var(--mono); color: var(--deep); }
+#cta .more { margin-top: 18px; font: 600 27px/1.45 var(--body); color: var(--soft); }
+#cta .more code { font-size: 26px; color: var(--deep); }
+#cta .url { margin-top: 30px; font: 600 34px/1 var(--mono); color: var(--deep); }
+#cta .url { white-space: nowrap; }
+#cta .url span { color: var(--soft); font: 500 24px/1 var(--body); }
+#cta .try { display: inline-block; margin-top: 22px; padding: 10px 22px; border-radius: 999px; background: var(--teal); border: 3px solid var(--ink); box-shadow: var(--lift); font: 800 30px/1 var(--body); color: #fff; }
+.cta-item { opacity: 0; visibility: hidden; }
+
+/* shared by the scenes after the loop: a failure tag that turns into CAUGHT */
+.chead { left: 90px; top: 50px; }
+.chead .tag { font: 600 24px/1 var(--mono); letter-spacing: 0.3em; color: var(--red); margin-bottom: 16px; white-space: pre; }
+.chead .tag .tx { position: relative; display: inline-block; transform-origin: 0 60%; }
+.chead .tag .strike { position: absolute; left: -4px; right: 0.1em; top: calc(50% - 2px); height: 4px; border-radius: 2px; background: currentColor; transform-origin: 0 50%; transform: scaleX(0); }
+.chead h2 { margin: 0; font: 800 64px/1.1 var(--display); color: var(--ink); white-space: nowrap; }
+.chead h2 code { font: 600 56px/1 var(--mono); color: var(--deep); }
+.cap { font: 500 21px/1.3 var(--body); color: var(--dim); }
+.shead .n { font: 800 100px/1 var(--display); color: var(--ink); }
+.shead .d { margin-top: 16px; font: 700 40px/1.15 var(--body); color: var(--soft); }
+.shead .n small { margin-left: 22px; padding: 6px 18px; border-radius: 999px; background: var(--amber-bg); font: 600 26px/1 var(--mono); letter-spacing: 0.12em; color: #fff; vertical-align: 26px; }
+
+/* terminal panels: lines built from timeline.json terms */
+.rpanel .ln.cmd .ps { color: var(--deep); }
+.rpanel .ln.warn { color: var(--amber); }
+.rpanel .ln.soft { color: var(--soft); }
+.rpanel .ln.claim, .rpanel .ln.claim .ps { color: var(--green); }
+.rpanel .ln.nudge .ps, .rpanel .ln.nudge .tx { color: var(--amber); }
+.rpanel .ln.label { margin-top: 12px; font-family: var(--body); font-weight: 700; color: var(--ink); }
+.rpanel .ln.box { white-space: normal; margin: 12px 0 16px; padding: 14px 22px 16px; border: 2px solid var(--amber-bg); border-left-width: 8px; border-radius: 14px; background: #fff6e6; font: 500 23px/1.45 var(--body); color: var(--ink); }
+.rpanel .ln.box b { display: block; margin-bottom: 8px; font: 600 17px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); }
+.rpanel .ln.box.bad { border-color: #f5a3b8; background: #ffeef3; }
+.rpanel .ln.box.bad b { color: var(--red); }
+.rpanel .sl { display: flex; align-items: center; gap: 18px; padding: 12px 28px 14px; border-top: 2px dashed var(--rule); border-radius: 0 0 19px 19px; font: 500 23px/1 var(--mono); white-space: pre; }
+.rpanel .sl .st.ok, .rpanel .sl .pill.ok { color: var(--green); }
+.rpanel .sl .st.warn, .rpanel .sl .pill.warn { color: var(--amber); }
+.rpanel .sl .st.bad, .rpanel .sl .pill.bad { color: var(--red); }
+.rpanel .sl .pill { margin: 0; font-size: 17px; }
+.rpanel .sl .pill.ok { border-color: #9fe0c6; }
+.rpanel .sl .pill.warn { border-color: #f5cf8f; }
+.rpanel .sl .pill.bad { border-color: #f5a3b8; }
+.rpanel.small { font-size: 22px; line-height: 1.45; }
+.rpanel.tiny { font-size: 19px; line-height: 1.5; }
+.rpanel.tiny .bar { padding: 9px 18px; font-size: 17px; }
+.rpanel.tiny .body { padding: 14px 22px 16px; }
+
+/* 5 · caught 01: the false green again, this time with the hooks on */
+#t1 { left: 90px; top: 232px; width: 1010px; }
+/* 6 · caught 02: scope */
+#t2 { left: 90px; top: 250px; width: 1010px; }
+#t2cap { left: 92px; top: 540px; }
+#rule9 { left: 90px; top: 640px; width: 1010px; }
+#rule9 h3 { margin: 0; font: 800 48px/1.15 var(--display); color: var(--ink); }
+#rule9 p { display: inline-block; margin: 18px 0 0; padding: 7px 18px; border-radius: 999px; background: var(--teal); font: 600 20px/1 var(--mono); color: #fff; letter-spacing: 0.06em; }
+/* 7 · caught 03: lessons */
+#ledger { left: 90px; top: 238px; width: 1010px; }
+#ledger .body { height: 388px; overflow: hidden; padding: 0 28px; position: relative; -webkit-mask-image: linear-gradient(transparent 0, #000 12%, #000 88%, transparent 100%); }
+#ledger .list { position: absolute; left: 28px; right: 28px; top: 0; }
+#ledger .item { height: 44px; display: flex; align-items: center; gap: 16px; white-space: nowrap; overflow: hidden; font: 500 21px/1 var(--mono); color: var(--soft); }
+#ledger .item i { font-style: normal; color: var(--dim); }
+#ledger .item .t { overflow: hidden; text-overflow: ellipsis; }
+#ledger .item.hit { color: var(--ink); }
+#ledger .item .h1 { padding: 3px 12px; border-radius: 999px; background: var(--amber-bg); color: #fff; font-weight: 600; font-size: 17px; opacity: 0; }
+#ledgerHi { position: absolute; left: 12px; right: 12px; height: 44px; border-radius: 12px; border: 2px solid var(--amber-bg); background: #fff3de; opacity: 0; }
+#c3cap1 { left: 90px; top: 700px; width: 1010px; }
+#c3cap2 { left: 90px; top: 800px; width: 1010px; }
+.say { font: 500 30px/1.35 var(--body); color: var(--ink); }
+.say code { font: 600 28px/1 var(--mono); color: var(--deep); }
+.say b { font-weight: 800; color: var(--ink); }
+/* the ledger count: a round badge beside Lucia */
+#count27 { position: absolute; left: 1230px; top: 760px; width: 0; height: 0; }
+#count27 .in { position: absolute; width: 230px; height: 230px; transform: translate(-50%, -50%) rotate(-8deg); border-radius: 50%; background: var(--card); border: 4px solid var(--ink); box-shadow: var(--lift); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; white-space: nowrap; }
+#count27 .num { font: 800 100px/1 var(--display); color: var(--deep); }
+#count27 .lbl { margin-top: 4px; font: 700 19px/1.2 var(--body); color: var(--ink); }
+/* 8 · caught 04: exact matching */
+#t4a { left: 90px; top: 222px; width: 960px; }
+#t4b { left: 90px; top: 486px; width: 960px; }
+#t4c { left: 90px; top: 750px; width: 960px; }
+/* 9 · caught 05: revert-probe */
+#t5 { left: 90px; top: 232px; width: 1010px; }
+/* 10 · bisect */
+#bisHead { left: 90px; top: 60px; }
+#tBis { left: 90px; top: 500px; width: 1040px; }
+.sha-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.sha { position: absolute; transform: translate(-50%, 0); top: 34px; font: 500 17px/1 var(--mono); color: var(--dim); white-space: nowrap; }
+.sha.end { top: -64px; font: 700 16px/1 var(--body); letter-spacing: 0.14em; }
+#bisFoundBox { left: 1210px; top: 590px; }
+#bisFoundBox .k { display: inline-block; padding: 6px 16px; border-radius: 999px; background: var(--red); font: 600 20px/1 var(--mono); letter-spacing: 0.24em; color: #fff; }
+#bisFoundBox .v { margin-top: 14px; font: 800 118px/1 var(--display); color: var(--ink); }
+#bisFoundBox .m { margin-top: 14px; font: 500 28px/1 var(--mono); color: var(--soft); }
+/* 12 · agent bus */
+#busHead { left: 90px; top: 44px; }
+#busHead .n { font-size: 90px; }
+#busHead .d { font-size: 34px; margin-top: 12px; }
+#tBusA { left: 70px; top: 262px; width: 740px; }
+#tBusB { left: 1110px; top: 262px; width: 740px; }
+#tWatch { left: 70px; top: 590px; width: 1780px; }
+#hubLabel { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+#hubLabel .in { position: absolute; transform: translate(-50%, 0); top: 142px; padding: 5px 14px; border-radius: 999px; background: var(--card); border: 2px solid var(--ink); font: 600 18px/1 var(--mono); color: var(--deep); white-space: nowrap; }
+#hubLabel .steps { position: absolute; transform: translate(-50%, 0); top: 138px; display: flex; gap: 18px; }
+#hubLabel .step { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 22px 8px 9px; border-radius: 999px; background: var(--card); border: 3px solid var(--ink); box-shadow: var(--lift); font: 800 27px/1 var(--body); color: var(--ink); white-space: nowrap; }
+#hubLabel .step b { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 50%; background: var(--blue); font: 800 23px/1 var(--display); color: #fff; }
+#hubLabel .step.fix b { background: var(--amber-bg); }
+#hubLabel .step.bad b { background: var(--red); }
+#hubLabel .step.ok b { background: var(--green); }
+#busFoot { left: 72px; top: 904px; display: flex; gap: 16px; align-items: center; }
+#busFoot span { padding: 8px 18px; border: 2px solid var(--ink); border-radius: 999px; background: var(--card); font: 700 22px/1 var(--body); color: var(--soft); }
+#busFoot span.b { border-color: var(--amber-bg); background: var(--amber-bg); color: #fff; }
+/* 13 · bus: survives, refuses */
+#bsHead { left: 90px; top: 60px; }
+#bsHead h2 { margin: 0; font: 800 76px/1.12 var(--display); color: var(--ink); }
+#tLog { left: 70px; top: 580px; width: 1780px; }
+/* 14 · evidence */
+#evHead { left: 90px; top: 70px; }
+#evHead h2 { margin: 0; font: 800 88px/1.08 var(--display); color: var(--ink); }
+#evHead p { margin: 22px 0 0; font: 700 26px/1.3 var(--body); color: var(--deep); }
+#evDiff { left: 90px; top: 420px; }
+#evDiff .v { font: 800 170px/1 var(--display); color: var(--deep); text-shadow: 0 8px 0 rgba(60, 200, 236, 0.3); }
+#evDiff .v small { font-size: 90px; }
+#evDiff .l { margin-top: 12px; font: 700 30px/1.3 var(--body); color: var(--ink); }
+#evCaveat { left: 90px; top: 890px; width: 980px; font: 500 22px/1.45 var(--body); color: var(--soft); }
+#evCaveat b { color: var(--amber); font-weight: 800; }
+.evl-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.evl-top { position: absolute; transform: translate(-50%, -100%); top: -18px; text-align: center; white-space: nowrap; }
+.evl-top .p { font: 800 72px/1 var(--display); color: var(--ink); }
+.evl-top .f { margin-top: 6px; font: 500 22px/1 var(--mono); color: var(--soft); }
+.evl-bot { position: absolute; transform: translate(-50%, 0); top: 22px; font: 700 22px/1.2 var(--body); color: var(--soft); text-align: center; white-space: nowrap; }
+/* 15 · safe to try */
+#sfHead { left: 90px; top: 96px; }
+#sfHead h2 { margin: 0; font: 800 100px/1 var(--display); color: var(--ink); }
+#sfList { left: 92px; top: 276px; width: 1100px; }
+.sf { display: flex; align-items: center; gap: 26px; margin-bottom: 26px; }
+.sf i { flex: none; display: flex; align-items: center; justify-content: center; width: 54px; height: 54px; border-radius: 50%; background: var(--green); border: 3px solid var(--ink); font: 800 30px/1 var(--display); font-style: normal; color: #fff; }
+.sf b { display: block; font: 800 38px/1.15 var(--body); color: var(--ink); }
+.sf span { display: block; margin-top: 8px; font: 500 22px/1.2 var(--body); color: var(--soft); }
+
+/* chapter cards (cuts only): the page, one word, one line */
+.card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; visibility: hidden;
+  background: radial-gradient(circle, rgba(60, 200, 236, 0.13) 0 4px, transparent 5px) 0 0 / 46px 46px, radial-gradient(ellipse at 50% 46%, #ffffff 0%, #f1f8fd 45%, #e3f1fb 100%); }
+.card > * { will-change: transform, opacity, filter; }
+.card i { font: 800 64px/1 var(--display); font-style: normal; color: var(--teal); text-shadow: 0 5px 0 rgba(31, 42, 68, 0.12); }
+.card .w { margin-top: 18px; font: 800 230px/1 var(--display); letter-spacing: -0.02em; color: var(--ink); text-shadow: 0 12px 0 rgba(60, 200, 236, 0.35); white-space: nowrap; }
+.card .w small { margin-left: 28px; padding: 10px 24px; border-radius: 999px; background: var(--amber-bg); font: 600 40px/1 var(--mono); letter-spacing: 0.12em; color: #fff; text-shadow: none; vertical-align: 70px; }
+.card .s { margin-top: 44px; font: 700 58px/1.2 var(--body); color: var(--soft); }
+
+/* Lucia's speech bubble and the CAUGHT stamp (placed and animated by main.js) */
+#bubble { position: absolute; left: 1472px; top: 470px; visibility: hidden; transform-origin: 100% 50%; }
+#bubble .t { position: relative; max-width: 270px; margin-right: 28px; padding: 18px 24px 20px; border-radius: 34px; background: var(--card); border: 4px solid var(--ink); box-shadow: var(--lift); font: 800 34px/1.18 var(--display); color: var(--ink); text-align: center; white-space: pre; }
+#bubble .t::after { content: ""; position: absolute; right: -32px; top: calc(50% - 16px); width: 34px; height: 32px; background: var(--ink); clip-path: polygon(0 0, 100% 60%, 0 100%); }
+#bubble .t::before { content: ""; position: absolute; right: -21px; top: calc(50% - 10px); width: 23px; height: 20px; background: var(--card); clip-path: polygon(0 0, 100% 60%, 0 100%); z-index: 1; }
+#stamp { position: absolute; left: 1770px; top: 830px; visibility: hidden; }
+#stamp span { display: block; padding: 12px 24px; border-radius: 16px; background: var(--green); border: 4px solid var(--ink); box-shadow: var(--lift); font: 600 30px/1 var(--mono); letter-spacing: 0.08em; color: #fff; white-space: nowrap; }
+
+#flash, #fade { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+#flash { background: #fff; }
+#fade { background: #f3f8fd; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./node_modules/three/build/three.module.js",
+  "three/addons/": "./node_modules/three/examples/jsm/",
+  "@pixiv/three-vrm": "./node_modules/@pixiv/three-vrm/lib/three-vrm.module.js",
+  "@pixiv/three-vrm-animation": "./node_modules/@pixiv/three-vrm-animation/lib/three-vrm-animation.module.js"
+} }
+</script>
+<script src="node_modules/gsap/dist/gsap.min.js"></script>
+<script src="node_modules/gsap/dist/SplitText.min.js"></script>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" width="1920" height="1080"></canvas>
+  <div id="ui">
+    <div id="term" class="layer">
+      <div class="bar"><i></i><i></i><i></i><span>~/app — agent session</span></div>
+      <div class="body">
+        <div><span class="ps">$</span> agent "fix the login bug"</div>
+        <div><span id="typed"></span><span id="caret">▌</span></div>
+        <div id="zero">commands run: 0 · exit codes seen: none</div>
+      </div>
+    </div>
+    <div class="row" style="top:0;bottom:0"><div id="question" class="layer">Did it actually run anything?</div></div>
+
+    <div id="fail1" class="layer fail"><div class="tag">FAILURE 01</div><h2>“Done” without a check.</h2><p>The agent said green. Nothing ran.</p></div>
+    <div id="fail2" class="layer fail"><div class="tag">FAILURE 02</div><h2>Scope, quietly dropped.</h2><p>Three things asked. Two delivered. Nobody said.</p></div>
+    <div id="fail3" class="layer fail"><div class="tag">FAILURE 03</div><h2>The same dead end. Twice.</h2><p>New session, same trap, because nothing was written down.</p></div>
+
+    <div id="title" class="layer">Luciazero</div>
+    <div id="tagline" class="layer">Make coding agents prove their work.</div>
+    <div id="subline" class="layer">for Claude Code &amp; Codex CLI</div>
+
+    <div id="nl-plan" class="node-pos"><div class="node-label"><b>plan</b><span>scope + acceptance evidence</span></div></div>
+    <div id="nl-change" class="node-pos"><div class="node-label"><b>change</b><span>smallest reversible step</span></div></div>
+    <div id="nl-verify" class="node-pos"><div class="node-label"><b>verify</b><span>a command, an exit code</span></div></div>
+    <div id="nl-fix" class="node-pos"><div class="node-label"><b>fix</b><span>the cause, never the check</span></div></div>
+    <div class="row" style="top:958px"><div id="status" class="layer"><span id="cmd"><span class="ps">$</span> ./test.sh</span><span id="exit"></span><span class="sep"></span><span id="sl"></span></div></div>
+    <div class="row" style="top:0"><div id="quote" class="layer"><h2>Done is proven by a command,<br>not by my judgment.</h2><p>LUCIAZERO DOCTRINE · RULE 1</p></div></div>
+
+    <div id="c1h" class="layer chead"><div class="tag">FAILURE 01</div><h2>“Done” without a check.</h2></div>
+    <div id="t1" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>~/app</b> · Claude Code + Luciazero hooks · statusline from the classic install</span></div><div class="body"></div></div>
+
+    <div id="c2h" class="layer chead"><div class="tag">FAILURE 02</div><h2>Scope, quietly dropped.</h2></div>
+    <div id="t2" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>/done</b> · closeout report</span></div><div class="body"></div></div>
+    <div id="t2cap" class="layer cap">report format from /done · example values</div>
+    <div id="rule9" class="layer"><h3>Finish the whole scope;<br>name anything left out.</h3><p>LUCIAZERO DOCTRINE · RULE 9</p></div>
+
+    <div id="c3h" class="layer chead"><div class="tag">FAILURE 03</div><h2>The same dead end. Twice.</h2></div>
+    <div id="ledger" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>docs/lessons.md</b> · the repo's ledger</span></div><div class="body"><div id="ledgerHi"></div><div class="list"></div></div></div>
+    <div id="count27" class="node-pos"><div class="in layer"><div class="num">0</div><div class="lbl">dead ends on record</div></div></div>
+    <div id="c3cap1" class="layer say"><code>/retro</code> writes each one down: cause, <b>proven-by</b>, fix.</div>
+    <div id="c3cap2" class="layer say"><code>/debug</code> searches the ledger first. A match becomes <b>H1</b>, and must pass its proven-by.</div>
+
+    <div id="c4h" class="layer chead"><div class="tag">FAILURE 04</div><h2><code>cat test.sh</code> counted as a test.</h2></div>
+    <div id="t4a" class="layer rpanel small"><div class="bar"><i></i><i></i><i></i><span><b>default</b> · a broad pattern</span></div><div class="body"></div></div>
+    <div id="t4b" class="layer rpanel small"><div class="bar"><i></i><i></i><i></i><span><b>LUCIAZERO_VERIFY_CMD=./test.sh</b> · exact match</span></div><div class="body"></div></div>
+    <div id="t4c" class="layer rpanel small"><div class="bar"><i></i><i></i><i></i><span><b>a hostile repo</b> · its committed settings</span></div><div class="body"></div></div>
+
+    <div id="c5h" class="layer chead"><div class="tag">FAILURE 05</div><h2>New tests that pass without the fix.</h2></div>
+    <div id="t5" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>/done</b> · revert-probe runs the new tests against the old code</span></div><div class="body"></div></div>
+
+    <div id="bisHead" class="layer shead"><div class="n">/bisect</div><div class="d">The first bad commit, found in a temporary worktree.</div></div>
+    <div id="tBis" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>~/shop</b> · 12 commits, one of them broke price()</span></div><div class="body"></div></div>
+    <div id="shas"></div>
+    <div id="bisFoundBox" class="layer"><div class="k">FIRST BAD COMMIT</div><div class="v">8eb5261</div><div class="m">refactor: rounding tweak</div></div>
+
+    <div id="relayHead" class="layer"><div class="n">/lucia-relay</div><div class="d">Hand off unfinished work and what you learned.</div></div>
+    <div id="relayA" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>laptop</b> · session A · Claude Code</span></div><div class="body"></div><div class="dev laptop"></div></div>
+    <div id="relayB" class="layer rpanel"><div class="bar"><i></i><i></i><i></i><span><b>desktop</b> · session B · Codex CLI</span></div><div class="body"></div><div class="dev stand"></div></div>
+    <div id="relayFoot" class="layer"><div class="x"><span class="layer">New session</span><span class="layer">New agent</span><span class="layer">New machine</span></div><div class="d">Evidence is re-run on arrival, never taken on trust.</div></div>
+
+    <div id="busHead" class="layer shead"><div class="n">Agent Bus<small>BETA</small></div><div class="d">Claude Code and Codex, one local bus between them.</div></div>
+    <div id="tBusA" class="layer rpanel tiny"><div class="bar"><i></i><i></i><i></i><span><b>window 1</b> · codex-architect</span></div><div class="body"></div></div>
+    <div id="tBusB" class="layer rpanel tiny"><div class="bar"><i></i><i></i><i></i><span><b>window 2</b> · claude-reviewer</span></div><div class="body"></div></div>
+    <div id="tWatch" class="layer rpanel tiny"><div class="bar"><i></i><i></i><i></i><span><b>window 3</b> · optional, read-only</span></div><div class="body"></div></div>
+    <div id="hubLabel" class="node-pos"><div class="in layer">luciazero-agentd</div>
+      <div class="steps"><div class="step layer"><b>1</b>Codex asks for a review</div><div class="step layer bad"><b>2</b>Claude finds a bug · red</div><div class="step layer fix"><b>3</b>Codex fixes it</div><div class="step layer ok"><b>4</b>Claude re-checks · green</div></div></div>
+    <div id="busFoot" class="layer"><span class="b">beta · opt-in</span><span>set up from a checkout · Python 3.10+</span><span>/lucia-bus · /lucia-chat</span></div>
+
+    <div id="bsHead" class="layer"><h2>The queue survives a restart.<br>The bus refuses what it should.</h2></div>
+    <div id="tLog" class="layer rpanel tiny"><div class="bar"><i></i><i></i><i></i><span><b>agent-bus-demo.sh</b> · fake provider · real daemon</span></div><div class="body"></div></div>
+
+    <div id="evHead" class="layer"><h2>Measured, not assumed.</h2><p>Claude Sonnet · classic pack without hooks · 10 tasks × 5 runs</p></div>
+    <div id="evDiff" class="layer"><div class="v">+32<small>pp</small></div><div class="l">all-criteria pass rate over the bare agent</div></div>
+    <div id="evCaveat" class="layer"><b>Early, and specific to model and task.</b> A GPT/Codex pilot hit a ceiling: both arms passed every run. Raw rows and method: README › Evidence &amp; limitations.</div>
+    <div id="evl"></div>
+
+    <div id="sfHead" class="layer"><h2>Safe to try.</h2></div>
+    <div id="sfList" class="layer">
+      <div class="sf"><i>✓</i><div><b>No npm install scripts.</b><span>installing the package runs nothing</span></div></div>
+      <div class="sf"><i>✓</i><div><b>Uninstall removes only what it installed.</b><span>name collisions are backed up; Codex gets AGENTS.md back byte for byte</span></div></div>
+      <div class="sf"><i>✓</i><div><b>A broken hook never blocks you.</b><span>hooks fail open; the nudge fires once, never loops</span></div></div>
+      <div class="sf"><i>✓</i><div><b>Nothing changes in the background.</b><span>updates run only when you run them</span></div></div>
+      <div class="sf"><i>✓</i><div><b>The core runs offline.</b><span>hook telemetry stays on your machine</span></div></div>
+    </div>
+
+    <div id="skillsHead" class="layer"><div class="n">13 skills.</div><div class="d">Each for one moment.</div></div>
+    <div id="agents" class="layer">Claude Code · Codex CLI · compatible skill runtimes</div>
+
+    <div id="cta" class="layer">
+      <div class="word cta-item">Luciazero</div>
+      <div class="tag cta-item">Make coding agents prove their work.</div>
+      <div class="install cta-item">
+        <div class="c"># Claude Code plugin · skills, doctrine, hooks</div>
+        <div>/plugin marketplace add ohm41321/luciazero</div>
+        <div>/plugin install luciazero@luciazero</div>
+        <div class="c"># Codex CLI · doctrine and skills</div>
+        <div><span class="ps">$</span> npx luciazero codex</div>
+      </div>
+      <div class="first cta-item">Then, in a new session: <code>/luciazero:ready</code> in the Claude Code plugin, <code>$ready</code> in Codex.</div>
+      <div class="more cta-item">Statusline: classic install, <code>luciazero --with-hooks</code><br>Agent Bus (beta): set up from a checkout</div>
+      <div class="url cta-item">github.com/ohm41321/luciazero <span>· MIT · pick your setup</span></div>
+      <div class="try cta-item">Try it on your next bug fix.</div>
+    </div>
+
+    <div id="bubble"><div class="t"></div></div>
+    <div id="stamp"><span>CAUGHT ✓</span></div>
+
+    <!-- chapter cards: only the cuts in timeline.json › cuts show them -->
+    <div id="card-verify" class="card"><i>✦</i><div class="w">Verify.</div><div class="s">Proof before “done”.</div></div>
+    <div id="card-debug" class="card"><i>✦</i><div class="w">Debug.</div><div class="s">Find the commit that broke it.</div></div>
+    <div id="card-relay" class="card"><i>✦</i><div class="w">Relay.</div><div class="s">New session. New agent. New machine.</div></div>
+    <div id="card-bus" class="card"><i>✦</i><div class="w">Agent Bus<small>BETA</small></div><div class="s">Tasks out. Results back.</div></div>
+
+    <div id="flash"></div>
+    <div id="fade"></div>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

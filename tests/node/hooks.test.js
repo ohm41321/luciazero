@@ -396,6 +396,397 @@ test("a committed CLAUDE_CONFIG_DIR cannot silence the doctrine or the hooks", (
   assert.ok(fs.existsSync(turn), "the prompt hook stood down for a classic install that is not there");
 });
 
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8", windowsHide: true }).status === 0;
+
+// A git repository holding `files`, committed; returns a runner for more git.
+function gitRepo(dir, files) {
+  fs.mkdirSync(dir, { recursive: true });
+  const git = (...args) => {
+    const r = spawnSync("git", ["-C", dir, "-c", "user.name=lz", "-c", "user.email=lz@example.invalid",
+      "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", windowsHide: true });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  git("init", "-q");
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  git("add", "-A");
+  git("commit", "-qm", "init");
+  return git;
+}
+
+// Doctrine rule 3: a failing check means not done. A stop whose last verify
+// of the session's own edits came back red -- a command that was not found
+// included -- is nudged once, like an unverified one; a green clears it, and
+// a red in another session does not reach edits a green already covered.
+test("a red verify after an edit nudges once at stop, and a green clears it", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "red");
+  const hook = (session, mode, extra = {}) => node(box.env, [VERIFY, mode], JSON.stringify({ cwd, session_id: session, ...extra }));
+  const edit = (session) => assert.strictEqual(hook(session, "edit",
+    { tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } }).status, 0);
+  const verify = (session, id, error) => {
+    const call = { tool_name: "Bash", tool_use_id: id, tool_input: { command: "npm test" } };
+    assert.strictEqual(hook(session, "bash-start", call).status, 0);
+    const done = hook(session, error ? "bash-failure" : "bash", error ? { ...call, error } : call);
+    assert.strictEqual(done.status, 0, done.stderr);
+  };
+  edit("s1");
+  verify("s1", "v1", "Exit code 1");
+  const red = hook("s1", "stop");
+  assert.strictEqual(red.status, 2, "a stop on a red verify of the session's own edit did not nudge");
+  assert.match(red.stderr, /failed/);
+  assert.strictEqual(hook("s1", "stop", { stop_hook_active: true }).status, 0, "the stop the nudge caused must end the turn");
+  assert.strictEqual(hook("s1", "stop").status, 0, "the red nudge is not one-shot");
+  verify("s1", "v2", "Exit code 1");
+  assert.strictEqual(hook("s1", "stop").status, 0, "a second red run of the same edit nudged again");
+
+  edit("s1");
+  verify("s1", "v3", "Exit code 127\nsh: npm: command not found");
+  assert.strictEqual(hook("s1", "stop").status, 2, "a verify command that was not found counted as a check");
+  verify("s1", "v4", null);
+  assert.strictEqual(hook("s1", "stop").status, 0, "a green run after the red did not clear it");
+
+  edit("s2");
+  verify("s2", "v5", null);
+  verify("s3", "v6", "Exit code 1");
+  assert.strictEqual(hook("s2", "stop").status, 0, "another session's red reached edits a green had covered");
+  assert.strictEqual(hook("s3", "stop").status, 0, "a session that edited nothing was nudged for its red run");
+});
+
+// An edit need not go through Edit or Write: `sed -i`, a heredoc, a formatter
+// or a commit hook changes files through the shell. At stop the hook asks git
+// which files changed while this session's shell commands ran after its last
+// verify, documentation and ignored files aside.
+test("a file a shell command changes after the last verify nudges at stop", { skip: !HAS_GIT && "needs git" }, (t) => {
+  const box = sandbox(t);
+  const session = (cwd, id = "s1", env = box.env) => {
+    const hook = (mode, extra = {}) => node(env, [VERIFY, mode], JSON.stringify({ cwd, session_id: id, ...extra }));
+    // a shell command: its start, what it does to the tree, its end
+    const shell = (toolId, command, act, error = null) => {
+      const call = { tool_name: "Bash", tool_use_id: toolId, tool_input: { command } };
+      assert.strictEqual(hook("bash-start", call).status, 0);
+      pause(20);
+      if (act) act();
+      pause(20);
+      const done = hook(error ? "bash-failure" : "bash", error ? { ...call, error } : call);
+      assert.strictEqual(done.status, 0, done.stderr);
+    };
+    return { hook, shell, stop: () => hook("stop").status };
+  };
+  const files = { "a.js": "a\n", "README.md": "# r\n", ".gitignore": "build/\n" };
+
+  const p1 = path.join(box.box, "p1");
+  gitRepo(p1, files);
+  const s1 = session(p1);
+  s1.shell("v1", "npm test");
+  s1.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p1, "a.js"), "b\n"));
+  assert.strictEqual(s1.stop(), 2, "a file sed changed after the last verify was taken as verified");
+  assert.strictEqual(s1.hook("stop", { stop_hook_active: true }).status, 0);
+  s1.shell("v2", "npm test");
+  assert.strictEqual(s1.stop(), 0, "a green run after the shell edit did not cover it");
+  s1.shell("e2", "sed -i s/b/c/ a.js", () => fs.writeFileSync(path.join(p1, "a.js"), "c\n"), "Exit code 1");
+  assert.strictEqual(s1.stop(), 2, "a shell command that failed after changing a file was not counted");
+
+  const p2 = path.join(box.box, "p2");
+  gitRepo(p2, files);
+  const s2 = session(p2);
+  s2.shell("v1", "npm test", () => {
+    // what a verify run itself writes is no edit after it
+    fs.writeFileSync(path.join(p2, "coverage.txt"), "92%\n");
+  });
+  s2.shell("e1", "notes", () => {
+    fs.writeFileSync(path.join(p2, "README.md"), "# r\nmore\n");
+    fs.mkdirSync(path.join(p2, "build"));
+    fs.writeFileSync(path.join(p2, "build", "out.js"), "x\n");
+  });
+  s2.shell("e2", "ls");
+  assert.strictEqual(s2.stop(), 0, "documentation, an ignored file or a verify's own output re-armed the nudge");
+
+  const p3 = path.join(box.box, "p3");
+  const git3 = gitRepo(p3, files);
+  const s3 = session(p3);
+  s3.shell("v1", "npm test");
+  s3.shell("e1", "sed -i s/a/b/ a.js && git commit -am wip", () => {
+    fs.writeFileSync(path.join(p3, "a.js"), "b\n");
+    git3("commit", "-qam", "wip");
+  });
+  assert.strictEqual(s3.stop(), 2, "a shell edit committed before the stop was taken as verified");
+
+  // the session that ran the command is the one nudged
+  const p4 = path.join(box.box, "p4");
+  gitRepo(p4, files);
+  const a = session(p4, "a");
+  const b = session(p4, "b");
+  a.shell("v1", "npm test");
+  b.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p4, "a.js"), "b\n"));
+  assert.strictEqual(a.stop(), 0, "a session that ran no command since its verify was nudged for another's shell edit");
+  assert.strictEqual(b.stop(), 2, "the session whose shell command changed the file was not nudged");
+
+  // only what changed while the session's own commands ran: another session's
+  // Edit between two of them is that session's edit
+  const p6 = path.join(box.box, "p6");
+  gitRepo(p6, files);
+  const a6 = session(p6, "a");
+  const b6 = session(p6, "b");
+  a6.shell("v1", "npm test");
+  a6.shell("e1", "ls");
+  // further from either command than the slack a coarse file time gets
+  pause(1100);
+  fs.writeFileSync(path.join(p6, "a.js"), "b\n");
+  assert.strictEqual(b6.hook("edit", { tool_name: "Edit", tool_input: { file_path: path.join(p6, "a.js") } }).status, 0);
+  pause(1100);
+  a6.shell("e2", "git status");
+  assert.strictEqual(a6.stop(), 0, "an edit made between two of a session's commands was charged to it");
+  assert.strictEqual(b6.stop(), 2, "the session that made the edit was not nudged");
+
+  // a shell edit tested by a red run is red, as an Edit would be
+  const p7 = path.join(box.box, "p7");
+  gitRepo(p7, files);
+  const s7 = session(p7);
+  s7.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p7, "a.js"), "b\n"));
+  s7.shell("v1", "npm test", null, "Exit code 1");
+  const red7 = s7.hook("stop");
+  assert.strictEqual(red7.status, 2, "a shell edit whose verify failed stopped clean");
+  assert.match(red7.stderr, /failed/);
+
+  // documentation in a new folder, and documentation beside a file removed
+  // before the last verify, are no code edits; a file removed after it is one
+  const p8 = path.join(box.box, "p8");
+  gitRepo(p8, { ...files, "old.js": "o\n", "src/gone.js": "g\n" });
+  const s8 = session(p8);
+  fs.rmSync(path.join(p8, "old.js"));
+  s8.shell("v1", "npm test");
+  s8.shell("e1", "mkdir notes && echo x > notes/plan.md && echo n > NOTES.md", () => {
+    fs.mkdirSync(path.join(p8, "notes"));
+    fs.writeFileSync(path.join(p8, "notes", "plan.md"), "x\n");
+    fs.writeFileSync(path.join(p8, "NOTES.md"), "n\n");
+  });
+  assert.strictEqual(s8.stop(), 0, "documentation in a new folder or beside an old deletion counted as code");
+  s8.shell("e2", "rm src/gone.js", () => fs.rmSync(path.join(p8, "src", "gone.js")));
+  assert.strictEqual(s8.stop(), 2, "a code file removed by the shell after the last verify did not count");
+
+  // what a green run writes is no edit, even right after a shell edit it tested
+  const p9 = path.join(box.box, "p9");
+  gitRepo(p9, files);
+  const s9 = session(p9);
+  s9.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p9, "a.js"), "b\n"));
+  s9.shell("v1", "npm test", () => fs.writeFileSync(path.join(p9, "report.js"), "x\n"));
+  assert.strictEqual(s9.stop(), 0, "a file the green run wrote was taken for an edit after it");
+
+  // one command that edits and then tests: red when it fails, covered when not
+  const p11 = path.join(box.box, "p11");
+  gitRepo(p11, files);
+  const s11 = session(p11);
+  s11.shell("v1", "sed -i s/a/b/ a.js && npm test", () => fs.writeFileSync(path.join(p11, "a.js"), "b\n"), "Exit code 1");
+  const red11 = s11.hook("stop");
+  assert.strictEqual(red11.status, 2, "an edit made inside a failing verify command stopped clean");
+  assert.match(red11.stderr, /failed/);
+  assert.strictEqual(s11.hook("stop", { stop_hook_active: true }).status, 0);
+  s11.shell("v2", "sed -i s/b/c/ a.js && npm test", () => fs.writeFileSync(path.join(p11, "a.js"), "c\n"));
+  assert.strictEqual(s11.stop(), 0, "an edit a green verify command made and tested was not covered");
+  // ...and one that tests and then edits leaves that edit unverified
+  s11.shell("v3", "npm test && sed -i s/c/d/ a.js", () => fs.writeFileSync(path.join(p11, "a.js"), "d\n"));
+  assert.strictEqual(s11.stop(), 2, "an edit made after the test step of a green verify command was covered");
+
+  // a failing run of a session that edited nothing stays its own: what the
+  // run writes, and another session's edit while it runs, make no red
+  const p12 = path.join(box.box, "p12");
+  gitRepo(p12, files);
+  const a12 = session(p12, "a");
+  const b12 = session(p12, "b");
+  a12.shell("v1", "npm test", () => {
+    fs.writeFileSync(path.join(p12, "junit.xml"), "<x/>\n");
+    fs.writeFileSync(path.join(p12, "a.js"), "b\n");
+    assert.strictEqual(b12.hook("edit", { tool_name: "Edit", tool_input: { file_path: path.join(p12, "a.js") } }).status, 0);
+  }, "Exit code 1");
+  assert.strictEqual(a12.stop(), 0, "a session that edited nothing was made red by what changed during its failing run");
+  a12.shell("v2", "cd . && npm test 2>&1 | tee test.log", () => {
+    fs.writeFileSync(path.join(p12, "junit.xml"), "<y/>\n");
+    fs.writeFileSync(path.join(p12, "test.log"), "1 failed\n");
+  }, "Exit code 1");
+  assert.strictEqual(a12.stop(), 0, "a cd before the test, or the test's own log, was taken for an edit");
+  assert.strictEqual(b12.stop(), 2, "the session that made the edit was not nudged");
+
+  // which parts of a verify command write: a fixing check, an unspaced
+  // redirection and a sourced script do; mkdir and an environment's
+  // activation do not; with a regex of one's own, an edit of the file the
+  // regex names is no verify step
+  const fresh = (name, env = box.env) => {
+    const dir = path.join(box.box, name);
+    gitRepo(dir, files);
+    return { dir, s: session(dir, "s1", env) };
+  };
+  const writesA = (dir) => () => fs.writeFileSync(path.join(dir, "a.js"), "b\n");
+  const writers = ["npx eslint --fix .", "pnpm lint:fix && pnpm test", "npm test -- -u", "npx vitest run --update",
+    "./gradlew spotlessApply check", "echo b>a.js && npm test", "echo b> a.js && npm test", 'echo "a b">a.js && npm test',
+    "echo b >& a.js && npm test", ". ./gen.sh && npm test", "npm run test -- -u", "pnpm run test -u", "make generate test",
+    "make fixall test", "npm run lint:fixes && npm test"];
+  writers.forEach((command, i) => {
+    const { dir, s } = fresh(`p13-${i}`);
+    s.shell("v1", command, writesA(dir), "Exit code 1");
+    const red = s.hook("stop");
+    assert.strictEqual(red.status, 2, `an edit made by \`${command}\`, which failed, stopped clean`);
+    assert.match(red.stderr, /failed/);
+  });
+  {
+    const { dir, s } = fresh("p14");
+    s.shell("v1", "mkdir -p reports && pytest --junitxml=reports/junit.xml", () => {
+      fs.mkdirSync(path.join(dir, "reports"));
+      fs.writeFileSync(path.join(dir, "reports", "junit.xml"), "<x/>\n");
+    }, "Exit code 1");
+    s.shell("v2", "source .venv/bin/activate && pytest", () => fs.writeFileSync(path.join(dir, ".coverage"), "c\n"), "Exit code 1");
+    s.shell("v3", 'echo "==> running tests" && npm test', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<y/>\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 0, "a mkdir, an activation or a quoted > before a failing test made its output an edit");
+    s.shell("v4", 'npm test && echo "-> done"', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<z/>\n"));
+    assert.strictEqual(s.stop(), 0, "a quoted > after a green test made its output an edit");
+  }
+  // a test runner given more than one target, a wrapper's own -u, a < or >
+  // inside quotes, a comparison in [[ ]] and a name that only contains fix
+  // or Format leave the run's output its own
+  ["./gradlew clean test", "make lint test", "timeout 600 python3 -u -m pytest", 'rg "Vec<String>" src && cargo test',
+    '[[ "$CI" > "" ]] && npm test', 'if [[ "$CI" > "" ]]; then npm test; fi', "npm run test:fixtures", "make test-fixtures",
+    "./gradlew test --tests '*FormatterTest'", "make verify-codegen", "npm run verify:gen"]
+    .forEach((command, i) => {
+      const { dir, s } = fresh(`p17-${i}`);
+      s.shell("v1", command, () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"), "Exit code 1");
+      assert.strictEqual(s.stop(), 0, `the output of a failing \`${command}\` was taken for an edit`);
+    });
+  {
+    const { dir, s } = fresh("p18");
+    s.shell("v1", 'npm test && grep -rn "=>" src', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"));
+    assert.strictEqual(s.stop(), 0, "a quoted > in a search after a green test made its output an edit");
+  }
+  // with a regex of one's own: an edit of the file it names is no verify
+  // step, and a verify command with no step at all still counts its edits
+  const regex = (re) => ({ ...box.env, LUCIAZERO_VERIFY_REGEX: re });
+  [["test\\.sh", "sed -i s/a/b/ test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "cp new.sh test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "git checkout -- test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "curl -fsSo test.sh http://127.0.0.1:9/x; ./test.sh", "test.sh"],
+    ["test\\.sh", "wget http://127.0.0.1:9/test.sh; ./test.sh", "test.sh"],
+    ["test\\.sh", "curl --remote-name http://127.0.0.1:9/test.sh; ./test.sh", "test.sh"],
+    ["test\\.sh", "cat test.sh.orig > test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "python3 - <<'PY'\nopen('test.sh', 'w').write('x')\nPY\n./test.sh", "test.sh"],
+    ["test", "black test_a.py && pytest", "test_a.py"],
+    ["test\\.sh", "sed -i s/a/b/ test.sh", "test.sh"],
+    ["test", "sed -i s/a/b/ a.test.js && npx jest", "a.test.js"]].forEach(([re, command, file], i) => {
+    const { dir, s } = fresh(`p15-${i}`, regex(re));
+    s.shell("v1", command, () => fs.writeFileSync(path.join(dir, file), "b\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 2, `with regex ${re}, the edit in a failing \`${command}\` stopped clean`);
+  });
+  {
+    const { dir, s } = fresh("p16", regex("test\\.sh"));
+    s.shell("v1", "./test.sh && sed -i s/a/b/ test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"));
+    assert.strictEqual(s.stop(), 2, "with a regex, an edit after a green run was covered by it");
+  }
+  // a regex may name arguments, and a redirection's target is no part of
+  // the step: what such a run writes is its own, and what follows it is not
+  [["test\\.sh --fast", "./test.sh --fast && sed -i s/a/b/ a.js", "a.js", undefined, 2],
+    ["test\\.sh", "sed -i s/0/1/ test.sh", "test.sh", undefined, 2],
+    ["pytest -q", "pytest -q", "junit.xml", "Exit code 1", 0],
+    ["pytest -q", "python3 -m pytest -q", "junit.xml", "Exit code 1", 0],
+    ["test:unit", "npm run test:unit", "junit.xml", "Exit code 1", 0],
+    ["pytest", 'bash -c "pytest -q"', "junit.xml", "Exit code 1", 0],
+    ["pytest", 'bash -c "pytest -q"', "junit.xml", undefined, 0],
+    ["npm test", 'cmd /c "npm test"', "junit.xml", "Exit code 1", 0],
+    ["tests/unit", "pytest tests/unit", "junit.xml", "Exit code 1", 0],
+    ["curl.*health", "curl -sf -o /dev/null http://127.0.0.1:9/health", "junit.xml", "Exit code 1", 0],
+    ["curl.*health", "curl -sf -o /dev/null http://127.0.0.1:9/health", "junit.xml", undefined, 0],
+    ["test\\.sh", "cat > run.sh <<'EOF'\n./test.sh\nEOF", "run.sh", undefined, 2],
+    ["test\\.sh", "./test.sh > test.sh.log", "test.sh.log", "Exit code 1", 0]].forEach(([re, command, file, result, want], i) => {
+    const { dir, s } = fresh(`p19-${i}`, regex(re));
+    s.shell("v1", command, () => fs.writeFileSync(path.join(dir, file), "b\n"), result);
+    assert.strictEqual(s.stop(), want, `with regex ${re}, \`${command}\` writing ${file} stopped ${want ? "clean" : "nudged"}`);
+  });
+  {
+    // a regex that matches only across simple commands finds no step, so
+    // what the run wrote is unverified, never a red nobody saw
+    const { dir, s } = fresh("p20", regex("make && make check"));
+    s.shell("v1", "make && make check", () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"), "Exit code 1");
+    assert.doesNotMatch(s.hook("stop").stderr, /failed/, "a failing run with no step found made a red of its own output");
+  }
+
+  // one session's look at a removal does not make it old for the session
+  // that removed it
+  const p10 = path.join(box.box, "p10");
+  gitRepo(p10, { ...files, "src/x.js": "x\n" });
+  const a10 = session(p10, "a");
+  const b10 = session(p10, "b");
+  a10.shell("v1", "npm test");
+  b10.shell("e1", "rm src/x.js", () => fs.rmSync(path.join(p10, "src", "x.js")));
+  pause(1100);
+  a10.shell("e2", "ls");
+  assert.strictEqual(a10.stop(), 0, "a session was nudged for a removal another session made");
+  assert.strictEqual(b10.stop(), 2, "another session's look hid this session's removal");
+
+  // outside a git work tree there is nothing to ask, and nothing breaks
+  const p5 = path.join(box.box, "p5");
+  fs.mkdirSync(p5);
+  const s5 = session(p5);
+  s5.shell("v1", "npm test");
+  s5.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p5, "a.js"), "b\n"));
+  assert.strictEqual(s5.stop(), 0, "outside git the stop must behave as before");
+});
+
+// .claude/settings.local.json is the user's own file, gitignored by Claude
+// Code. One a repository commits is project scope, and refused like
+// .claude/settings.json.
+test("a committed .claude/settings.local.json cannot configure the hook; the user's own can", { skip: !HAS_GIT && "needs git" }, (t) => {
+  const box = sandbox(t);
+  for (const committed of [true, false]) {
+    const cwd = path.join(box.box, committed ? "committed" : "personal");
+    const git = gitRepo(cwd, { "a.js": "a\n" });
+    const local = path.join(cwd, ".claude", "settings.local.json");
+    fs.mkdirSync(path.dirname(local), { recursive: true });
+    fs.writeFileSync(local, JSON.stringify({ env: { LUCIAZERO_DOC_REGEX: ".*" } }));
+    if (committed) {
+      git("add", "-f", ".claude/settings.local.json");
+      git("commit", "-qm", "ship local settings");
+    }
+    // Claude Code applies that env block; the hook decides whether to believe it
+    const env = { ...box.env, LUCIAZERO_DOC_REGEX: ".*" };
+    const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+    const start = node(env, [VERIFY, "session"], event({ source: "startup" }));
+    assert.strictEqual(start.status, 0, start.stderr);
+    assert.strictEqual(node(env, [VERIFY, "edit"], event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
+    const stop = node(env, [VERIFY, "stop"], event()).status;
+    if (committed) {
+      assert.match(start.stdout, /settings\.local\.json.*LUCIAZERO_DOC_REGEX/, "a committed settings.local.json was not named");
+      assert.strictEqual(stop, 2, "a committed settings.local.json switched the nudge off");
+    } else {
+      assert.doesNotMatch(start.stdout, /LUCIAZERO_DOC_REGEX/, "the user's own settings.local.json was refused");
+      assert.strictEqual(stop, 0, "the user's own settings.local.json was not honored");
+    }
+  }
+});
+
+// The plugin's doctrine stands down for a classic install, so it never loads
+// twice. A doctrine file alone is not one: uninstall keeps a customized copy
+// and removes the import, and a plugin installed after that loaded nothing.
+test("the plugin's doctrine stands down only for a classic install that still imports it", (t) => {
+  const box = sandbox(t);
+  fs.mkdirSync(box.claude, { recursive: true });
+  const doctrine = () => {
+    const r = node({ ...box.env, PWD: box.box }, [VERIFY, "doctrine"]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  const text = fs.readFileSync(path.join(ROOT, "claude", "luciazero.md"), "utf8");
+  assert.strictEqual(doctrine(), text, "with no classic install the plugin must load the doctrine");
+  fs.writeFileSync(path.join(box.claude, "luciazero.md"), "a customized copy uninstall kept\n");
+  assert.strictEqual(doctrine(), text, "a doctrine file nothing imports silenced the plugin's doctrine");
+  fs.writeFileSync(path.join(box.claude, "CLAUDE.md"), "# mine\n@luciazero.md.old\n");
+  assert.strictEqual(doctrine(), text, "a line that only begins like the import counted as one");
+  for (const md of ["# mine\n\n@luciazero.md\n", "# mine\r\n@luciazero.md\r\n", "  @~/.claude/luciazero.md\n"]) {
+    fs.writeFileSync(path.join(box.claude, "CLAUDE.md"), md);
+    assert.strictEqual(doctrine(), "", `the doctrine loaded twice beside a classic import (${JSON.stringify(md)})`);
+  }
+});
+
 test("a Node that refuses md5 still names the state directory, with sha256", (t) => {
   // FIPS mode makes createHash("md5") throw; the tracker must not fail open
   const probe = [

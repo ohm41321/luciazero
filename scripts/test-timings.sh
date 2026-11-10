@@ -3,8 +3,8 @@
 # samples kept so far. Samples come from real work runs — run this instead of
 # ./test.sh while collecting — so no benchmark time is spent on purpose.
 #
-#   scripts/test-timings.sh [--discipline|--fast|--full]   run, keep the sample
-#   scripts/test-timings.sh --report                       median / p95 per gate
+#   scripts/test-timings.sh [--discipline|--fast|--bus|--full]   run, keep the sample
+#   scripts/test-timings.sh --report                             median / p95 per gate
 #
 # A sample is three files under LZ_TEST_TIMINGS_DIR (default
 # .test-timings/ in the checkout, git-ignored): <stamp>-<tier>.out, .err
@@ -19,9 +19,10 @@ DIR="${LZ_TEST_TIMINGS_DIR:-${ROOT}/.test-timings}"
 case "${1:-}" in
   ""|--full) TIER=full ;;
   --fast) TIER=fast ;;
+  --bus) TIER=bus ;;
   --discipline) TIER=discipline ;;
   --report) TIER=report ;;
-  *) echo "usage: scripts/test-timings.sh [--discipline|--fast|--full|--report]" >&2; exit 64 ;;
+  *) echo "usage: scripts/test-timings.sh [--discipline|--fast|--bus|--full|--report]" >&2; exit 64 ;;
 esac
 
 if [ "${TIER}" = report ]; then

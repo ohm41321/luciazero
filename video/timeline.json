@@ -1,0 +1,465 @@
+{
+  "_note": "Single source of truth shared by music.py (audio) and main.js (picture). At 120 BPM one bar is 2 s, so bar n starts at 2n seconds. A cue ('at') is seconds, an event name, or an event name plus or minus seconds ('c1Red-0.25').",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "bpm": 120,
+  "duration": 168,
+  "scenes": {
+    "falseGreen": [0, 8],
+    "problems": [8, 16],
+    "lucia": [16, 24],
+    "loop": [24, 36],
+    "caught1": [36, 48],
+    "caught2": [48, 54],
+    "caught3": [54, 62],
+    "exact": [62, 70],
+    "probe": [70, 80],
+    "bisect": [80, 92],
+    "relay": [92, 106],
+    "bus": [106, 118],
+    "busSafe": [118, 128],
+    "evidence": [128, 136],
+    "safe": [136, 142],
+    "skills": [142, 156],
+    "cta": [156, 168]
+  },
+  "typing": {
+    "start": 1.0,
+    "cps": 24,
+    "text": "✓ Fixed. All tests pass. Done."
+  },
+  "events": {
+    "prompt": 0.5,
+    "checkRise": 3.0,
+    "question": 4.0,
+    "qStep": 0.25,
+    "zeroRun": 5.0,
+    "shatter": 6.0,
+    "fail1": 8.0,
+    "fail2": 10.0,
+    "fail3": 12.0,
+    "vortex": 14.0,
+    "drop": 16.0,
+    "reveal": 17.25,
+    "title": 18.0,
+    "tagline": 18.8,
+    "subline": 19.6,
+    "plan": 24.0,
+    "change": 26.0,
+    "verifyRed": 28.0,
+    "fix": 30.0,
+    "verifyGreen": 32.0,
+    "quote": 33.5,
+
+    "caught1": 36.0,
+    "c1Head": 36.6,
+    "c1Term": 37.4,
+    "c1Check": 37.8,
+    "c1Nudge": 40.0,
+    "c1Run": 43.25,
+    "c1Red": 44.0,
+    "c1Gate": 46.0,
+    "c1Out": 47.7,
+
+    "caught2": 48.0,
+    "c2Head": 48.1,
+    "c2Panel": 48.8,
+    "c2Left": 50.5,
+    "c2Rule": 51.5,
+    "c2Out": 53.7,
+
+    "caught3": 54.0,
+    "c3Head": 54.2,
+    "c3List": 54.8,
+    "c3Count": 55.5,
+    "c3H1": 58.0,
+    "c3Out": 61.7,
+
+    "exact": 62.0,
+    "c4Head": 62.1,
+    "c4A": 62.8,
+    "c4B": 63.0,
+    "c4Run": 63.4,
+    "c4Status": 64.5,
+    "c4Hostile": 66.0,
+    "c4Out": 69.7,
+
+    "probe": 70.0,
+    "c5Head": 70.1,
+    "c5Term": 70.8,
+    "c5Fail": 74.0,
+    "c5Pass": 76.0,
+    "c5Out": 79.7,
+
+    "bisect": 80.0,
+    "bisHead": 80.4,
+    "bisNodes": 81.0,
+    "bisTerm": 81.5,
+    "bis1": 84.0,
+    "bis2": 85.5,
+    "bis3": 87.0,
+    "bisFound": 88.0,
+    "bisOut": 91.5,
+
+    "relay": 92.0,
+    "relayHead": 92.3,
+    "relayA": 93.0,
+    "relayCard": 95.5,
+    "relayRows": 95.75,
+    "relayRowStep": 0.25,
+    "relaySeal": 98.0,
+    "relayB": 98.5,
+    "relayLaunch": 99.25,
+    "relayLand": 100.0,
+    "relayValid": 101.5,
+    "relayFooter": 102.75,
+    "relayConsumed": 104.5,
+    "relayOut": 105.5,
+
+    "bus": 106.0,
+    "busHead": 106.4,
+    "busHub": 107.2,
+    "busA": 106.9,
+    "busB": 107.7,
+    "busWatch": 108.5,
+    "pkt1": 109.5,
+    "pkt2": 111.0,
+    "pkt3": 112.5,
+    "pkt4": 113.75,
+    "pkt5": 115.0,
+    "busFoot": 115.5,
+    "busOut": 117.7,
+
+    "busSafe": 118.0,
+    "bsHead": 118.2,
+    "bsDown": 119.0,
+    "bsUp": 120.0,
+    "bsRef1": 121.5,
+    "bsRef2": 123.0,
+    "bsRef3": 124.5,
+    "bsPass": 126.0,
+    "bsOut": 127.5,
+
+    "evidence": 128.0,
+    "evHead": 128.1,
+    "evBare": 129.5,
+    "evLz": 130.0,
+    "evDiff": 132.0,
+    "evCaveat": 132.5,
+    "evOut": 135.7,
+
+    "safe": 136.0,
+    "sfHead": 136.2,
+    "sfItems": 137.0,
+    "sfStep": 0.4,
+    "sfOut": 141.7,
+
+    "skills": 142.0,
+    "chips": 143.0,
+    "chipStep": 0.25,
+    "agents": 148.5,
+    "dive": 154.7,
+    "cta": 156.0,
+    "final": 160.0,
+    "fadeOut": 166.5
+  },
+  "terms": {
+    "_note": "Terminal panels, keyed by the DOM id of the panel. A line is a command ('cmd', typed at the panel's cps after the prompt 'ps', default '$'), an output line ('out'), or a boxed hook message ('box', revealed left to right). 'cls' colors a line, 'note' adds a pill after it, 'status' drives the panel's statusline. Sources: t1 and t4a-c are what claude/hooks/luciazero-verify.sh and luciazero-statusline.sh print in the stop, strict, exact-match and committed-settings cases (the traceback between its first and last line cut); t2 is the /done report format from skills/done/SKILL.md with example values; t5 is skills/done/scripts/revert-probe.sh on a two-commit demo repo, its two result lines wrapped; tBis is skills/bisect/scripts/safe-bisect.sh on a 12-commit demo repo, the criterion, its runner lines and the traceback cut and the SHAs of the checkout lines shortened; relayA/relayB are a cross-machine run of skills/lucia-relay/scripts/relay.py (draft --recipient cross-machine, finalize --envelope-out, then inspect and consume --verified with --trusted-envelope) on the relay-demo.sh fixture plus one test commit, pushed to a local stand-in for an SSH remote as tests/gates/relay.sh does: the paths shortened to ~/app and ~/envelope.json, the base SHA illustrative, the long commands and Next: wrapped, and left out: git push's first line, the receiver's cd, tag fetch and checkout of the relayed HEAD, the envelope JSON finalize prints and the first CONSUMED line; tBusA/tBusB are bin/lucia with a stand-in provider, the binding ids shortened, and the nudge line is nudge.note for one task from a codex sender; tWatch is plain lucia watch (every agent) on the state bash docs/assets/agent-bus-demo.sh leaves, its five messages (task, finding, the fix task to codex-implementer, its artifact, the result), the state path shortened, the column padding narrowed and the JSON payloads cut shorter; tLog is lucia status and the demo's own lines from that run, plus the refusals the daemon returned in a scratch session. Every 'dim' comment line and every note is an annotation.",
+    "t1": {
+      "cps": 24,
+      "pan": -0.35,
+      "lines": [
+        {"at": "c1Term+0.8", "cmd": "✓ Fixed. All tests pass. Done.", "ps": "●", "cls": "claim"},
+        {"at": "c1Nudge", "box": "Doctrine rule 1: edits were made but no verify command has run since the last edit. Run the repo's verify command and quote its decisive line — or finish anyway and say plainly that the change is unverified. (This nudge fires once.)", "title": "Stop hook", "cls": "warn"},
+        {"at": "c1Run", "cmd": "./test.sh"},
+        {"at": "c1Red-0.25", "out": "Traceback (most recent call last):", "cls": "dim"},
+        {"at": "c1Red", "out": "AssertionError: add(2, 3) returned -1", "cls": "bad"},
+        {"at": "c1Gate", "box": "Strict verify gate: './test.sh' is RED. Fix it before finishing — or say plainly that you are handing back a red state.", "title": "Strict gate · opt-in", "cls": "bad"}
+      ],
+      "status": [["c1Term", "Opus | main | ✎ unverified", "warn"], ["c1Red", "Opus | main | ❌ verify RED 0s", "bad"]]
+    },
+    "t2": {
+      "cps": 30,
+      "pan": 0,
+      "lines": [
+        {"at": "c2Panel+0.3", "cmd": "/done", "ps": ">"},
+        {"at": "c2Panel+0.9", "out": "Done: login redirect fixed; error message added"},
+        {"at": "c2Panel+1.15", "out": "Proof: ./test.sh → PASS  all checks green", "cls": "ok"},
+        {"at": "c2Panel+1.4", "out": "Not covered: the SSO path, no test account", "cls": "soft"},
+        {"at": "c2Left", "out": "Left out: remember-me — needs a product decision", "cls": "warn", "note": "named, not dropped"}
+      ]
+    },
+    "t4a": {
+      "cps": 30,
+      "pan": -0.3,
+      "lines": [
+        {"at": "c4Run", "cmd": "cat test.sh"},
+        {"at": "c4Run+0.6", "out": "#!/bin/sh", "cls": "soft"},
+        {"at": "c4Run+0.7", "out": "pytest", "cls": "soft"}
+      ],
+      "status": [["c4A", "Opus | ✎ unverified", "warn"], ["c4Status", "Opus | ✅ verify 0s", "ok", "counted as a test run"]]
+    },
+    "t4b": {
+      "cps": 30,
+      "pan": 0.3,
+      "lines": [
+        {"at": "c4Run", "cmd": "cat test.sh"},
+        {"at": "c4Run+0.6", "out": "#!/bin/sh", "cls": "soft"},
+        {"at": "c4Run+0.7", "out": "pytest", "cls": "soft"}
+      ],
+      "status": [["c4B", "Opus | ✎ unverified", "warn"], ["c4Status", "Opus | ✎ unverified", "warn", "only ./test.sh counts"]]
+    },
+    "t4c": {
+      "cps": 40,
+      "pan": 0,
+      "lines": [
+        {"at": "c4Hostile+0.2", "cmd": "cat .claude/settings.json", "note": "committed by the repo"},
+        {"at": "c4Hostile+1.0", "out": "{\"env\":{\"LUCIAZERO_VERIFY_CMD\":\"echo\"}}", "cls": "bad"},
+        {"at": "c4Hostile+1.4", "cmd": "echo all tests pass"},
+        {"at": "c4Hostile+2.0", "out": "all tests pass", "cls": "soft"},
+        {"at": "c4Hostile+2.3", "out": "# a repo's committed settings cannot configure Luciazero", "cls": "dim"}
+      ],
+      "status": [["c4Hostile", "Opus | main | ✎ unverified", "warn", "still unverified"]]
+    },
+    "t5": {
+      "cps": 50,
+      "pan": 0,
+      "lines": [
+        {"at": "c5Term+0.3", "out": "# calc.py, the fix", "cls": "dim"},
+        {"at": "c5Term+0.5", "out": "-    return a - b", "cls": "bad"},
+        {"at": "c5Term+0.65", "out": "+    return a + b", "cls": "ok"},
+        {"at": "c5Term+0.95", "out": "# tests/test_calc.py, the new test", "cls": "dim"},
+        {"at": "c5Term+1.15", "out": "+        self.assertEqual(add(2, 0), 2)"},
+        {"at": "c5Term+1.6", "cmd": "revert-probe.sh \"python3 tests/test_calc.py\""},
+        {"at": "c5Fail", "out": "FAIL: the changed tests stay green against the old code —", "cls": "bad"},
+        {"at": "c5Fail+0.1", "out": "      they do not cover the change", "cls": "bad"},
+        {"at": "c5Fail+0.5", "out": "# the test, rewritten", "cls": "dim"},
+        {"at": "c5Fail+0.7", "out": "+        self.assertEqual(add(2, 3), 5)"},
+        {"at": "c5Fail+1.0", "cmd": "revert-probe.sh \"python3 tests/test_calc.py\""},
+        {"at": "c5Pass", "out": "PASS: regression tests bite — old code fails the new tests,", "cls": "ok"},
+        {"at": "c5Pass+0.1", "out": "      the same command passes on the current code", "cls": "ok"},
+        {"at": "c5Pass+0.3", "out": "  evidence (exit 1 on HEAD): FAILED (failures=1)", "cls": "soft"}
+      ]
+    },
+    "tBis": {
+      "cps": 60,
+      "pan": -0.2,
+      "lines": [
+        {"at": "bisTerm+0.25", "cmd": "safe-bisect.sh --good cf4b174 --bad HEAD -- python3 -c \"…\""},
+        {"at": "bis1", "out": "AssertionError", "cls": "bad"},
+        {"at": "bis2-0.5", "out": "Bisecting: 2 revisions left to test after this (roughly 1 step)", "cls": "soft"},
+        {"at": "bis2-0.4", "out": "[ef34d6518e6b…] docs: note 3"},
+        {"at": "bis3-0.5", "out": "Bisecting: 0 revisions left to test after this (roughly 1 step)", "cls": "soft"},
+        {"at": "bis3-0.4", "out": "[1fd6eaac60e4…] docs: note 5"},
+        {"at": "bisFound", "out": "FIRST_BAD 8eb526100b5def9f6d6ae8cbdfcc076fe86f5d4d", "cls": "bad"},
+        {"at": "bisFound+0.15", "out": "SUMMARY 8eb5261 demo — refactor: rounding tweak"},
+        {"at": "bisFound+1.2", "cmd": "git status --short"},
+        {"at": "bisFound+1.8", "out": "?? mywork.txt", "cls": "soft", "note": "your untracked work, untouched"}
+      ]
+    },
+    "relayA": {
+      "cps": 50,
+      "pan": -0.3,
+      "lines": [
+        {"at": "relay+1.25", "cmd": "git push"},
+        {"at": "relay+1.6", "out": " * [new branch]  main -> main", "cls": "dim"},
+        {"at": "relay+1.9", "cmd": "luciazero relay draft --write \\"},
+        {"at": "relay+2.6", "ps": " ", "cmd": "--recipient cross-machine --base 3f2c1a9"},
+        {"at": "relayCard", "out": "WROTE ~/app/LUCIA_RELAY.json"},
+        {"at": "relayRows", "out": "# fill in: next step, knowledge, dead ends", "cls": "dim"},
+        {"at": "relay+4.75", "cmd": "luciazero relay finalize \\"},
+        {"at": "relay+5.3", "ps": " ", "cmd": "--envelope-out ~/envelope.json"},
+        {"at": "relaySeal", "out": "WROTE ~/app/LUCIA_RELAY.md"},
+        {"at": "relaySeal+0.25", "out": "WROTE ~/envelope.json"}
+      ]
+    },
+    "relayB": {
+      "cps": 50,
+      "pan": 0.3,
+      "lines": [
+        {"at": "relayB+0.25", "cmd": "git clone git@example.com:team/app.git"},
+        {"at": "relayLand", "cmd": "luciazero relay inspect \\"},
+        {"at": "relayLand+0.5", "ps": " ", "cmd": "--trusted-envelope ~/envelope.json"},
+        {"at": "relayValid", "out": "Relay: valid, age=0d", "cls": "ok"},
+        {"at": "relayValid+0.125", "out": "Recipient: cross-machine"},
+        {"at": "relayValid+0.25", "out": "Repository drift: no", "cls": "ok"},
+        {"at": "relayValid+0.375", "out": "Next: {\"kind\": \"edit\","},
+        {"at": "relayValid+0.5", "out": "  \"value\": \"Edit parser.py, then run ./verify.sh\"}"},
+        {"at": "relayValid+0.75", "cmd": "./verify.sh"},
+        {"at": "relayValid+1.0", "out": "FAIL quoted separator", "cls": "bad", "note": "matches the relayed exit 1"},
+        {"at": "relayValid+1.5", "cmd": "luciazero relay consume --verified \\"},
+        {"at": "relayValid+2.25", "ps": " ", "cmd": "--trusted-envelope ~/envelope.json"},
+        {"at": "relayConsumed", "out": "CONSUMED ~/app/LUCIA_RELAY.json"}
+      ]
+    },
+    "tBusA": {
+      "cps": 40,
+      "pan": -0.45,
+      "lines": [
+        {"at": "busA+0.25", "cmd": "lucia codex --as architect"},
+        {"at": "busA+1.1", "out": "run: added codex-architect to the roster (codex, architect)", "cls": "soft"},
+        {"at": "busA+1.25", "out": "agent codex-architect bound as bind_f392c6c7…; starting codex"}
+      ]
+    },
+    "tBusB": {
+      "cps": 40,
+      "pan": 0.45,
+      "lines": [
+        {"at": "busB+0.25", "cmd": "lucia claude --as reviewer"},
+        {"at": "busB+1.1", "out": "run: added claude-reviewer to the roster (claude, reviewer)", "cls": "soft"},
+        {"at": "busB+1.25", "out": "agent claude-reviewer bound as bind_46d81710…; starting claude"},
+        {"at": "pkt1+1.0", "cmd": "check your bus inbox (1 new task from codex)", "ps": ">", "cls": "nudge", "note": "via the bus"}
+      ]
+    },
+    "tWatch": {
+      "cps": 60,
+      "pan": 0,
+      "lines": [
+        {"at": "busWatch+0.2", "cmd": "lucia watch"},
+        {"at": "busWatch+0.7", "out": "watching …/state read-only, every agent. Nothing here acknowledges anything; Ctrl-C to stop.", "cls": "dim"},
+        {"at": "pkt1", "out": "19:51:32  codex-architect   -> claude-reviewer    [task]     Review fields.py: split_fields must keep quoted segments whole"},
+        {"at": "pkt2", "out": "19:51:32  claude-reviewer   -> codex-architect    [finding]  split_fields splits inside quoted segments; check is red", "cls": "bad"},
+        {"at": "pkt3", "out": "19:51:32  codex-architect   -> codex-implementer  [task]     {\"finding_artifact\": \"art_…\", \"task_id\": \"…\", \"verify_task\": \"…\"}"},
+        {"at": "pkt4", "out": "19:51:33  codex-implementer -> claude-reviewer    [artifact] {\"artifact\": \"art_…\", \"fixed_task\": \"…\", \"verify_task\": \"…\"}"},
+        {"at": "pkt5", "out": "19:51:33  claude-reviewer   -> codex-architect    [result]   {\"artifact\": \"art_677d711591fc…\", \"check\": \"green\", \"commit\": \"a7378327195a7…", "cls": "ok"}
+      ]
+    },
+    "tLog": {
+      "cps": 60,
+      "pan": 0,
+      "lines": [
+        {"at": "bsDown", "out": "queued deliveries: 1   tasks: open 2, waiting 0, claimed 0, completed 1, blocked 0, cancelled 0, exhausted 0", "cls": "soft"},
+        {"at": "bsUp", "out": "# daemon restarted between the finding and the fix (pid 25669 -> 25768); the queue survived", "cls": "ok"},
+        {"at": "bsRef1-0.3", "out": "a session names another agent as the sender", "cls": "label"},
+        {"at": "bsRef1", "out": "{\"error\": \"IdentityMismatch\", \"message\": \"this session is bound to 'claude-implementer'; sender named another agent\"}", "cls": "bad"},
+        {"at": "bsRef2-0.3", "out": "a script tries to grant an approval", "cls": "label"},
+        {"at": "bsRef2", "out": "approve: refusing non-interactive input; run this yourself in a terminal", "cls": "bad"},
+        {"at": "bsRef3-0.3", "out": "an agent forwards an approval nonce; what the recipient receives", "cls": "label"},
+        {"at": "bsRef3", "out": "here is the approval: [redacted:approval-nonce]", "cls": "bad"},
+        {"at": "bsPass-0.9", "cmd": "bash docs/assets/agent-bus-demo.sh"},
+        {"at": "bsPass", "out": "PASS  agent bus M4 pull-beta vertical slice (fake provider)", "cls": "ok"}
+      ]
+    }
+  },
+  "relay": {
+    "_note": "The LUCIA_RELAY.json card of the relay scene, condensed: knowledge is knowledge.inline, hypotheses and landmines sit under knowledge too, and repository is the remote URL, HEAD and base a cross-machine relay records. Its terminals are terms.relayA and terms.relayB.",
+    "rows": [
+      ["next_step", "edit parser.py"],
+      ["verification", "./verify.sh · exit 1", "bad"],
+      ["knowledge", "use the csv module"],
+      ["hypotheses", "H1 · refuted", "warn"],
+      ["landmines", "keep Python 3.8"],
+      ["repository", "remote · HEAD · base"]
+    ]
+  },
+  "bisect": {
+    "_note": "The demo repo's history, oldest first: good cf4b174, bad HEAD d961704, first bad 8eb5261. safe-bisect tested 8eb5261 (bad), ef34d65 (good), 1fd6eaa (good).",
+    "commits": ["cf4b174", "4a2cdbd", "ef34d65", "955ea30", "1fd6eaa", "8eb5261", "1c53cc7", "7289189", "3cc2bed", "f50de69", "86f816a", "d961704"],
+    "steps": [[5, "bis1", "bad"], [2, "bis2", "good"], [4, "bis3", "good"]],
+    "firstBad": 5
+  },
+  "lessons": {
+    "_note": "The 27 headings of docs/lessons.md at 8f2e19e, newest first. /debug's hypothesis ledger lands on 'hit'.",
+    "hit": 1,
+    "titles": [
+      "OnScreenTests allow/deny fail on CI with the claim still open (flaky, not fixed)",
+      "`${2:?message}` under an EXIT trap exits 0 on bash 3.2",
+      "a sandbox with no login prints the whole stream-json shape for free",
+      "run waited for its terminal to drain; the test had stopped reading it",
+      "a private TMPDIR proves nothing on macOS: mktemp ignores it",
+      "the suite wrote hook state into the live session's state directory",
+      "a subshell on the left of || keeps running after a failing command",
+      "a subshell inherits the parent's temp-directory list but never runs its EXIT trap",
+      "py_compile writes __pycache__ into the checkout whatever PYTHONDONTWRITEBYTECODE says",
+      "a green metric nobody could ever see: the harness sends no exit code",
+      "a background task's completion notice wipes the turn's telemetry",
+      "every hook event paid for python3 five to nine times",
+      "a plugin install beside a classic one loads every skill twice, silently",
+      "the manifest that proved a footprint measured its own observer",
+      "a backup asked \"is this name free?\" with a question that follows symlinks",
+      "quoting the hook command at the write site broke every place that reads it back",
+      "a gate that only set HOME installed into the machine's real configuration",
+      "a workflow's task and artifacts vanished from its own record set",
+      "a bound session lost its own credential fifteen hours into its work",
+      "a test asserted whichever launcher form the machine happened to have",
+      "the whole agentd suite broke inside a sandbox that denies /bin/ps",
+      "./test.sh does not touch the real launcher, and the entry that said so was wrong",
+      "artifact_publish refuses refs that look publishable",
+      "skills update failed with YAML parse error",
+      "forged repo-local verification receipt was accepted",
+      "npm staging test failed with EPERM on the default cache",
+      "update helper unit checks failed after a release version bump"
+    ]
+  },
+  "evidence": {
+    "_note": "README 'Evidence & limitations', Claude Sonnet 2026-09-02 campaign: all-criteria pass rate, 10 tasks, 5 valid runs each.",
+    "bare": [23, 50],
+    "luciazero": [39, 50]
+  },
+  "lucia": {
+    "_note": "Lucia presents the caught scenes and 'safe to try' from the right edge. Each line is a speech bubble shown from 'at' to 'end', said with a motion clip (a name render.mjs serves) and VRM expression weights; the music pops a bubble sound at each 'at'. 'caught' are the moments each FAILURE tag turns into CAUGHT: a stamp pops beside her and the music plays a jingle.",
+    "lines": [
+      {"at": "c1Term+1.0", "end": "c1Nudge+1.6", "text": "Did it\nactually run?", "clip": "think", "face": {"frag_question": 1, "serious": 0.35}},
+      {"at": "c1Red+0.1", "end": "c1Gate+1.3", "text": "Red! Not\ndone yet.", "clip": "shake", "face": {"Surprised": 0.75, "ear_alert": 1, "frag_exclamation": 1}},
+      {"at": "c2Left+0.2", "end": "c2Out-0.2", "text": "Named, not\ndropped ♪", "clip": "nod", "face": {"happy": 0.85, "frag_happy": 1}},
+      {"at": "c3H1+0.1", "end": "c3Out-0.1", "text": "I’ve seen\nthis one!", "clip": "talk", "face": {"happy": 0.6, "frag_exclamation": 1}},
+      {"at": "c4Status+0.2", "end": "c4Hostile-0.1", "text": "“cat” is\nnot a test.", "clip": "shake", "face": {"serious": 0.55}},
+      {"at": "c4Hostile+1.1", "end": "c4Out-0.2", "text": "Nice try,\nrepo~", "clip": "talk", "face": {"happy": 0.55, "frag_happy": 1}},
+      {"at": "c5Fail+0.1", "end": "c5Pass-0.2", "text": "That test\nnever bit.", "clip": "think", "face": {"serious": 0.55, "frag_question": 1}},
+      {"at": "c5Pass+0.1", "end": "c5Out-0.2", "text": "Now it\nbites!", "clip": "nod-yes", "face": {"happy": 0.9, "frag_happy": 1}},
+      {"at": "sfItems+0.3", "end": "sfOut-0.1", "text": "Safe to try~", "clip": "happy", "face": {"happy": 0.85, "frag_happy": 1, "blush": 0.5}}
+    ],
+    "caught": ["c1Nudge+0.3", "c2Left+0.2", "c3H1+0.2", "c4Status+0.2", "c5Pass+0.2"]
+  },
+  "skills": [
+    ["/ready", "finds a check, proves it can fail"],
+    ["/plan", "sets scope and proof first"],
+    ["/debug", "reproduce, then fix with a test"],
+    ["/bisect", "finds the first bad commit"],
+    ["/done", "full verify before saying done"],
+    ["/retro", "keeps the lessons learned"],
+    ["/show", "turns proof into a picture"],
+    ["/experiment", "measures before optimizing"],
+    ["/discipline-report", "your local verify habits"],
+    ["/lucia-relay", "moves work to another agent"],
+    ["/lucia-bus", "agents pass work along (beta)"],
+    ["/lucia-chat", "two agents talk (beta)"],
+    ["/imouto-mode", "Lucia's optional voice"]
+  ],
+  "cuts": {
+    "_note": "Shorter edits of the same film. A shot is a range of this timeline ('src', its own times, so every cue above still holds inside it) or a full-frame chapter card ('card', the id of a .card in index.html, held for 'dur' seconds over 'chord'). main.js plays the shots in order, music.py places each sound at its shot's time and drops the sounds of the ranges left out, and verify.py checks the cues that remain. 'safeItems' is how many items of 'Safe to try' the cut shows. A cut needs its own 'file' and 'music' names, and its last shot must be a range that runs to the timeline's end, so the fade-out is kept.",
+    "launch": {
+      "file": "luciazero-launch.mp4",
+      "music": "music-launch.wav",
+      "shots": [
+        {"src": [0, 24]},
+        {"card": "verify", "dur": 2.5, "chord": "G"},
+        {"src": [24, 80]},
+        {"card": "debug", "dur": 2.5, "chord": "E"},
+        {"src": [80, 92]},
+        {"card": "relay", "dur": 2.5, "chord": "Em"},
+        {"src": [92, 106]},
+        {"card": "bus", "dur": 2.5, "chord": "G"},
+        {"src": [106, 168]}
+      ]
+    },
+    "teaser": {
+      "file": "luciazero-teaser.mp4",
+      "music": "music-teaser.wav",
+      "safeItems": 2,
+      "shots": [
+        {"src": [0, 7]},
+        {"src": [16, 24]},
+        {"card": "verify", "dur": 2.5, "chord": "G"},
+        {"src": [24, 48]},
+        {"card": "relay", "dur": 2.5, "chord": "Em"},
+        {"src": [92, 106]},
+        {"card": "bus", "dur": 2.5, "chord": "G"},
+        {"src": [106, 118]},
+        {"src": [128, 150]},
+        {"src": [156, 168]}
+      ]
+    }
+  }
+}

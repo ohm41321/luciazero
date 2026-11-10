@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+  Source of docs/assets/intro-cover.jpg, the README image that links to the
+  intro video on the website. It is frame 23.6 s of the video with a play
+  button in the empty space under the loop line. ./web.sh makes it:
+    node render.mjs --grain 0 --stills 23.6   the frame, without grain
+    node render.mjs --cover                   this page -> out/cover.png
+  then scales out/cover.png to the JPEG. Look at the image before committing.
+-->
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "Plex Sans"; src: url("node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Plex Mono"; src: url("node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; }
+html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+.frame { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+.play {
+  position: absolute; left: 876px; top: 764px;
+  display: flex; align-items: center; gap: 28px;
+  padding: 22px 44px 22px 22px; border-radius: 999px;
+  background: rgba(4, 16, 20, 0.72);
+  box-shadow: 0 0 0 2px rgba(124, 232, 225, 0.55), 0 0 48px rgba(124, 232, 225, 0.28);
+  font: 600 44px/1 "Plex Sans", sans-serif; color: #f2f5f7;
+}
+.play i {
+  width: 88px; height: 88px; border-radius: 50%; background: #7ce8e1;
+  display: grid; place-items: center;
+}
+.play i::after {
+  content: ""; margin-left: 8px;
+  border-left: 30px solid #062a2b; border-top: 19px solid transparent; border-bottom: 19px solid transparent;
+}
+.play small { display: block; margin-top: 10px; font: 500 28px/1 "Plex Mono", monospace; color: #7ce8e1; }
+</style></head>
+<body>
+<img class="frame" src="out/stills/t-23.60.png" alt="">
+<div class="play"><i></i><div>Watch the intro<small>1:00 · with sound</small></div></div>
+</body></html>

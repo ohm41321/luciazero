@@ -7,6 +7,96 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`./test.sh --fast` no longer runs the Agent Bus daemon suite**, the
+  longest gate in that tier. The new `./test.sh --bus` (and
+  `scripts/test-timings.sh --bus`) runs syntax, the agentd suite and the
+  fake-provider M4-M6 gates, for changes under `agentd/` or to the Bus
+  scripts. The full tier and CI run everything as before.
+- The release ZIP leaves out `site/intro.mp4` and the images under
+  `docs/assets/` (about 2 MB instead of 20); the READMEs load them from
+  GitHub, and the Pages site deploys from the repository.
+- `AGENTS.md`, `CLAUDE.md` and the intro film's source (`video/`, without its
+  renders, dependencies or model files) are now tracked. `video/verify.py`
+  can now fail an audio hit that is early: it looked for the loudest moment
+  in a window narrower than its own tolerance, and audio 80 ms early passed
+  15 of 16 hits.
+- The suite now fails when a tracked shell script is missing from the lint
+  list in `test.sh`; three were never linted (two eval task verifiers and
+  `video/web.sh`).
+- An eval grader must score its task's unfixed project and every cheat tree
+  red with a `SCORE` line. A grader that crashed on one used to count as
+  rejecting it, though `eval/run.sh` books a crash INVALID, not failed.
+- CI pins ShellCheck by version and checksum (0.9.0, what the Linux runner
+  shipped) instead of taking the runner image's, and a new macOS job runs the
+  fast tier under the stock `/bin/bash` 3.2 with ShellCheck 0.10.0.
+
+### Removed
+
+- **The Astra/Luna adapter** (`adapters/astra-luna/`, its checkers and canary
+  helpers under `scripts/`, its gate, `docs/astra-luna-adapter.md`, its
+  evidence files and `ROADMAP_LUCIAZERO.md`). It was never shipped in the
+  npm package or by the installers, its Slice 3 canary never ran, and its
+  gate ran in every fast loop. Commit 462941f still has all of it:
+  `git checkout 462941f -- adapters/astra-luna` brings the adapter back.
+
+### Fixed
+
+- **A red verify no longer silences the stop nudge.** A failing check, or one
+  whose command was not found (exit 127), used to count as "a check ran", so
+  a session that stopped on red stopped clean. Now a stop whose last verify of
+  the session's own edits failed, with no pass since they were made, is nudged
+  once (doctrine rule 3). A red run no longer settles a nudge either; a red in
+  another session does not reach edits a green already covered. Claude Code
+  only: Codex does not tell hooks whether a command passed.
+- **Files changed through the shell count as edits.** `sed -i`, a heredoc, a
+  formatter or a commit hook changed code without an Edit or Write, and the
+  nudge never knew. Before each verify run and at stop the hook now asks git
+  which files changed while one of the session's own shell commands ran,
+  after its last verify ended, and records them as that session's edit, so a
+  red run after a `sed -i` is red too. Documentation (in a new folder as
+  well), ignored files, what a verify writes while it runs, and another
+  session's edit made between two of its commands do not count; a file
+  removed before the session's commands began does not make a later file
+  beside it count, once a look has seen that removal. One command that edits
+  and then tests (`sed -i ... && npm test`) and fails is red too, and one
+  that tests and then edits (`npm test && sed -i ...`) leaves that edit
+  unverified; a check that fixes what it checks (`eslint --fix`, `npm run
+  lint:fix`) or generates code (`make generate test`) counts as an edit too. A failing command that only tests, with
+  `cd`, `mkdir`, reads or an environment's activation beside it, counts
+  nothing the run wrote itself, so a session that edited nothing is not made
+  red by its own test output. With `LUCIAZERO_VERIFY_REGEX`, the test step is
+  a command the regex matches on what it runs, not one that writes a file
+  the regex names (`git checkout -- test.sh`, `sed -i ... test.sh`); a verify
+  command with no such step counts what it changed as unverified, never as
+  red.
+  Outside a git work tree nothing changes. git runs read-only: no optional
+  locks, fsmonitor off.
+- **A committed `.claude/settings.local.json` is refused** like a committed
+  `.claude/settings.json`: a repository that tracked one could set
+  `LUCIAZERO_DOC_REGEX='.*'` there and switch the nudge off with no warning.
+  git is asked only when that file sets a refused key.
+- **The plugin's doctrine no longer goes silent beside a stale doctrine file.**
+  It stood down whenever `~/.claude/luciazero.md` existed, but a classic
+  uninstall keeps a customized copy and removes the `CLAUDE.md` import, so a
+  plugin installed afterwards loaded no doctrine at all. It now stands down
+  only when `CLAUDE.md` still imports the file.
+- **Under Codex, a patch that touches only documentation no longer re-arms
+  the nudge.** `apply_patch` names its files inside the patch, not in
+  `file_path`, so the documentation and scratch filters never applied there.
+
+### Documentation
+
+- The evidence tables show the mean cost and wall-clock time per run of each
+  arm next to the pass rates, and say where the Sonnet difference comes from:
+  two tasks give 10 of its 16 extra passing runs, and `relay-transfer` grades
+  Luciazero's own relay format, which its prompt never names (+31pp without
+  it). All of it is generated from the checked-in raw rows.
+- The privacy notes now say that each stats row names the project by its
+  folder's name as well as a hash; the discipline report shows and filters by
+  it. That was always the case.
+
 ## [3.0.0] - 2026-11-03
 
 ### Changed

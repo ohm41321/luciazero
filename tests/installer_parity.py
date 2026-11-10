@@ -241,6 +241,42 @@ def scenarios(top):
                 print("FAIL: installer parity, claude-separator: %s CLAUDE.md did not come back byte for byte" % side)
                 raise SystemExit(1)
 
+    # A CLAUDE.md saved on Windows: CRLF before the install, and CRLF again
+    # after an editor re-saved the whole file, import line included. Either
+    # way the uninstall must take the import line out, or it is left pointing
+    # at a luciazero.md the same uninstall deletes.
+    crlf = b"# mine\r\n\r\nkeep this\r\n"
+    s = Pair(top, "claude-crlf")
+    s.both(lambda box: write(cfg(box, "CLAUDE.md"), crlf, 0o640))
+    s.run("claude")
+    s.run("claude")
+    s.run("claude-uninstall")
+    for side, box in s.boxes.items():
+        with open(cfg(box, "CLAUDE.md"), "rb") as f:
+            if f.read() != crlf:
+                print("FAIL: installer parity, claude-crlf: %s CLAUDE.md did not come back byte for byte" % side)
+                raise SystemExit(1)
+
+    def resaved_crlf(box):
+        with open(cfg(box, "CLAUDE.md"), "rb") as f:
+            text = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        write(cfg(box, "CLAUDE.md"), text)
+    s = Pair(top, "claude-crlf-resaved")
+    s.both(lambda box: write(cfg(box, "CLAUDE.md"), "# mine\n\nkeep this\n", 0o640))
+    s.run("claude")
+    s.both(resaved_crlf)
+    shown = s.run("claude", "--status")
+    if "CLAUDE.md imports the doctrine" not in shown[1]:
+        print("FAIL: installer parity, claude-crlf-resaved: --status missed the CRLF import line:\n%s" % shown[1])
+        raise SystemExit(1)
+    s.run("claude")
+    s.run("claude-uninstall")
+    for side, box in s.boxes.items():
+        with open(cfg(box, "CLAUDE.md"), "rb") as f:
+            if b"@luciazero.md" in f.read():
+                print("FAIL: installer parity, claude-crlf-resaved: %s left the import line in CLAUDE.md" % side)
+                raise SystemExit(1)
+
     s = Pair(top, "claude-separator-edited")
     s.both(lambda box: write(cfg(box, "CLAUDE.md"), "# mine\n"))
     s.run("claude")
@@ -356,19 +392,54 @@ def scenarios(top):
     s.run("codex-uninstall")
     s.run("codex", "--bogus")
 
+    # CRLF cases: an AGENTS.md saved on Windows keeps its line endings, and a
+    # reinstall finds the block it wrote instead of adding a second one
     for name, text in (("codex-terminated", "# rules\n\nbe careful\n"),
                        ("codex-unterminated", "# rules\n\nno final newline"),
-                       ("codex-blank-tail", "# rules\n\n\n")):
+                       ("codex-blank-tail", "# rules\n\n\n"),
+                       ("codex-crlf", "# rules\r\n\r\nbe careful\r\n"),
+                       ("codex-crlf-unterminated", "# rules\r\n\r\nno final newline")):
         s = Pair(top, name)
         s.both(lambda box, t=text: write(codex(box, "AGENTS.md"), t, 0o640))
         s.run("codex")
         s.run("codex")
+        for side, box in s.boxes.items():
+            with open(codex(box, "AGENTS.md"), "rb") as f:
+                starts = f.read().count(b"<!-- luciazero:start -->")
+            if starts != 1:
+                print("FAIL: installer parity, %s: %s AGENTS.md has %d doctrine blocks after a reinstall"
+                      % (name, side, starts))
+                raise SystemExit(1)
         s.run("codex-uninstall")
         for side, box in s.boxes.items():
             with open(codex(box, "AGENTS.md"), "rb") as f:
                 if f.read() != text.encode():
                     print("FAIL: installer parity, %s: %s AGENTS.md did not come back byte for byte" % (name, side))
                     raise SystemExit(1)
+
+    # The block itself re-saved as CRLF by an editor, after the install
+    s = Pair(top, "codex-crlf-resaved")
+    s.both(lambda box: write(codex(box, "AGENTS.md"), "# rules\n\nbe careful\n", 0o640))
+    s.run("codex")
+
+    def resaved_agents(box):
+        with open(codex(box, "AGENTS.md"), "rb") as f:
+            text = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        write(codex(box, "AGENTS.md"), text)
+    s.both(resaved_agents)
+    s.run("codex")
+    for side, box in s.boxes.items():
+        with open(codex(box, "AGENTS.md"), "rb") as f:
+            starts = f.read().count(b"<!-- luciazero:start -->")
+        if starts != 1:
+            print("FAIL: installer parity, codex-crlf-resaved: %s AGENTS.md has %d doctrine blocks" % (side, starts))
+            raise SystemExit(1)
+    s.run("codex-uninstall")
+    for side, box in s.boxes.items():
+        with open(codex(box, "AGENTS.md"), "rb") as f:
+            if b"luciazero" in f.read():
+                print("FAIL: installer parity, codex-crlf-resaved: %s left the doctrine block in AGENTS.md" % side)
+                raise SystemExit(1)
 
     # CLAUDE.md and AGENTS.md as links into a dotfiles checkout: the install
     # appends through the link, and the uninstall must write through it too,

@@ -170,7 +170,9 @@ if [ "${STATUS_ONLY}" = 1 ]; then
     fi
   fi
   GLOBAL_MD="${CLAUDE_DIR}/CLAUDE.md"
-  N="$(grep -cxF "${IMPORT_LINE}" "${GLOBAL_MD}" 2>/dev/null || true)"
+  # a CRLF line is the same line, as the Node installer counts it
+  N="$(awk -v want="${IMPORT_LINE}" '{ sub(/\r$/, "") } $0 == want { n++ } END { print n + 0 }' \
+    "${GLOBAL_MD}" 2>/dev/null || true)"
   if [ "${N:-0}" = 1 ]; then
     echo "  ok    CLAUDE.md imports the doctrine"
   else
@@ -599,6 +601,18 @@ sha_of() {
   else echo ""; fi
 }
 
+# The line ending $1 already uses, in EOL, so lines added to it match their
+# neighbours: CRLF when its first line ends in one, as eolOf in
+# bin/lib/installer.js decides it. A variable, not output, because command
+# substitution would strip the newline it is.
+eol_of() {
+  EOL=$'\n'
+  EOL_FIRST=""
+  if IFS= read -r EOL_FIRST < "$1" && [ "${EOL_FIRST%$'\r'}" != "${EOL_FIRST}" ]; then
+    EOL=$'\r\n'
+  fi
+}
+
 # Anything already at this path belongs to whoever put it there until it
 # proves otherwise, and "it is a regular file" proves nothing -- a plain file
 # somebody keeps notes in would pass that and be overwritten here and deleted
@@ -635,7 +649,8 @@ else
   if [ -f "${GLOBAL_MD}" ]; then
     BACKUP="$(bakcopy -L "${GLOBAL_MD}" "${GLOBAL_MD}")"
     echo "  ok  backed up CLAUDE.md -> $(basename "${BACKUP}")"
-    printf '\n%s\n' "${IMPORT_LINE}" >> "${GLOBAL_MD}"
+    eol_of "${GLOBAL_MD}"
+    printf '%s%s%s' "${EOL}" "${IMPORT_LINE}" "${EOL}" >> "${GLOBAL_MD}"
     # Provenance for the uninstaller, and the only reason it may remove the
     # blank line above the import line. A CLAUDE.md can arrive at that same
     # shape without this branch running -- somebody writes the import line

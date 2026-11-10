@@ -85,6 +85,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Under Codex, a patch that touches only documentation no longer re-arms
   the nudge.** `apply_patch` names its files inside the patch, not in
   `file_path`, so the documentation and scratch filters never applied there.
+- **The Bash installers treat CRLF files as the Node installer does.**
+  `uninstall.sh` left `@luciazero.md\r` in a `CLAUDE.md` saved with CRLF
+  endings and deleted the `luciazero.md` it pointed at, and `install-codex.sh`
+  added a second doctrine block to a CRLF `AGENTS.md` on every reinstall. A
+  CRLF line now counts as the same line, a line they add takes the file's own
+  ending, and `install.sh --status` counts a CRLF import line.
+  `tests/installer_parity.py` plays five CRLF cases through both installers.
 
 ### Documentation
 

@@ -84,6 +84,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- The evidence tables show the mean cost and wall-clock time per run of each
+  arm next to the pass rates, and say where the Sonnet difference comes from:
+  two tasks give 10 of its 16 extra passing runs, and `relay-transfer` grades
+  Luciazero's own relay format, which its prompt never names (+31pp without
+  it). All of it is generated from the checked-in raw rows.
 - The privacy notes now say that each stats row names the project by its
   folder's name as well as a hash; the discipline report shows and filters by
   it. That was always the case.

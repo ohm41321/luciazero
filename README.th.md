@@ -392,11 +392,11 @@ GitHub **Watch → Custom → Releases**
 Snapshot: 2026-08-11 สำหรับ Haiku และ Sonnet pilot, 2026-09-02 สำหรับ Sonnet
 อัตราผ่านทุกเกณฑ์ สร้างจาก raw rows ที่ commit ไว้:
 
-| โมเดล Claude | จำนวน task | Luciazero | Bare | ผลต่าง |
-|---|---:|---:|---:|---:|
-| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp |
-| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp |
+| โมเดล Claude | จำนวน task | Luciazero | Bare | ผลต่าง | ต้นทุนต่อ run | เวลาต่อ run |
+|---|---:|---:|---:|---:|---:|---:|
+| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | $0.08 vs $0.07 | 54 s vs 48 s |
+| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | $0.21 vs $0.18 | 38 s vs 33 s |
+| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | $0.39 vs $0.22 | 93 s vs 47 s |
 
 Arm `Luciazero` ติดตั้ง classic pack แบบไม่มี hook จึงไม่ใช่การแยกผลของ
 doctrine เพียงอย่างเดียว และแต่ละแถวเทียบข้ามกันตรงๆ ไม่ได้ เพราะ campaign
@@ -406,6 +406,14 @@ Sonnet วันที่ 2026-09-02 เพิ่ม task ที่ยากข�
 valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 มาแทนที่ด้วย valid run
 ครบ 5 รอบทุก cell และไม่มี invalid เลย ส่วนผล top-up `+37pp` เดิมยังถูกยกเลิก
 เพราะหา replacement raw rows ที่ใช้ตรวจสอบซ้ำไม่ได้
+
+ส่วนต่างส่วนใหญ่ของ Sonnet มาจาก 2 task: `merge-conflict` กับ `pipeline` ให้ 10
+จาก 16 run ที่ผ่านเพิ่มขึ้น และไม่ได้คำนวณช่วงความไม่แน่นอน
+จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด `relay-transfer` ตรวจตาม format relay
+ของ Luciazero เอง (`LUCIA_RELAY.json`) ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง
+Luciazero ถ้าตัด task นี้ออก ส่วนต่างของ Sonnet เป็น +31pp ต้นทุนต่อ run
+คือค่าเฉลี่ยราคา API ที่ CLI รายงาน เวลาต่อ run คือค่าเฉลี่ยเวลาจริง (median ของ
+Sonnet: 45 s กับ 40 s)
 
 †Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก
 model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign

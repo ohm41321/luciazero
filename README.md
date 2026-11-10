@@ -403,11 +403,11 @@ every repository or model.
 Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.
 All-criteria pass rate generated from checked-in raw rows:
 
-| Claude model | Tasks | Luciazero | Bare | Difference |
-|---|---:|---:|---:|---:|
-| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp |
-| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp |
-| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp |
+| Claude model | Tasks | Luciazero | Bare | Difference | Cost per run | Time per run |
+|---|---:|---:|---:|---:|---:|---:|
+| Haiku†, 10 valid/task | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | $0.08 vs $0.07 | 54 s vs 48 s |
+| Sonnet (2026-08-11 pilot), 4–5 valid/task* | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | $0.21 vs $0.18 | 38 s vs 33 s |
+| Sonnet, 5 valid/task | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | $0.39 vs $0.22 | 93 s vs 47 s |
 
 The `Luciazero` arm installs the classic pack without hooks; it is not a clean
 doctrine-only ablation. Rows are not like-for-like: the 2026-09-02 Sonnet
@@ -417,6 +417,14 @@ compare each row against its own bare arm rather than across models.
 arms at four valid runs; the 2026-09-02 campaign supersedes it with five valid
 runs in every cell and no invalid rows. The previously stated `+37pp` top-up
 remains retired because its replacement raw rows could not be recovered.
+
+Two tasks carry most of the Sonnet difference: `merge-conflict` and `pipeline`
+give 10 of its 16 extra passing runs. No uncertainty interval is computed, so
+read the difference as a direction more than a size. `relay-transfer` grades
+Luciazero's own relay format (`LUCIA_RELAY.json`), which its prompt never names,
+so it favors the Luciazero arm; without it the Sonnet difference is +31pp. Cost
+per run is the mean API price the CLI reported; time per run is the mean
+wall-clock time (medians for Sonnet: 45 s vs 40 s).
 
 †Model provenance is incomplete for Haiku: only 70/140 rows encode model
 identity. The other 70 are attributed at campaign-file/report level and

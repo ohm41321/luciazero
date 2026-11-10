@@ -54,11 +54,11 @@ box.
 Snapshots: 2026-08-11 for Haiku and the Sonnet pilot, 2026-09-02 for Sonnet.
 Tables below are generated from digest-verified raw JSONL.
 
-| Model | Tasks | Luciazero | Bare | Difference | Valid runs per task | Status |
-|---|---:|---:|---:|---:|---:|---|
-| Claude Haiku | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | 10 | published |
-| Claude Sonnet (2026-08-11 pilot) | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | 4–5 | preliminary |
-| Claude Sonnet | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | 5 | published |
+| Model | Tasks | Luciazero | Bare | Difference | Cost per run | Time per run | Valid runs per task | Status |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Claude Haiku | 6 | 36/60 (60%) | 27/60 (45%) | +15pp | $0.08 vs $0.07 | 54 s vs 48 s | 10 | published |
+| Claude Sonnet (2026-08-11 pilot) | 6 | 25/27 (93%) | 16/26 (62%) | +31pp | $0.21 vs $0.18 | 38 s vs 33 s | 4–5 | preliminary |
+| Claude Sonnet | 10 | 39/50 (78%) | 23/50 (46%) | +32pp | $0.39 vs $0.22 | 93 s vs 47 s | 5 | published |
 
 > **Canonical Sonnet result:** the 2026-09-02 campaign is canonical — ten tasks,
 > five valid runs in every cell, no invalid rows, one pinned repository commit
@@ -71,6 +71,15 @@ Tables below are generated from digest-verified raw JSONL.
 > (`archive-security`, `schema-migration`, `paginated-sync`, `relay-transfer`)
 > that did not exist on 2026-08-11. Model rows are not like-for-like; each arm
 > is only comparable with the bare arm of its own campaign.
+
+> **Where the difference comes from:** Two tasks carry most of the Sonnet
+> difference: `merge-conflict` and `pipeline` give 10 of its 16 extra passing
+> runs. No uncertainty interval is computed, so read the difference as a direction
+> more than a size. `relay-transfer` grades Luciazero's own relay format
+> (`LUCIA_RELAY.json`), which its prompt never names, so it favors the Luciazero
+> arm; without it the Sonnet difference is +31pp. Cost per run is the mean API
+> price the CLI reported; time per run is the mean wall-clock time (medians for
+> Sonnet: 45 s vs 40 s).
 
 > **Haiku model-provenance limitation:** only 70/140 rows encode model
 > identity. Attribution of the other 70 comes from the original campaign

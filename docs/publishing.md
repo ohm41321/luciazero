@@ -437,7 +437,8 @@ the render command is in that file. When the mascot changes, update both copies,
 re-render the card, and upload it again as the social preview. The README
 banners (`docs/assets/readme-banner-*.svg`) carry the mascot too, embedded as
 WebP because an SVG shown through `<img>` cannot load other files; redraw them
-when it changes.
+with `docs/assets/readme-banner.py` (its docstring has the commands) when it
+changes.
 
 ## Channel honesty
 

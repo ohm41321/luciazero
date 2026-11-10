@@ -105,7 +105,14 @@ class Dispatcher:
     # ------------------------------------------------------------- plumbing
     def open_store(self) -> Store:
         store = Store.open(self.db_path, redact_literals=(self.token,) if self.token else ())
-        store.migrate()
+        try:
+            store.migrate()
+        except BaseException:
+            # Refused under an older daemon, say. Closed here, because the
+            # caller's `with` has not started: on Windows an open connection
+            # keeps bus.sqlite3 from being deleted or replaced.
+            store.close()
+            raise
         # ADR 0006: the dispatcher's own bookkeeping is neither a human's
         # command nor a bound session's claim, and must not read as either.
         store.trust = "system"

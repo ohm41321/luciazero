@@ -28,7 +28,7 @@ import time
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 from unittest import mock
 from xml.etree import ElementTree
@@ -293,7 +293,9 @@ class SystemdTests(ServiceCase):
         joins the next line, so either would mean another path. (An absolute
         path cannot start with whitespace.)"""
         for bad in ("trail ", "trail\t", "end\\"):
-            with mock.patch.object(service, "_package_home", return_value=Path(self._tmp.name) / bad):
+            # A Linux path on any host: a Windows path takes a final
+            # backslash for a separator and drops it.
+            with mock.patch.object(service, "_package_home", return_value=PurePosixPath("/srv") / bad):
                 with self.assertRaises(service.ServiceError, msg=repr(bad)):
                     self.plan(platform="linux")
 

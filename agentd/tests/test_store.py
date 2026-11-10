@@ -288,13 +288,27 @@ class MigrationGuardTests(unittest.TestCase):
         self.assertNotIn("Traceback", err.getvalue())
 
     def test_the_dispatcher_says_why_it_will_not_migrate(self) -> None:
+        """And closes the store it could not migrate: on Windows an open
+        connection keeps bus.sqlite3 from being deleted (WinError 32)."""
         self.older()
         child = self.daemon()
         err = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        opened: list[Store] = []
+        real_open = Store.open
+
+        def spy(*args: Any, **kwargs: Any) -> Store:
+            opened.append(real_open(*args, **kwargs))
+            return opened[-1]
+
+        with mock.patch.object(Store, "open", side_effect=spy), \
+                redirect_stdout(io.StringIO()), redirect_stderr(err):
             code = main(["dispatch", "--once", "--state-dir", str(self.state)])
         self.assertEqual(2, code)
         self.assertIn(f"pid {child.pid}", err.getvalue())
+        self.assertTrue(opened)
+        for store in opened:
+            with self.assertRaises(sqlite3.ProgrammingError, msg="a store was left open"):
+                store._conn.execute("SELECT 1")
 
     def test_a_fresh_store_matches_its_schema(self) -> None:
         self.build(list(migrations.MIGRATIONS))

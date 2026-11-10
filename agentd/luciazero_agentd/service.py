@@ -409,16 +409,6 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
     # name, and `codex` lives in the user's PATH and nowhere else.
     if environ.get("PATH"):
         env["PATH"] = environ["PATH"]
-    # A newline ends a directive in a systemd unit, so a path carrying one
-    # would add a line of its own -- an ExecStartPre=, say -- to a file the
-    # user believes describes one command. Nothing legitimate needs it, and
-    # quoting cannot save it, so it is refused before a file is generated.
-    for value in [str(home), str(resolved), str(log), str(_package_home()), *argv, *env.values()]:
-        if any(bad in value for bad in ("\n", "\r", "\x00")):
-            raise ServiceError(
-                f"refusing to write a service file for a path containing a newline "
-                f"or a null byte: {value!r}")
-
     # The daemon starts in the directory its package lives in, never the home
     # directory: `python -m` and `python -c` put the working directory first
     # on sys.path, so an argparse.py or json.py left in the home directory was
@@ -427,6 +417,16 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
     # exists whenever the service can run at all; a state directory removed
     # to start over would leave a service that cannot start (200/CHDIR).
     workdir = _package_home()
+    # A newline ends a directive in a systemd unit, so a path carrying one
+    # would add a line of its own -- an ExecStartPre=, say -- to a file the
+    # user believes describes one command. Nothing legitimate needs it, and
+    # quoting cannot save it, so it is refused before a file is generated.
+    for value in [str(home), str(resolved), str(log), str(workdir), *argv, *env.values()]:
+        if any(bad in value for bad in ("\n", "\r", "\x00")):
+            raise ServiceError(
+                f"refusing to write a service file for a path containing a newline "
+                f"or a null byte: {value!r}")
+
     notes: list[str] = []
     probe: Optional[Step] = None
     absent: Optional[Step] = None

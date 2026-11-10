@@ -14,14 +14,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a session that stopped on red stopped clean. Now a stop whose last verify of
   the session's own edits failed, with no pass since they were made, is nudged
   once (doctrine rule 3). A red run no longer settles a nudge either; a red in
-  another session does not reach edits a green already covered.
+  another session does not reach edits a green already covered. Claude Code
+  only: Codex does not tell hooks whether a command passed.
 - **Files changed through the shell count as edits.** `sed -i`, a heredoc, a
   formatter or a commit hook changed code without an Edit or Write, and the
-  nudge never knew. At stop the hook now asks git which files changed while
-  the session's own shell commands ran after its last verify ended, and
-  records them as that session's edit. Documentation, ignored files and what
-  a verify writes while it runs do not count; outside a git work tree nothing
-  changes. git runs read-only: no optional locks, fsmonitor off.
+  nudge never knew. Before each verify run and at stop the hook now asks git
+  which files changed while one of the session's own shell commands ran,
+  after its last verify ended, and records them as that session's edit, so a
+  red run after a `sed -i` is red too. Documentation (in a new folder as
+  well), ignored files, what a verify writes while it runs, and another
+  session's edit made between two of its commands do not count; a file
+  removed before the last verify does not make a later file beside it count.
+  Outside a git work tree nothing changes. git runs read-only: no optional
+  locks, fsmonitor off.
 - **A committed `.claude/settings.local.json` is refused** like a committed
   `.claude/settings.json`: a repository that tracked one could set
   `LUCIAZERO_DOC_REGEX='.*'` there and switch the nudge off with no warning.

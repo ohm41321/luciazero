@@ -494,12 +494,15 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
   and outside any git work tree, such as an agent's scratchpad, does not
   re-arm the nudge.
 - A file a shell command changes (`sed -i`, a heredoc, a formatter, a commit
-  hook) counts as an edit too. At stop the hook asks git which files changed
-  while the session's own shell commands ran after its last verify ended;
-  documentation, ignored files and what the verify itself wrote do not
-  count. Outside a git work tree, shell writes are not tracked.
+  hook) counts as an edit too. Before each verify run and at stop the hook
+  asks git which files changed while one of the session's own shell commands
+  ran, after its last verify ended; documentation, ignored files and what the
+  verify itself wrote do not count, and neither does another session's edit
+  made between two of its commands. Outside a git work tree, shell writes are
+  not tracked.
 - A stop whose last verify of the session's edits failed, or could not find
-  its command, is nudged once too, until a run passes.
+  its command, is nudged once too, until a run passes. Claude Code only:
+  Codex gives hooks a command's output but not whether it passed.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
   edit event in its state directory (tool name, opaque key, whether

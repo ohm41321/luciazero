@@ -526,6 +526,49 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   assert.strictEqual(a.stop(), 0, "a session that ran no command since its verify was nudged for another's shell edit");
   assert.strictEqual(b.stop(), 2, "the session whose shell command changed the file was not nudged");
 
+  // only what changed while the session's own commands ran: another session's
+  // Edit between two of them is that session's edit
+  const p6 = path.join(box.box, "p6");
+  gitRepo(p6, files);
+  const a6 = session(p6, "a");
+  const b6 = session(p6, "b");
+  a6.shell("v1", "npm test");
+  a6.shell("e1", "ls");
+  // further from either command than the slack a coarse file time gets
+  pause(1100);
+  fs.writeFileSync(path.join(p6, "a.js"), "b\n");
+  assert.strictEqual(b6.hook("edit", { tool_name: "Edit", tool_input: { file_path: path.join(p6, "a.js") } }).status, 0);
+  pause(1100);
+  a6.shell("e2", "git status");
+  assert.strictEqual(a6.stop(), 0, "an edit made between two of a session's commands was charged to it");
+  assert.strictEqual(b6.stop(), 2, "the session that made the edit was not nudged");
+
+  // a shell edit tested by a red run is red, as an Edit would be
+  const p7 = path.join(box.box, "p7");
+  gitRepo(p7, files);
+  const s7 = session(p7);
+  s7.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p7, "a.js"), "b\n"));
+  s7.shell("v1", "npm test", null, "Exit code 1");
+  const red7 = s7.hook("stop");
+  assert.strictEqual(red7.status, 2, "a shell edit whose verify failed stopped clean");
+  assert.match(red7.stderr, /failed/);
+
+  // documentation in a new folder, and documentation beside a file removed
+  // before the last verify, are no code edits; a file removed after it is one
+  const p8 = path.join(box.box, "p8");
+  gitRepo(p8, { ...files, "old.js": "o\n", "src/gone.js": "g\n" });
+  const s8 = session(p8);
+  fs.rmSync(path.join(p8, "old.js"));
+  s8.shell("v1", "npm test");
+  s8.shell("e1", "mkdir notes && echo x > notes/plan.md && echo n > NOTES.md", () => {
+    fs.mkdirSync(path.join(p8, "notes"));
+    fs.writeFileSync(path.join(p8, "notes", "plan.md"), "x\n");
+    fs.writeFileSync(path.join(p8, "NOTES.md"), "n\n");
+  });
+  assert.strictEqual(s8.stop(), 0, "documentation in a new folder or beside an old deletion counted as code");
+  s8.shell("e2", "rm src/gone.js", () => fs.rmSync(path.join(p8, "src", "gone.js")));
+  assert.strictEqual(s8.stop(), 2, "a code file removed by the shell after the last verify did not count");
+
   // outside a git work tree there is nothing to ask, and nothing breaks
   const p5 = path.join(box.box, "p5");
   fs.mkdirSync(p5);

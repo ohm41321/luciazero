@@ -20,7 +20,8 @@
 //   bash-start — PreToolUse on Bash: start shell-command timing
 //   edit    — PostToolUse on Edit|Write|NotebookEdit : record "an edit happened"
 //   bash    — PostToolUse on Bash: record duration, verify runs, and status;
-//             for any other command, when this session's shell ran
+//             for any other command, when it ran; before a verify run, what
+//             this session's shell commands changed (asked of git)
 //   bash-failure — PostToolUseFailure on Bash: record failed commands
 //   skill   — PostToolUse on Skill: count model-invoked skills
 //   skill-prompt — UserPromptExpansion: count user-invoked slash skills
@@ -367,37 +368,60 @@ function patchFiles(text) {
   return names;
 }
 
-// A session's shell commands since its last stop: when the first started and
-// the last ended, as "<start> <end>" in shell/<key>. A command can change
-// files with no Edit or Write (sed -i, a heredoc, a formatter, a commit hook).
+// A session's shell commands since its last stop or verify, one
+// "<start> <end>" line each in shell/<key>. A command can change files with
+// no Edit or Write (sed -i, a heredoc, a formatter, a commit hook). Past
+// SHELL_SPANS lines the file folds into one span from the first start to the
+// last end: that counts more, never less.
+const SHELL_SPANS = 200;
+// A file time can be a whole second coarse (HFS+, FAT, some network file
+// systems), and a write can land as a file closes after its command reports
+// done: a change this close to a command counts as made while it ran. A
+// change another session makes that close is counted too: an extra nudge,
+// never a missed one.
+const SHELL_SLACK_MS = 1000;
+function shellSpans(file) {
+  return readTrimmed(file).split("\n").map((line) => line.split(" ").map(Number))
+    .filter(([start, end]) => start > 0 && end >= start);
+}
 function noteShell(state, key, startMs, endMs) {
   const dir = path.join(state, "shell");
   if (!mkdirs(dir)) return;
   const file = path.join(dir, key);
-  const [first, last] = readTrimmed(file).split(" ").map(Number);
-  write(file, `${first > 0 ? Math.min(first, startMs) : startMs} ${last > 0 ? Math.max(last, endMs) : endMs}\n`);
+  try {
+    fs.appendFileSync(file, `${startMs} ${endMs}\n`);
+  } catch {
+    return;
+  }
+  const spans = shellSpans(file);
+  if (spans.length > SHELL_SPANS) {
+    write(file, `${Math.min(...spans.map(([start]) => start))} ${Math.max(...spans.map(([, end]) => end))}\n`);
+  }
 }
 
-// At stop: the files this session's shell commands changed after the last
-// verify ended, recorded as its edit. git names the candidates -- what
-// differs from HEAD, what it does not ignore among untracked files, what
-// commits made since then touched -- and one counts when it changed while
-// those commands ran and is code, as codeEdit says. A removed file counts by
-// its directory's time. Anything git cannot answer, a directory outside any
-// work tree among them, leaves the state as it was.
-function shellEdits(state, cwd, project, key) {
+// At a verify run, before it is recorded, and at stop: the files this
+// session's shell commands changed after the last verify ended, recorded as
+// its edit at the time they changed. git names the candidates -- what differs
+// from HEAD, every untracked file it does not ignore, what commits made since
+// then touched -- and one counts when it is code, as codeEdit says, and
+// changed while one of those commands ran. A removed file has no time of its
+// own: it counts by its directory's time, and only if it was not already gone
+// at the last look, so a later file beside an old deletion is not taken for
+// it. `look` asks git even with no command to account for, to keep that list
+// of removed files current. Anything git cannot answer, a directory outside
+// any work tree among them, leaves the edit state as it was.
+function shellEdits(state, cwd, project, key, look = false) {
   const file = path.join(state, "shell", key);
-  const [first, last] = readTrimmed(file).split(" ").map(Number);
+  const spans = shellSpans(file);
   removeFile(file);
-  if (!(first > 0 && last >= first)) return;
+  if (!spans.length && !look) return;
   const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
   const verified = ended > 0 ? ended : mtime(path.join(state, "last_verify"));
-  if (verified !== null && last <= verified) return;
-  const since = verified === null ? first : Math.max(first, verified + 1);
-  const until = last + 1000;
+  const counts = (at) => at !== null && (verified === null || at > verified)
+    && spans.some(([start, end]) => at >= start - SHELL_SLACK_MS && at <= end + SHELL_SLACK_MS);
   const top = (gitOut(project, ["rev-parse", "--show-toplevel"]) || "").trim();
   if (!top) return;
-  const status = gitOut(top, ["status", "--porcelain", "-z"]);
+  const status = gitOut(top, ["status", "--porcelain", "-z", "--untracked-files=all"]);
   if (status === null) return;
   const names = [];
   const fields = status.split("\0");
@@ -406,20 +430,30 @@ function shellEdits(state, cwd, project, key) {
     names.push(fields[i].slice(3));
     if (/^[RC]/.test(fields[i])) i += 1; // a rename's second field is the old name
   }
-  const log = gitOut(top, ["log", `--since=@${Math.floor(since / 1000)}`, "--name-only", "--format=", "-z"]);
-  if (log !== null) names.push(...log.split(/[\0\n]/).filter(Boolean));
+  if (spans.length) {
+    const first = Math.min(...spans.map(([start]) => start));
+    const since = verified === null ? first : Math.max(first, verified + 1);
+    const log = gitOut(top, ["log", `--since=@${Math.floor(since / 1000)}`, "--name-only", "--format=", "-z"]);
+    if (log !== null) names.push(...log.split(/[\0\n]/).filter(Boolean));
+  }
+  // digests, not names: hook state keeps no paths
+  const goneFile = path.join(state, "gone");
+  const goneBefore = new Set(readTrimmed(goneFile).split("\n").filter(Boolean));
+  const gone = [];
   let newest = null;
   for (const name of [...new Set(names)].slice(0, 20000)) {
     const abs = path.join(top, name.replace(/\/$/, ""));
-    if (!codeEdit(abs, cwd, project)) continue;
     let at = null;
     try {
       at = fs.statSync(abs).mtimeMs;
     } catch {
-      at = mtime(path.dirname(abs));
+      const digest = sha256(name, 16);
+      gone.push(digest);
+      if (!goneBefore.has(digest)) at = mtime(path.dirname(abs));
     }
-    if (at !== null && at >= since && at <= until && (newest === null || at > newest)) newest = at;
+    if (counts(at) && codeEdit(abs, cwd, project) && (newest === null || at > newest)) newest = at;
   }
+  write(goneFile, gone.join("\n") + "\n");
   if (newest !== null) recordEdit(state, key, newest);
 }
 
@@ -1641,6 +1675,9 @@ function main(argv) {
       } else if (isVerify) {
         mkdirs(path.join(telemetry, "verify_count"));
         touch(path.join(telemetry, "verify_count", toolKey));
+        // what this session's shell commands changed before the run is what
+        // it tested, so a red run makes those edits red
+        shellEdits(state, cwd, project, editorKey, true);
         // Red/green came from the tool response; failure hooks are red.
         if (mode === "bash-failure") status = "fail";
         // A green that follows a green with no code edit between them proved

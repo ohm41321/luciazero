@@ -151,7 +151,9 @@ Limits, stated plainly:
 
 - The personal, untracked `.claude/settings.local.json` is deliberately
   honored — that scope is the user's own. One shipped outside git (an archive
-  with no `.git`) cannot be told apart from it.
+  with no `.git`) cannot be told apart from it, and neither can a tracked one
+  when git cannot answer (not installed, or a repository git refuses as owned
+  by another user): the check fails open and honors the file.
 - Env exported by the shell, a parent process, or a global settings file is
   indistinguishable from a legitimate personal setting and is still honored.
 - A repository that hides configuration outside a committed

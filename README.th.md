@@ -481,11 +481,13 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
   ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
   ไม่ปลุก nudge
 - ไฟล์ที่คำสั่ง shell แก้ (`sed -i`, heredoc, formatter, commit hook) นับเป็น edit
-  ด้วย ตอน stop hook ถาม git ว่าไฟล์ไหนเปลี่ยนระหว่างที่คำสั่ง shell ของ session
-  นั้นรันหลัง verify ครั้งล่าสุดจบ ไม่นับเอกสาร ไฟล์ที่ ignore และสิ่งที่ verify
-  เขียนเอง ถ้าอยู่นอก git work tree จะไม่ตามการเขียนผ่าน shell
+  ด้วย ก่อน verify แต่ละรอบและตอน stop hook ถาม git ว่าไฟล์ไหนเปลี่ยนระหว่างที่คำสั่ง
+  shell ของ session นั้นรันอยู่ หลัง verify ครั้งล่าสุดจบ ไม่นับเอกสาร ไฟล์ที่ ignore
+  สิ่งที่ verify เขียนเอง และ edit ของ session อื่นที่เกิดระหว่างสองคำสั่ง ถ้าอยู่นอก
+  git work tree จะไม่ตามการเขียนผ่าน shell
 - ถ้า verify ล่าสุดของ edit ใน session นั้นล้ม หรือหาคำสั่งไม่เจอ stop จะถูกเตือน
-  หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน
+  หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน เฉพาะ Claude Code: Codex ส่ง output ของคำสั่ง
+  ให้ hook แต่ไม่บอกว่าผ่านหรือไม่
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,

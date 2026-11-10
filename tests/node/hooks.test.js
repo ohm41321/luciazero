@@ -577,6 +577,18 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   s9.shell("v1", "npm test", () => fs.writeFileSync(path.join(p9, "report.js"), "x\n"));
   assert.strictEqual(s9.stop(), 0, "a file the green run wrote was taken for an edit after it");
 
+  // one command that edits and then tests: red when it fails, covered when not
+  const p11 = path.join(box.box, "p11");
+  gitRepo(p11, files);
+  const s11 = session(p11);
+  s11.shell("v1", "sed -i s/a/b/ a.js && npm test", () => fs.writeFileSync(path.join(p11, "a.js"), "b\n"), "Exit code 1");
+  const red11 = s11.hook("stop");
+  assert.strictEqual(red11.status, 2, "an edit made inside a failing verify command stopped clean");
+  assert.match(red11.stderr, /failed/);
+  assert.strictEqual(s11.hook("stop", { stop_hook_active: true }).status, 0);
+  s11.shell("v2", "sed -i s/b/c/ a.js && npm test", () => fs.writeFileSync(path.join(p11, "a.js"), "c\n"));
+  assert.strictEqual(s11.stop(), 0, "an edit a green verify command made and tested was not covered");
+
   // one session's look at a removal does not make it old for the session
   // that removed it
   const p10 = path.join(box.box, "p10");

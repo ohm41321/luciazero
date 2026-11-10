@@ -408,31 +408,38 @@ function noteShell(state, key, startMs, endMs) {
 // run counts from its start instead: what the run wrote then may count too,
 // an extra nudge, never a missed one.
 //
-// At a verify run (runStart, when it started) only what changed before it
-// started counts, so nothing the run itself writes is taken for an edit; a
-// command still within reach of that start stays for the stop to look at
-// again. That look happens even with no command to account for, to keep the
-// list of removed files current.
+// At a verify run (`run`: when it started and ended, and whether it failed)
+// only what changed before it started counts, so nothing a green run writes
+// is taken for an edit; a command still within reach of that start stays for
+// the stop to look at again. A failed run's own time counts as well, since
+// one command can edit and then test (`sed -i ... && npm test`): what changed
+// in it is recorded just before the run, so the red is that edit's. What a
+// failed run writes itself counts the same way: an extra nudge on a stop
+// that is red anyway. That look happens even with no command to account
+// for, to keep the list of removed files current.
 //
 // A removed file has no time of its own: it counts by its directory's time,
 // unless a look saw it gone before the session's first command started, so a
-// later file beside an old deletion is not taken for it. A project's first
-// look has no such list, and counts a file written beside an older deletion:
-// an extra nudge again. Anything git cannot answer, a directory outside any
-// work tree among them, leaves the edit state as it was.
-function shellEdits(state, cwd, project, key, runStart = null) {
+// later file beside an old deletion is not taken for it. A removal no look
+// has seen yet -- at a project's first look, or one made outside any command
+// since the last -- still counts when the shell writes a file beside it: an
+// extra nudge again. Anything git cannot answer, a directory outside any work
+// tree among them, leaves the edit state as it was.
+function shellEdits(state, cwd, project, key, run = null) {
   const file = path.join(state, "shell", key);
-  const spans = shellSpans(file);
-  const keep = runStart === null ? [] : spans.filter(([, end]) => end + SHELL_SLACK_MS >= runStart);
+  const commands = shellSpans(file);
+  const keep = run === null ? [] : commands.filter(([, end]) => end + SHELL_SLACK_MS >= run.start);
   if (keep.length) write(file, keep.map((span) => span.join(" ")).join("\n") + "\n");
   else removeFile(file);
-  if (!spans.length && runStart === null) return;
+  const spans = run !== null && run.failed ? [...commands, [run.start, run.end]] : commands;
+  const cap = run === null ? Infinity : run.failed ? run.end + SHELL_SLACK_MS + 1 : run.start;
+  if (!spans.length && run === null) return;
   const runFrom = mtime(path.join(state, "last_verify"));
   const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
   const runTo = ended > 0 ? ended : runFrom;
   const floor = (start, end) => (runTo === null ? -Infinity
     : runFrom !== null && start <= runTo && end >= runFrom ? runFrom : runTo);
-  const counts = (at) => at !== null && (runStart === null || at < runStart)
+  const counts = (at) => at !== null && at < cap
     && spans.some(([start, end]) => at >= start - SHELL_SLACK_MS && at <= end + SHELL_SLACK_MS
       && at > floor(start, end));
   const top = (gitOut(project, ["rev-parse", "--show-toplevel"]) || "").trim();
@@ -474,7 +481,7 @@ function shellEdits(state, cwd, project, key, runStart = null) {
     if (counts(at) && codeEdit(abs, cwd, project) && (newest === null || at > newest)) newest = at;
   }
   write(goneFile, [...gone].map(([digest, at]) => `${digest} ${at}`).join("\n") + "\n");
-  if (newest !== null) recordEdit(state, key, newest);
+  if (newest !== null) recordEdit(state, key, run !== null && run.failed ? Math.min(newest, run.start - 1) : newest);
 }
 
 function readTrimmed(file) {
@@ -1697,7 +1704,9 @@ function main(argv) {
         touch(path.join(telemetry, "verify_count", toolKey));
         // what this session's shell commands changed before the run is what
         // it tested, so a red run makes those edits red
-        shellEdits(state, cwd, project, editorKey, /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : nowMs);
+        const runStart = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : nowMs;
+        shellEdits(state, cwd, project, editorKey,
+          { start: runStart, end: nowMs, failed: mode === "bash-failure" || status === "fail" });
         // Red/green came from the tool response; failure hooks are red.
         if (mode === "bash-failure") status = "fail";
         // A green that follows a green with no code edit between them proved

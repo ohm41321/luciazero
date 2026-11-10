@@ -25,7 +25,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   well), ignored files, what a verify writes while it runs, and another
   session's edit made between two of its commands do not count; a file
   removed before the session's commands began does not make a later file
-  beside it count, once the hook has looked at that project before.
+  beside it count, once a look has seen that removal. One command that edits
+  and then tests (`sed -i ... && npm test`) and fails is red too.
   Outside a git work tree nothing changes. git runs read-only: no optional
   locks, fsmonitor off.
 - **A committed `.claude/settings.local.json` is refused** like a committed

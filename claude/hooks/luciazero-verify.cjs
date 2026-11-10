@@ -1014,53 +1014,97 @@ function defaultVerify(command) {
 
 // Programs that change no file in the work tree when a command runs one
 // beside its verify (`cd sub && npm test`, `npm test; echo $?`); an output
-// redirection still makes one a writer. `sed` and `perl` write with `-i`,
-// and git subcommands outside GIT_KEEPS_TREE may rewrite files.
+// redirection to a file still makes one a writer. `sed` and `perl` write
+// with `-i`, git subcommands outside GIT_KEEPS_TREE may rewrite files, and
+// a sourced script is a writer unless it activates an environment.
 const KEEPS_TREE = new Set(["cd", "pushd", "popd", "export", "unset", "set", "shopt", "ulimit", "umask", "true",
   "false", ":", "pwd", "ls", "echo", "printf", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "sort",
   "uniq", "cut", "tr", "column", "less", "more", "jq", "which", "type", "hash", "test", "[", "[[", "sleep", "date",
-  "clear", "source", ".", "exit", "return", "wait", "fi", "done", "esac"]);
+  "clear", "mkdir", "exit", "return", "wait", "fi", "done", "esac"]);
 const GIT_KEEPS_TREE = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame",
   "describe", "add", "commit", "push", "fetch", "tag", "branch", "remote", "config"]);
+// A verify step that rewrites what it checks: `eslint --fix`, `ruff check
+// --fix`, `npm run lint:fix`, `jest -u`.
+const FIX_FLAGS = /^(--fix|--fix-only|--fix=.*|--write|--update-snapshots|--updateSnapshot)$/;
 
-// Whether one simple command may change a file in the work tree.
-function mayWrite(cmd) {
+// A simple command's words without its redirections, and whether one sends
+// output to a file rather than /dev/null or another descriptor. lex keeps
+// an unspaced redirection inside its word (`echo b>a.js`).
+function plainWords(cmd) {
   const w = [];
+  let toFile = false;
   for (let j = 0; j < cmd.words.length; j++) {
     const t = cmd.words[j];
     const op = /^\d*(>>|>\||>|&>>|&>)$/.test(t);
-    const target = op ? cmd.words[j + 1] || "" : (t.match(/^\d*(?:>>|>\||>|&>>|&>)(.+)$/) || [])[1];
-    if (target !== undefined) {
-      if (!/^(&\d*-?|\/dev\/null|\/dev\/std(out|err))$/.test(target)) return true;
+    const attached = op ? null : t.match(/^(.*?)\d*(?:>>|>\||&>>|&>|>)(.+)$/);
+    if (op || attached) {
+      const target = op ? cmd.words[j + 1] || "" : attached[2];
+      if (!/^(&\d*-?|\/dev\/null|\/dev\/std(out|err))$/.test(target)) toFile = true;
       if (op) j += 1;
+      else if (attached[1]) w.push(attached[1]);
     } else if (/^\d*(<<<|<>|<)$/.test(t)) {
       j += 1;
     } else if (!/^\d*</.test(t)) {
       w.push(t);
     }
   }
+  return { w, toFile };
+}
+
+// The program a simple command runs and its arguments, past keywords,
+// assignments and `time`; null for assignments alone or `command -v`.
+function programOf(w) {
   let k = 0;
   while (k < w.length && (KEYWORDS.has(w[k]) || assignment(w[k]) || w[k] === "time" || w[k] === "builtin"
     || (w[k] === "command" && !/^-[vV]$/.test(w[k + 1] || "")))) k += 1;
-  if (k >= w.length || w[k] === "command") return false; // only assignments, or `command -v`
-  const name = programName(w[k]).toLowerCase();
-  const rest = w.slice(k + 1);
-  if (name === "sed") return rest.some((t) => /^-[^-]*i/.test(t) || t.startsWith("--in-place"));
-  if (name === "perl") return rest.some((t) => /^-[^-]*i/.test(t));
-  if (name === "git") {
-    let j = 0;
-    while (j < rest.length && rest[j].startsWith("-")) j += /^-[Cc]$/.test(rest[j]) ? 2 : 1;
-    return !GIT_KEEPS_TREE.has(rest[j] || "");
-  }
-  return !KEEPS_TREE.has(name);
+  if (k >= w.length || w[k] === "command") return null;
+  return { name: programName(w[k]).toLowerCase(), rest: w.slice(k + 1) };
 }
 
-// Whether a verify command also runs a simple command that may change a
-// file before its last verify step (`sed -i ... && npm test`), and one after
-// it (`npm test && sed -i ...`). `step(cmd, i)` says which simple commands
-// are verify steps; what a step pipes into is part of it, so `npm test |
-// tee log` writes the run's own log, no edit. A step hidden inside one
-// simple command (`bash -c 'sed -i ... && npm test'`) is not looked into.
+const inPlace = (p) => (p.name === "sed" && p.rest.some((t) => /^-[^-]*i/.test(t) || t.startsWith("--in-place")))
+  || (p.name === "perl" && p.rest.some((t) => /^-[^-]*i/.test(t)));
+
+// Whether one simple command may change a file in the work tree.
+function mayWrite(cmd) {
+  const { w, toFile } = plainWords(cmd);
+  if (toFile) return true;
+  const p = programOf(w);
+  if (p === null) return false;
+  if (p.name === "sed" || p.name === "perl") return inPlace(p);
+  if (p.name === "git") {
+    let j = 0;
+    while (j < p.rest.length && p.rest[j].startsWith("-")) j += /^-[Cc]$/.test(p.rest[j]) ? 2 : 1;
+    return !GIT_KEEPS_TREE.has(p.rest[j] || "");
+  }
+  if (p.name === "source" || p.name === ".") return !/(^|\/)activate(\.[a-z]+)?$/.test(p.rest[0] || "");
+  return !KEEPS_TREE.has(p.name);
+}
+
+// Whether a simple command is an explicit file edit: `sed -i`, `perl -i`, or
+// a plain program such as `echo` sending its output to a file. A regex of
+// one's own may match the file it edits (`sed -i ... test.sh`); that is no
+// verify step.
+function editsFile(cmd) {
+  const { w, toFile } = plainWords(cmd);
+  const p = programOf(w);
+  return p !== null && (inPlace(p) || (toFile && KEEPS_TREE.has(p.name)));
+}
+
+// Whether a verify step rewrites files itself.
+function stepWrites(cmd) {
+  const { w } = plainWords(cmd);
+  if (w.some((t) => FIX_FLAGS.test(t))) return true;
+  if (w.includes("-u") && w.some((t) => /^(jest|vitest)$/.test(programName(t).toLowerCase()))) return true;
+  return runs(cmd, 0).some((run) => / run [^ ]*[:_-]?\b(fix|format)\b/.test(" " + run));
+}
+
+// Whether a verify command also changes a file up to its last verify step
+// (`sed -i ... && npm test`, `eslint --fix .`), and after it (`npm test &&
+// sed -i ...`). `step(cmd, i)` says which simple commands are verify steps;
+// what a step pipes into is part of it, so `npm test | tee log` writes the
+// run's own log, no edit. A step hidden inside one simple command (`bash -c
+// 'sed -i ... && npm test'`) is not looked into, and lex lists the commands
+// of a `$(...)` after the rest, so a step inside one counts as the last.
 function aroundSteps(command, step) {
   try {
     const commands = lex(command, 0, false, 0).commands;
@@ -1070,9 +1114,9 @@ function aroundSteps(command, step) {
       at.push(Boolean(step(cmd, i)) || (from >= 0 && at[from]));
     });
     const last = at.lastIndexOf(true);
-    const writes = (i) => !at[i] && mayWrite(commands[i]);
+    const writes = (i) => (at[i] ? stepWrites(commands[i]) : mayWrite(commands[i]));
     return {
-      before: last > 0 && commands.slice(0, last).some((_, i) => writes(i)),
+      before: last >= 0 && commands.slice(0, last + 1).some((_, i) => writes(i)),
       after: last >= 0 && commands.slice(last + 1).some((_, i) => writes(last + 1 + i)),
     };
   } catch {
@@ -1767,7 +1811,7 @@ function main(argv) {
         } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
           // a regex of one's own keeps its documented meaning: any line
           isVerify = anyLine(command, verifyRe);
-          step = (cmd) => anyLine(cmd.words.join(" "), verifyRe);
+          step = (cmd) => !editsFile(cmd) && anyLine(cmd.words.join(" "), verifyRe);
         } else {
           isVerify = defaultVerify(command);
           const re = ere(DEFAULT_VERIFY_RE);

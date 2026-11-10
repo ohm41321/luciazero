@@ -463,8 +463,8 @@ test("a red verify after an edit nudges once at stop, and a green clears it", (t
 // verify, documentation and ignored files aside.
 test("a file a shell command changes after the last verify nudges at stop", { skip: !HAS_GIT && "needs git" }, (t) => {
   const box = sandbox(t);
-  const session = (cwd, id = "s1") => {
-    const hook = (mode, extra = {}) => node(box.env, [VERIFY, mode], JSON.stringify({ cwd, session_id: id, ...extra }));
+  const session = (cwd, id = "s1", env = box.env) => {
+    const hook = (mode, extra = {}) => node(env, [VERIFY, mode], JSON.stringify({ cwd, session_id: id, ...extra }));
     // a shell command: its start, what it does to the tree, its end
     const shell = (toolId, command, act, error = null) => {
       const call = { tool_name: "Bash", tool_use_id: toolId, tool_input: { command } };
@@ -610,6 +610,44 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   }, "Exit code 1");
   assert.strictEqual(a12.stop(), 0, "a cd before the test, or the test's own log, was taken for an edit");
   assert.strictEqual(b12.stop(), 2, "the session that made the edit was not nudged");
+
+  // which parts of a verify command write: a fixing check, an unspaced
+  // redirection and a sourced script do; mkdir and an environment's
+  // activation do not; with a regex of one's own, an edit of the file the
+  // regex names is no verify step
+  const fresh = (name, env = box.env) => {
+    const dir = path.join(box.box, name);
+    gitRepo(dir, files);
+    return { dir, s: session(dir, "s1", env) };
+  };
+  const writesA = (dir) => () => fs.writeFileSync(path.join(dir, "a.js"), "b\n");
+  for (const command of ["npx eslint --fix .", "echo b>a.js && npm test", ". ./gen.sh && npm test"]) {
+    const { dir, s } = fresh(`p13-${command.split(" ")[1]}`);
+    s.shell("v1", command, writesA(dir), "Exit code 1");
+    const red = s.hook("stop");
+    assert.strictEqual(red.status, 2, `an edit made by \`${command}\`, which failed, stopped clean`);
+    assert.match(red.stderr, /failed/);
+  }
+  {
+    const { dir, s } = fresh("p14");
+    s.shell("v1", "mkdir -p reports && pytest --junitxml=reports/junit.xml", () => {
+      fs.mkdirSync(path.join(dir, "reports"));
+      fs.writeFileSync(path.join(dir, "reports", "junit.xml"), "<x/>\n");
+    }, "Exit code 1");
+    s.shell("v2", "source .venv/bin/activate && pytest", () => fs.writeFileSync(path.join(dir, ".coverage"), "c\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 0, "a mkdir or an activation before a failing test made its output an edit");
+  }
+  const regex = { ...box.env, LUCIAZERO_VERIFY_REGEX: "test\\.sh" };
+  {
+    const { dir, s } = fresh("p15", regex);
+    s.shell("v1", "sed -i s/a/b/ test.sh && ./test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"), "Exit code 1");
+    assert.strictEqual(s.stop(), 2, "with a regex, an edit of the file it names before a failing run stopped clean");
+  }
+  {
+    const { dir, s } = fresh("p16", regex);
+    s.shell("v1", "./test.sh && sed -i s/a/b/ test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"));
+    assert.strictEqual(s.stop(), 2, "with a regex, an edit after a green run was covered by it");
+  }
 
   // one session's look at a removal does not make it old for the session
   // that removed it

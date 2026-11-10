@@ -62,8 +62,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   beside it count, once a look has seen that removal. One command that edits
   and then tests (`sed -i ... && npm test`) and fails is red too, and one
   that tests and then edits (`npm test && sed -i ...`) leaves that edit
-  unverified. A plain failing run counts nothing it wrote itself, so a
-  session that edited nothing is not made red by its own test output.
+  unverified; a check that fixes what it checks (`eslint --fix`, `npm run
+  lint:fix`) counts as an edit too. A failing command that only tests, with
+  `cd`, `mkdir`, reads or an environment's activation beside it, counts
+  nothing the run wrote itself, so a session that edited nothing is not made
+  red by its own test output.
   Outside a git work tree nothing changes. git runs read-only: no optional
   locks, fsmonitor off.
 - **A committed `.claude/settings.local.json` is refused** like a committed

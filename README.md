@@ -183,6 +183,11 @@ Risky diffs also pass through one read-only `lucia-reviewer` with `security`,
 pass that names both focuses, never two. A small diff with no routed risk gets
 no review.
 
+Instruction files grow. [context-weight](https://github.com/ohm41321/context-weight),
+a separate skill by the same author, weighs what `CLAUDE.md`, `AGENTS.md` and
+the skill listing cost before any work starts, then slims them and proves no
+line was lost.
+
 ## Keep work portable
 
 `/lucia-relay` transfers decisions and evidence instead of dumping a chat

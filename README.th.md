@@ -180,6 +180,10 @@ Diff เสี่ยงจะผ่าน `lucia-reviewer` แบบอ่าน
 หรือ `general` ถ้าเสี่ยงทั้ง security และ contract จะตรวจรอบเดียวโดยระบุทั้งสอง
 focus ไม่ใช่รอบละ focus diff เล็กที่ไม่เข้า route ใดไม่ต้อง review
 
+ไฟล์คำสั่งของ agent โตขึ้นเรื่อย ๆ [context-weight](https://github.com/ohm41321/context-weight)
+เป็น skill แยกจากผู้สร้างคนเดียวกัน ใช้วัดว่า `CLAUDE.md`, `AGENTS.md` และรายการ
+skill กิน context เท่าไรก่อนเริ่มงาน แล้วช่วยตัดให้เล็กลงพร้อมพิสูจน์ว่าไม่มีบรรทัดไหนหาย
+
 ## ส่งต่องานข้าม agent
 
 `/lucia-relay` ส่งต่อการตัดสินใจและหลักฐาน แทนการเท transcript ทั้งแชต

@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-10
+
 ### Changed
 
 - **`./test.sh --fast` no longer runs the Agent Bus daemon suite**, the

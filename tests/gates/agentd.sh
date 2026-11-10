@@ -7,8 +7,8 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-# The daemon suite is the one long check of the fast tier; the discipline
-# tier skips this gate, every other tier runs it here, right after syntax.
+# The daemon suite is the long check of the Agent Bus loop: the bus and full
+# tiers run this gate right after syntax; the discipline and fast tiers skip it.
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
   "${ROOT}/scripts/agent_bus_spike.py" || fail "agent bus M0 Python syntax"
 echo "ok  agent bus M0 Python syntax"

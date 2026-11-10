@@ -67,7 +67,7 @@ red() { # red <what> <gate>: the run is red, shows the error, never passes
 
 # Green first: a stub run that is red for any other reason (a missing tool in
 # a minimal image) would make every check below pass for nothing.
-for FLAG in --discipline --fast --full; do
+for FLAG in --discipline --fast --bus --full; do
   run "${FLAG}"
   [ "${RC}" -eq 0 ] || fail "${FLAG} over clean stubs exited ${RC} (${WHO}): $(tail -1 "${T}/out")"
   grep -q '^PASS' "${T}/out" || fail "${FLAG} over clean stubs printed no PASS line (${WHO})"
@@ -80,6 +80,11 @@ for FLAG in --discipline --fast --full; do
   red "${FLAG}" hooks
 done
 stub hooks
+# The bus tier sources no hooks gate; its own gates die the same way.
+stub agentd "${DIE}"
+run --bus
+red --bus agentd
+stub agentd
 
 # A full-only gate, in its own subshell, parallel and serial.
 stub parity "${DIE}"

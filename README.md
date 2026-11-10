@@ -518,7 +518,8 @@ See [SECURITY.md](https://github.com/ohm41321/luciazero/blob/main/SECURITY.md) f
 
 ```bash
 ./test.sh --discipline  # editing a hook, the report or a skill prompt: ~30 s
-./test.sh --fast        # intermediate loop: adds the agentd suite, Relay, bisect, evidence
+./test.sh --fast        # intermediate loop: adds Relay, bisect, evidence
+./test.sh --bus         # editing agentd/ or the Bus scripts: daemon suite and fake-provider gates
 ./test.sh               # closeout/CI: full eval, packaging, and install coverage
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # plus one `TIMING gate=<name> seconds=<n>` per gate on stderr
 scripts/test-timings.sh --fast       # same run, and keeps stdout/stderr/meta under .test-timings/

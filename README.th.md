@@ -502,7 +502,8 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 
 ```bash
 ./test.sh --discipline  # แก้ hook, report หรือ skill prompt: ราว 30 วินาที
-./test.sh --fast        # loop ระหว่างทำ: เพิ่ม agentd suite, Relay, bisect, evidence
+./test.sh --fast        # loop ระหว่างทำ: เพิ่ม Relay, bisect, evidence
+./test.sh --bus         # แก้ agentd/ หรือ script ของ Bus: daemon suite กับ gate ที่ใช้ fake provider
 ./test.sh               # ปิดงาน/CI: ตรวจ eval, packaging และ install แบบเต็ม
 LZ_TEST_TIMINGS=1 ./test.sh --fast   # เพิ่มบรรทัด `TIMING gate=<name> seconds=<n>` ต่อ gate ทาง stderr
 scripts/test-timings.sh --fast       # รันแบบเดียวกัน และเก็บ stdout/stderr/meta ไว้ใต้ .test-timings/

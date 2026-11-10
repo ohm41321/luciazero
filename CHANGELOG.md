@@ -7,6 +7,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`./test.sh --fast` no longer runs the Agent Bus daemon suite**, the
+  longest gate in that tier. The new `./test.sh --bus` (and
+  `scripts/test-timings.sh --bus`) runs syntax, the agentd suite and the
+  fake-provider M4-M6 gates, for changes under `agentd/` or to the Bus
+  scripts. The full tier and CI run everything as before.
+- The release ZIP leaves out `site/intro.mp4` and the images under
+  `docs/assets/` (about 2 MB instead of 20); the READMEs load them from
+  GitHub, and the Pages site deploys from the repository.
+- `AGENTS.md`, `CLAUDE.md` and the intro film's source (`video/`, without its
+  renders, dependencies or model files) are now tracked. `video/verify.py`
+  can now fail an audio hit that is early: it looked for the loudest moment
+  in a window narrower than its own tolerance, and audio 80 ms early passed
+  15 of 16 hits.
+
+### Removed
+
+- **The Astra/Luna adapter** (`adapters/astra-luna/`, its checkers and canary
+  helpers under `scripts/`, its gate, `docs/astra-luna-adapter.md`, its
+  evidence files and `ROADMAP_LUCIAZERO.md`). It was never shipped in the
+  npm package or by the installers, its Slice 3 canary never ran, and its
+  gate ran in every fast loop. Commit 462941f still has all of it:
+  `git checkout 462941f -- adapters/astra-luna` brings the adapter back.
+
 ### Fixed
 
 - **A red verify no longer silences the stop nudge.** A failing check, or one

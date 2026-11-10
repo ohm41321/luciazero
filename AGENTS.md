@@ -2,7 +2,9 @@
 
 - Reuse `./test.sh --fast` for the normal code loop and `./test.sh` for full
   closeout/CI. For hook/report/prompt-only edits, `./test.sh --discipline` is
-  the narrower loop. Coverage and prerequisites: `CONTRIBUTING.md`.
+  the narrower loop; for `agentd/` and the Agent Bus scripts, `./test.sh --bus`
+  (`--fast` no longer runs the daemon suite). Coverage and prerequisites:
+  `CONTRIBUTING.md`.
 - CI runs the ubuntu runner's own ShellCheck and fails on any finding, style
   included; locally `tests/gates/core.sh` skips ShellCheck when it is not
   installed. A newer local ShellCheck can pass what the older CI one flags

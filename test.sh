@@ -6,10 +6,11 @@
 # `--discipline` covers what a change to the hooks, the discipline report or
 # a skill/agent prompt can break: syntax, bash 3.2 and ShellCheck over every
 # shipped script and gate, the prompt and doctrine contracts, and the hook
-# state machine — nothing else. `--fast` adds the agentd suite, Relay, bisect,
-# and evidence integrity for intermediate loops. The default/`--full`
-# continues through eval, packaging, and sandboxed install cycles for both
-# harnesses.
+# state machine — nothing else. `--fast` adds Relay, bisect, and evidence
+# integrity for intermediate loops. `--bus` is the loop for the Agent Bus:
+# syntax, the agentd suite and the fake-provider M4-M6 gates, nothing else.
+# The default/`--full` runs all of it and continues through eval, packaging,
+# and sandboxed install cycles for both harnesses.
 # `--agent-bus-spike` runs only the local-first M0 feasibility gate (needs
 # the provider CLIs). `--agent-bus-store` runs only the M1-M4 daemon suite.
 # `--agent-bus-mcp` runs the M2 gate against the real CLIs (needs them).
@@ -30,13 +31,14 @@ TIER=full
 # One tier per run, except the live gate, which passes its own flags through
 # (--spend-quota is required, and belongs to that gate, not to this dispatcher).
 if [ "$#" -gt 1 ] && [ "${1:-}" != "--agent-bus-live" ]; then
-  echo "usage: ./test.sh [--discipline|--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-chat|--agent-bus-live]" >&2
+  echo "usage: ./test.sh [--discipline|--fast|--bus|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-chat|--agent-bus-live]" >&2
   exit 64
 fi
 case "${1:-}" in
   ""|--full) ;;
   --discipline) TIER=discipline ;;
   --fast) TIER=fast ;;
+  --bus) TIER=bus ;;
   --agent-bus-spike) TIER=agent-bus-spike ;;
   --agent-bus-store) TIER=agent-bus-store ;;
   --agent-bus-mcp) TIER=agent-bus-mcp ;;
@@ -46,7 +48,7 @@ case "${1:-}" in
   --agent-bus-dispatch) TIER=agent-bus-dispatch ;;
   --agent-bus-chat) TIER=agent-bus-chat ;;
   --agent-bus-live) TIER=agent-bus-live ;;
-  *) echo "usage: ./test.sh [--discipline|--fast|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-chat|--agent-bus-live]" >&2; exit 64 ;;
+  *) echo "usage: ./test.sh [--discipline|--fast|--bus|--full|--agent-bus-spike|--agent-bus-store|--agent-bus-mcp|--agent-bus-security|--agent-bus-e2e|--agent-bus-workflow|--agent-bus-dispatch|--agent-bus-chat|--agent-bus-live]" >&2; exit 64 ;;
 esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -150,7 +152,7 @@ fi
 # refusal, approval provenance, path containment, secret redaction, bounded
 # input, terminal bindings, session credentials, the actor-field matrix, and
 # the invariant that an unattributed session is never labelled as proven.
-# Both modules also run inside agent_bus_store, so --fast covers them.
+# Both modules also run inside agent_bus_store, so --bus and --full cover them.
 if [ "${TIER}" = agent-bus-security ]; then
   (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_security tests.test_identity >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
     || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M3+M4.5 security suite"; }
@@ -260,20 +262,21 @@ done
 # this shell in the order below. A gate sees the helpers, the sandbox
 # environment and every variable an earlier gate set, exactly as when the
 # suite was one file; a `fail` inside one ends the run the same way. The
-# discipline tier runs DISCIPLINE_GATES and nothing else (agentd sits between
-# syntax and core in every other tier, so its output keeps its place); the
-# fast tier adds FAST_GATES; the full tier continues through FULL_GATES.
+# discipline tier runs DISCIPLINE_GATES and nothing else; the fast tier adds
+# FAST_GATES. The bus tier runs syntax, BUS_GATES and the agent-bus gate. The
+# full tier runs every gate, agentd between syntax and core so its output
+# keeps its place, and continues through FULL_GATES.
 # Every gate is also lint input: syntax, bash 3.2 parse and ShellCheck.
 # LZ_TEST_TIMINGS=1 prints `TIMING gate=<name> seconds=<n>` on stderr as each
 # gate finishes; off, nothing about the run changes.
 DISCIPLINE_GATES=(tests/gates/syntax.sh tests/gates/core.sh
                   tests/gates/contracts.sh tests/gates/hooks.sh)
-FAST_GATES=(tests/gates/agentd.sh tests/gates/relay.sh tests/gates/bisect.sh
-            tests/gates/evidence.sh tests/gates/astra-luna.sh)
+FAST_GATES=(tests/gates/relay.sh tests/gates/bisect.sh tests/gates/evidence.sh)
+BUS_GATES=(tests/gates/agentd.sh)
 FULL_GATES=(tests/gates/tiers.sh tests/gates/agent-bus.sh tests/gates/eval.sh
             tests/gates/packaging.sh tests/gates/install.sh
             tests/gates/codex-install.sh tests/gates/parity.sh)
-SCRIPTS+=("${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${FULL_GATES[@]}")
+SCRIPTS+=("${DISCIPLINE_GATES[@]}" "${FAST_GATES[@]}" "${BUS_GATES[@]}" "${FULL_GATES[@]}")
 gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
   # The bash SECONDS counter: no process, nothing added to what it measures,
   # whole seconds — enough to rank gates of ten to a hundred seconds. Off,
@@ -299,7 +302,17 @@ gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
 }
 
 gate syntax
-if [ "${TIER}" != discipline ]; then
+# The Agent Bus loop: the daemon suite, then the fake-provider gates the full
+# tier runs alone in its parallel stage (they share agentd/.last-store-run.log).
+if [ "${TIER}" = bus ]; then
+  gate agentd
+  gate agent-bus
+  echo
+  echo "PASS  agent bus checks green"
+  RUN_ENDED=1
+  exit 0
+fi
+if [ "${TIER}" = full ]; then
   gate agentd
 fi
 gate core
@@ -316,7 +329,6 @@ fi
 gate relay
 gate bisect
 gate evidence
-gate astra-luna
 
 if [ "${TIER}" = fast ]; then
   echo

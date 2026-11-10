@@ -622,7 +622,8 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   };
   const writesA = (dir) => () => fs.writeFileSync(path.join(dir, "a.js"), "b\n");
   const writers = ["npx eslint --fix .", "pnpm lint:fix && pnpm test", "npm test -- -u", "npx vitest run --update",
-    "./gradlew spotlessApply check", "echo b>a.js && npm test", "echo b> a.js && npm test", ". ./gen.sh && npm test"];
+    "./gradlew spotlessApply check", "echo b>a.js && npm test", "echo b> a.js && npm test", 'echo "a b">a.js && npm test',
+    "echo b >& a.js && npm test", ". ./gen.sh && npm test"];
   writers.forEach((command, i) => {
     const { dir, s } = fresh(`p13-${i}`);
     s.shell("v1", command, writesA(dir), "Exit code 1");
@@ -642,6 +643,20 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     s.shell("v4", 'npm test && echo "-> done"', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<z/>\n"));
     assert.strictEqual(s.stop(), 0, "a quoted > after a green test made its output an edit");
   }
+  // a test runner given more than one target, a wrapper's own -u, a < or >
+  // inside quotes and a comparison in [[ ]] leave the run's output its own
+  ["./gradlew clean test", "make lint test", "timeout 600 python3 -u -m pytest", 'rg "Vec<String>" src && cargo test',
+    '[[ "$CI" > "" ]] && npm test']
+    .forEach((command, i) => {
+      const { dir, s } = fresh(`p17-${i}`);
+      s.shell("v1", command, () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"), "Exit code 1");
+      assert.strictEqual(s.stop(), 0, `the output of a failing \`${command}\` was taken for an edit`);
+    });
+  {
+    const { dir, s } = fresh("p18");
+    s.shell("v1", 'npm test && grep -rn "=>" src', () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"));
+    assert.strictEqual(s.stop(), 0, "a quoted > in a search after a green test made its output an edit");
+  }
   // with a regex of one's own: an edit of the file it names is no verify
   // step, and a verify command with no step at all still counts its edits
   const regex = (re) => ({ ...box.env, LUCIAZERO_VERIFY_REGEX: re });
@@ -658,6 +673,36 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     s.shell("v1", "./test.sh && sed -i s/a/b/ test.sh", () => fs.writeFileSync(path.join(dir, "test.sh"), "b\n"));
     assert.strictEqual(s.stop(), 2, "with a regex, an edit after a green run was covered by it");
   }
+  // a regex may name arguments, and a redirection's target is no part of
+  // the step: what such a run writes is its own, and what follows it is not
+  [["test\\.sh --fast", "./test.sh --fast && sed -i s/a/b/ a.js", "a.js", undefined, 2],
+    ["test\\.sh", "sed -i s/0/1/ test.sh", "test.sh", undefined, 2],
+    ["pytest -q", "pytest -q", "junit.xml", "Exit code 1", 0],
+    ["test\\.sh", "./test.sh > test.sh.log", "test.sh.log", "Exit code 1", 0]].forEach(([re, command, file, result, want], i) => {
+    const { dir, s } = fresh(`p19-${i}`, regex(re));
+    s.shell("v1", command, () => fs.writeFileSync(path.join(dir, file), "b\n"), result);
+    assert.strictEqual(s.stop(), want, `with regex ${re}, \`${command}\` writing ${file} stopped ${want ? "clean" : "nudged"}`);
+  });
+  {
+    // a regex that matches only across simple commands finds no step, so
+    // what the run wrote is unverified, never a red nobody saw
+    const { dir, s } = fresh("p20", regex("make && make check"));
+    s.shell("v1", "make && make check", () => fs.writeFileSync(path.join(dir, "junit.xml"), "<x/>\n"), "Exit code 1");
+    assert.doesNotMatch(s.hook("stop").stderr, /failed/, "a failing run with no step found made a red of its own output");
+  }
+
+  // one session's look at a removal does not make it old for the session
+  // that removed it
+  const p10 = path.join(box.box, "p10");
+  gitRepo(p10, { ...files, "src/x.js": "x\n" });
+  const a10 = session(p10, "a");
+  const b10 = session(p10, "b");
+  a10.shell("v1", "npm test");
+  b10.shell("e1", "rm src/x.js", () => fs.rmSync(path.join(p10, "src", "x.js")));
+  pause(1100);
+  a10.shell("e2", "ls");
+  assert.strictEqual(a10.stop(), 0, "a session was nudged for a removal another session made");
+  assert.strictEqual(b10.stop(), 2, "another session's look hid this session's removal");
 
   // outside a git work tree there is nothing to ask, and nothing breaks
   const p5 = path.join(box.box, "p5");

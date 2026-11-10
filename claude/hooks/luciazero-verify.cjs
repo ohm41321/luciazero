@@ -1128,21 +1128,45 @@ function stepWrites(cmd) {
   });
 }
 
-// With a regex of one's own, a simple command whose words, or the heredoc
-// it reads, the regex matches is a verify step (`pytest -q`, `bash -c
-// "pytest"`, `./test.sh > test.sh.log`), unless it is a program that
-// writes a file it names: `sed -i`, a copy, `git checkout -- test.sh`,
-// `curl -o test.sh`, `patch`. A redirection's target is no word, so `echo x
-// > test.sh` is no step, and `cat > run.sh <<EOF` writes its heredoc out.
+// With a regex of one's own, a simple command the regex matches is a verify
+// step when it writes nothing (`cat test.sh`), when it is a test runner the
+// default regex knows (`pytest tests/unit`, `bash -c "pytest -q"`), or when
+// the match takes in what it runs (`./test.sh > test.sh.log`, `pytest -q`),
+// a shell's heredoc included. A command that writes and only names the file
+// (`git checkout -- test.sh`, `curl -o test.sh ...`, `cat a > test.sh`,
+// `black tests/`) is no step: its edit counts, and a verify command left
+// with no step is nudged, never made red.
 const COPIES = new Set(["cp", "mv", "tee", "install", "ln", "rsync"]);
-const NAMES_WRITE = new Set([...COPIES, "patch", "ed", "dd", "wget"]);
+const NAMES_WRITE = new Set([...COPIES, "patch", "ed", "dd"]);
 function regexStep(cmd, re) {
-  const { w, toFile } = plainWords(cmd);
+  const { w } = plainWords(cmd);
   const p = programOf(w);
-  if (p !== null && (inPlace(p) || NAMES_WRITE.has(p.name) || (p.name === "git" && mayWrite(cmd))
-    || (p.name === "curl" && p.rest.some((t) => t === "--output" || /^-[^-]*[oO]/.test(t))))) return false;
-  const bodies = p !== null && p.name === "cat" && toFile ? [] : cmd.bodies;
-  return anyLine([w.join(" "), ...bodies].join("\n"), re);
+  if (p !== null && (inPlace(p) || NAMES_WRITE.has(p.name))) return false;
+  if (p !== null && POSIX_SHELLS.test(p.name) && cmd.bodies.some((body) => anyLine(body, re))) return true;
+  const line = w.join(" ");
+  if (!anyLine(line, re)) return false;
+  if (!mayWrite(cmd)) return true;
+  const ran = runs(cmd, 0);
+  const tests = ere(DEFAULT_VERIFY_RE);
+  if (ran.some((run) => tests.test(run))) return true;
+  // where the match falls must take in a word the command runs, or a word
+  // holding one (`bash -c "./ci.sh --fast"`)
+  const named = new Set(ran.flatMap((run) => run.split(" ")));
+  const runsIt = (t) => t.split(/\s+/).some((x) => named.has(x) || named.has(programName(x)));
+  const spans = [];
+  let at = 0;
+  for (const t of w) {
+    if (runsIt(t)) spans.push([at, at + t.length]);
+    at += t.length + 1;
+  }
+  const g = ere(re);
+  const all = new RegExp(g.source, `${g.flags}g`);
+  for (let m = all.exec(line); m !== null; m = all.exec(line)) {
+    const end = m.index + Math.max(m[0].length, 1);
+    if (spans.some(([a, b]) => m.index < b && end > a)) return true;
+    if (m[0].length === 0) all.lastIndex += 1;
+  }
+  return false;
 }
 
 // Whether a verify command also changes a file up to its last verify step

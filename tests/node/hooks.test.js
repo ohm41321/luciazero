@@ -668,6 +668,10 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     ["test\\.sh", "git checkout -- test.sh && ./test.sh", "test.sh"],
     ["test\\.sh", "curl -fsSo test.sh http://127.0.0.1:9/x; ./test.sh", "test.sh"],
     ["test\\.sh", "wget http://127.0.0.1:9/test.sh; ./test.sh", "test.sh"],
+    ["test\\.sh", "curl --remote-name http://127.0.0.1:9/test.sh; ./test.sh", "test.sh"],
+    ["test\\.sh", "cat test.sh.orig > test.sh && ./test.sh", "test.sh"],
+    ["test\\.sh", "python3 - <<'PY'\nopen('test.sh', 'w').write('x')\nPY\n./test.sh", "test.sh"],
+    ["test", "black test_a.py && pytest", "test_a.py"],
     ["test\\.sh", "sed -i s/a/b/ test.sh", "test.sh"],
     ["test", "sed -i s/a/b/ a.test.js && npx jest", "a.test.js"]].forEach(([re, command, file], i) => {
     const { dir, s } = fresh(`p15-${i}`, regex(re));
@@ -690,6 +694,8 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
     ["pytest", 'bash -c "pytest -q"', "junit.xml", undefined, 0],
     ["npm test", 'cmd /c "npm test"', "junit.xml", "Exit code 1", 0],
     ["tests/unit", "pytest tests/unit", "junit.xml", "Exit code 1", 0],
+    ["curl.*health", "curl -sf -o /dev/null http://127.0.0.1:9/health", "junit.xml", "Exit code 1", 0],
+    ["curl.*health", "curl -sf -o /dev/null http://127.0.0.1:9/health", "junit.xml", undefined, 0],
     ["test\\.sh", "cat > run.sh <<'EOF'\n./test.sh\nEOF", "run.sh", undefined, 2],
     ["test\\.sh", "./test.sh > test.sh.log", "test.sh.log", "Exit code 1", 0]].forEach(([re, command, file, result, want], i) => {
     const { dir, s } = fresh(`p19-${i}`, regex(re));

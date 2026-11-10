@@ -3,3 +3,11 @@
 # script with CR in it, so a CRLF checkout would test a tree no user gets.
 # CRLF handling is tested with fixtures that carry CRLF on purpose.
 * text=auto eol=lf
+
+# The release ZIP is `git archive HEAD`. The READMEs show these files from raw
+# GitHub URLs and the Pages site deploys from the checkout, so the ZIP does not
+# need them; leaving them out keeps it about 2 MB instead of 20.
+site/intro.mp4 export-ignore
+docs/assets/*.gif export-ignore
+docs/assets/*.png export-ignore
+docs/assets/*.jpg export-ignore

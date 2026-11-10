@@ -1,0 +1,29 @@
+{
+  "name": "luciazero-intro-video",
+  "private": true,
+  "type": "module",
+  "description": "Luciazero intro video: Three.js + GSAP rendered frame by frame, algorithmic music synthesized in Python.",
+  "scripts": {
+    "music": ".venv/bin/python music.py",
+    "stills": "node render.mjs --stills",
+    "render": "npm run music && node render.mjs",
+    "verify": ".venv/bin/python verify.py out/luciazero-intro.mp4",
+    "music:launch": ".venv/bin/python music.py --cut launch",
+    "render:launch": "npm run music:launch && node render.mjs --cut launch",
+    "verify:launch": ".venv/bin/python verify.py --cut launch out/luciazero-launch.mp4",
+    "music:teaser": ".venv/bin/python music.py --cut teaser",
+    "render:teaser": "npm run music:teaser && node render.mjs --cut teaser",
+    "verify:teaser": ".venv/bin/python verify.py --cut teaser out/luciazero-teaser.mp4"
+  },
+  "dependencies": {
+    "@fontsource/chakra-petch": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/m-plus-rounded-1c": "^5.3.0",
+    "@pixiv/three-vrm": "^3.5.5",
+    "@pixiv/three-vrm-animation": "^3.5.5",
+    "gsap": "^3.15.0",
+    "playwright": "^1.63.0",
+    "three": "^0.186.1"
+  }
+}

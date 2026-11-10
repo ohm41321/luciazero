@@ -54,16 +54,18 @@ runtime.
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
 
-**This checkout is the 3.0.0 tree.** The manifests and the top
+**This checkout is the 3.0.1 tree.** The manifests and the top
 [changelog](CHANGELOG.md) entry agree, and this document describes that source.
 
-- **Breaking:** the reviewer agent is renamed `lucia-reviewer`
-  (`luciazero:lucia-reviewer` in the plugin). A prompt or script that names
-  `reviewer` must use the new name.
-- The stop hook now judges a command by the program it runs, so reading a test
-  file no longer counts, while type checkers, linters and a project's own check
-  scripts do. Edits to scratch files in a temporary directory no longer re-arm
-  the nudge.
+- 3.0.1 is a fix release. A failing verify no longer silences the stop nudge,
+  and files changed through the shell (`sed -i`, a formatter) count as edits.
+  The Agent Bus service unit loads on Linux; systemd had refused it since
+  2.5.0. The Bash installers handle `CLAUDE.md` and `AGENTS.md` files saved
+  with CRLF endings.
+- Since 3.0.0 the reviewer agent is `lucia-reviewer`
+  (`luciazero:lucia-reviewer` in the plugin), and the stop hook judges a
+  command by the program it runs: type checkers, linters and a project's own
+  check scripts count, reading a test file does not.
 - Its twelve eval fixtures pass offline under `./test.sh`; no real-model
   skills-ablation pilot has run yet.
 - Native Windows support, new in 2.7.0, has passed CI on `windows-latest` but

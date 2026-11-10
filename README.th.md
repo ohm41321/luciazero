@@ -483,8 +483,9 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 - ไฟล์ที่คำสั่ง shell แก้ (`sed -i`, heredoc, formatter, commit hook) นับเป็น edit
   ด้วย ก่อน verify แต่ละรอบและตอน stop hook ถาม git ว่าไฟล์ไหนเปลี่ยนระหว่างที่คำสั่ง
   shell ของ session นั้นรันอยู่ หลัง verify ครั้งล่าสุดจบ ไม่นับเอกสาร ไฟล์ที่ ignore
-  สิ่งที่ verify เขียนเอง และ edit ของ session อื่นที่เกิดระหว่างสองคำสั่ง ถ้าอยู่นอก
-  git work tree จะไม่ตามการเขียนผ่าน shell
+  สิ่งที่ verify เขียนเอง และ edit ของ session อื่นที่เกิดระหว่างสองคำสั่ง คำสั่งที่
+  test ก่อนแล้วค่อยแก้ (`npm test && sed -i ...`) ถือว่า edit นั้นยังไม่ได้ verify
+  ถ้าอยู่นอก git work tree จะไม่ตามการเขียนผ่าน shell
 - ถ้า verify ล่าสุดของ edit ใน session นั้นล้ม หรือหาคำสั่งไม่เจอ stop จะถูกเตือน
   หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน เฉพาะ Claude Code: Codex ส่ง output ของคำสั่ง
   ให้ hook แต่ไม่บอกว่าผ่านหรือไม่

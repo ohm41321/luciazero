@@ -498,8 +498,9 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
   asks git which files changed while one of the session's own shell commands
   ran, after its last verify ended; documentation, ignored files and what the
   verify itself wrote do not count, and neither does another session's edit
-  made between two of its commands. Outside a git work tree, shell writes are
-  not tracked.
+  made between two of its commands. A command that tests and then edits
+  (`npm test && sed -i ...`) leaves that edit unverified. Outside a git work
+  tree, shell writes are not tracked.
 - A stop whose last verify of the session's edits failed, or could not find
   its command, is nudged once too, until a run passes. Claude Code only:
   Codex gives hooks a command's output but not whether it passed.

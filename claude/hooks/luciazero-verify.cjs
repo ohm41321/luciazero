@@ -408,15 +408,21 @@ function noteShell(state, key, startMs, endMs) {
 // run counts from its start instead: what the run wrote then may count too,
 // an extra nudge, never a missed one.
 //
-// At a verify run (`run`: when it started and ended, and whether it failed)
-// only what changed before it started counts, so nothing a green run writes
-// is taken for an edit; a command still within reach of that start stays for
-// the stop to look at again. A failed run's own time counts as well, since
-// one command can edit and then test (`sed -i ... && npm test`): what changed
-// in it is recorded just before the run, so the red is that edit's. What a
-// failed run writes itself counts the same way: an extra nudge on a stop
-// that is red anyway. That look happens even with no command to account
-// for, to keep the list of removed files current.
+// At a verify run (`run`: when it started and ended, whether it failed, and
+// whether the command may also change a file before its last verify step or
+// after it, as aroundSteps says) only what changed before it started counts,
+// so nothing a run writes is taken for an edit; a command still within reach
+// of that start stays for the stop to look at again. The run's own time
+// counts as well when the command edits around its test. Edit, then test
+// (`sed -i ... && npm test`) and fail: what changed in it is recorded just
+// before the run, so the red is that edit's. Test, then edit (`npm test &&
+// sed -i ...`): what changed in it is recorded when it changed, after the run
+// started, so no verify covers it. Either way what the run writes itself, and
+// another session's edit while it ran, count the same: an extra nudge. A
+// plain test run counts nothing from its own time, so a session that edited
+// nothing is never made red by what its failing run wrote. That look happens
+// even with no command to account for, to keep the list of removed files
+// current.
 //
 // A removed file has no time of its own: it counts by its directory's time,
 // unless a look saw it gone before the session's first command started, so a
@@ -431,8 +437,10 @@ function shellEdits(state, cwd, project, key, run = null) {
   const keep = run === null ? [] : commands.filter(([, end]) => end + SHELL_SLACK_MS >= run.start);
   if (keep.length) write(file, keep.map((span) => span.join(" ")).join("\n") + "\n");
   else removeFile(file);
-  const spans = run !== null && run.failed ? [...commands, [run.start, run.end]] : commands;
-  const cap = run === null ? Infinity : run.failed ? run.end + SHELL_SLACK_MS + 1 : run.start;
+  const red = run !== null && run.failed && run.before;
+  const during = red || (run !== null && run.after);
+  const spans = during ? [...commands, [run.start, run.end]] : commands;
+  const cap = run === null ? Infinity : during ? run.end + SHELL_SLACK_MS + 1 : run.start;
   if (!spans.length && run === null) return;
   const runFrom = mtime(path.join(state, "last_verify"));
   const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
@@ -481,7 +489,7 @@ function shellEdits(state, cwd, project, key, run = null) {
     if (counts(at) && codeEdit(abs, cwd, project) && (newest === null || at > newest)) newest = at;
   }
   write(goneFile, [...gone].map(([digest, at]) => `${digest} ${at}`).join("\n") + "\n");
-  if (newest !== null) recordEdit(state, key, run !== null && run.failed ? Math.min(newest, run.start - 1) : newest);
+  if (newest !== null) recordEdit(state, key, red ? Math.min(newest, run.start - 1) : newest);
 }
 
 function readTrimmed(file) {
@@ -1002,6 +1010,74 @@ function verifyRuns(text, depth = 0) {
 function defaultVerify(command) {
   const re = ere(DEFAULT_VERIFY_RE);
   return verifyRuns(command).some((run) => re.test(run));
+}
+
+// Programs that change no file in the work tree when a command runs one
+// beside its verify (`cd sub && npm test`, `npm test; echo $?`); an output
+// redirection still makes one a writer. `sed` and `perl` write with `-i`,
+// and git subcommands outside GIT_KEEPS_TREE may rewrite files.
+const KEEPS_TREE = new Set(["cd", "pushd", "popd", "export", "unset", "set", "shopt", "ulimit", "umask", "true",
+  "false", ":", "pwd", "ls", "echo", "printf", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "sort",
+  "uniq", "cut", "tr", "column", "less", "more", "jq", "which", "type", "hash", "test", "[", "[[", "sleep", "date",
+  "clear", "source", ".", "exit", "return", "wait", "fi", "done", "esac"]);
+const GIT_KEEPS_TREE = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame",
+  "describe", "add", "commit", "push", "fetch", "tag", "branch", "remote", "config"]);
+
+// Whether one simple command may change a file in the work tree.
+function mayWrite(cmd) {
+  const w = [];
+  for (let j = 0; j < cmd.words.length; j++) {
+    const t = cmd.words[j];
+    const op = /^\d*(>>|>\||>|&>>|&>)$/.test(t);
+    const target = op ? cmd.words[j + 1] || "" : (t.match(/^\d*(?:>>|>\||>|&>>|&>)(.+)$/) || [])[1];
+    if (target !== undefined) {
+      if (!/^(&\d*-?|\/dev\/null|\/dev\/std(out|err))$/.test(target)) return true;
+      if (op) j += 1;
+    } else if (/^\d*(<<<|<>|<)$/.test(t)) {
+      j += 1;
+    } else if (!/^\d*</.test(t)) {
+      w.push(t);
+    }
+  }
+  let k = 0;
+  while (k < w.length && (KEYWORDS.has(w[k]) || assignment(w[k]) || w[k] === "time" || w[k] === "builtin"
+    || (w[k] === "command" && !/^-[vV]$/.test(w[k + 1] || "")))) k += 1;
+  if (k >= w.length || w[k] === "command") return false; // only assignments, or `command -v`
+  const name = programName(w[k]).toLowerCase();
+  const rest = w.slice(k + 1);
+  if (name === "sed") return rest.some((t) => /^-[^-]*i/.test(t) || t.startsWith("--in-place"));
+  if (name === "perl") return rest.some((t) => /^-[^-]*i/.test(t));
+  if (name === "git") {
+    let j = 0;
+    while (j < rest.length && rest[j].startsWith("-")) j += /^-[Cc]$/.test(rest[j]) ? 2 : 1;
+    return !GIT_KEEPS_TREE.has(rest[j] || "");
+  }
+  return !KEEPS_TREE.has(name);
+}
+
+// Whether a verify command also runs a simple command that may change a
+// file before its last verify step (`sed -i ... && npm test`), and one after
+// it (`npm test && sed -i ...`). `step(cmd, i)` says which simple commands
+// are verify steps; what a step pipes into is part of it, so `npm test |
+// tee log` writes the run's own log, no edit. A step hidden inside one
+// simple command (`bash -c 'sed -i ... && npm test'`) is not looked into.
+function aroundSteps(command, step) {
+  try {
+    const commands = lex(command, 0, false, 0).commands;
+    const at = [];
+    commands.forEach((cmd, i) => {
+      const from = cmd.pipedFrom === null ? -1 : commands.indexOf(cmd.pipedFrom);
+      at.push(Boolean(step(cmd, i)) || (from >= 0 && at[from]));
+    });
+    const last = at.lastIndexOf(true);
+    const writes = (i) => !at[i] && mayWrite(commands[i]);
+    return {
+      before: last > 0 && commands.slice(0, last).some((_, i) => writes(i)),
+      after: last >= 0 && commands.slice(last + 1).some((_, i) => writes(last + 1 + i)),
+    };
+  } catch {
+    return { before: false, after: false };
+  }
 }
 
 // A repository's COMMITTED .claude/settings.json can put anything in its `env`
@@ -1681,15 +1757,21 @@ function main(argv) {
       const verifyCmd = process.env.LUCIAZERO_VERIFY_CMD || "";
       const verifyRe = process.env.LUCIAZERO_VERIFY_REGEX || DEFAULT_VERIFY_RE;
       let isVerify = false;
+      // which simple commands of a verify command are its verify steps
+      let step = () => false;
       if (command) {
         if (verifyCmd) {
           // exact mode: the command must BE or START WITH the configured command
           isVerify = command === verifyCmd || command.startsWith(verifyCmd + " ");
+          step = (cmd, i) => i < lex(verifyCmd, 0, false, 0).commands.length;
         } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
           // a regex of one's own keeps its documented meaning: any line
           isVerify = anyLine(command, verifyRe);
+          step = (cmd) => anyLine(cmd.words.join(" "), verifyRe);
         } else {
           isVerify = defaultVerify(command);
+          const re = ere(DEFAULT_VERIFY_RE);
+          step = (cmd) => runs(cmd, 0).some((run) => re.test(run));
         }
       }
       // A command started in the background has no result yet: its
@@ -1705,8 +1787,10 @@ function main(argv) {
         // what this session's shell commands changed before the run is what
         // it tested, so a red run makes those edits red
         const runStart = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : nowMs;
-        shellEdits(state, cwd, project, editorKey,
-          { start: runStart, end: nowMs, failed: mode === "bash-failure" || status === "fail" });
+        shellEdits(state, cwd, project, editorKey, {
+          start: runStart, end: nowMs, failed: mode === "bash-failure" || status === "fail",
+          ...aroundSteps(command, step),
+        });
         // Red/green came from the tool response; failure hooks are red.
         if (mode === "bash-failure") status = "fail";
         // A green that follows a green with no code edit between them proved

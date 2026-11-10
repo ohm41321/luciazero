@@ -588,6 +588,28 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   assert.strictEqual(s11.hook("stop", { stop_hook_active: true }).status, 0);
   s11.shell("v2", "sed -i s/b/c/ a.js && npm test", () => fs.writeFileSync(path.join(p11, "a.js"), "c\n"));
   assert.strictEqual(s11.stop(), 0, "an edit a green verify command made and tested was not covered");
+  // ...and one that tests and then edits leaves that edit unverified
+  s11.shell("v3", "npm test && sed -i s/c/d/ a.js", () => fs.writeFileSync(path.join(p11, "a.js"), "d\n"));
+  assert.strictEqual(s11.stop(), 2, "an edit made after the test step of a green verify command was covered");
+
+  // a failing run of a session that edited nothing stays its own: what the
+  // run writes, and another session's edit while it runs, make no red
+  const p12 = path.join(box.box, "p12");
+  gitRepo(p12, files);
+  const a12 = session(p12, "a");
+  const b12 = session(p12, "b");
+  a12.shell("v1", "npm test", () => {
+    fs.writeFileSync(path.join(p12, "junit.xml"), "<x/>\n");
+    fs.writeFileSync(path.join(p12, "a.js"), "b\n");
+    assert.strictEqual(b12.hook("edit", { tool_name: "Edit", tool_input: { file_path: path.join(p12, "a.js") } }).status, 0);
+  }, "Exit code 1");
+  assert.strictEqual(a12.stop(), 0, "a session that edited nothing was made red by what changed during its failing run");
+  a12.shell("v2", "cd . && npm test 2>&1 | tee test.log", () => {
+    fs.writeFileSync(path.join(p12, "junit.xml"), "<y/>\n");
+    fs.writeFileSync(path.join(p12, "test.log"), "1 failed\n");
+  }, "Exit code 1");
+  assert.strictEqual(a12.stop(), 0, "a cd before the test, or the test's own log, was taken for an edit");
+  assert.strictEqual(b12.stop(), 2, "the session that made the edit was not nudged");
 
   // one session's look at a removal does not make it old for the session
   // that removed it

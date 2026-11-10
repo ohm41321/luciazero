@@ -28,6 +28,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An eval grader must score its task's unfixed project and every cheat tree
   red with a `SCORE` line. A grader that crashed on one used to count as
   rejecting it, though `eval/run.sh` books a crash INVALID, not failed.
+- CI loads and starts the systemd user unit under the Linux runner's own
+  systemd (`systemd-analyze verify`, then a linked copy started, checked and
+  stopped), and proves the check refuses the quoted `WorkingDirectory=` that
+  2.5.0 to 3.0.0 wrote. Tests that read the unit's text all passed on it.
 - CI pins ShellCheck by version and checksum (0.9.0, what the Linux runner
   shipped) instead of taking the runner image's, and a new macOS job runs the
   fast tier under the stock `/bin/bash` 3.2 with ShellCheck 0.10.0.

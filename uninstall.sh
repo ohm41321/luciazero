@@ -454,16 +454,21 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   cp -p "${BACKUP}" "${MD_TMP}"
   if [ "${PROV%% *}" = appended ] && [ -n "${PROV#appended }" ] \
      && [ "${PROV#appended }" = "$(sha_of "${BACKUP}")" ]; then
+    # A CRLF line is the same line, and every kept line keeps its own
+    # ending: the held blank is printed as it was, CR and all.
     awk -v want="${IMPORT_LINE}" '
-      $0 == want { pending = 0; next }
-      pending    { print ""; pending = 0 }
-      $0 == ""   { pending = 1; next }
-                 { print }
-      END        { if (pending) print "" }
+                   { line = $0; sub(/\r$/, "", line) }
+      line == want { pending = 0; next }
+      pending      { print blank; pending = 0 }
+      line == ""   { blank = $0; pending = 1; next }
+                   { print }
+      END          { if (pending) print blank }
     ' "${BACKUP}" > "${MD_TMP}"
   else
-    # grep exits 1 when the import line was the only content — that is fine
-    grep -vxF "${IMPORT_LINE}" "${BACKUP}" > "${MD_TMP}" || [ $? -eq 1 ]
+    # `grep -vxF`, except that "@luciazero.md\r" from a CRLF file is the import
+    # line too: left behind, it would point at the luciazero.md this deletes
+    awk -v want="${IMPORT_LINE}" '{ line = $0; sub(/\r$/, "", line) } line != want { print }' \
+      "${BACKUP}" > "${MD_TMP}"
   fi
   if cmp -s "${BACKUP}" "${GLOBAL_MD}"; then
     if [ -L "${GLOBAL_MD}" ]; then
@@ -489,7 +494,8 @@ if [ -f "${GLOBAL_MD}" ] && grep -qF "${IMPORT_LINE}" "${GLOBAL_MD}"; then
   # still be somebody's decision to keep. One byte of anyone else's text and
   # the file stays.
   if [ "${IMPORT_REWRITTEN}" = 1 ]; then
-    if printf '%s\n' "${IMPORT_LINE}" | cmp -s - "${BACKUP}"; then
+    if printf '%s\n' "${IMPORT_LINE}" | cmp -s - "${BACKUP}" \
+       || printf '%s\r\n' "${IMPORT_LINE}" | cmp -s - "${BACKUP}"; then
       rm -f "${BACKUP}"
       echo "  ok  removed import line (its backup held only that line; removed)"
     else

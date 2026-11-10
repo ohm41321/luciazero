@@ -233,6 +233,24 @@ ends_with_newline() {
   [ -s "$1" ] && [ -z "$(tail -c 1 "$1")" ]
 }
 
+# Is a line of $1 exactly $2? A CRLF line is the same line: a file saved on
+# Windows says what it says anywhere else, and the Node installer reads it so.
+has_line() {
+  awk -v want="$2" '{ line = $0; sub(/\r$/, "", line) } line == want { found = 1; exit } END { exit !found }' "$1"
+}
+
+# The line ending $1 already uses, in EOL, so lines added to it match their
+# neighbours: CRLF when its first line ends in one, as eolOf in
+# bin/lib/installer.js decides it. A variable, not output, because command
+# substitution would strip the newline it is.
+eol_of() {
+  EOL=$'\n'
+  EOL_FIRST=""
+  if IFS= read -r EOL_FIRST < "$1" && [ "${EOL_FIRST%$'\r'}" != "${EOL_FIRST}" ]; then
+    EOL=$'\r\n'
+  fi
+}
+
 # Write $1 with its marker block removed and every other byte kept, including a
 # last line that carries no newline.
 #
@@ -250,12 +268,15 @@ ends_with_newline() {
 strip_marker_block() {
   if ends_with_newline "$1"; then SMB_SRC_NL=1; else SMB_SRC_NL=0; fi
   awk -v s="${START}" -v e="${END}" -v mark="${ADDED_NL_MARK}" -v srcnl="${SMB_SRC_NL}" '
-    $0==s {inblock=1; head=1; blockend=NR; next}
-    $0==e {inblock=0; blockend=NR; next}
-    inblock {if (head && $0==mark) added=1; head=0; blockend=NR; next}
+    {line = $0; sub(/\r$/, "", line)}
+    line==s {inblock=1; head=1; blockend=NR; next}
+    line==e {inblock=0; blockend=NR; next}
+    inblock {if (head && line==mark) added=1; head=0; blockend=NR; next}
     {n++; keep[n]=$0; lastkept=NR}
     END {
       chop = (added && n > 0 && blockend == NR)
+      # the newline the install added goes whole: CR and LF on a CRLF file
+      if (chop) sub(/\r$/, "", keep[n])
       for (i = 1; i <= n; i++) {
         printf "%s", keep[i]
         if (i < n) printf "\n"
@@ -274,15 +295,12 @@ strip_marker_block() {
 marker_block_ok() {
   MB_FILE="$1"
   [ -f "${MB_FILE}" ] || return 0
-  MB_S="$(grep -cxF "${START}" "${MB_FILE}" || true)"
-  MB_E="$(grep -cxF "${END}" "${MB_FILE}" || true)"
-  [ "${MB_S}" = 0 ] && [ "${MB_E}" = 0 ] && return 0
-  if [ "${MB_S}" = 1 ] && [ "${MB_E}" = 1 ]; then
-    MB_SL="$(grep -nxF "${START}" "${MB_FILE}" | cut -d: -f1)"
-    MB_EL="$(grep -nxF "${END}" "${MB_FILE}" | cut -d: -f1)"
-    [ "${MB_SL}" -lt "${MB_EL}" ] && return 0
-  fi
-  return 1
+  awk -v s="${START}" -v e="${END}" '
+    {line = $0; sub(/\r$/, "", line)}
+    line==s {ns++; if (!sl) sl=NR}
+    line==e {ne++; if (!el) el=NR}
+    END {exit !((ns == 0 && ne == 0) || (ns == 1 && ne == 1 && sl < el))}
+  ' "${MB_FILE}"
 }
 
 if ! marker_block_ok "${AGENTS_MD}"; then
@@ -322,14 +340,22 @@ fi
 # only byte of the user's file this installer changes, and it is recorded under
 # the start marker so the uninstall takes it back with the block.
 if [ -s "${TMP}" ] && ! ends_with_newline "${TMP}"; then ADDED_NL=1; else ADDED_NL=0; fi
+# The block takes the line ending the user's file already has, so a CRLF
+# AGENTS.md stays CRLF throughout.
+EOL=$'\n'
+if [ -s "${TMP}" ]; then eol_of "${TMP}"; fi
 {
   if [ -s "${TMP}" ]; then cat "${TMP}"; fi
-  if [ "${ADDED_NL}" = 1 ]; then printf '\n'; fi
-  echo "${START}"
-  if [ "${ADDED_NL}" = 1 ]; then echo "${ADDED_NL_MARK}"; fi
-  echo
-  cat "${SRC}/claude/luciazero.md"
-  echo "${END}"
+  if [ "${ADDED_NL}" = 1 ]; then printf '%s' "${EOL}"; fi
+  printf '%s%s' "${START}" "${EOL}"
+  if [ "${ADDED_NL}" = 1 ]; then printf '%s%s' "${ADDED_NL_MARK}" "${EOL}"; fi
+  printf '%s' "${EOL}"
+  if [ "${EOL}" = $'\n' ]; then
+    cat "${SRC}/claude/luciazero.md"
+  else
+    awk '{sub(/\r$/, ""); printf "%s\r\n", $0}' "${SRC}/claude/luciazero.md"
+  fi
+  printf '%s%s' "${END}" "${EOL}"
 } > "${AGENTS_MD}"
 rm -f "${TMP}"
 echo "  ok  AGENTS.md doctrine block"

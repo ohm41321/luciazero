@@ -52,15 +52,21 @@ TIMEOUT_SECONDS = 10
 # spawn `ps` on every request, short enough that pid reuse is still caught.
 START_CACHE_SECONDS = 5.0
 _start_cache: dict[int, tuple[float, Optional[str]]] = {}
+# `ps` prints lstart in the caller's locale and time zone: one start reads
+# "Tue Nov 10 22:41:27 2026" in a LaunchAgent, which has no LANG, and
+# "Di. 10 Nov. 22:41:27 2026" in a German terminal, or another hour with TZ
+# exported. A value one process records and another compares is read here.
+STABLE_PS_ENV = {"LC_ALL": "C", "TZ": "UTC0"}
 
 
 class ProcessError(RuntimeError):
     """The process table could not be read."""
 
 
-def _run(argv: Sequence[str]) -> str:
+def _run(argv: Sequence[str], env: Optional[dict[str, str]] = None) -> str:
     try:
-        done = subprocess.run(list(argv), capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
+        done = subprocess.run(list(argv), capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False,
+                              env=env)
     except FileNotFoundError as exc:
         raise ProcessError(f"{argv[0]} not found") from exc
     except PermissionError as exc:
@@ -123,6 +129,16 @@ def started_at(pid: int, *, cache: bool = False) -> Optional[str]:
             _start_cache.clear()
         _start_cache[pid] = (time.monotonic(), out)
     return out
+
+
+def stable_started_at(pid: int) -> Optional[str]:
+    """The process start time as every reader on this machine prints it, in
+    the C locale and UTC whatever its own locale and time zone. `started_at`
+    keeps the caller's form, which the bindings already stored compare with."""
+    pid = int(pid)
+    if WINDOWS:
+        return winproc.started_at(pid)  # a FILETIME count: no locale in it
+    return _run(["ps", "-o", "lstart=", "-p", str(pid)], env={**os.environ, **STABLE_PS_ENV}).strip() or None
 
 
 def _table() -> list[dict[str, Any]]:

@@ -3,16 +3,26 @@ idempotent replays, immutable history."""
 
 from __future__ import annotations
 
+import io
+import os
+import signal
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Any, Optional
 from unittest import mock
 
 from luciazero_agentd import ConflictError, IdempotencyConflict, NotFound, Store, StoreError, ValidationError
-from luciazero_agentd import migrations
+from luciazero_agentd import migrations, procinfo
+from luciazero_agentd.__main__ import main
 from luciazero_agentd.migrations import LATEST_VERSION
+from luciazero_agentd.server import BusServer
+from luciazero_agentd.statedir import db_path, ensure_state_dir, read_endpoint, write_endpoint
 from tests.fixtures import git, make_repo
 
 
@@ -139,6 +149,206 @@ class MigrationTests(StoreCase):
         self.assertIn("depends_on", columns)
         columns = {r[1] for r in self.store._conn.execute("PRAGMA table_info(sessions)")}
         self.assertIn("generation", columns)
+
+
+class MigrationGuardTests(unittest.TestCase):
+    """What a store's schema version can and cannot promise.
+
+    Every command migrates the store it opens, and the launcher prefers the
+    clone it runs from, so the daemon and a command can be different builds
+    with different migrations. And `user_version` is only a number: a build
+    can stamp it on tables that are not what that version describes."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="agentd-guard-")
+        self.addCleanup(self._tmp.cleanup)
+        self.state = ensure_state_dir(Path(self._tmp.name) / "state")
+        self.db = str(db_path(self.state))
+
+    def build(self, entries: list[tuple[int, str]]) -> None:
+        """The store a build that shipped these migrations leaves behind."""
+        shipped = list(migrations.MIGRATIONS)
+        migrations.MIGRATIONS[:] = entries
+        try:
+            with Store.open(self.db) as old:
+                old.migrate()
+        finally:
+            migrations.MIGRATIONS[:] = shipped
+
+    def older(self) -> None:
+        self.build([entry for entry in migrations.MIGRATIONS if entry[0] < LATEST_VERSION])
+
+    def daemon(self, process_started_at: Optional[str] = None) -> "subprocess.Popen[bytes]":
+        """A live process recorded as the daemon serving this state directory,
+        by pid alone (as a daemon from before the start time was recorded
+        wrote it) or by pid and the start time given."""
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", child.pid, "2026-01-01T00:00:00Z",
+                       process_started_at=process_started_at)
+        return child
+
+    def v8_incident(self) -> None:
+        """A working tree partway through the M7c commit stamped version 8 on
+        a claim_requests table without code_hash, and every claim on that
+        store failed while user_version said all was well."""
+        column = "    code_hash       TEXT NOT NULL,\n"
+        entries = [(version, sql.replace(column, "") if version == 8 else sql)
+                   for version, sql in migrations.MIGRATIONS]
+        self.assertNotEqual(list(migrations.MIGRATIONS), entries, "the fixture must change migration 8")
+        self.build(entries)
+
+    def test_a_running_older_daemon_keeps_the_schema_it_serves(self) -> None:
+        """Migrating under it made that daemon refuse every request, its
+        store now newer than itself."""
+        self.older()
+        child = self.daemon()
+        with Store.open(self.db) as newer:
+            with self.assertRaises(StoreError) as caught:
+                newer.migrate()
+            self.assertEqual(LATEST_VERSION - 1, newer.schema_version())
+        self.assertIn(f"pid {child.pid}", str(caught.exception))
+        child.kill()
+        child.wait()
+        with Store.open(self.db) as newer:
+            self.assertEqual(LATEST_VERSION, newer.migrate(), "once it has stopped, the upgrade goes ahead")
+
+    def test_the_daemon_is_known_in_any_locale_and_time_zone(self) -> None:
+        """The daemon records its start time in its own environment (a
+        LaunchAgent has no LANG) and a command reads it in the user's, where
+        `ps` prints another language or another hour for the same start."""
+        self.older()
+        child = self.daemon()
+        with mock.patch.dict(os.environ, {"LANG": "de_DE.UTF-8", "LC_ALL": "", "LC_TIME": "",
+                                          "TZ": "America/New_York"}):
+            recorded = procinfo.stable_started_at(child.pid)
+        self.assertIsNotNone(recorded)
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", child.pid, "2026-01-01T00:00:00Z",
+                       process_started_at=recorded)
+        with mock.patch.dict(os.environ, {"LANG": "C.UTF-8", "TZ": "Asia/Bangkok"}):
+            with Store.open(self.db) as newer:
+                with self.assertRaises(StoreError):
+                    newer.migrate()
+
+    def test_a_pid_in_use_again_is_not_the_daemon(self) -> None:
+        """After a crash and a reboot the recorded pid can belong to anything;
+        refusing then would name a daemon that does not exist."""
+        self.older()
+        self.daemon(process_started_at="Thu Jan  1 00:00:00 1970")
+        with Store.open(self.db) as newer:
+            self.assertEqual(LATEST_VERSION, newer.migrate())
+
+    def test_serve_records_its_own_start_time(self) -> None:
+        self.build(list(migrations.MIGRATIONS))
+        seen: dict[str, Any] = {}
+
+        def look_then_stop(server: BusServer) -> None:
+            seen.update(read_endpoint(self.state) or {})
+            server._httpd.server_close()
+            raise KeyboardInterrupt
+
+        self.serve_once(look_then_stop)
+        self.assertEqual(os.getpid(), seen.get("pid"))
+        self.assertEqual(procinfo.stable_started_at(os.getpid()), seen.get("process_started_at"))
+
+    def serve_once(self, side_effect: Any) -> str:
+        """`serve` in this process, stopped by `side_effect`; its stderr."""
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", None)) if sig is not None}
+        err = io.StringIO()
+        try:
+            with mock.patch.object(BusServer, "serve_forever", autospec=True, side_effect=side_effect), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(0, main(["serve", "--state-dir", str(self.state), "--port", "0"]))
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        return err.getvalue()
+
+    def test_the_daemon_still_migrates_the_store_it_serves(self) -> None:
+        self.older()
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "2026-01-01T00:00:00Z")
+        with Store.open(self.db) as own:
+            self.assertEqual(LATEST_VERSION, own.migrate())
+
+    def test_a_store_with_nothing_to_migrate_opens_under_any_daemon(self) -> None:
+        self.build(list(migrations.MIGRATIONS))
+        self.daemon()
+        with Store.open(self.db) as same:
+            self.assertEqual(LATEST_VERSION, same.migrate())
+
+    def test_a_command_says_why_it_will_not_migrate(self) -> None:
+        self.older()
+        child = self.daemon()
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["worker", "list", "--state-dir", str(self.state)])
+        self.assertEqual(2, code)
+        self.assertIn(f"pid {child.pid}", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+    def test_the_dispatcher_says_why_it_will_not_migrate(self) -> None:
+        """And closes the store it could not migrate: on Windows an open
+        connection keeps bus.sqlite3 from being deleted (WinError 32)."""
+        self.older()
+        child = self.daemon()
+        err = io.StringIO()
+        opened: list[Store] = []
+        real_open = Store.open
+
+        def spy(*args: Any, **kwargs: Any) -> Store:
+            opened.append(real_open(*args, **kwargs))
+            return opened[-1]
+
+        with mock.patch.object(Store, "open", side_effect=spy), \
+                redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = main(["dispatch", "--once", "--state-dir", str(self.state)])
+        self.assertEqual(2, code)
+        self.assertIn(f"pid {child.pid}", err.getvalue())
+        self.assertTrue(opened)
+        for store in opened:
+            with self.assertRaises(sqlite3.ProgrammingError, msg="a store was left open"):
+                store._conn.execute("SELECT 1")
+
+    def test_a_fresh_store_matches_its_schema(self) -> None:
+        self.build(list(migrations.MIGRATIONS))
+        with Store.open(self.db) as store:
+            self.assertEqual([], store.schema_drift())
+
+    def test_a_table_short_of_its_version_is_named(self) -> None:
+        self.v8_incident()
+        with Store.open(self.db) as store:
+            self.assertEqual(LATEST_VERSION, store.schema_version(), "user_version alone sees nothing wrong")
+            self.assertEqual(["table claim_requests: column code_hash is missing"], store.schema_drift())
+
+    def test_an_extra_column_and_a_missing_index_are_named(self) -> None:
+        self.build(list(migrations.MIGRATIONS))
+        raw = sqlite3.connect(self.db)
+        raw.execute("ALTER TABLE agents ADD COLUMN stray TEXT")
+        raw.execute("DROP INDEX tasks_state")
+        raw.close()
+        with Store.open(self.db) as store:
+            self.assertEqual(["index tasks_state is missing",
+                              f"table agents: column stray is not in schema {LATEST_VERSION}"],
+                             store.schema_drift())
+
+    def test_serve_names_the_drift_where_its_log_is(self) -> None:
+        self.v8_incident()
+
+        def stop_at_once(server: BusServer) -> None:
+            server._httpd.server_close()
+            raise KeyboardInterrupt
+
+        handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", None)) if sig is not None}
+        err = io.StringIO()
+        try:
+            with mock.patch.object(BusServer, "serve_forever", autospec=True, side_effect=stop_at_once), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(0, main(["serve", "--state-dir", str(self.state), "--port", "0"]))
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+        self.assertIn("claim_requests: column code_hash is missing", err.getvalue())
 
 
 class OpenTests(unittest.TestCase):

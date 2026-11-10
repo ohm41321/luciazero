@@ -76,6 +76,19 @@
   When the order is unknown, prefer an extra nudge to a red. Revert-probe a
   new assertion against the last two or three commits of the hook, not only
   the latest. In zsh, quote `"${rev}:path"`: `$rev:c...` is a modifier.
+- systemd reads `WorkingDirectory=` and `StandardOutput=append:` whole, with
+  no unquoting: a quoted path is not absolute and the unit is refused as a
+  bad setting (`config_parse_working_directory`, read 2026-11-10). Only
+  `ExecStart=` and `Environment=` unquote. `agentd/tests/test_service.py`
+  checks the unit text, not a real systemd: nothing here loads a unit, so
+  the quoted form shipped from 2.5.0 through 3.0.0 unnoticed.
+- `ps -o lstart=` prints in the caller's `LANG` and `TZ` (`de_DE` gives
+  `Di. 10 Nov.`, an exported `TZ` another hour; probed 2026-11-10 on macOS).
+  A start time one process records and another compares must come from
+  `procinfo.stable_started_at` (C locale, UTC), as `endpoint.json` does.
+  Bindings still use `started_at` in each side's own environment, so a
+  service daemon may refuse a `run` binding made in a German terminal; not
+  fixed yet, because changing the form refuses every binding already stored.
 - Claude Code silently drops an agent whose `name:` contains a colon
   (`lucia:reviewer` never loads; checked against the `claude -p` init event's
   agent list, 2.1.317). `x:y` only comes from plugin namespacing.

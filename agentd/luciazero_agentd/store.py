@@ -37,6 +37,7 @@ from .migrations import LATEST_VERSION, MIGRATIONS
 from .redact import CREDENTIAL_PATTERN, CREDENTIAL_PREFIX
 from .redact import DEFAULT as DEFAULT_REDACTOR
 from .redact import NONCE_PATTERN, NONCE_PREFIX, Redactor, find_credential_url
+from .statedir import endpoint_alive, read_endpoint
 
 WINDOWS = sys.platform == "win32"
 MESSAGE_KINDS = ("task", "question", "finding", "decision", "artifact", "result")
@@ -365,6 +366,28 @@ def _contained_file(toplevel: str, ref: str, expected_sha256: Optional[str], *, 
     return len(data), actual
 
 
+def _schema_shape(conn: sqlite3.Connection) -> dict[tuple[str, str], Any]:
+    """Each table's columns (declared type, NOT NULL, primary key), each
+    index's table and columns, and each trigger's table: what schema_drift
+    compares. SQLite's own objects (sqlite_sequence, automatic indexes) are
+    left out."""
+    shape: dict[tuple[str, str], Any] = {}
+    objects = conn.execute(
+        "SELECT type, name, tbl_name FROM sqlite_master "
+        "WHERE type IN ('table', 'index', 'trigger', 'view') AND name NOT LIKE 'sqlite~_%' ESCAPE '~'"
+    ).fetchall()
+    for kind, name, table in objects:
+        if kind == "table":
+            shape[(kind, name)] = {row[0]: (row[1], row[2], row[3]) for row in conn.execute(
+                'SELECT name, type, "notnull", pk FROM pragma_table_info(?)', (name,))}
+        elif kind == "index":
+            shape[(kind, name)] = (table, tuple(row[0] for row in conn.execute(
+                "SELECT name FROM pragma_index_info(?) ORDER BY seqno", (name,))))
+        else:
+            shape[(kind, name)] = table
+    return shape
+
+
 def _split_statements(sql: str) -> list[str]:
     """Split a migration script into complete statements. Trigger bodies
     contain semicolons, so rely on SQLite's own completeness check."""
@@ -555,6 +578,8 @@ class Store:
         current = self.schema_version()
         if current > LATEST_VERSION:
             raise StoreError(f"database schema {current} is newer than this daemon ({LATEST_VERSION})")
+        if 0 < current < LATEST_VERSION:
+            self._refuse_under_a_running_daemon(current)
         for version, sql in MIGRATIONS:
             if version <= current:
                 continue
@@ -587,6 +612,66 @@ class Store:
                 self._conn.execute("PRAGMA foreign_keys = ON")
             current = version
         return current
+
+    def _refuse_under_a_running_daemon(self, current: int) -> None:
+        """A daemon migrates its store when it starts, so one still serving a
+        store that this build would migrate is an older build. Every command
+        migrates the store it opens, and the launcher prefers the clone it
+        runs from: a feature worktree moved the shared store to its schema,
+        and the daemon then refused every request as newer than itself. The
+        upgrade waits until that daemon has stopped; the daemon's own
+        connections are its own business."""
+        endpoint = read_endpoint(Path(self.path).parent)
+        pid = endpoint.get("pid") if endpoint is not None else None
+        if pid != os.getpid() and endpoint_alive(endpoint):
+            raise StoreError(
+                f"database schema {current} is served by a running daemon (pid {pid}) older than this "
+                f"build (schema {LATEST_VERSION}), and migrating it would make that daemon refuse every "
+                "request. Stop it and start the daemon from this build, or run this command from the "
+                "build the daemon runs from")
+
+    def schema_drift(self) -> list[str]:
+        """How this store's tables and indexes differ from those of a fresh
+        store at the same schema version; empty when they match.
+
+        `user_version` is only a number: a development build once stamped
+        version 8 on a claim_requests table without its code_hash column, and
+        every claim on that store failed. Columns are compared rather than the
+        CREATE text, which SQLite rewrites on ALTER TABLE in ways that vary by
+        version: a store migrated step by step need not read like a fresh one
+        to be the same."""
+        version = self.schema_version()
+        if version == 0 or version > LATEST_VERSION:
+            return []
+        fresh = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            for number, sql in MIGRATIONS:
+                if number > version:
+                    break
+                for statement in _split_statements(sql):
+                    fresh.execute(statement)
+            want = _schema_shape(fresh)
+        finally:
+            fresh.close()
+        have = _schema_shape(self._conn)
+        problems: list[str] = []
+        for key in sorted(set(want) | set(have)):
+            kind, name = key
+            if key not in have:
+                problems.append(f"{kind} {name} is missing")
+            elif key not in want:
+                problems.append(f"{kind} {name} is not in schema {version}")
+            elif kind == "table":
+                for column in sorted(set(want[key]) | set(have[key])):
+                    if column not in have[key]:
+                        problems.append(f"table {name}: column {column} is missing")
+                    elif column not in want[key]:
+                        problems.append(f"table {name}: column {column} is not in schema {version}")
+                    elif want[key][column] != have[key][column]:
+                        problems.append(f"table {name}: column {column} is declared differently")
+            elif want[key] != have[key]:
+                problems.append(f"{kind} {name} is defined differently")
+        return problems
 
     # ----------------------------------------------------------- transactions
     @contextmanager

@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from xml.sax.saxutils import escape as xml_escape
 
-from .statedir import resolve_state_dir
+from .statedir import ensure_state_dir, resolve_state_dir
 from .watch import LAUNCHER_NAME
 
 #: Present in every file this module writes. Ownership is proven by content,
@@ -334,8 +334,22 @@ def _systemd_quote(value: str) -> str:
     return '"' + escaped + '"'
 
 
+def _systemd_path(value: Path) -> str:
+    """A path for a directive systemd reads whole, such as WorkingDirectory=:
+    no quoting, which systemd would keep as part of the path (a quoted path is
+    not absolute, and the unit is refused as a bad setting). Only what would
+    change its meaning unquoted is refused: trailing whitespace is trimmed,
+    and a final backslash joins the next line."""
+    text = str(value)
+    if text != text.rstrip() or text.endswith("\\"):
+        raise ServiceError(
+            f"refusing to write a systemd unit for a path systemd would read as another one: {text!r}")
+    return _no_specifier(text)
+
+
 def systemd_unit(argv: list[str], env: dict[str, str], log: Path, workdir: Path) -> str:
     exec_start = " ".join(_systemd_quote(a) for a in argv)
+    working_directory = _systemd_path(workdir)
     environment = "".join(
         f"Environment={_systemd_quote(f'{k}={v}')}\n" for k, v in sorted(env.items()))
     return f"""# {MARKER}
@@ -348,7 +362,7 @@ Documentation={DOCS}
 [Service]
 Type=simple
 ExecStart={exec_start}
-{environment}WorkingDirectory={_systemd_quote(str(workdir))}
+{environment}WorkingDirectory={working_directory}
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:{_no_specifier(log)}
@@ -395,11 +409,19 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
     # name, and `codex` lives in the user's PATH and nowhere else.
     if environ.get("PATH"):
         env["PATH"] = environ["PATH"]
+    # The daemon starts in the directory its package lives in, never the home
+    # directory: `python -m` and `python -c` put the working directory first
+    # on sys.path, so an argparse.py or json.py left in the home directory was
+    # imported in place of the standard library's. The package directory is
+    # already on PYTHONPATH, so starting there adds nothing to import, and it
+    # exists whenever the service can run at all; a state directory removed
+    # to start over would leave a service that cannot start (200/CHDIR).
+    workdir = _package_home()
     # A newline ends a directive in a systemd unit, so a path carrying one
     # would add a line of its own -- an ExecStartPre=, say -- to a file the
     # user believes describes one command. Nothing legitimate needs it, and
     # quoting cannot save it, so it is refused before a file is generated.
-    for value in [str(home), str(resolved), str(log), *argv, *env.values()]:
+    for value in [str(home), str(resolved), str(log), str(workdir), *argv, *env.values()]:
         if any(bad in value for bad in ("\n", "\r", "\x00")):
             raise ServiceError(
                 f"refusing to write a service file for a path containing a newline "
@@ -416,7 +438,7 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
         path = home / "AppData" / "Local" / "Luciazero" / "agentd-task.xml"
         interpreter = _windowless(argv_head[0])
         content = windows_task(task, f"{domain}\\{user}" if domain else user, interpreter,
-                               ["-c", WINDOWS_BOOT, env["PYTHONPATH"], str(log), *serve], home)
+                               ["-c", WINDOWS_BOOT, env["PYTHONPATH"], str(log), *serve], workdir)
         folder, name = task.rsplit("\\", 1)
         install_steps = [Step(["schtasks", "/End", "/TN", task], optional=True),
                          Step(["schtasks", "/Create", "/TN", task, "/XML", str(path), "/F"]),
@@ -443,7 +465,7 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
         encoding = "utf-16"
     elif platform == "darwin":
         path = home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-        content = launchd_plist(LABEL, argv, env, log, home)
+        content = launchd_plist(LABEL, argv, env, log, workdir)
         target = f"gui/{os.getuid() if uid is None else uid}"
         # bootstrap loads the job; it does not necessarily start it. In a GUI
         # domain that already exists, RunAtLoad is pended ("pended nondemand
@@ -464,7 +486,7 @@ def plan(*, state_dir: Optional[str] = None, root: Optional[Path] = None,
         for name in DISPLAY_VARS:
             if environ.get(name):
                 env[name] = environ[name]
-        content = systemd_unit(argv, env, log, home)
+        content = systemd_unit(argv, env, log, workdir)
         install_steps = [Step(["systemctl", "--user", "daemon-reload"]),
                          Step(["systemctl", "--user", "enable", "--now", UNIT])]
         uninstall_steps = [Step(["systemctl", "--user", "disable", "--now", UNIT], optional=True),
@@ -616,6 +638,16 @@ def install(plan_: Plan, *, runner: Optional[Runner] = None, dry_run: bool = Fal
         raise ServiceError(
             f"a scheduled task {plan_.label} exists and is not a Luciazero service; left untouched. "
             "Remove it yourself if you are sure.")
+    if not dry_run:
+        # The service manager opens the log before the daemon runs, and
+        # systemd does not create a missing directory for StandardOutput=:
+        # without this an install before `init` starts nothing and logs
+        # nothing. Made first, so a directory that cannot be made leaves no
+        # service behind.
+        try:
+            ensure_state_dir(plan_.state_dir)
+        except OSError as exc:
+            raise ServiceError(f"cannot make the state directory {plan_.state_dir}: {exc}") from exc
     written = write_files(plan_, dry_run=dry_run)
     steps = [] if dry_run else run_steps(plan_.install_steps, runner=runner)
     return {"kind": plan_.kind, "label": plan_.label, "dry_run": dry_run,

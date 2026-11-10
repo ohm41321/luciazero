@@ -300,6 +300,20 @@ class AuthAndBind(ServerCase):
         self.assertEqual(conn.getresponse().status, 401)
         conn.close()
 
+    def test_allow_remote_drops_the_host_check_and_keeps_token_and_origin(self) -> None:
+        """What docs/agent-bus.md says `--allow-remote` changes, held to it.
+        Bound to loopback here, so nothing is exposed while it runs."""
+        remote = BusServer(self.db, TOKEN, port=0, allow_remote=True, allow_unattributed=True).start()
+        self.addCleanup(remote.stop)
+        hello = {"protocolVersion": PROTOCOL_VERSIONS[0]}
+        status, _, _ = Http(remote.url).rpc("initialize", hello, headers={"Host": "bus.example.com"})
+        self.assertEqual(200, status, "any Host is accepted, so DNS rebinding is no longer refused by name")
+        status, _, _ = Http(remote.url).rpc("initialize", hello, headers={"Origin": "https://evil.example"})
+        self.assertEqual(403, status)
+        status, _, _ = Http(remote.url, None).rpc("initialize", hello, headers={"Host": "bus.example.com"})
+        self.assertEqual(401, status)
+        self.assertTrue(remote.url.startswith("http://"), "no TLS: the token crosses the network as written")
+
     def test_non_loopback_bind_is_refused_without_allow_remote_and_token_is_required(self) -> None:
         with self.assertRaises(ValueError):
             BusServer(self.db, TOKEN, host="0.0.0.0", port=0)

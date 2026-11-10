@@ -311,7 +311,9 @@ the always-loaded doctrine is unchanged to keep its context cost fixed.
   `next_after`, `has_more`).
 - [x] Bind locally by default and refuse non-loopback exposure without an
   explicit authenticated configuration (`--allow-remote`; token always
-  required; foreign `Origin`/`Host` answered 403).
+  required; a foreign `Origin` answered 403 in both modes, a foreign `Host`
+  only on loopback, since `--allow-remote` accepts any `Host`; plain HTTP,
+  so the token crosses the network in clear).
 - [x] Pass a protocol-conformance suite for the shipped daemon: protocol
   version negotiation, session handling, error shapes, notifications, and
   Streamable HTTP behaviour against the MCP specification. The M0 stdlib

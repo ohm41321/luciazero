@@ -189,6 +189,12 @@ ends_with_newline() {
   [ -s "$1" ] && [ -z "$(tail -c 1 "$1")" ]
 }
 
+# Is a line of $1 exactly $2? A CRLF line is the same line: a file saved on
+# Windows says what it says anywhere else, and the Node installer reads it so.
+has_line() {
+  awk -v want="$2" '{ line = $0; sub(/\r$/, "", line) } line == want { found = 1; exit } END { exit !found }' "$1"
+}
+
 # Write $1 with its marker block removed and every other byte kept, including a
 # last line that carries no newline.
 #
@@ -206,12 +212,15 @@ ends_with_newline() {
 strip_marker_block() {
   if ends_with_newline "$1"; then SMB_SRC_NL=1; else SMB_SRC_NL=0; fi
   awk -v s="${START}" -v e="${END}" -v mark="${ADDED_NL_MARK}" -v srcnl="${SMB_SRC_NL}" '
-    $0==s {inblock=1; head=1; blockend=NR; next}
-    $0==e {inblock=0; blockend=NR; next}
-    inblock {if (head && $0==mark) added=1; head=0; blockend=NR; next}
+    {line = $0; sub(/\r$/, "", line)}
+    line==s {inblock=1; head=1; blockend=NR; next}
+    line==e {inblock=0; blockend=NR; next}
+    inblock {if (head && line==mark) added=1; head=0; blockend=NR; next}
     {n++; keep[n]=$0; lastkept=NR}
     END {
       chop = (added && n > 0 && blockend == NR)
+      # the newline the install added goes whole: CR and LF on a CRLF file
+      if (chop) sub(/\r$/, "", keep[n])
       for (i = 1; i <= n; i++) {
         printf "%s", keep[i]
         if (i < n) printf "\n"
@@ -230,15 +239,12 @@ strip_marker_block() {
 marker_block_ok() {
   MB_FILE="$1"
   [ -f "${MB_FILE}" ] || return 0
-  MB_S="$(grep -cxF "${START}" "${MB_FILE}" || true)"
-  MB_E="$(grep -cxF "${END}" "${MB_FILE}" || true)"
-  [ "${MB_S}" = 0 ] && [ "${MB_E}" = 0 ] && return 0
-  if [ "${MB_S}" = 1 ] && [ "${MB_E}" = 1 ]; then
-    MB_SL="$(grep -nxF "${START}" "${MB_FILE}" | cut -d: -f1)"
-    MB_EL="$(grep -nxF "${END}" "${MB_FILE}" | cut -d: -f1)"
-    [ "${MB_SL}" -lt "${MB_EL}" ] && return 0
-  fi
-  return 1
+  awk -v s="${START}" -v e="${END}" '
+    {line = $0; sub(/\r$/, "", line)}
+    line==s {ns++; if (!sl) sl=NR}
+    line==e {ne++; if (!el) el=NR}
+    END {exit !((ns == 0 && ne == 0) || (ns == 1 && ne == 1 && sl < el))}
+  ' "${MB_FILE}"
 }
 
 remove_managed_tree() {
@@ -310,12 +316,12 @@ if [ -f "${LEGACY_HANDOFF}/SKILL.md" ]; then
   fi
 fi
 
-if [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}" && ! marker_block_ok "${AGENTS_MD}"; then
+if [ -f "${AGENTS_MD}" ] && has_line "${AGENTS_MD}" "${START}" && ! marker_block_ok "${AGENTS_MD}"; then
   # the skills are gone by now, which is safe on its own; the file is not ours
   # to interpret, so it keeps every byte it has, backup included
   echo "  !!  AGENTS.md carries ambiguous Luciazero markers; left untouched" >&2
   echo "      expected exactly one '${START}' ... '${END}' pair, on their own lines" >&2
-elif [ -f "${AGENTS_MD}" ] && grep -qxF "${START}" "${AGENTS_MD}"; then
+elif [ -f "${AGENTS_MD}" ] && has_line "${AGENTS_MD}" "${START}"; then
   BACKUP="$(bakcopy -L "${AGENTS_MD}" "${AGENTS_MD}")"
   # The block goes and nothing else does, which is now the whole round trip
   # rather than a compromise. `install-codex.sh` used to write a blank

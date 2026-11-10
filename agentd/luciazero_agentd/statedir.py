@@ -176,8 +176,40 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def write_endpoint(state_dir: Path, url: str, pid: int, started_at: str) -> None:
-    _write_private(state_dir / "endpoint.json", json.dumps({"url": url, "pid": pid, "started_at": started_at}, indent=2) + "\n")
+def write_endpoint(state_dir: Path, url: str, pid: int, started_at: str,
+                   process_started_at: Optional[str] = None) -> None:
+    """Record where the daemon listens. `process_started_at` is the process
+    start time as `procinfo.stable_started_at` prints it, so a reader can tell
+    the daemon from another process given the same pid after a crash."""
+    record: dict[str, Any] = {"url": url, "pid": pid, "started_at": started_at}
+    if process_started_at is not None:
+        record["process_started_at"] = process_started_at
+    _write_private(state_dir / "endpoint.json", json.dumps(record, indent=2) + "\n")
+
+
+def endpoint_alive(endpoint: Optional[dict[str, Any]]) -> bool:
+    """Is the daemon an endpoint record names still running? A daemon killed
+    without its cleanup (power loss, SIGKILL) leaves its record behind, and
+    after a reboot its pid can belong to any process, so the pid is checked
+    against the start time the daemon recorded, when it recorded one.
+
+    Unlike `procinfo.alive`, which guards credentials and fails closed, this
+    fails OPEN: when the process table cannot be read, the pid alone decides,
+    as it did before start times were recorded. A wrong no here would start a
+    second daemon over a live one, or migrate a store under it."""
+    pid = endpoint.get("pid") if endpoint is not None else None
+    if not isinstance(pid, int) or isinstance(pid, bool) or not pid_alive(pid):
+        return False
+    recorded = endpoint.get("process_started_at") if endpoint is not None else None
+    if not isinstance(recorded, str):
+        return True
+    from . import procinfo
+
+    try:
+        current = procinfo.stable_started_at(pid)
+    except procinfo.ProcessError:
+        return True
+    return current is None or current == recorded
 
 
 def read_endpoint(state_dir: Path) -> Optional[dict[str, Any]]:

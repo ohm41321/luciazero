@@ -85,6 +85,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Under Codex, a patch that touches only documentation no longer re-arms
   the nudge.** `apply_patch` names its files inside the patch, not in
   `file_path`, so the documentation and scratch filters never applied there.
+- **The Agent Bus no longer trusts a dead daemon's endpoint.** A daemon killed
+  without its cleanup (`kill -9`, a crash, power loss) leaves `endpoint.json`
+  behind, and `run` pointed the provider at a port nobody served. `run` now
+  starts a daemon of its own when the recorded one has exited, and `run
+  --no-autostart` says that it has. The daemon also records its process
+  start time, so a pid that another process took over after a reboot is not
+  mistaken for it; when the process table cannot be read, the pid alone
+  decides, as before.
+- **The daemon service starts in its package directory, not your home
+  directory.** `python -m` puts the working directory first on the import
+  path, so an `argparse.py` or `json.py` left in your home was imported in
+  place of the standard library's. The package directory is already on the
+  import path and exists whenever the service can run. `service install`
+  also creates the state directory, which the service manager opens the log
+  in, before it writes any service file; run it again to update a service
+  installed before.
+- **The Linux service unit loads.** systemd reads `WorkingDirectory=` whole,
+  quotes included, so the quoted path written since 2.5.0 was not absolute
+  and systemd refused the unit as a bad setting. The path is now written
+  unquoted, and one that systemd would read as another path (trailing
+  whitespace, a final backslash) is refused at install.
+- **A newer checkout no longer migrates a store an older daemon is serving.**
+  Every command migrates the store it opens, and the launcher prefers the
+  clone it runs from, so a feature worktree moved the shared store to its
+  own schema and the running daemon then refused every request. A command,
+  or `dispatch`, now refuses and names the daemon's pid; the upgrade goes
+  ahead once that daemon has stopped. A recorded pid now held by another
+  process does not block it.
+- **`serve` names a schema that does not match its version.** It compares the
+  store's tables, columns and indexes with a fresh store at the same
+  `user_version` and names each difference on stderr (`daemon.log` under a
+  service), such as the `claim_requests` table without `code_hash` that one
+  development build stamped version 8. It still serves.
 - **The Bash installers treat CRLF files as the Node installer does.**
   `uninstall.sh` left `@luciazero.md\r` in a `CLAUDE.md` saved with CRLF
   endings and deleted the `luciazero.md` it pointed at, and `install-codex.sh`
@@ -94,6 +127,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tests/installer_parity.py` plays five CRLF cases through both installers.
 
 ### Documentation
+
+- `docs/agent-bus.md` says what `serve --allow-remote` changes: the bus is
+  plain HTTP, so the token crosses the network in clear, and any `Host`
+  header is accepted. The roadmap said a foreign `Host` was refused in that
+  mode too. A test now holds the server to the documented behavior.
 
 - The evidence tables show the mean cost and wall-clock time per run of each
   arm next to the pass rates, and say where the Sonnet difference comes from:

@@ -58,9 +58,9 @@ from .statedir import (
     clear_endpoint,
     create_private,
     db_path,
+    endpoint_alive,
     ensure_state_dir,
     load_or_create_token,
-    pid_alive,
     read_endpoint,
     read_token,
     resolve_state_dir,
@@ -134,18 +134,32 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"serve: cannot make the state directory private: {clean(exc)}", file=sys.stderr)
         return 2
     existing = read_endpoint(state_dir)
-    if existing is not None and isinstance(existing.get("pid"), int) and pid_alive(existing["pid"]) and existing["pid"] != os.getpid():
+    if existing is not None and existing.get("pid") != os.getpid() and endpoint_alive(existing):
         print(f"a daemon already serves this state directory at {existing['url']} (pid {existing['pid']}); stop it first", file=sys.stderr)
         return 2
     token = load_or_create_token(state_dir)
     with Store.open(db_path(state_dir)) as store:
-        store.migrate()
+        version = store.migrate()
+        drift = store.schema_drift()
         store.trust = "system"
         store.end_orphaned_claims()
+    if drift:
+        # Served all the same: most requests do not touch the tables named, and
+        # stopping would turn a broken feature into a broken bus. Said here,
+        # because under a service this is the log.
+        print(f"warning: {db_path(state_dir)} is stamped schema {version} but its tables "
+              "differ from that schema's; requests that use them may fail. "
+              "Copy the database before repairing it:", file=sys.stderr)
+        for problem in drift:
+            print(f"  {clean(problem)}", file=sys.stderr)
     server = BusServer(str(db_path(state_dir)), token, host=args.host, port=args.port, allow_remote=args.allow_remote,
                        allow_unattributed=bool(getattr(args, "allow_unattributed", False)),
                        approve_with=getattr(args, "approve_with", "auto"))
-    write_endpoint(state_dir, server.url, os.getpid(), server.started_at)
+    try:
+        own_start: Optional[str] = procinfo.stable_started_at(os.getpid())
+    except procinfo.ProcessError:
+        own_start = None  # readers fall back to the pid, as for an older daemon's record
+    write_endpoint(state_dir, server.url, os.getpid(), server.started_at, process_started_at=own_start)
     print(f"luciazero-agentd listening on {server.url} (state: {state_dir})", flush=True)
 
     def _stop(*_: object) -> None:
@@ -480,7 +494,7 @@ def cmd_next(args: argparse.Namespace) -> int:
         print(json.dumps(actions, indent=2, sort_keys=True))
         return 0
     endpoint = read_endpoint(state_dir)
-    if endpoint is None or not (isinstance(endpoint.get("pid"), int) and pid_alive(endpoint["pid"])):
+    if not endpoint_alive(endpoint):
         # Nothing else can happen while the daemon is down, so it is the whole
         # answer rather than a warning above the real one.
         print(f"the daemon is not running on {state_dir}. Start it, and everything below resumes:")
@@ -615,7 +629,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     except DispatchError as exc:
         print(f"dispatch: {clean(exc)}", file=sys.stderr)
         return 2
-    recovered = engine.recover_all()
+    try:
+        recovered = engine.recover_all()
+    except StoreError as exc:
+        # The first time the dispatcher opens the store: a store it may not
+        # migrate, or one newer than it, is refused here, before any turn.
+        print(f"dispatch: {clean(exc)}", file=sys.stderr)
+        return 2
     for run in recovered:
         print(f"recovered run {clean(run['id'])} for {clean(run['agent_id'])}: {clean(run['delivery_state'])}", file=sys.stderr)
     if args.watch and args.once:
@@ -729,7 +749,7 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
     child = {**os.environ, **env, "LUCIAZERO_AGENT_BUS_HOME": str(state_dir)}
     # An ephemeral port, always. The stable 8765 belongs to the installed
     # service, which passes its own `--port`, and this path only runs when no
-    # daemon is recorded here at all -- so it never competes with one. What it
+    # live daemon is recorded here -- so it never competes with one. What it
     # does compete with is every other daemon on the machine: a second state
     # directory is a second daemon, two daemons cannot share a port, and the
     # loser dies with `Errno 48` in a log nobody reads. `cmd_serve` writes the
@@ -789,7 +809,7 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
 def _live_endpoint(state_dir: Path) -> Optional[dict[str, Any]]:
     """A recorded endpoint whose process is still there, or None."""
     endpoint = read_endpoint(state_dir)
-    if endpoint is not None and isinstance(endpoint.get("pid"), int) and pid_alive(endpoint["pid"]):
+    if endpoint_alive(endpoint):
         return endpoint
     return None
 
@@ -808,7 +828,12 @@ def _open_store(command: str, state_dir: Path) -> Optional[Store]:
             print(f"{command}: {clean(exc)}", file=sys.stderr)
             return None
     store = Store.open(path)
-    store.migrate()
+    try:
+        store.migrate()
+    except StoreError as exc:
+        store.close()
+        print(f"{command}: {clean(exc)}", file=sys.stderr)
+        return None
     store.trust = "human"  # ADR 0004: the user's own terminal, not a peer's claim
     return store
 
@@ -1013,13 +1038,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"run: --strict is only supported by claude, not {clean(provider)}; "
               "it passes claude's --strict-mcp-config, which has no equivalent here", file=sys.stderr)
         return 2
-    endpoint = read_endpoint(state_dir)
+    # Only a daemon that is still there counts: one killed without its
+    # cleanup (kill -9, a crash, power loss) leaves endpoint.json behind,
+    # and taking it at its word pointed the provider at a port nobody serves.
+    recorded = read_endpoint(state_dir)
+    endpoint = _live_endpoint(state_dir)
     if endpoint is None and args.autostart:
         endpoint = _autostart_daemon(state_dir)
         if endpoint is None:
             return 2
     if endpoint is None:
-        print(f"run: no running daemon recorded in {state_dir} (start one with: python3 -m luciazero_agentd serve)", file=sys.stderr)
+        gone = f"; the one recorded (pid {recorded.get('pid')}) has exited" if recorded is not None else ""
+        print(f"run: no running daemon recorded in {state_dir}{gone} (start one with: python3 -m luciazero_agentd serve)", file=sys.stderr)
         return 2
     # Asked before anything is created, because the answer decides whether
     # this command can work at all: a binding is anchored to the child's pid
@@ -1552,7 +1582,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--state-dir", default=None)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
-    serve.add_argument("--allow-remote", action="store_true", help="permit a non-loopback --host (token still required)")
+    serve.add_argument("--allow-remote", action="store_true", help="permit a non-loopback --host: plain HTTP, so the token crosses the network in clear, and any Host header is accepted (token still required)")
     serve.add_argument("--approve-with", choices=("auto", "dialog", "console"), default="auto",
                        dest="approve_with",
                        help="how a session's claim is put to you: dialog (a window this daemon raises; macOS), "

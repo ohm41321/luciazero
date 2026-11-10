@@ -102,6 +102,21 @@ you, and what to type when you want to do a piece of it yourself.
    state directory. Override the directory with `LUCIAZERO_AGENT_BUS_HOME`
    or `--state-dir`; tests and the demo always use a temporary one.
 
+   The daemon binds `127.0.0.1` only. `serve --host 0.0.0.0 --allow-remote`
+   exposes it beyond loopback, and that changes more than the interface:
+
+   - It is plain HTTP, with no TLS. The bearer token and every message, task
+     and artifact cross the network as written, so anyone who can watch that
+     network can read them and present the token themselves.
+   - The `Host` check is off: any `Host` header is accepted, so DNS
+     rebinding is no longer refused by name. The token is still required, and
+     a foreign `Origin` is still answered 403.
+
+   To reach the bus from another machine, prefer an SSH tunnel
+   (`ssh -L 8765:127.0.0.1:8765 <host>`): the daemon stays on loopback and
+   needs no `--allow-remote`. Use `--allow-remote` only on a network you
+   would hand the token to.
+
 2. Name the team once. A pull-beta turn exists only when you open that
    agent's session, so the first agent must be able to address peers that
    have not registered yet:
@@ -149,6 +164,15 @@ as root or an administrator; Cygwin is refused by name. The unit always
 serves with strict binding — a service is never
 installed with `--allow-unattributed` — and its output goes to
 `daemon.log` in the state directory.
+
+The service starts in the directory the `luciazero_agentd` package lives in,
+not your home directory. `python -m` and `python -c` put the working
+directory first on the import path, so a service started in your home
+imported any `argparse.py` or `json.py` left there in place of the standard
+library's. The package directory is on the import path already. `service
+install` also creates the state directory if it is missing, before it writes
+the service file: the service manager opens `daemon.log` there before the
+daemon runs, and systemd does not create the directory for it.
 
 Every file carries an ownership marker. A service file that is not ours is
 reported and left exactly as it is, never backed up and replaced, and
@@ -815,6 +839,25 @@ that read it, the number of turns waited on, and the longest wait.
   are checked by their process and stay bound.
 - **A second daemon.** `serve` refuses to start while `endpoint.json` names
   a live process, and a daemon only ever removes its own record.
+- **A daemon that died without its cleanup** (`kill -9`, a crash, power
+  loss) leaves `endpoint.json` behind. `run` checks that the recorded process
+  is still there, and is the one that started when the daemon recorded it,
+  since after a reboot its pid can belong to anything. If not, it starts a
+  daemon of its own, or, with `--no-autostart`, says the recorded one has
+  exited. When the process table cannot be read, the pid alone decides.
+- **A daemon from another checkout.** Every command migrates the store it
+  opens, and the launcher prefers the clone it runs from. A command from a
+  newer checkout refuses to migrate a store that a running daemon still
+  serves, because that daemon would then refuse every request as newer than
+  itself. Stop the daemon and start it from the newer checkout, or run the
+  command from the checkout the daemon runs from.
+- **A schema that does not match its version.** `user_version` is only a
+  number. When `serve` starts, it compares the store's tables, columns and
+  indexes with a fresh store at the same version, and names each difference
+  on stderr (`daemon.log` under a service), for example `table
+  claim_requests: column code_hash is missing`. It serves all the same,
+  because most requests do not touch the tables named. Copy `bus.sqlite3`
+  before repairing it.
 - **Stale worktree.** If an agent's checkout changed branch, moved, or was
   deleted, its next claim or publish is refused with `WorktreeMismatch` and
   a `worktree.mismatch` event. Restore the branch, or finish the task as

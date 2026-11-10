@@ -154,6 +154,40 @@ class PlanTests(ServiceCase):
             plan = self.plan(platform=platform, environ={"PATH": "/opt/homebrew/bin:/usr/bin"})
             self.assertIn("/opt/homebrew/bin:/usr/bin", plan.files[0][1])
 
+    def workdir(self, platform: str) -> str:
+        """The directory the service manager starts the daemon in."""
+        (_, content), = self.plan(platform=platform).files
+        if platform == "darwin":
+            return plistlib.loads(content.encode("utf-8"))["WorkingDirectory"]
+        if platform == "win32":
+            task = ElementTree.fromstring(content.split("?>", 1)[1])
+            return task.find("t:Actions/t:Exec/t:WorkingDirectory", WindowsTaskTests.NS).text
+        line, = [line for line in content.splitlines() if line.startswith("WorkingDirectory=")]
+        return line.split("=", 1)[1]
+
+    def test_the_service_starts_in_its_package_directory_not_the_home(self) -> None:
+        """`python -m` and `python -c` put the working directory first on
+        sys.path, so a daemon started in the home directory imported any
+        argparse.py or json.py left there instead of the standard library's.
+        The directory the package lives in holds the package and nothing that
+        shadows the standard library, and it is there whenever the service can
+        run at all, unlike a state directory somebody deleted to start over."""
+        home = str(service._package_home())
+        for platform in ("darwin", "win32"):
+            self.assertEqual(home, self.workdir(platform), platform)
+        self.assertEqual(service._no_specifier(home), self.workdir("linux"))
+
+    def test_a_module_left_in_the_home_directory_is_not_imported(self) -> None:
+        """The service's own command, run where its file says, with a module
+        in the home directory that shadows one the daemon imports."""
+        (self.root / "argparse.py").write_text("raise SystemExit(9)\n", encoding="utf-8")
+        job = plistlib.loads(self.plan().files[0][1].encode("utf-8"))
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "LUCIAZERO_AGENT_BUS_HOME")}
+        env.update(job["EnvironmentVariables"])
+        done = subprocess.run([*job["ProgramArguments"][:3], "--help"], cwd=job["WorkingDirectory"],
+                              env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+
     def test_a_path_with_a_newline_is_refused_before_a_file_exists(self) -> None:
         """A newline ends a systemd directive, so the path would add a line of
         its own -- an ExecStartPre=, say -- to a unit the user believes
@@ -244,6 +278,25 @@ class SystemdTests(ServiceCase):
         self.assertEqual('"say \\"hi\\""', service._systemd_quote('say "hi"'))
         self.assertEqual('"back\\\\slash"', service._systemd_quote("back\\slash"))
 
+    def test_the_working_directory_is_written_the_way_systemd_reads_it(self) -> None:
+        """systemd takes WorkingDirectory= literally, quotes included: a quoted
+        path is not absolute, and the unit is refused as a bad setting. A
+        space needs no quoting there; a percent sign is still a specifier."""
+        odd = Path(self._tmp.name) / "my code" / "100%done"
+        with mock.patch.object(service, "_package_home", return_value=odd):
+            content = self.plan(platform="linux").files[0][1]
+        line, = [line for line in content.splitlines() if line.startswith("WorkingDirectory=")]
+        self.assertEqual("WorkingDirectory=" + str(odd).replace("%", "%%"), line)
+
+    def test_a_working_directory_systemd_would_misread_is_refused(self) -> None:
+        """Unquoted, trailing whitespace is trimmed and a final backslash
+        joins the next line, so either would mean another path. (An absolute
+        path cannot start with whitespace.)"""
+        for bad in ("trail ", "trail\t", "end\\"):
+            with mock.patch.object(service, "_package_home", return_value=Path(self._tmp.name) / bad):
+                with self.assertRaises(service.ServiceError, msg=repr(bad)):
+                    self.plan(platform="linux")
+
     def test_a_percent_in_a_path_cannot_become_a_systemd_specifier(self) -> None:
         """`/tmp/100%done` reaches systemd as the `%d` specifier, which
         silently points the daemon at a different directory."""
@@ -313,7 +366,7 @@ class WindowsTaskTests(ServiceCase):
                     *plan.command[3:]]
         self.assertEqual(subprocess.list2cmdline(expected), action.find("t:Arguments", self.NS).text)
         self.assertNotIn("--allow-unattributed", expected)
-        self.assertEqual(str(self.root), action.find("t:WorkingDirectory", self.NS).text)
+        self.assertEqual(str(service._package_home()), action.find("t:WorkingDirectory", self.NS).text)
 
     def test_the_bootstrap_sets_the_home_and_the_log_before_the_daemon_runs(self) -> None:
         """What a task cannot do for itself: set an environment, and send
@@ -563,6 +616,31 @@ class InstallTests(ServiceCase):
         result = service.install(plan, runner=runner, dry_run=True)
         self.assertEqual([(str(plan.paths()[0]), "created")], result["files"])
         self.assertFalse(plan.paths()[0].exists())
+        self.assertEqual([], runner.commands)
+
+    def test_install_makes_the_directory_the_log_goes_to(self) -> None:
+        """The service manager opens the log before the daemon runs, and
+        systemd does not create a missing directory for StandardOutput=.
+        Installing before `init` must still leave a service that starts and
+        says in its log why it stopped."""
+        self.state.rmdir()
+        plan = self.plan()
+        service.install(plan, runner=FakeRunner(), dry_run=True)
+        self.assertFalse(self.state.exists(), "a dry run makes nothing")
+        service.install(plan, runner=FakeRunner())
+        self.assertTrue(self.state.is_dir())
+        self.assertIsNone(private_problem(self.state))
+
+    def test_a_state_directory_that_cannot_be_made_is_an_error_before_any_file(self) -> None:
+        blocker = Path(self._tmp.name) / "a file"
+        blocker.write_text("not a directory\n", encoding="utf-8")
+        plan = service.plan(state_dir=str(blocker / "state"), root=self.root, platform="darwin",
+                            uid=501, environ={}, which=lambda name: None)
+        runner = FakeRunner()
+        with self.assertRaises(service.ServiceError) as caught:
+            service.install(plan, runner=runner)
+        self.assertIn(str(blocker / "state"), str(caught.exception))
+        self.assertFalse(plan.paths()[0].exists(), "no service file for a service that cannot log")
         self.assertEqual([], runner.commands)
 
     def test_a_failing_required_step_is_an_error_not_a_success(self) -> None:

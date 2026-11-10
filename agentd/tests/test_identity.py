@@ -661,6 +661,70 @@ class HumanCommands(unittest.TestCase):
         self.assertIsNotNone(endpoint, done.stderr)
         self.assertIn("hello", done.stdout)
 
+    def _dead_endpoint(self) -> int:
+        """An endpoint.json left by a daemon that died without its cleanup
+        (kill -9, a crash, power loss): its pid is gone, its port answers
+        nothing."""
+        from luciazero_agentd.statedir import ensure_state_dir, write_endpoint
+
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        ensure_state_dir(self.state)
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", gone.pid, "2026-01-01T00:00:00Z")
+        return gone.pid
+
+    def test_run_starts_a_daemon_when_the_recorded_one_is_gone(self) -> None:
+        """A daemon that died without its cleanup leaves its endpoint.json
+        behind. Taken at its word, `run` started no daemon and pointed the
+        provider at a port nobody serves."""
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        dead = self._dead_endpoint()
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        endpoint = read_endpoint(self.state)
+        self.assertIsNotNone(endpoint, done.stderr)
+        self.assertNotEqual(endpoint["pid"], dead, "run kept the endpoint of a daemon that is gone")
+        self.assertTrue(pid_running(endpoint["pid"]), done.stderr)
+        self.assertNotIn("127.0.0.1:1/", done.stdout, "the provider was pointed at the dead daemon's port")
+
+    def _reused_endpoint(self) -> int:
+        """endpoint.json after a crash and a reboot: the recorded pid is in
+        use again, by a process that started at another time. That process
+        is a child of the test, never the test itself: the cleanup stops
+        whatever endpoint.json names."""
+        from luciazero_agentd.statedir import ensure_state_dir, write_endpoint
+
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        ensure_state_dir(self.state)
+        write_endpoint(self.state, "http://127.0.0.1:1/mcp", other.pid, "2026-01-01T00:00:00Z",
+                       process_started_at="Thu Jan  1 00:00:00 1970")
+        return other.pid
+
+    def test_run_starts_a_daemon_when_the_recorded_pid_is_another_process(self) -> None:
+        from luciazero_agentd.statedir import read_endpoint
+
+        self.addCleanup(self._stop_daemon)
+        reused = self._reused_endpoint()
+        done = self.cli("run", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        endpoint = read_endpoint(self.state)
+        self.assertNotEqual(endpoint["pid"], reused, "a pid in use again was taken for the daemon")
+        self.assertNotIn("127.0.0.1:1/", done.stdout)
+
+    def test_no_autostart_refuses_an_endpoint_whose_daemon_is_gone(self) -> None:
+        dead = self._dead_endpoint()
+        done = self.cli("run", "--no-autostart", "--agent", "claude-reviewer", "--provider", "claude",
+                        "--state-dir", str(self.state), "--", self._echo(), "hello", raw=True)
+        self.assertEqual(done.returncode, 2, done.stdout)
+        self.assertIn("no running daemon", done.stderr)
+        self.assertIn(f"pid {dead}", done.stderr)
+
     def test_no_autostart_leaves_the_old_refusal_in_place(self) -> None:
         """Automation that wants to know a daemon was already running keeps
         the answer it had."""
@@ -855,9 +919,14 @@ class HumanCommands(unittest.TestCase):
             "def proxy(pid, master, **_):\n"
             "    os.close(master)\n"
             "    return os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])\n"
+            "from pathlib import Path\n"
+            "from luciazero_agentd.statedir import read_endpoint\n"
+            "def daemon():\n"
+            "    return (read_endpoint(Path(os.environ['LUCIAZERO_AGENT_BUS_HOME'])) or {}).get('pid')\n"
             "real = procinfo.started_at\n"
             "def started_at(pid, **kw):\n"
-            "    if pid != os.getpid():\n"
+            "    # The daemon's start time is read too, to tell it from a reused pid.\n"
+            "    if pid not in (os.getpid(), daemon()):\n"
             "        print(f'provider pid {pid}', file=sys.stderr, flush=True)\n"
             "        os.kill(os.getpid(), signal.SIGTERM)\n"
             "    return real(pid, **kw)\n"

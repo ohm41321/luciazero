@@ -32,6 +32,21 @@ elif [ -n "${CI:-}" ] || [ -n "${LZ_REQUIRE_LINT:-}" ]; then
 else
   echo "skip shellcheck (not installed — local only; CI fails without it)"
 fi
+# 2a. Every tracked shell script is lint input: one missing from SCRIPTS gets
+# no syntax, bash 3.2 or ShellCheck pass, and green says nothing about it.
+# The legacy fixtures are byte-for-byte copies of released hooks that the
+# upgrade tests install: they stay as shipped, findings and all.
+if TRACKED_SH="$(git -C "${ROOT}" ls-files '*.sh' 2>/dev/null)" && [ -n "${TRACKED_SH}" ]; then
+  UNLINTED=""
+  while IFS= read -r S; do
+    case "${S}" in tests/fixtures/legacy-*.sh) continue ;; esac
+    case " ${SCRIPTS[*]} " in *" ${S} "*) ;; *) UNLINTED="${UNLINTED} ${S}" ;; esac
+  done <<<"${TRACKED_SH}"
+  [ -z "${UNLINTED}" ] || fail "tracked shell scripts missing from SCRIPTS in test.sh, so never linted:${UNLINTED}"
+  echo "ok  every tracked shell script is linted"
+else
+  echo "skip tracked shell script coverage (not a git checkout)"
+fi
 
 # 2b. Never pipe into `grep -q`. grep exits at the first match; under
 # pipefail the writer's next write then meets a closed pipe and the match

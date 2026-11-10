@@ -19,11 +19,14 @@
 //             prompt inside an open turn is a background-task notice: kept)
 //   bash-start — PreToolUse on Bash: start shell-command timing
 //   edit    — PostToolUse on Edit|Write|NotebookEdit : record "an edit happened"
-//   bash    — PostToolUse on Bash: record duration, verify runs, and status
+//   bash    — PostToolUse on Bash: record duration, verify runs, and status;
+//             for any other command, when this session's shell ran
 //   bash-failure — PostToolUseFailure on Bash: record failed commands
 //   skill   — PostToolUse on Skill: count model-invoked skills
 //   skill-prompt — UserPromptExpansion: count user-invoked slash skills
 //   stop    — Stop                                   : warn once if edits are unverified
+//             or red; files the session's shell commands changed (asked of
+//             git) count as its edits
 //   session — SessionStart                           : point at an existing Lucia Relay
 //   doctrine— SessionStart (plugin installs only)    : emit the doctrine as context
 //             (plugins cannot add a CLAUDE.md import line; this is the same
@@ -47,9 +50,11 @@
 // one schema-versioned JSON line per stop outcome (stop-clean / nudge /
 // strict-block) to luciazero-stats.log in the harness config dir — local only,
 // capped at ~250 lines, fail-open. It records a privacy-preserving project
-// hash, verify mode, and aggregate latency/counts — including how long verify
-// commands ran and how many came back green with no edit since the previous
-// green (schema 3) — never the project path, command, or skill name.
+// hash, the project folder's own name (for the report), verify mode, and
+// aggregate latency/counts — including how long verify commands ran and how
+// many came back green with no edit since the previous green (schema 3) —
+// never the project path, command, or skill name. Reading git at stop runs
+// read-only commands only (no optional locks, no fsmonitor).
 // Uninstall keeps it.
 "use strict";
 
@@ -94,6 +99,7 @@ const DEFAULT_VERIFY_RE = "verify|test\\.sh|python[0-9.]* -m unittest|test-timin
 // after editing requirements.txt.
 const DEFAULT_DOC_RE = "\\.(md|markdown|rst)$";
 const NUDGE_TEXT = "Doctrine rule 1: edits were made but no verify command has run since the last edit. Run the repo's verify command and quote its decisive line — or finish anyway and say plainly that the change is unverified. (This nudge fires once.)";
+const RED_TEXT = "Doctrine rule 3: the last verify run after these edits failed or could not run, and none has passed since. Fix the cause and run it again — or finish anyway and say plainly that the work is red. (This nudge fires once.)";
 
 function home() {
   // os.homedir() reads HOME on POSIX and USERPROFILE on Windows, which is
@@ -107,6 +113,23 @@ function home() {
 
 function configDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(home(), ".claude");
+}
+
+// Whether Claude Code already loads the doctrine from its classic install:
+// the file, and a line in CLAUDE.md that imports it. Uninstall keeps a
+// customized copy and removes the line, so the file alone loads nothing.
+function claudeDoctrineInstalled() {
+  const dir = configDir();
+  if (!isFile(path.join(dir, "luciazero.md"))) return false;
+  const file = path.join(dir, "CLAUDE.md");
+  let text;
+  try {
+    if (!isFile(file) || fs.statSync(file).size > LIMIT) return false;
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return false;
+  }
+  return text.split(/\r?\n/).some((line) => /^@(.*[\\/])?luciazero\.md$/.test(line.trim()));
 }
 
 // Whether Codex already loads the doctrine from its classic install
@@ -283,7 +306,121 @@ function recordVerify(state, status, startMs, command) {
   // Keep only an opaque digest for strict-gate equality; raw commands may
   // contain paths or secrets and must never persist in shared state.
   write(path.join(state, "last_verify_cmd_hash"), sha256(command, 64) + "\n");
+  // When the run ended: what a verify writes while it runs (coverage, a
+  // report) is no edit after it, for the shell-edit check at stop.
+  write(path.join(state, "last_verify_end"), Date.now() + "\n");
+  // The latest run that did not fail, stamped like last_verify: edits made
+  // before it are the ones a red after it does not make red again.
+  if (status !== "fail") {
+    const pass = path.join(state, "last_pass");
+    write(pass, status + "\n");
+    if (startMs !== null) stampAt(pass, startMs);
+  }
   return true;
+}
+
+// `touch`, or with atMs, a time of at least atMs, never moved back.
+function stamp(file, atMs) {
+  const was = mtime(file);
+  if (atMs === null || was === null) touch(file);
+  if (atMs !== null && (was === null || was < atMs)) stampAt(file, atMs);
+}
+
+// A code edit by the session `key`, made now or at atMs. The first edit this
+// copy records keeps the time of the last one an older copy recorded, which
+// no session's edited/ entry carries. It re-arms this session's nudge, and an
+// older copy's.
+function recordEdit(state, key, atMs = null) {
+  const edited = path.join(state, "edited");
+  const before = fs.existsSync(edited) ? null : mtime(path.join(state, "last_edit"));
+  stamp(path.join(state, "last_edit"), atMs);
+  if (mkdirs(edited)) {
+    if (before !== null) {
+      try {
+        fs.writeFileSync(path.join(state, "legacy_edit"), "", { flag: "wx" });
+        stampAt(path.join(state, "legacy_edit"), before);
+      } catch {}
+    }
+    stamp(path.join(edited, key), atMs);
+  }
+  removeFile(path.join(state, "nudged-sessions", key));
+  removeOlderMarker(state);
+}
+
+// Whether a file an edit wrote is code: neither a relay artifact, nor
+// documentation (closeout skills write docs AFTER the final green verify),
+// nor the agent's own scratch file outside the project.
+function codeEdit(file, cwd, project) {
+  const name = file.split(WINDOWS ? /[\\/]/ : /\//).pop();
+  if (file !== name && (name === "LUCIA_RELAY.json" || name === "LUCIA_RELAY.md")) return false;
+  if (file && anyLine(file, process.env.LUCIAZERO_DOC_REGEX || DEFAULT_DOC_RE)) return false;
+  return !scratchEdit(file, cwd, project);
+}
+
+// Codex's apply_patch names its files inside the patch, not in file_path.
+function patchFiles(text) {
+  const names = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/.exec(line);
+    if (m && m[1].trim()) names.push(m[1].trim());
+  }
+  return names;
+}
+
+// A session's shell commands since its last stop: when the first started and
+// the last ended, as "<start> <end>" in shell/<key>. A command can change
+// files with no Edit or Write (sed -i, a heredoc, a formatter, a commit hook).
+function noteShell(state, key, startMs, endMs) {
+  const dir = path.join(state, "shell");
+  if (!mkdirs(dir)) return;
+  const file = path.join(dir, key);
+  const [first, last] = readTrimmed(file).split(" ").map(Number);
+  write(file, `${first > 0 ? Math.min(first, startMs) : startMs} ${last > 0 ? Math.max(last, endMs) : endMs}\n`);
+}
+
+// At stop: the files this session's shell commands changed after the last
+// verify ended, recorded as its edit. git names the candidates -- what
+// differs from HEAD, what it does not ignore among untracked files, what
+// commits made since then touched -- and one counts when it changed while
+// those commands ran and is code, as codeEdit says. A removed file counts by
+// its directory's time. Anything git cannot answer, a directory outside any
+// work tree among them, leaves the state as it was.
+function shellEdits(state, cwd, project, key) {
+  const file = path.join(state, "shell", key);
+  const [first, last] = readTrimmed(file).split(" ").map(Number);
+  removeFile(file);
+  if (!(first > 0 && last >= first)) return;
+  const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
+  const verified = ended > 0 ? ended : mtime(path.join(state, "last_verify"));
+  if (verified !== null && last <= verified) return;
+  const since = verified === null ? first : Math.max(first, verified + 1);
+  const until = last + 1000;
+  const top = (gitOut(project, ["rev-parse", "--show-toplevel"]) || "").trim();
+  if (!top) return;
+  const status = gitOut(top, ["status", "--porcelain", "-z"]);
+  if (status === null) return;
+  const names = [];
+  const fields = status.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    if (fields[i].length < 4) continue;
+    names.push(fields[i].slice(3));
+    if (/^[RC]/.test(fields[i])) i += 1; // a rename's second field is the old name
+  }
+  const log = gitOut(top, ["log", `--since=@${Math.floor(since / 1000)}`, "--name-only", "--format=", "-z"]);
+  if (log !== null) names.push(...log.split(/[\0\n]/).filter(Boolean));
+  let newest = null;
+  for (const name of [...new Set(names)].slice(0, 20000)) {
+    const abs = path.join(top, name.replace(/\/$/, ""));
+    if (!codeEdit(abs, cwd, project)) continue;
+    let at = null;
+    try {
+      at = fs.statSync(abs).mtimeMs;
+    } catch {
+      at = mtime(path.dirname(abs));
+    }
+    if (at !== null && at >= since && at <= until && (newest === null || at > newest)) newest = at;
+  }
+  if (newest !== null) recordEdit(state, key, newest);
 }
 
 function readTrimmed(file) {
@@ -823,7 +960,7 @@ function defaultVerify(command) {
 // and at the home directory, and it never reads the user's
 // own config directory. Personal settings (global `~/.claude/settings.json`,
 // gitignored `.claude/settings.local.json`) are the user's scope and keep
-// working.
+// working; a settings.local.json that git tracks is committed, and refused.
 //
 // Refusal only ever falls back to this file's own defaults, never to a block,
 // and a parse error leaves the configured values untouched. Every mode pays for
@@ -868,6 +1005,55 @@ function samePath(a, b) {
   return WINDOWS ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+// git by its full path on Windows, where a bare name is looked for in the
+// working directory -- the project a hook looks at -- before PATH. Only
+// PATH's absolute entries are searched, and only for a program: a batch file
+// would need cmd.exe, which searches the working directory too.
+function gitProgram() {
+  if (!WINDOWS) return "git";
+  const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+  const exts = (process.env.PATHEXT || ".COM;.EXE").split(";").map((ext) => ext.toLowerCase())
+    .filter((ext) => ext === ".com" || ext === ".exe");
+  for (const entry of (key ? process.env[key] : "").split(path.delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
+    if (!dir || !path.isAbsolute(dir)) continue;
+    for (const ext of exts) {
+      const file = path.join(dir, `git${ext}`);
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+// One read-only git call in dir: its stdout on exit 0, else null. No
+// optional locks, so it never rewrites the index of the repository it reads,
+// and no fsmonitor, which would run a program the repository's config names.
+function gitOut(dir, args) {
+  const git = gitProgram();
+  if (git === null) return null;
+  try {
+    const r = childProcess.spawnSync(git, ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir, ...args], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 3000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return r.status === 0 && !r.error ? r.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
+// .claude/settings.local.json is the user's own file, which Claude Code keeps
+// out of git. A repository that commits one has made it project scope. git is
+// asked only when the file sets a refused key, so most hook calls start no
+// process for this.
+function committedLocalKeys(claudeDir) {
+  const keys = keysIn(path.join(claudeDir, "settings.local.json"));
+  if (!keys.length) return [];
+  return gitOut(claudeDir, ["ls-files", "--error-unmatch", "--", "settings.local.json"]) === null ? [] : keys;
+}
+
 function refusedKeys(start) {
   const homeDir = real(home() || path.sep);
   // Only the DEFAULT config directory counts as user scope. CLAUDE_CONFIG_DIR
@@ -878,6 +1064,8 @@ function refusedKeys(start) {
   const userConfig = real(path.join(homeDir, ".claude"));
   const projectDir = process.env.CLAUDE_PROJECT_DIR ? real(process.env.CLAUDE_PROJECT_DIR) : null;
   const found = [];
+  // which files set them, for the one line SessionStart prints
+  found.files = [];
   let directory = real(start || ".");
   // Inside the session's project the walk goes on up to it: a submodule or
   // nested checkout below the project root does not end the project's scope.
@@ -886,8 +1074,12 @@ function refusedKeys(start) {
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const claudeDir = path.join(directory, ".claude");
     if (!samePath(directory, homeDir) && !samePath(real(claudeDir), userConfig)) {
-      for (const key of keysIn(path.join(claudeDir, "settings.json"))) {
-        if (!found.includes(key)) found.push(key);
+      for (const [name, keys] of [["settings.json", keysIn(path.join(claudeDir, "settings.json"))],
+        ["settings.local.json", committedLocalKeys(claudeDir)]]) {
+        if (keys.length && !found.files.includes(".claude/" + name)) found.files.push(".claude/" + name);
+        for (const key of keys) {
+          if (!found.includes(key)) found.push(key);
+        }
       }
     }
     if (samePath(directory, homeDir)) break;
@@ -1223,9 +1415,10 @@ function runStrict(state, cwd, command, timeout) {
 // Drop every knob the project's committed settings set (see refusedKeys);
 // the names refused.
 function dropRefused(cwd) {
-  let refused = refusedKeys(cwd);
+  const found = refusedKeys(cwd);
   // `LUCIAZERO_*` is the oversized-file marker: drop every knob this hook reads
-  if (refused.includes("LUCIAZERO_*")) refused = ALL_KNOBS.slice();
+  const refused = found.includes("LUCIAZERO_*") ? ALL_KNOBS.slice() : found;
+  refused.files = found.files;
   for (const name of refused) {
     if (/^LUCIAZERO_[A-Z_]+$/.test(name) || name === "CLAUDE_CONFIG_DIR") delete process.env[name];
   }
@@ -1254,7 +1447,7 @@ function main(argv) {
     if (!codex) dropRefused(process.env.CLAUDE_PROJECT_DIR || process.env.PWD || process.cwd());
     // a classic install already loads this text — never twice: Claude Code's
     // through its CLAUDE.md import, Codex's through its AGENTS.md block
-    if (codex ? codexDoctrineInstalled() : isFile(path.join(configDir(), "luciazero.md"))) return 0;
+    if (codex ? codexDoctrineInstalled() : claudeDoctrineInstalled()) return 0;
     try {
       process.stdout.write(fs.readFileSync(path.join(__dirname, "..", "luciazero.md")));
     } catch {}
@@ -1383,36 +1576,16 @@ function main(argv) {
       return 0;
     }
     case "edit": {
-      // Documentation writes do not re-arm the nudge: closeout skills write
-      // docs AFTER the final green verify. Relay's JSON is also a transient
-      // knowledge artifact, not implementation code.
-      const docRe = process.env.LUCIAZERO_DOC_REGEX || DEFAULT_DOC_RE;
-      const separators = WINDOWS ? /[\\/]/ : /\//;
-      const base = filePath.split(separators).pop();
-      const relay = filePath !== base && (base === "LUCIA_RELAY.json" || base === "LUCIA_RELAY.md");
-      let counted = "yes";
-      if (relay) counted = "no";
-      else if (filePath && anyLine(filePath, docRe)) counted = "no"; // doc-only write; verify state unchanged
-      else if (scratchEdit(filePath, cwd, project)) counted = "no"; // the agent's own scratch file
-      else {
-        // The first edit this copy records keeps the time of the last one an
-        // older copy recorded, which no session's edited/ entry carries.
-        const edited = path.join(state, "edited");
-        const before = fs.existsSync(edited) ? null : mtime(path.join(state, "last_edit"));
-        touch(path.join(state, "last_edit"));
-        if (mkdirs(edited)) {
-          if (before !== null) {
-            try {
-              fs.writeFileSync(path.join(state, "legacy_edit"), "", { flag: "wx" });
-              stampAt(path.join(state, "legacy_edit"), before);
-            } catch {}
-          }
-          touch(path.join(edited, editorKey));
-        }
-        // a new code edit re-arms this session's nudge, and an older copy's
-        removeFile(path.join(state, "nudged-sessions", editorKey));
-        removeOlderMarker(state);
-      }
+      // Documentation, relay and scratch writes do not re-arm the nudge (see
+      // codeEdit). A patch with no file_path (Codex's apply_patch) is code
+      // when any file it names is; one that names none counts, as every
+      // edit did.
+      const patched = filePathState === "missing" && toolInput && typeof toolInput.command === "string"
+        ? patchFiles(toolInput.command).map((name) => path.resolve(cwd, name)) : [];
+      const base = filePath.split(WINDOWS ? /[\\/]/ : /\//).pop();
+      const counted = (patched.length ? patched.some((file) => codeEdit(file, cwd, project))
+        : codeEdit(filePath, cwd, project)) ? "yes" : "no";
+      if (counted === "yes") recordEdit(state, editorKey);
       // Opt-in diagnostic (LUCIAZERO_EDIT_DIAG=1): one line per edit event in
       // the state directory, next to last_edit, saying what the event carried
       // and what the hook made of it -- the tool's name, the opaque tool key,
@@ -1483,7 +1656,11 @@ function main(argv) {
           }
         }
         const started = /^\d+$/.test(startMs) && nowMs >= Number(startMs) ? Number(startMs) : null;
-        if (recordVerify(state, status || "ran", started, command)) settleNudged(state);
+        // A red run settles no nudge: the edits it covers are still not
+        // proven, and a session already nudged for them is not nudged again.
+        if (recordVerify(state, status || "ran", started, command) && status !== "fail") settleNudged(state);
+      } else if (!background && /^\d+$/.test(startMs) && nowMs >= Number(startMs)) {
+        noteShell(state, editorKey, Number(startMs), nowMs);
       }
       return 0;
     }
@@ -1502,6 +1679,9 @@ function main(argv) {
         endTurn();
         return 0;
       }
+      // what this session's shell commands changed is an edit like any other,
+      // for the strict gate's fast path too
+      shellEdits(state, cwd, project, editorKey);
       // Strict gate (opt-in, see header): actually run the user's verify
       // command unless the tracked state is already green-after-last-edit. Any
       // internal error — timeout, missing command, unparseable state — degrades
@@ -1542,12 +1722,20 @@ function main(argv) {
       // clean while another session's edit waits for a verify.
       const lastEdit = lastEditOf(state, editorKey);
       const lastVerify = mtime(path.join(state, "last_verify"));
-      const nudge = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
+      const unverified = lastEdit !== null && (lastVerify === null || lastEdit > lastVerify);
+      // Doctrine rule 3: a red check proves nothing either. The session's
+      // edits are red when the latest run failed -- or could not find its
+      // command -- and no run since they were made has passed. A red in
+      // another session does not reach edits a green already covered.
+      const lastPass = mtime(path.join(state, "last_pass"));
+      const red = !unverified && lastEdit !== null && readTrimmed(path.join(state, "last_verify")) === "fail"
+        && (lastPass === null || lastEdit > lastPass);
+      const nudge = unverified || red;
       const nudged = path.join(state, "nudged-sessions");
       if (nudge && !isFile(path.join(nudged, editorKey))) {
         if (mkdirs(nudged)) touch(path.join(nudged, editorKey));
         statLog("nudge", ctx);
-        process.stderr.write(NUDGE_TEXT + "\n");
+        process.stderr.write((red ? RED_TEXT : NUDGE_TEXT) + "\n");
         return 2;
       }
       // a genuinely clean stop logs a row; yes-but-already-nudged logs nothing
@@ -1568,7 +1756,8 @@ function main(argv) {
       // ships these keys is either mistaken or hostile. Names the keys, never
       // their values.
       if (refused.length) {
-        process.stdout.write(`This repository's committed .claude/settings.json sets ${refused.join(" ")} — Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo.\n`);
+        const files = (refused.files && refused.files.length ? refused.files : [".claude/settings.json"]).join(" and ");
+        process.stdout.write(`This repository's committed ${files} sets ${refused.join(" ")} — Luciazero refuses those keys from project scope (they can disable verify tracking or run a command at every stop). Review that env block before trusting this repo.\n`);
       }
       // SessionStart emits ONE pointer, never the relay contents. A legacy
       // HANDOFF.md gets a migration warning but is not silently rewritten.
@@ -1594,7 +1783,7 @@ function main(argv) {
   }
 }
 
-module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns };
+module.exports = { stateBase, stateKey, projectOf, trustedBase, ere, anyLine, readStdin, defaultVerify, verifyRuns, gitProgram };
 
 if (require.main === module) {
   try {

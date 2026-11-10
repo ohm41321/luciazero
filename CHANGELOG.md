@@ -7,6 +7,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A red verify no longer silences the stop nudge.** A failing check, or one
+  whose command was not found (exit 127), used to count as "a check ran", so
+  a session that stopped on red stopped clean. Now a stop whose last verify of
+  the session's own edits failed, with no pass since they were made, is nudged
+  once (doctrine rule 3). A red run no longer settles a nudge either; a red in
+  another session does not reach edits a green already covered.
+- **Files changed through the shell count as edits.** `sed -i`, a heredoc, a
+  formatter or a commit hook changed code without an Edit or Write, and the
+  nudge never knew. At stop the hook now asks git which files changed while
+  the session's own shell commands ran after its last verify ended, and
+  records them as that session's edit. Documentation, ignored files and what
+  a verify writes while it runs do not count; outside a git work tree nothing
+  changes. git runs read-only: no optional locks, fsmonitor off.
+- **A committed `.claude/settings.local.json` is refused** like a committed
+  `.claude/settings.json`: a repository that tracked one could set
+  `LUCIAZERO_DOC_REGEX='.*'` there and switch the nudge off with no warning.
+  git is asked only when that file sets a refused key.
+- **The plugin's doctrine no longer goes silent beside a stale doctrine file.**
+  It stood down whenever `~/.claude/luciazero.md` existed, but a classic
+  uninstall keeps a customized copy and removes the `CLAUDE.md` import, so a
+  plugin installed afterwards loaded no doctrine at all. It now stands down
+  only when `CLAUDE.md` still imports the file.
+- **Under Codex, a patch that touches only documentation no longer re-arms
+  the nudge.** `apply_patch` names its files inside the patch, not in
+  `file_path`, so the documentation and scratch filters never applied there.
+
+### Documentation
+
+- The privacy notes now say that each stats row names the project by its
+  folder's name as well as a hash; the discipline report shows and filters by
+  it. That was always the case.
+
 ## [3.0.0] - 2026-11-03
 
 ### Changed

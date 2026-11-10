@@ -43,7 +43,7 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 
 | งาน | ทำอย่างไร |
 |---|---|
-| **พิสูจน์** | Stop hook เตือนเมื่อ agent จะหยุดทั้งที่มีการแก้หลังการตรวจครั้งล่าสุด; strict gate แบบ opt-in บล็อกเมื่อผลแดง `/done` รัน full verify และ skeptic diff pass เพิ่ม revert probe เมื่อมีการแก้ test และ review อิสระหนึ่งรอบเมื่อ diff เสี่ยง |
+| **พิสูจน์** | Stop hook เตือนเมื่อ agent จะหยุดทั้งที่มีการแก้หลังการตรวจครั้งล่าสุด หรือการตรวจนั้นแดง; strict gate แบบ opt-in บล็อกเมื่อผลแดง `/done` รัน full verify และ skeptic diff pass เพิ่ม revert probe เมื่อมีการแก้ test และ review อิสระหนึ่งรอบเมื่อ diff เสี่ยง |
 | **รักษา&nbsp;scope** | `/done` บังคับให้ส่งครบทุกข้อหรือระบุสิ่งที่เว้นไว้ scope ที่หลุดจึงถูกบอกออกมาแทนที่จะหายเงียบ ๆ |
 | **จำบทเรียน** | `/retro` บันทึกทางตันและกับดัก `/debug` อ่านก่อนลองรอบถัดไป |
 | **ส่งต่องาน** | `/lucia-relay` ส่งหลักฐาน next action และ negative knowledge ไปยัง session, agent หรือเครื่องอื่น |
@@ -449,16 +449,18 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 - Hook รันคำสั่งบนเครื่อง ควรอ่านก่อนเปิดใช้
 - Telemetry ของ hook อยู่ใน private state แยกตาม session ภายในเครื่อง เก็บเวลา
   wall time ของ turn/Bash/verify, จำนวน green ซ้ำโดยไม่มี edit คั่น และจำนวน
-  Bash, verify, skill ที่ model/user เรียก โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
+  Bash, verify, skill ที่ model/user เรียก แต่ละแถวของสถิติระบุ project ด้วย hash
+  และชื่อโฟลเดอร์ไว้ใช้ใน report โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
   ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
   config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
   คีย์ `LUCIAZERO_*` ทุกตัว (รวม `CLAUDE_CONFIG_DIR`) ที่ประกาศไว้ที่นั่น — ทั้งใน
   ไดเรกทอรีที่เปิด session และไดเรกทอรีแม่จนถึง root ของ repo — จะถูกปฏิเสธ
-  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน settings ของคุณเองยังใช้ได้:
+  และแจ้งชื่อคีย์หนึ่งครั้งตอน `SessionStart` ส่วน `.claude/settings.local.json`
+  ที่ git track อยู่ก็ถูกปฏิเสธแบบเดียวกัน settings ของคุณเองยังใช้ได้:
   การค้นหยุดที่ root ของ repo และที่ `$HOME` ไม่เคยอ่าน `~/.claude/settings.json`
-  หรือ `.claude/settings.local.json` ของคุณ
+  หรือ `.claude/settings.local.json` ที่ไม่ได้ track
 - Windows รันได้โดยตรงโดยไม่ต้องใช้ WSL (ผ่าน CI เท่านั้น; ดูต้นหน้านี้):
   `npx luciazero` ติดตั้งผ่าน installer ที่ port เป็น Node, `global-install`
   ใช้ global prefix ของ npm เอง และ hook,
@@ -477,7 +479,13 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
   `python scripts/check-site.py`) การอ่านไฟล์ test ไม่นับ การรันโปรแกรมด้วย
   `--help` หรือ `--version` อย่างเดียวก็ไม่นับ การแก้ไฟล์ใน temporary directory
   ที่อยู่นอก project และไม่อยู่ใน git work tree เช่น scratchpad ของ agent
-  ไม่ปลุก nudge ส่วนคำสั่ง Bash ที่เขียนไฟล์ไม่ถูกนับเป็น edit
+  ไม่ปลุก nudge
+- ไฟล์ที่คำสั่ง shell แก้ (`sed -i`, heredoc, formatter, commit hook) นับเป็น edit
+  ด้วย ตอน stop hook ถาม git ว่าไฟล์ไหนเปลี่ยนระหว่างที่คำสั่ง shell ของ session
+  นั้นรันหลัง verify ครั้งล่าสุดจบ ไม่นับเอกสาร ไฟล์ที่ ignore และสิ่งที่ verify
+  เขียนเอง ถ้าอยู่นอก git work tree จะไม่ตามการเขียนผ่าน shell
+- ถ้า verify ล่าสุดของ edit ใน session นั้นล้ม หรือหาคำสั่งไม่เจอ stop จะถูกเตือน
+  หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน
 - ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,

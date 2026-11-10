@@ -44,7 +44,7 @@ runtime.
 
 | Job | How |
 |---|---|
-| **Prove** | A stop hook nudges an agent that stops with edits after its last check; an optional strict gate blocks a red stop. `/done` runs full verify and a skeptic diff pass, adds a revert probe when tests changed, and one independent review when the diff is risky. |
+| **Prove** | A stop hook nudges an agent that stops with edits after its last check, or with that check red; an optional strict gate blocks a red stop. `/done` runs full verify and a skeptic diff pass, adds a revert probe when tests changed, and one independent review when the diff is risky. |
 | **Keep&nbsp;scope** | `/done` requires every item to be delivered or named as left out, so dropped scope gets named instead of going silent. |
 | **Remember** | `/retro` records dead ends and footguns; `/debug` reads them before the next attempt. |
 | **Hand&nbsp;off** | `/lucia-relay` carries evidence, the next action and negative knowledge to another session, agent or machine. |
@@ -460,16 +460,19 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
 - Hooks run commands on your machine. Read them before enabling them.
 - Hook telemetry stays local in private per-session state and records aggregate
   turn/Bash/verify wall time, redundant-green counts, and Bash, verify, and
-  model/user skill counts—never raw commands, skill names, or paths. Older rows
+  model/user skill counts. Each stats row names the project by a hash and by
+  its folder's name, for the report—never raw commands, skill names, or
+  paths. Older rows
   without verify timing are reported as not measured, not zero.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
   committed repository config. Strict mode fails open on internal errors.
 - A repository's committed `.claude/settings.json` cannot configure Luciazero
   at all: every `LUCIAZERO_*` key (and `CLAUDE_CONFIG_DIR`) declared there — in
   the session directory or any ancestor up to the repository root — is refused
-  and named once at `SessionStart`. Your own settings still configure it: the
+  and named once at `SessionStart`. A `.claude/settings.local.json` that git
+  tracks is refused the same way. Your own settings still configure it: the
   search stops at the repo root and at `$HOME`, and never reads your global
-  `~/.claude/settings.json` or gitignored `.claude/settings.local.json`.
+  `~/.claude/settings.json` or an untracked `.claude/settings.local.json`.
 - Windows runs natively, without WSL (CI-tested only; see the top of this
   page): `npx luciazero` installs through a Node port of the installers,
   `global-install` uses npm's own global prefix, and the hooks, status line
@@ -489,7 +492,14 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
   not count, and neither does running a program with only `--help` or
   `--version`. Editing a file in a temporary directory outside your project
   and outside any git work tree, such as an agent's scratchpad, does not
-  re-arm the nudge. Bash commands that write files are not tracked as edits.
+  re-arm the nudge.
+- A file a shell command changes (`sed -i`, a heredoc, a formatter, a commit
+  hook) counts as an edit too. At stop the hook asks git which files changed
+  while the session's own shell commands ran after its last verify ended;
+  documentation, ignored files and what the verify itself wrote do not
+  count. Outside a git work tree, shell writes are not tracked.
+- A stop whose last verify of the session's edits failed, or could not find
+  its command, is nudged once too, until a run passes.
 - Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
 - `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
   edit event in its state directory (tool name, opaque key, whether

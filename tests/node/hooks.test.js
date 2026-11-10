@@ -396,6 +396,200 @@ test("a committed CLAUDE_CONFIG_DIR cannot silence the doctrine or the hooks", (
   assert.ok(fs.existsSync(turn), "the prompt hook stood down for a classic install that is not there");
 });
 
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8", windowsHide: true }).status === 0;
+
+// A git repository holding `files`, committed; returns a runner for more git.
+function gitRepo(dir, files) {
+  fs.mkdirSync(dir, { recursive: true });
+  const git = (...args) => {
+    const r = spawnSync("git", ["-C", dir, "-c", "user.name=lz", "-c", "user.email=lz@example.invalid",
+      "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", windowsHide: true });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  git("init", "-q");
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  git("add", "-A");
+  git("commit", "-qm", "init");
+  return git;
+}
+
+// Doctrine rule 3: a failing check means not done. A stop whose last verify
+// of the session's own edits came back red -- a command that was not found
+// included -- is nudged once, like an unverified one; a green clears it, and
+// a red in another session does not reach edits a green already covered.
+test("a red verify after an edit nudges once at stop, and a green clears it", (t) => {
+  const box = sandbox(t);
+  const cwd = path.join(box.box, "red");
+  const hook = (session, mode, extra = {}) => node(box.env, [VERIFY, mode], JSON.stringify({ cwd, session_id: session, ...extra }));
+  const edit = (session) => assert.strictEqual(hook(session, "edit",
+    { tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } }).status, 0);
+  const verify = (session, id, error) => {
+    const call = { tool_name: "Bash", tool_use_id: id, tool_input: { command: "npm test" } };
+    assert.strictEqual(hook(session, "bash-start", call).status, 0);
+    const done = hook(session, error ? "bash-failure" : "bash", error ? { ...call, error } : call);
+    assert.strictEqual(done.status, 0, done.stderr);
+  };
+  edit("s1");
+  verify("s1", "v1", "Exit code 1");
+  const red = hook("s1", "stop");
+  assert.strictEqual(red.status, 2, "a stop on a red verify of the session's own edit did not nudge");
+  assert.match(red.stderr, /failed/);
+  assert.strictEqual(hook("s1", "stop", { stop_hook_active: true }).status, 0, "the stop the nudge caused must end the turn");
+  assert.strictEqual(hook("s1", "stop").status, 0, "the red nudge is not one-shot");
+  verify("s1", "v2", "Exit code 1");
+  assert.strictEqual(hook("s1", "stop").status, 0, "a second red run of the same edit nudged again");
+
+  edit("s1");
+  verify("s1", "v3", "Exit code 127\nsh: npm: command not found");
+  assert.strictEqual(hook("s1", "stop").status, 2, "a verify command that was not found counted as a check");
+  verify("s1", "v4", null);
+  assert.strictEqual(hook("s1", "stop").status, 0, "a green run after the red did not clear it");
+
+  edit("s2");
+  verify("s2", "v5", null);
+  verify("s3", "v6", "Exit code 1");
+  assert.strictEqual(hook("s2", "stop").status, 0, "another session's red reached edits a green had covered");
+  assert.strictEqual(hook("s3", "stop").status, 0, "a session that edited nothing was nudged for its red run");
+});
+
+// An edit need not go through Edit or Write: `sed -i`, a heredoc, a formatter
+// or a commit hook changes files through the shell. At stop the hook asks git
+// which files changed while this session's shell commands ran after its last
+// verify, documentation and ignored files aside.
+test("a file a shell command changes after the last verify nudges at stop", { skip: !HAS_GIT && "needs git" }, (t) => {
+  const box = sandbox(t);
+  const session = (cwd, id = "s1") => {
+    const hook = (mode, extra = {}) => node(box.env, [VERIFY, mode], JSON.stringify({ cwd, session_id: id, ...extra }));
+    // a shell command: its start, what it does to the tree, its end
+    const shell = (toolId, command, act, error = null) => {
+      const call = { tool_name: "Bash", tool_use_id: toolId, tool_input: { command } };
+      assert.strictEqual(hook("bash-start", call).status, 0);
+      pause(20);
+      if (act) act();
+      pause(20);
+      const done = hook(error ? "bash-failure" : "bash", error ? { ...call, error } : call);
+      assert.strictEqual(done.status, 0, done.stderr);
+    };
+    return { hook, shell, stop: () => hook("stop").status };
+  };
+  const files = { "a.js": "a\n", "README.md": "# r\n", ".gitignore": "build/\n" };
+
+  const p1 = path.join(box.box, "p1");
+  gitRepo(p1, files);
+  const s1 = session(p1);
+  s1.shell("v1", "npm test");
+  s1.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p1, "a.js"), "b\n"));
+  assert.strictEqual(s1.stop(), 2, "a file sed changed after the last verify was taken as verified");
+  assert.strictEqual(s1.hook("stop", { stop_hook_active: true }).status, 0);
+  s1.shell("v2", "npm test");
+  assert.strictEqual(s1.stop(), 0, "a green run after the shell edit did not cover it");
+  s1.shell("e2", "sed -i s/b/c/ a.js", () => fs.writeFileSync(path.join(p1, "a.js"), "c\n"), "Exit code 1");
+  assert.strictEqual(s1.stop(), 2, "a shell command that failed after changing a file was not counted");
+
+  const p2 = path.join(box.box, "p2");
+  gitRepo(p2, files);
+  const s2 = session(p2);
+  s2.shell("v1", "npm test", () => {
+    // what a verify run itself writes is no edit after it
+    fs.writeFileSync(path.join(p2, "coverage.txt"), "92%\n");
+  });
+  s2.shell("e1", "notes", () => {
+    fs.writeFileSync(path.join(p2, "README.md"), "# r\nmore\n");
+    fs.mkdirSync(path.join(p2, "build"));
+    fs.writeFileSync(path.join(p2, "build", "out.js"), "x\n");
+  });
+  s2.shell("e2", "ls");
+  assert.strictEqual(s2.stop(), 0, "documentation, an ignored file or a verify's own output re-armed the nudge");
+
+  const p3 = path.join(box.box, "p3");
+  const git3 = gitRepo(p3, files);
+  const s3 = session(p3);
+  s3.shell("v1", "npm test");
+  s3.shell("e1", "sed -i s/a/b/ a.js && git commit -am wip", () => {
+    fs.writeFileSync(path.join(p3, "a.js"), "b\n");
+    git3("commit", "-qam", "wip");
+  });
+  assert.strictEqual(s3.stop(), 2, "a shell edit committed before the stop was taken as verified");
+
+  // the session that ran the command is the one nudged
+  const p4 = path.join(box.box, "p4");
+  gitRepo(p4, files);
+  const a = session(p4, "a");
+  const b = session(p4, "b");
+  a.shell("v1", "npm test");
+  b.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p4, "a.js"), "b\n"));
+  assert.strictEqual(a.stop(), 0, "a session that ran no command since its verify was nudged for another's shell edit");
+  assert.strictEqual(b.stop(), 2, "the session whose shell command changed the file was not nudged");
+
+  // outside a git work tree there is nothing to ask, and nothing breaks
+  const p5 = path.join(box.box, "p5");
+  fs.mkdirSync(p5);
+  const s5 = session(p5);
+  s5.shell("v1", "npm test");
+  s5.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p5, "a.js"), "b\n"));
+  assert.strictEqual(s5.stop(), 0, "outside git the stop must behave as before");
+});
+
+// .claude/settings.local.json is the user's own file, gitignored by Claude
+// Code. One a repository commits is project scope, and refused like
+// .claude/settings.json.
+test("a committed .claude/settings.local.json cannot configure the hook; the user's own can", { skip: !HAS_GIT && "needs git" }, (t) => {
+  const box = sandbox(t);
+  for (const committed of [true, false]) {
+    const cwd = path.join(box.box, committed ? "committed" : "personal");
+    const git = gitRepo(cwd, { "a.js": "a\n" });
+    const local = path.join(cwd, ".claude", "settings.local.json");
+    fs.mkdirSync(path.dirname(local), { recursive: true });
+    fs.writeFileSync(local, JSON.stringify({ env: { LUCIAZERO_DOC_REGEX: ".*" } }));
+    if (committed) {
+      git("add", "-f", ".claude/settings.local.json");
+      git("commit", "-qm", "ship local settings");
+    }
+    // Claude Code applies that env block; the hook decides whether to believe it
+    const env = { ...box.env, LUCIAZERO_DOC_REGEX: ".*" };
+    const event = (extra = {}) => JSON.stringify({ cwd, session_id: "s1", ...extra });
+    const start = node(env, [VERIFY, "session"], event({ source: "startup" }));
+    assert.strictEqual(start.status, 0, start.stderr);
+    assert.strictEqual(node(env, [VERIFY, "edit"], event({ tool_name: "Edit", tool_input: { file_path: path.join(cwd, "a.js") } })).status, 0);
+    const stop = node(env, [VERIFY, "stop"], event()).status;
+    if (committed) {
+      assert.match(start.stdout, /settings\.local\.json.*LUCIAZERO_DOC_REGEX/, "a committed settings.local.json was not named");
+      assert.strictEqual(stop, 2, "a committed settings.local.json switched the nudge off");
+    } else {
+      assert.doesNotMatch(start.stdout, /LUCIAZERO_DOC_REGEX/, "the user's own settings.local.json was refused");
+      assert.strictEqual(stop, 0, "the user's own settings.local.json was not honored");
+    }
+  }
+});
+
+// The plugin's doctrine stands down for a classic install, so it never loads
+// twice. A doctrine file alone is not one: uninstall keeps a customized copy
+// and removes the import, and a plugin installed after that loaded nothing.
+test("the plugin's doctrine stands down only for a classic install that still imports it", (t) => {
+  const box = sandbox(t);
+  fs.mkdirSync(box.claude, { recursive: true });
+  const doctrine = () => {
+    const r = node({ ...box.env, PWD: box.box }, [VERIFY, "doctrine"]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  const text = fs.readFileSync(path.join(ROOT, "claude", "luciazero.md"), "utf8");
+  assert.strictEqual(doctrine(), text, "with no classic install the plugin must load the doctrine");
+  fs.writeFileSync(path.join(box.claude, "luciazero.md"), "a customized copy uninstall kept\n");
+  assert.strictEqual(doctrine(), text, "a doctrine file nothing imports silenced the plugin's doctrine");
+  fs.writeFileSync(path.join(box.claude, "CLAUDE.md"), "# mine\n@luciazero.md.old\n");
+  assert.strictEqual(doctrine(), text, "a line that only begins like the import counted as one");
+  for (const md of ["# mine\n\n@luciazero.md\n", "# mine\r\n@luciazero.md\r\n", "  @~/.claude/luciazero.md\n"]) {
+    fs.writeFileSync(path.join(box.claude, "CLAUDE.md"), md);
+    assert.strictEqual(doctrine(), "", `the doctrine loaded twice beside a classic import (${JSON.stringify(md)})`);
+  }
+});
+
 test("a Node that refuses md5 still names the state directory, with sha256", (t) => {
   // FIPS mode makes createHash("md5") throw; the tracker must not fail open
   const probe = [

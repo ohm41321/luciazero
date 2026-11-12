@@ -1,0 +1,13 @@
+# The workflows pin every action to a commit with its version in a comment;
+# Dependabot moves both together, so a pin does not quietly age into a
+# runtime GitHub retires. The package has no npm dependencies to watch, and
+# video/ is a separate tool that is updated when it is rendered.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

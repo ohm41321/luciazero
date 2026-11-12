@@ -18,3 +18,5 @@ LUCIA_RELAY_RECEIPT.json
 agentd/.last-store-run.log
 # per-run timing samples kept by scripts/test-timings.sh
 .test-timings/
+# local image-generation output, never shipped
+/output/

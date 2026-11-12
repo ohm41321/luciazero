@@ -75,11 +75,15 @@ Tables below are generated from digest-verified raw JSONL.
 > **Where the difference comes from:** Two tasks carry most of the Sonnet
 > difference: `merge-conflict` and `pipeline` give 10 of its 16 extra passing
 > runs. No uncertainty interval is computed, so read the difference as a direction
-> more than a size. `relay-transfer` grades Luciazero's own relay format
-> (`LUCIA_RELAY.json`), which its prompt never names, so it favors the Luciazero
-> arm; without it the Sonnet difference is +31pp. Cost per run is the mean API
-> price the CLI reported; time per run is the mean wall-clock time (medians for
-> Sonnet: 45 s vs 40 s).
+> more than a size. Most of the difference is a regression test left behind:
+> counting every criterion except the three that ask for a test that fails without
+> the fix (`regression-red`, `regression-test`, `tests-bite`), the arms pass 40/50
+> vs 36/50. Doctrine rule 4 asks for that test, so the measured gain is mostly in
+> leaving one, not in fixing more bugs. `relay-transfer` grades Luciazero's own
+> relay format (`LUCIA_RELAY.json`), which its prompt never names, so it favors
+> the Luciazero arm; without it the Sonnet difference is +31pp. Cost per run is
+> the mean API price the CLI reported; time per run is the mean wall-clock time
+> (medians for Sonnet: 45 s vs 40 s).
 
 > **Haiku model-provenance limitation:** only 70/140 rows encode model
 > identity. Attribution of the other 70 comes from the original campaign

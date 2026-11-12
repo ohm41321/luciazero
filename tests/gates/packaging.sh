@@ -42,6 +42,12 @@ grep -qF '**Agent Bus is beta, opt-in, and checkout only.**' "${ROOT}/README.md"
   || fail "README.md no longer labels its Agent Bus demo checkout-only"
 grep -qF '**Agent Bus เป็น beta แบบ opt-in และใช้ได้จาก checkout เท่านั้น**' "${ROOT}/README.th.md" \
   || fail "README.th.md no longer labels its Agent Bus demo checkout-only"
+# the approval nonce records provenance; neither README may present it as a
+# sandbox (the Thai one once stated the rule with no such limit)
+grep -qF 'it is not a host sandbox' "${ROOT}/README.md" \
+  || fail "README.md lost the caveat that Bus approvals are no host sandbox"
+grep -qF 'ไม่ใช่ sandbox ของเครื่อง' "${ROOT}/README.th.md" \
+  || fail "README.th.md lost the caveat that Bus approvals are no host sandbox"
 echo "ok  Thai README present + in sync"
 
 # 4d6. the GitHub Pages site the manifests name as homepage: search metadata,

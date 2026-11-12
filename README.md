@@ -291,6 +291,7 @@ carries a different part of the pack:
 | Claude Code plugin | ✓ | ✓ | ✓ | hooks only |
 | Classic, Claude Code | ✓ | ✓ | ✓ | with `--with-hooks` |
 | Classic, Codex CLI | ✓ | ✓ | ✓ (as a skill) | — |
+| Codex CLI plugin | ✓ | ✓ | — | hooks only |
 | Skills only | — | ✓ | — | — |
 
 <details>
@@ -317,6 +318,27 @@ npx skills add ohm41321/luciazero
 ```
 
 This installs the 13 skills: no doctrine, `lucia-reviewer`, or hooks.
+
+</details>
+
+<details>
+<summary><strong>Codex CLI plugin · doctrine, skills and hooks</strong></summary>
+
+```bash
+codex plugin marketplace add ohm41321/luciazero
+codex plugin add luciazero@luciazero
+```
+
+This carries the doctrine, the 13 skills and the verify-tracking hooks, but not
+`lucia-reviewer` or a statusline. Codex tells a hook what a command printed but
+not whether it passed, so under Codex a verify run counts as run, never as
+green, there is no red nudge, and a strict gate runs its command at stop
+instead of trusting an earlier run. Pick either this plugin or
+`npx luciazero codex`: both load every skill twice. Update with
+`codex plugin marketplace upgrade luciazero`, remove with
+`codex plugin remove luciazero@luciazero`. Codex also refreshes a Git
+marketplace on its own, so restart a long-running Codex session after an
+update.
 
 </details>
 
@@ -353,8 +375,8 @@ it and `global-status` say so if that prefix is not on your Path.
 
 Pick either plugin or classic for Claude Code: installing both loads every
 skill and `lucia-reviewer` twice, even though hooks and doctrine deduplicate.
-Classic installs support `--status`; Codex receives the doctrine and skills but
-not Claude-only hooks/statusline. Installers back up name collisions and remove
+Classic installs support `--status`; the classic Codex install carries the
+doctrine and skills but no hooks (the Codex plugin carries them). Installers back up name collisions and remove
 only exact Luciazero-managed copies on uninstall.
 
 </details>
@@ -368,6 +390,7 @@ channel has its own updater:
 |---|---|
 | Classic or Codex | `luciazero update` (`luciazero check-update` only reads) |
 | Claude Code plugin | `claude plugin update luciazero@luciazero`, then `/reload-plugins` |
+| Codex CLI plugin | `codex plugin marketplace upgrade luciazero`, then a new session |
 | Skills only | `npx skills update`, or `npx skills update done -g` for one skill |
 
 ```bash
@@ -422,11 +445,15 @@ remains retired because its replacement raw rows could not be recovered.
 
 Two tasks carry most of the Sonnet difference: `merge-conflict` and `pipeline`
 give 10 of its 16 extra passing runs. No uncertainty interval is computed, so
-read the difference as a direction more than a size. `relay-transfer` grades
-Luciazero's own relay format (`LUCIA_RELAY.json`), which its prompt never names,
-so it favors the Luciazero arm; without it the Sonnet difference is +31pp. Cost
-per run is the mean API price the CLI reported; time per run is the mean
-wall-clock time (medians for Sonnet: 45 s vs 40 s).
+read the difference as a direction more than a size. Most of the difference is a
+regression test left behind: counting every criterion except the three that ask
+for a test that fails without the fix (`regression-red`, `regression-test`,
+`tests-bite`), the arms pass 40/50 vs 36/50. Doctrine rule 4 asks for that test,
+so the measured gain is mostly in leaving one, not in fixing more bugs.
+`relay-transfer` grades Luciazero's own relay format (`LUCIA_RELAY.json`), which
+its prompt never names, so it favors the Luciazero arm; without it the Sonnet
+difference is +31pp. Cost per run is the mean API price the CLI reported; time
+per run is the mean wall-clock time (medians for Sonnet: 45 s vs 40 s).
 
 †Model provenance is incomplete for Haiku: only 70/140 rows encode model
 identity. The other 70 are attributed at campaign-file/report level and
@@ -475,7 +502,10 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
   paths. Older rows
   without verify timing are reported as not measured, not zero.
 - Put `LUCIAZERO_STRICT_VERIFY_CMD` only in personal settings, never in a
-  committed repository config. Strict mode fails open on internal errors.
+  committed repository config. Strict mode fails open on internal errors. It
+  runs at stop unless that same command is already green since the last edit,
+  for at most `LUCIAZERO_STRICT_TIMEOUT` seconds (default 120); a run that
+  times out decides nothing, and the nudge says it timed out.
 - A repository's committed `.claude/settings.json` cannot configure Luciazero
   at all: every `LUCIAZERO_*` key (and `CLAUDE_CONFIG_DIR`) declared there — in
   the session directory or any ancestor up to the repository root — is refused
@@ -514,7 +544,17 @@ and `luciazero-agentd service install` runs the daemon under launchd, systemd
 - A stop whose last verify of the session's edits failed, or could not find
   its command, is nudged once too, until a run passes. Claude Code only:
   Codex gives hooks a command's output but not whether it passed.
-- Set `LUCIAZERO_VERIFY_CMD` to the repo's exact fast verify command.
+- To count only the repo's own verify commands, set `LUCIAZERO_VERIFY_CMD` in
+  personal settings, one command per line (`./test.sh --fast` and
+  `./test.sh`). A command counts when it runs one of them, after a `cd`, a
+  wrapper such as `timeout`, or a variable assignment too. List the full tier
+  as well, or the closeout run `/done` asks for is nudged.
+- Other knobs, all read from personal settings only: `LUCIAZERO_VERIFY_REGEX`
+  replaces the default detection with an extended regex tried on each line of
+  the command; `LUCIAZERO_DOC_REGEX` (default `\.(md|markdown|rst)$`) names the
+  edited files that are documentation and never need a verify;
+  `LUCIAZERO_RELAY_STALE_DAYS` (default 7) is when a `LUCIA_RELAY.json` is
+  called stale at session start.
 - `LUCIAZERO_EDIT_DIAG=1` in your own shell makes the hook keep one line per
   edit event in its state directory (tool name, opaque key, whether
   `file_path` was missing, empty or present, its suffix, under cwd or not,

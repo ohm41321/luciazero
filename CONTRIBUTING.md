@@ -39,6 +39,9 @@ subscription quota.
 
 ## Rules of the repo
 
+Open work and the reasons behind it are in [the roadmap](docs/roadmap.md)
+and [the Bus roadmap](docs/agent-bus-roadmap.md).
+
 These mirror the doctrine the repo ships — changes that break them will be
 declined:
 

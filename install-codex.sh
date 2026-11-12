@@ -7,7 +7,7 @@
 #   skills/catalog.txt + aliases.txt     -> ~/.codex/skills/<each>/
 #   claude/agents/catalog.txt entries     -> ~/.codex/skills/<agent>/SKILL.md
 #                                           (Claude-only `tools:`/`model:` lines dropped)
-#   claude/hooks/ (enforcement pack)     -> NOT installed: Codex has no hooks/statusline
+#   claude/hooks/ (enforcement pack)     -> NOT installed: the Codex plugin carries the hooks
 set -euo pipefail
 
 for ARG in "$@"; do

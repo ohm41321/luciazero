@@ -51,18 +51,21 @@ ARCHITECT, REVIEWER = "codex-architect", "claude-reviewer"
 class ClaimCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-claim-")
+        # Cleanups, not tearDown: tearDown runs before every addCleanup, so
+        # the directory went while a test's `server_with` daemon still had
+        # bus.sqlite3 open, which Windows refuses (WinError 32). Cleanups run
+        # last-in first-out, so the server stops, then the store closes, then
+        # the directory goes.
+        self.addCleanup(self._tmp.cleanup)
         self.state_dir = Path(self._tmp.name)
         self.db = str(self.state_dir / "bus.sqlite3")
         self.store = Store.open(self.db)
+        self.addCleanup(self.store.close)
         self.store.migrate()
         self.store.trust = "human"
         self.store.register_agent(ARCHITECT, provider="codex", role="architect")
         self.store.register_agent(REVIEWER, provider="claude", role="reviewer")
         self.codes: dict[str, str] = {}
-
-    def tearDown(self) -> None:
-        self.store.close()
-        self._tmp.cleanup()
 
     def key(self, session: str = "session-one") -> str:
         return hashlib.sha256(session.encode("utf-8")).hexdigest()

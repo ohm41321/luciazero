@@ -27,6 +27,7 @@ the repository root):
 ```bash
 python3 -m luciazero_agentd serve           # foreground on 127.0.0.1:8765; writes endpoint.json
 python3 -m luciazero_agentd status [--json] # read-only queue summary; never mints a token
+python3 -m luciazero_agentd stop            # stop the daemon endpoint.json records
 python3 -m luciazero_agentd client-config   # `codex mcp add` / `claude mcp add` commands
 python3 -m luciazero_agentd approve TASK OP  # interactive only: one single-use approval nonce
 ```
@@ -34,8 +35,9 @@ python3 -m luciazero_agentd approve TASK OP  # interactive only: one single-use 
 For normal interactive use, follow the [checkout setup](../docs/agent-bus.md#start-here)
 once, then run `lucia claude` and `lucia codex` in separate terminals. These
 start the daemon as needed and bind each session without changing central
-MCP config. `lucia next`, `lucia watch`, and `lucia status` inspect the queue;
-the guide covers managed dispatch and approval boundaries.
+MCP config. `lucia next`, `lucia watch`, and `lucia status` inspect the queue,
+and `lucia stop` ends the daemon; the guide covers managed dispatch
+and approval boundaries.
 
 State lives under `${LUCIAZERO_AGENT_BUS_HOME:-~/.luciazero/agent-bus}`
 (directory `0700`, token `0600`). Tests and gates always point that variable

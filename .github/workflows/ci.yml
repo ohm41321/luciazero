@@ -14,9 +14,19 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels that pull request's older run. Every
+# other run (main, and release.yml's call at a tag) gets a group of its own, so
+# nothing that gates a release is ever cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+# Each job's timeout is about six times its usual run (1.5 to 5 minutes on
+# 2026-11-10), so a hung daemon test fails in minutes, not after six hours.
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -87,6 +97,7 @@ jobs:
     # covers the hooks, the installers' contracts, Relay and bisect; the
     # full tier stays on Linux.
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Install a pinned ShellCheck
@@ -116,6 +127,7 @@ jobs:
     # and a current one. The installer's Agent Bus launcher (a .cmd) runs
     # Python, the oldest it takes.
     runs-on: windows-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -141,6 +153,7 @@ jobs:
     # server and the Task Scheduler service, on the oldest Python it supports
     # and a current one.
     runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -161,4 +174,4 @@ jobs:
       - name: Lucia Relay trust regressions
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python test_lucia_relay.py
+        run: python tests/test_lucia_relay.py

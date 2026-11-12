@@ -11,9 +11,9 @@ run.
 
 This is a repository-wide review and proposed work queue, not an implementation
 or release approval. Existing local commits belong to their owners. Release
-decisions remain in [publishing](docs/publishing.md), distribution in
-[ADR 0008](docs/adr/0008-agent-bus-distribution-and-the-cost-of-shipping-a-daemon.md),
-and Bus milestones in [the Bus roadmap](docs/agent-bus-roadmap.md).
+decisions remain in [publishing](publishing.md), distribution in
+[ADR 0008](adr/0008-agent-bus-distribution-and-the-cost-of-shipping-a-daemon.md),
+and Bus milestones in [the Bus roadmap](agent-bus-roadmap.md).
 
 ## How to read this review
 
@@ -43,7 +43,7 @@ execution context.
 
 The historical five-item checkout-beta release gate is closed, including
 install/upgrade/uninstall on a second Linux aarch64 machine through `--inner`.
-The container path remains untested; see [the pinned evidence](docs/publishing.md).
+The container path remains untested; see [the pinned evidence](publishing.md).
 The decision log stands at 7 of 3 workflows and 2 of 2 qualifying retros.
 This is not approval for a new release or for npm distribution of Agent Bus.
 

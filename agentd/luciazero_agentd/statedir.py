@@ -18,6 +18,7 @@ is read or opened, and refuses one it cannot.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
@@ -239,3 +240,65 @@ def clear_endpoint(state_dir: Path, pid: Optional[int] = None) -> None:
 
 def db_path(state_dir: Path) -> Path:
     return state_dir / "bus.sqlite3"
+
+
+SERVE_LOCK = "serve.lock"
+
+
+def hold_serve_lock(state_dir: Path) -> Optional[int]:
+    """Take this state directory's serve lock, or return None when another
+    process holds it. The caller keeps the returned descriptor open for as
+    long as it serves; the lock goes with the process however it ends.
+
+    endpoint.json alone could not keep two daemons apart: two `serve`s
+    started together both read no live record, both bound a port, and the
+    one whose record was overwritten went on serving the same database with
+    nobody able to reach it. The lock is taken before the record is read, so
+    exactly one of them gets past it. The file holds nothing; the lock is an
+    advisory one, flock on POSIX and a one-byte region lock on Windows, and
+    a daemon from before the lock simply does not take it, which is why
+    `serve` still checks the record too."""
+    path = state_dir / SERVE_LOCK
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        restrict(path)
+    except BaseException:
+        os.close(fd)
+        raise
+    try:
+        if WINDOWS:
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(fd)
+        # Windows says a held region with EACCES (or EDEADLOCK, after its
+        # retries); flock says it with EWOULDBLOCK. Anything else is a real
+        # failure and is raised.
+        held = (exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)) if WINDOWS
+                else isinstance(exc, BlockingIOError))
+        if held:
+            return None
+        raise
+    return fd
+
+
+def release_serve_lock(fd: Optional[int]) -> None:
+    """Give the lock back before the descriptor closes: Windows asks for a
+    region to be unlocked before its file is closed."""
+    if fd is None:
+        return
+    try:
+        if WINDOWS:
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

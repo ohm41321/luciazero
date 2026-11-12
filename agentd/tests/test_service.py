@@ -889,6 +889,39 @@ class CommandLineTests(ServiceCase):
         self.assertEqual(0, self.run_cli("uninstall")[0])
         self.assertFalse(any(path.exists() for path in self.paths()))
 
+    def live_daemon(self) -> None:
+        """A record of a live daemon in the state directory: this test's own
+        process, with its own start time, so nothing is ever signalled."""
+        from luciazero_agentd import procinfo
+        from luciazero_agentd.statedir import write_endpoint
+
+        write_endpoint(self.state, "http://127.0.0.1:49999/mcp", os.getpid(), "2026-01-01T00:00:00Z",
+                       process_started_at=procinfo.stable_started_at(os.getpid()))
+
+    def test_install_refuses_beside_a_daemon_the_service_did_not_start(self) -> None:
+        # Nothing is installed and the manager says nothing runs.
+        idle = FakeRunner(codes={"schtasks /Query": 1, "is-active": 3}, outputs={"ObjectNotFound": "absent\n"})
+        with mock.patch.object(service, "run_command", idle):
+            self.live_daemon()
+            code, out = self.run_cli("install", "--dry-run")
+            self.assertEqual(0, code, out)
+            self.assertIn("did not start", out)
+            code, out = self.run_cli("install")
+        self.assertEqual(2, code, out)
+        self.assertIn("did not start", out)
+        self.assertIn(" stop", out)
+        self.assertFalse(any(path.exists() for path in self.paths()), "a refused install wrote a service file")
+        self.assertFalse(any(c for c in idle.commands if "bootstrap" in c or "enable" in c or "/Create" in c),
+                         "a refused install started the service")
+
+    def test_reinstalling_over_the_services_own_daemon_goes_ahead(self) -> None:
+        code, out = self.run_cli("install")
+        self.assertEqual(0, code, out)
+        self.live_daemon()  # the running service's daemon, as the manager reports
+        code, out = self.run_cli("install")
+        self.assertEqual(0, code, out)
+        self.assertNotIn("did not start", out)
+
     def test_a_foreign_service_file_is_reported_not_replaced(self) -> None:
         for path in self.paths():
             path.parent.mkdir(parents=True, exist_ok=True)

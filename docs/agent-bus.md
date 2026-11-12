@@ -165,6 +165,12 @@ serves with strict binding — a service is never
 installed with `--allow-unattributed` — and its output goes to
 `daemon.log` in the state directory.
 
+`service install` refuses while a daemon the service did not start serves the
+state directory (one `run` started for you, say): the service's own daemon
+would find the directory taken and exit, and the manager would keep starting
+it. Stop that daemon first with `luciazero-agentd stop`. Reinstalling over the
+service's own running daemon goes ahead and restarts it.
+
 The service starts in the directory the `luciazero_agentd` package lives in,
 not your home directory. `python -m` and `python -c` put the working
 directory first on the import path, so a service started in your home
@@ -829,16 +835,26 @@ that read it, the number of turns waited on, and the longest wait.
 
 ## Recovery
 
-- **Daemon restart.** Stop it with Ctrl-C or `kill <pid>` and start it
-  again on the same state directory. Acknowledged messages, claimed tasks,
+- **Daemon restart.** Stop it with `luciazero-agentd stop` (or Ctrl-C in
+  its window) and start it again on the same state directory. `stop` signals
+  the pid in `endpoint.json` only while the start time recorded beside it
+  still matches, so a pid reused after a crash or reboot is never signalled;
+  a record it cannot vouch for is left alone with the command to end it by
+  hand. On Windows the daemon is terminated and `stop` removes its record.
+  An installed service starts the daemon again at your next login, or after
+  a failure; `service uninstall` removes it. Acknowledged messages, claimed tasks,
   worktree records and artifacts survive; the demo restarts the daemon
   between the reviewer's finding and the implementer's fix to prove it.
   Identities given out by `claim approve` do not: MCP sessions live in the
   daemon's memory, so `serve` revokes those bindings when it starts, and a
   session that reconnects asks again. Terminals bound with `run` or `attach`
   are checked by their process and stay bound.
-- **A second daemon.** `serve` refuses to start while `endpoint.json` names
-  a live process, and a daemon only ever removes its own record.
+- **A second daemon.** `serve` holds `serve.lock` in the state directory for
+  as long as it runs, so of two started together exactly one serves; the
+  other waits up to 20 seconds for the winner's record and then exits. It
+  also refuses while `endpoint.json` names a live process (a daemon from
+  before the lock does not take it), and a daemon only ever removes its own
+  record.
 - **A daemon that died without its cleanup** (`kill -9`, a crash, power
   loss) leaves `endpoint.json` behind. `run` checks that the recorded process
   is still there, and is the one that started when the daemon recorded it,
@@ -876,9 +892,9 @@ that read it, the number of turns waited on, and the longest wait.
 
 ```bash
 python3 -m luciazero_agentd detach --agent claude-reviewer   # per bound terminal
+python3 -m luciazero_agentd stop         # the daemon this state directory records
 BUS="${LUCIAZERO_AGENT_BUS_HOME:-$HOME/.luciazero/agent-bus}"
-kill "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["pid"])' "$BUS/endpoint.json")"
-rm -rf "$BUS"                            # queue, token, worktree records
+rm -rf "$BUS"                            # once stop says stopped: queue, token, worktree records
 claude mcp remove --scope user luciazero-bus
 codex mcp remove luciazero-bus
 git worktree remove ../wt-reviewer       # per writing agent

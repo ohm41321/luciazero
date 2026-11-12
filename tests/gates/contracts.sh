@@ -178,7 +178,7 @@ python3 "${ROOT}/scripts/check-skill-prompts.py" \
   || fail "remaining skill prompt budget or contract drift"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
   "${ROOT}/skills/lucia-relay/scripts/relay.py" || fail "relay.py syntax"
-PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT}/test_lucia_relay.py" >/dev/null \
+PYTHONDONTWRITEBYTECODE=1 python3 "${ROOT}/tests/test_lucia_relay.py" >/dev/null \
   || fail "focused lucia-relay trust regressions"
 echo "ok  focused lucia-relay trust regressions"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \

@@ -77,6 +77,9 @@ class Http:
 class ServerCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-mcp-")
+        # Cleanups, not tearDown, so a server a test starts and stops with
+        # addCleanup is stopped before the directory goes (see ClaimCase).
+        self.addCleanup(self._tmp.cleanup)
         self.db = str(Path(self._tmp.name) / "bus.sqlite3")
         with Store.open(self.db) as store:
             store.migrate()
@@ -84,11 +87,8 @@ class ServerCase(unittest.TestCase):
         # this suite is about protocol conformance, so it opts into the legacy
         # mode on purpose. tests/test_identity.py covers the default.
         self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=True).start()
+        self.addCleanup(self.server.stop)
         self.client = Http(self.server.url)
-
-    def tearDown(self) -> None:
-        self.server.stop()
-        self._tmp.cleanup()
 
 
 class NegotiationAndSessions(ServerCase):
@@ -545,6 +545,130 @@ class DaemonCli(unittest.TestCase):
                 self.assertEqual(refreshed["capabilities"], ["review", "verify"])
                 self.assertEqual(store.register_agent("claude-reviewer", provider="claude", role="reviewer")["capabilities"], ["review", "verify"])
                 self.assertEqual(store.events(limit=100)[-1]["actor"], "claude-reviewer")
+
+
+
+class ServeLockAndStop(unittest.TestCase):
+    """One daemon per state directory, and `stop` ending only the one the
+    record names. Every daemon here runs in its own temporary directory."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="agentd-lock-")
+        self.addCleanup(self._tmp.cleanup)
+        self.state = Path(self._tmp.name)
+        # Service files are looked up under a temporary root, never the real
+        # home directory, so `stop`'s note about an installed service is ours.
+        self.env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(PACKAGE_ROOT),
+                        LUCIAZERO_SERVICE_ROOT=str(self.state / "no-service"))
+        self.procs: list[subprocess.Popen] = []
+        self.addCleanup(self._end_all)
+
+    def _end_all(self) -> None:
+        for proc in self.procs:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=10)
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    pipe.close()
+
+    def serve(self) -> subprocess.Popen:
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
+        proc = subprocess.Popen([sys.executable, "-m", "luciazero_agentd", "serve", "--state-dir", str(self.state), "--port", "0"],
+                                cwd=PACKAGE_ROOT, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **group)
+        self.procs.append(proc)
+        return proc
+
+    def sleeper(self) -> subprocess.Popen:
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        self.procs.append(proc)
+        return proc
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-m", "luciazero_agentd", *args, "--state-dir", str(self.state)],
+                              cwd=PACKAGE_ROOT, env=self.env, capture_output=True, text=True, timeout=60)
+
+    def wait_for(self, predicate: Any, seconds: float = 30.0) -> Any:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            value = predicate()
+            if value:
+                return value
+            time.sleep(0.05)
+        return predicate()
+
+    def test_two_serves_started_together_leave_one_and_its_record(self) -> None:
+        first, second = self.serve(), self.serve()
+        loser = self.wait_for(lambda: next((p for p in (first, second) if p.poll() is not None), None))
+        self.assertIsNotNone(loser, "both daemons kept serving one state directory")
+        winner = second if loser is first else first
+        _, err = loser.communicate(timeout=10)
+        self.assertEqual(2, loser.returncode, err)
+        self.assertIn("already serves", err)
+        self.assertIsNone(winner.poll(), "the daemon that won the lock exited")
+        endpoint = self.wait_for(lambda: read_endpoint(self.state))
+        self.assertEqual(winner.pid, endpoint["pid"])
+
+    def test_a_serve_that_finds_the_lock_taken_waits_for_the_holders_record(self) -> None:
+        from luciazero_agentd import procinfo
+        from luciazero_agentd.statedir import hold_serve_lock, release_serve_lock, write_endpoint
+
+        held = hold_serve_lock(self.state)
+        self.assertIsNotNone(held)
+        try:
+            proc = self.serve()
+            # The holder has not recorded itself yet: the latecomer must not
+            # take that silence for an empty directory.
+            time.sleep(1.0)
+            self.assertIsNone(proc.poll(), "serve did not wait for the lock's holder")
+            self.assertIsNone(read_endpoint(self.state), "serve wrote a record while another process held the lock")
+            write_endpoint(self.state, "http://127.0.0.1:1/mcp", os.getpid(), "2026-01-01T00:00:00Z",
+                           process_started_at=procinfo.stable_started_at(os.getpid()))
+            _, err = proc.communicate(timeout=30)
+        finally:
+            release_serve_lock(held)
+        self.assertEqual(2, proc.returncode, err)
+        self.assertIn("already serves", err)
+        self.assertEqual(os.getpid(), read_endpoint(self.state)["pid"])
+
+    def test_stop_ends_the_daemon_and_its_record(self) -> None:
+        proc = self.serve()
+        endpoint = self.wait_for(lambda: read_endpoint(self.state))
+        self.assertIsNotNone(endpoint, "daemon did not write endpoint.json")
+        stopped = self.cli("stop")
+        self.assertEqual(0, stopped.returncode, stopped.stderr)
+        self.assertIn(f"pid {proc.pid}", stopped.stdout)
+        self.assertNotIn("service is installed", stopped.stdout)
+        proc.wait(timeout=30)
+        self.assertIsNone(read_endpoint(self.state))
+        # Stopped again, there is nothing to do, and that is not an error.
+        again = self.cli("stop")
+        self.assertEqual(0, again.returncode, again.stderr)
+        self.assertIn("nothing to stop", again.stdout)
+        # And the directory serves again at once: the lock went with it.
+        self.serve()
+        self.assertIsNotNone(self.wait_for(lambda: read_endpoint(self.state)), "the next serve found the lock still held")
+
+    def test_stop_never_signals_a_pid_its_record_cannot_vouch_for(self) -> None:
+        from luciazero_agentd.statedir import write_endpoint
+
+        bystander = self.sleeper()
+        for start in (None, "Thu Jan  1 00:00:00 1970"):
+            with self.subTest(recorded_start=start):
+                write_endpoint(self.state, "http://127.0.0.1:1/mcp", bystander.pid, "2026-01-01T00:00:00Z",
+                               process_started_at=start)
+                refused = self.cli("stop")
+                time.sleep(0.3)
+                self.assertIsNone(bystander.poll(), "stop signalled a process its record did not prove")
+                if start is None:
+                    self.assertEqual(1, refused.returncode, refused.stdout)
+                    self.assertIn("nothing was signalled", refused.stderr)
+                else:
+                    # A start time that differs is a different process: the
+                    # record is stale, so it goes and nothing is signalled.
+                    self.assertEqual(0, refused.returncode, refused.stderr)
+                    self.assertIn("already exited", refused.stdout)
+                    self.assertIsNone(read_endpoint(self.state))
 
 
 if __name__ == "__main__":

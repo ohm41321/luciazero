@@ -7,6 +7,64 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`lucia stop`** (`luciazero-agentd stop`) ends the daemon a state
+  directory records. It signals the pid in `endpoint.json` only while the
+  start time recorded beside it still matches, so a pid reused after a crash
+  or reboot is never signalled; a record it cannot vouch for is left alone,
+  with the command to end the process by hand. On Windows it terminates the
+  daemon and removes its record. It replaces the `kill "$(python3 -c ...)"`
+  line in the Bus cleanup steps.
+- Dependabot keeps the commit-pinned GitHub Actions current, monthly, in one
+  grouped pull request.
+
+### Fixed
+
+- **Two `serve`s started together no longer both serve one state
+  directory.** Both read no live `endpoint.json`, both bound a port, and the
+  one whose record was overwritten kept serving the same database where no
+  client could reach it. `serve` now holds `serve.lock` for as long as it
+  runs; the loser waits up to 20 seconds for the winner's record, then exits
+  2 as before.
+- **`service install` refuses beside a daemon the service did not start**
+  (one `lucia claude` autostarted, say). Installed anyway, the service's own
+  daemon found the directory taken, exited, and was started again until the
+  manager gave up, while install reported success. Reinstalling over the
+  service's own running daemon still goes ahead.
+- **Exact mode (`LUCIAZERO_VERIFY_CMD`) counts a verify run behind a `cd`,
+  a wrapper or an assignment**, such as `cd repo && ./test.sh --fast`,
+  `timeout 600 ./test.sh` or `LZ_REQUIRE_LINT=1 ./test.sh`, and takes one
+  command per line, so the fast and full tiers can both be listed. Before,
+  only a command line that started with the configured text counted, and the
+  documented single-command form left `/done`'s full run nudged.
+- A shell edit is no longer forgotten when a stop's `git` calls cannot
+  answer (a timeout, a missing repository): its span is kept for the next
+  stop instead of being consumed unchecked.
+- A strict verify command that times out now says so, with the limit and
+  `LUCIAZERO_STRICT_TIMEOUT`, instead of a bare nudge.
+- CI jobs time out after 20 to 30 minutes instead of GitHub's six hours, and
+  a new push to a pull request cancels that pull request's older run.
+
+### Documentation
+
+- The READMEs describe the Codex CLI plugin: its install, update and removal
+  commands, and what it carries compared with the classic Codex install
+  (hooks, but no `lucia-reviewer` or statusline; a verify run counts as run,
+  never green).
+- The benchmark evidence notes, from the same rows, that most of the Sonnet
+  difference is a regression test left behind: without the three criteria
+  that ask for one, the arms pass 40/50 vs 36/50.
+- The Thai README says the Bus approval record is not a host sandbox, as
+  the English one does.
+- `roadmap.md` moved to `docs/roadmap.md`, linked from `CONTRIBUTING.md`;
+  `test_lucia_relay.py` moved to `tests/`.
+
+### Removed
+
+- `agentd/package.json`, a private manifest for the companion npm package
+  that ADR 0008 decided not to ship.
+
 ## [3.0.1] - 2026-11-10
 
 ### Changed

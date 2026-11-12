@@ -506,6 +506,7 @@ class RequireBinding(ServerCase):
         strict = self.payload(self.unbound().call("agent_whoami", {}))
         self.server.stop()
         self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=True).start()
+        self.addCleanup(self.server.stop)  # the setUp cleanup stops the first one only
         lenient = self.payload(self.unbound().call("agent_whoami", {}))
         self.assertEqual(strict["verified"], lenient["verified"], "the label must not depend on the flag")
         self.assertEqual(strict["agent_id"], lenient["agent_id"])

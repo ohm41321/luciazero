@@ -264,6 +264,16 @@ def passed(row: dict) -> bool:
     return bool(criteria) and all(criteria.values())
 
 
+# The criteria that ask for a regression test that fails without the fix,
+# which doctrine rule 4 asks for and the task prompts do not.
+REGRESSION_CRITERIA = ("regression-red", "regression-test", "tests-bite")
+
+
+def passed_without_regression(row: dict) -> bool:
+    criteria = {name: ok for name, ok in row["criteria"].items() if name not in REGRESSION_CRITERIA}
+    return bool(criteria) and all(criteria.values())
+
+
 def arm_rows(rows: list[dict], arm: str, task: Optional[str] = None) -> list[dict]:
     return [
         row
@@ -342,7 +352,9 @@ def difference_sources(campaign: dict, rows: list[dict]) -> dict:
     if "relay-transfer" in campaign["tasks"]:
         kept = [row for row in rows if row["task"] != "relay-transfer"]
         without = percent(arm_rows(kept, "doctrine")) - percent(arm_rows(kept, "bare"))
+    other = [sum(passed_without_regression(row) for row in arm_rows(rows, arm)) for arm in ("doctrine", "bare")]
     return {
+        "other_criteria": (other[0], other[1], len(arm_rows(rows, "doctrine")), len(arm_rows(rows, "bare"))),
         "label": short_label(campaign),
         "total": sum(gain for gain, _ in gains),
         "top": [task for _, task in top],
@@ -364,6 +376,13 @@ def sources_text(src: dict) -> str:
     text = (f"{lead} the {src['label']} difference: `{first}` and `{second}` give "
             f"{src['top_gain']} of its {src['total']} extra passing runs. No uncertainty "
             "interval is computed, so read the difference as a direction more than a size.")
+    own, bare, own_n, bare_n = src["other_criteria"]
+    explained = src["total"] - (own - bare)
+    if src["total"] > 0 and 2 * explained > src["total"]:
+        text += (f" Most of the difference is a regression test left behind: counting every criterion except the three that"
+                 f" ask for a test that fails without the fix ({', '.join(f'`{c}`' for c in REGRESSION_CRITERIA)}),"
+                 f" the arms pass {own}/{own_n} vs {bare}/{bare_n}. Doctrine rule 4 asks for that test, so the"
+                 " measured gain is mostly in leaving one, not in fixing more bugs.")
     if src["without_relay"] is not None:
         text += (" `relay-transfer` grades Luciazero's own relay format (`LUCIA_RELAY.json`),"
                  " which its prompt never names, so it favors the Luciazero arm; without it"
@@ -381,6 +400,13 @@ def sources_text_th(src: dict) -> str:
     text = (f"{lead} {src['label']} มาจาก 2 task: `{first}` กับ `{second}` ให้ "
             f"{src['top_gain']} จาก {src['total']} run ที่ผ่านเพิ่มขึ้น และไม่ได้คำนวณช่วงความไม่แน่นอน "
             "จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด")
+    own, bare, own_n, bare_n = src["other_criteria"]
+    explained = src["total"] - (own - bare)
+    if src["total"] > 0 and 2 * explained > src["total"]:
+        text += (" ส่วนต่างส่วนใหญ่มาจากการทิ้ง regression test ไว้: ถ้านับทุกเกณฑ์ยกเว้น 3 เกณฑ์ที่ขอ test"
+                 f" ซึ่งล้มเมื่อไม่มี fix ({', '.join(f'`{c}`' for c in REGRESSION_CRITERIA)})"
+                 f" สอง arm ผ่าน {own}/{own_n} กับ {bare}/{bare_n} doctrine ข้อ 4 ขอ test นั้น"
+                 " ผลที่วัดได้จึงอยู่ที่การทิ้ง test ไว้มากกว่าการแก้ bug ได้มากขึ้น")
     if src["without_relay"] is not None:
         text += (" `relay-transfer` ตรวจตาม format relay ของ Luciazero เอง (`LUCIA_RELAY.json`)"
                  " ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง Luciazero ถ้าตัด task นี้ออก"

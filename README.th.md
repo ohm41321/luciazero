@@ -267,12 +267,13 @@ bash docs/assets/agent-bus-demo.sh
 `lucia claude` กับ `lucia codex` อ่าน [คู่มือ Agent Bus](docs/agent-bus.md)
 สำหรับ ownership ของ worktree, `--no-nudge`, ขอบเขตความปลอดภัย และการล้างข้อมูล
 
-งานเสี่ยงยังต้องผ่านคุณเสมอ: delete, deploy, การเข้าถึง production, การใช้เงิน,
-force-push, การเปลี่ยน public contract และการขยาย scope ต้องใช้ nonce ครั้งเดียว
-ที่คุณสร้างเองในเทอร์มินัลของคุณ ไม่มี bus tool ใดสร้างให้ได้ และ nonce ที่ถูกใส่
-ลงใน message, task หรือ artifact จะถูกลบหรือปฏิเสธ
-([approvals](docs/agent-bus.md#approvals)) ส่วน trust boundary ของโปรเจกต์อยู่ใน
-[SECURITY.md](SECURITY.md)
+ภายใน workflow ของ Bus skill จะหยุดก่อนงานเสี่ยง: delete, deploy, การเข้าถึง
+production, การใช้เงิน, force-push, การเปลี่ยน public contract และการขยาย scope
+ต้องใช้ nonce ครั้งเดียวที่คุณสร้างเองในเทอร์มินัลของคุณ ไม่มี bus tool ใดสร้างให้ได้
+และ nonce ที่ถูกใส่ลงใน message, task หรือ artifact จะถูกลบหรือปฏิเสธ
+([approvals](docs/agent-bus.md#approvals)) สิ่งนี้บันทึกที่มาของการอนุมัติ
+ไม่ใช่ sandbox ของเครื่องที่กันโปรเซสอื่นซึ่งรันในชื่อคุณ ส่วน trust boundary
+ของโปรเจกต์อยู่ใน [SECURITY.md](SECURITY.md)
 
 ## ติดตั้ง
 
@@ -284,6 +285,7 @@ Luciazero รองรับ Claude Code, Codex CLI และ agent ที่ใ
 | Claude Code plugin | ✓ | ✓ | ✓ | เฉพาะ hook |
 | Classic, Claude Code | ✓ | ✓ | ✓ | เมื่อใช้ `--with-hooks` |
 | Classic, Codex CLI | ✓ | ✓ | ✓ (เป็น skill) | — |
+| Codex CLI plugin | ✓ | ✓ | — | เฉพาะ hook |
 | เฉพาะ skill | — | ✓ | — | — |
 
 <details>
@@ -309,6 +311,25 @@ npx skills add ohm41321/luciazero
 ```
 
 ช่องทางนี้ติดตั้งเฉพาะ skill 13 ตัว ไม่มี doctrine, `lucia-reviewer` หรือ hook
+
+</details>
+
+<details>
+<summary><strong>Codex CLI plugin · doctrine, skill และ hook</strong></summary>
+
+```bash
+codex plugin marketplace add ohm41321/luciazero
+codex plugin add luciazero@luciazero
+```
+
+ได้ doctrine, skill ทั้ง 13 ตัว และ hook ติดตาม verify แต่ไม่มี `lucia-reviewer`
+หรือ statusline Codex บอก hook ว่าคำสั่งพิมพ์อะไรออกมา แต่ไม่บอกว่าผ่านหรือไม่
+ใต้ Codex รอบ verify จึงนับว่ารันแล้ว ไม่เคยนับว่าเขียว ไม่มี nudge ตอนแดง และ
+strict gate จะรันคำสั่งของมันตอน stop แทนการเชื่อรอบก่อนหน้า ให้เลือก plugin นี้
+หรือ `npx luciazero codex` อย่างใดอย่างหนึ่ง เพราะทั้งคู่จะโหลด skill ซ้ำ อัปเดตด้วย
+`codex plugin marketplace upgrade luciazero` ถอนด้วย
+`codex plugin remove luciazero@luciazero` Codex ยัง refresh Git marketplace
+เองด้วย จึงควรเริ่ม session ของ Codex ที่เปิดค้างไว้ใหม่หลังอัปเดต
 
 </details>
 
@@ -345,8 +366,8 @@ luciazero global-uninstall      # ถอนคำสั่งและ PATH bloc
 
 ฝั่ง Claude Code ให้เลือก plugin หรือ classic อย่างใดอย่างหนึ่ง เพราะติดตั้งทั้งคู่
 จะโหลด skill และ `lucia-reviewer` ซ้ำ แม้ hook กับ doctrine จะ dedupe ได้
-Classic มี `--status`; Codex ได้ doctrine และ skill แต่ไม่มี hook/statusline
-เฉพาะ Claude Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
+Classic มี `--status`; Codex แบบ classic ได้ doctrine และ skill แต่ไม่มี hook
+(Codex plugin มี hook) Installer สำรองชื่อที่ชน และตอนถอนจะลบเฉพาะสำเนาที่ Luciazero
 ยืนยันความเป็นเจ้าของได้
 
 </details>
@@ -360,6 +381,7 @@ Luciazero จะไม่แก้ไฟล์ของ classic หรือ Cod
 |---|---|
 | Classic หรือ Codex | `luciazero update` (`luciazero check-update` อ่านอย่างเดียว) |
 | Claude Code plugin | `claude plugin update luciazero@luciazero` แล้วรัน `/reload-plugins` |
+| Codex CLI plugin | `codex plugin marketplace upgrade luciazero` แล้วเริ่ม session ใหม่ |
 | เฉพาะ skill | `npx skills update` หรือ `npx skills update done -g` สำหรับ skill เดียว |
 
 ```bash
@@ -412,11 +434,14 @@ valid run เพียง 4 รอบ campaign วันที่ 2026-09-02 ม
 
 ส่วนต่างส่วนใหญ่ของ Sonnet มาจาก 2 task: `merge-conflict` กับ `pipeline` ให้ 10
 จาก 16 run ที่ผ่านเพิ่มขึ้น และไม่ได้คำนวณช่วงความไม่แน่นอน
-จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด `relay-transfer` ตรวจตาม format relay
-ของ Luciazero เอง (`LUCIA_RELAY.json`) ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง
-Luciazero ถ้าตัด task นี้ออก ส่วนต่างของ Sonnet เป็น +31pp ต้นทุนต่อ run
-คือค่าเฉลี่ยราคา API ที่ CLI รายงาน เวลาต่อ run คือค่าเฉลี่ยเวลาจริง (median ของ
-Sonnet: 45 s กับ 40 s)
+จึงควรอ่านส่วนต่างเป็นทิศทางมากกว่าขนาด ส่วนต่างส่วนใหญ่มาจากการทิ้ง regression
+test ไว้: ถ้านับทุกเกณฑ์ยกเว้น 3 เกณฑ์ที่ขอ test ซึ่งล้มเมื่อไม่มี fix
+(`regression-red`, `regression-test`, `tests-bite`) สอง arm ผ่าน 40/50 กับ 36/50
+doctrine ข้อ 4 ขอ test นั้น ผลที่วัดได้จึงอยู่ที่การทิ้ง test ไว้มากกว่าการแก้
+bug ได้มากขึ้น `relay-transfer` ตรวจตาม format relay ของ Luciazero เอง
+(`LUCIA_RELAY.json`) ซึ่ง prompt ไม่ได้บอก จึงได้เปรียบฝั่ง Luciazero ถ้าตัด
+task นี้ออก ส่วนต่างของ Sonnet เป็น +31pp ต้นทุนต่อ run คือค่าเฉลี่ยราคา API ที่
+CLI รายงาน เวลาต่อ run คือค่าเฉลี่ยเวลาจริง (median ของ Sonnet: 45 s กับ 40 s)
 
 †Provenance ของโมเดล Haiku ยังไม่สมบูรณ์: มีเพียง 70/140 rows ที่บันทึก
 model identity ส่วนอีก 70 rows ระบุได้แค่ระดับไฟล์/รายงานของ campaign
@@ -464,7 +489,10 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
   และชื่อโฟลเดอร์ไว้ใช้ใน report โดยไม่เก็บ command, ชื่อ skill หรือ path ดิบ
   ข้อมูลเก่าที่ไม่มีเวลา verify จะแสดงว่ายังไม่ได้วัด ไม่ใช่ศูนย์
 - ใส่ `LUCIAZERO_STRICT_VERIFY_CMD` ใน personal settings เท่านั้น ห้าม commit ลง
-  config ของ repository; strict mode จะ fail open เมื่อเกิด internal error
+  config ของ repository; strict mode จะ fail open เมื่อเกิด internal error มันรัน
+  ตอน stop เว้นแต่คำสั่งเดียวกันนั้นเขียวอยู่แล้วหลัง edit ล่าสุด โดยรันได้นานสุด
+  `LUCIAZERO_STRICT_TIMEOUT` วินาที (ค่าเริ่มต้น 120) รอบที่ timeout ไม่ตัดสินอะไร
+  และ nudge จะบอกว่ามัน timeout
 - `.claude/settings.json` ที่ commit ไว้ใน repository ตั้งค่า Luciazero ไม่ได้เลย:
   คีย์ `LUCIAZERO_*` ทุกตัว (รวม `CLAUDE_CONFIG_DIR`) ที่ประกาศไว้ที่นั่น — ทั้งใน
   ไดเรกทอรีที่เปิด session และไดเรกทอรีแม่จนถึง root ของ repo — จะถูกปฏิเสธ
@@ -500,7 +528,16 @@ Agent Bus daemon ไม่อยู่ใน npm payload และ `npx luciazer
 - ถ้า verify ล่าสุดของ edit ใน session นั้นล้ม หรือหาคำสั่งไม่เจอ stop จะถูกเตือน
   หนึ่งครั้งเช่นกัน จนกว่าจะมีรอบที่ผ่าน เฉพาะ Claude Code: Codex ส่ง output ของคำสั่ง
   ให้ hook แต่ไม่บอกว่าผ่านหรือไม่
-- ตั้ง `LUCIAZERO_VERIFY_CMD` เป็นคำสั่ง verify ระดับเร็วที่ exact ของ repo
+- ถ้าต้องการนับเฉพาะคำสั่ง verify ของ repo เอง ให้ตั้ง `LUCIAZERO_VERIFY_CMD` ใน
+  personal settings บรรทัดละหนึ่งคำสั่ง (`./test.sh --fast` และ `./test.sh`)
+  คำสั่งจะนับเมื่อมันรันหนึ่งในนั้น รวมถึงเมื่อมี `cd`, wrapper อย่าง `timeout`
+  หรือการตั้งตัวแปรนำหน้า ใส่ระดับ full ไว้ด้วย ไม่อย่างนั้นรอบ closeout ที่ `/done`
+  ขอจะโดน nudge
+- knob อื่นที่อ่านจาก personal settings เท่านั้น: `LUCIAZERO_VERIFY_REGEX` แทนการตรวจ
+  แบบ default ด้วย extended regex ที่ลองกับแต่ละบรรทัดของคำสั่ง;
+  `LUCIAZERO_DOC_REGEX` (ค่าเริ่มต้น `\.(md|markdown|rst)$`) ระบุไฟล์ที่เป็นเอกสาร
+  ซึ่งแก้แล้วไม่ต้อง verify; `LUCIAZERO_RELAY_STALE_DAYS` (ค่าเริ่มต้น 7) คือจำนวนวัน
+  ที่ `LUCIA_RELAY.json` จะถูกเรียกว่าเก่าตอนเริ่ม session
 - `LUCIAZERO_EDIT_DIAG=1` ใน shell ของคุณเอง ทำให้ hook เก็บหนึ่งบรรทัดต่อ edit event
   ไว้ใน state directory ของมัน (ชื่อ tool, key แบบ opaque, `file_path` ขาด/ว่าง/มีค่า,
   นามสกุล, อยู่ใต้ cwd หรือไม่, นับเป็น edit หรือไม่ — ไม่เก็บ path หรือเนื้อหา)

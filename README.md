@@ -54,14 +54,18 @@ runtime.
 </p>
 <p align="center"><sub>Relay 6/6 is a mechanical protocol check; behavioral results are reported separately.</sub></p>
 
-**This checkout is the 3.0.1 tree.** The manifests and the top
+**This checkout is the 3.1.0 tree.** The manifests and the top
 [changelog](CHANGELOG.md) entry agree, and this document describes that source.
 
-- 3.0.1 is a fix release. A failing verify no longer silences the stop nudge,
-  and files changed through the shell (`sed -i`, a formatter) count as edits.
-  The Agent Bus service unit loads on Linux; systemd had refused it since
-  2.5.0. The Bash installers handle `CLAUDE.md` and `AGENTS.md` files saved
-  with CRLF endings.
+- 3.1.0: `LUCIAZERO_VERIFY_CMD` takes one command per line and counts a verify
+  run behind a `cd`, a wrapper or an assignment, so the fast and full tiers can
+  both be listed. A strict verify command that times out says so. In the
+  checkout-only Agent Bus beta, `lucia stop` ends the recorded daemon, only one
+  daemon serves a state directory, and `service install` refuses beside a
+  daemon the service did not start.
+- 3.0.1 fixed the stop nudge after a failing verify, counted files changed
+  through the shell as edits, made the Linux service unit load, and taught
+  the Bash installers CRLF.
 - Since 3.0.0 the reviewer agent is `lucia-reviewer`
   (`luciazero:lucia-reviewer` in the plugin), and the stop hook judges a
   command by the program it runs: type checkers, linters and a project's own

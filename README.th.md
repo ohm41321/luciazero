@@ -53,14 +53,18 @@ Luciazero เป็นชั้น verification และ handoff สำหร�
 </p>
 <p align="center"><sub>Relay 6/6 เป็นการตรวจ protocol ด้วยเครื่อง ส่วนผลด้านพฤติกรรมรายงานแยกต่างหาก</sub></p>
 
-**checkout นี้คือ tree ของ 3.0.1** manifest กับรายการบนสุดใน
+**checkout นี้คือ tree ของ 3.1.0** manifest กับรายการบนสุดใน
 [changelog](CHANGELOG.md) ตรงกัน และเอกสารนี้อธิบาย source นั้น
 
-- 3.0.1 เป็น release แก้บั๊ก verify ที่ fail ไม่ทำให้ stop nudge เงียบอีกแล้ว
-  และไฟล์ที่แก้ผ่าน shell (`sed -i`, formatter) นับเป็นการแก้ไข
-  service ของ Agent Bus โหลดบน Linux ได้แล้ว หลังจาก systemd ปฏิเสธมาตั้งแต่
-  2.5.0 ส่วน Bash installer จัดการ `CLAUDE.md` และ `AGENTS.md` ที่บันทึกแบบ
-  CRLF ได้ถูกต้อง
+- 3.1.0: `LUCIAZERO_VERIFY_CMD` ใส่ได้บรรทัดละหนึ่งคำสั่ง และนับ verify ที่รัน
+  หลัง `cd`, wrapper หรือ assignment จึงใส่ได้ทั้ง tier เร็วและ tier เต็ม
+  strict verify ที่ timeout จะบอกว่า timeout ส่วนใน Agent Bus beta
+  (เฉพาะ checkout) `lucia stop` หยุด daemon ที่บันทึกไว้, state directory
+  หนึ่งมี daemon ได้ตัวเดียว และ `service install` ไม่ติดตั้งข้าง daemon
+  ที่ service ไม่ได้เปิดเอง
+- 3.0.1 แก้ให้ stop nudge ไม่เงียบหลัง verify ที่ fail, นับไฟล์ที่แก้ผ่าน
+  shell เป็นการแก้ไข, ให้ service บน Linux โหลดได้ และให้ Bash installer
+  จัดการ CRLF ได้
 - ตั้งแต่ 3.0.0 reviewer agent ชื่อ `lucia-reviewer`
   (ใน plugin คือ `luciazero:lucia-reviewer`) และ stop hook ตัดสินคำสั่งจาก
   โปรแกรมที่มันรันจริง type checker, linter และ check script ของ project นับ

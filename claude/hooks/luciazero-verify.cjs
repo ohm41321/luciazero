@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Enforcement-pack hook (Claude Code only; installed by `install.sh --with-hooks`
-// or `luciazero --with-hooks`, or loaded by the plugin).
+// Enforcement-pack hook (Claude Code: installed by `install.sh --with-hooks`
+// or `luciazero --with-hooks`, or loaded by the plugin; Codex: loaded by its
+// plugin, which passes `codex` after the subcommand).
 // Tracks per-project whether edits have been followed by a verify run, and
 // nudges each session ONCE at stop when its own edits have not — mechanizing
 // doctrine rule 1 ("done is proven by a command") at the exact moment it is
@@ -77,8 +78,9 @@ const ALL_KNOBS = ["LUCIAZERO_VERIFY_CMD", "LUCIAZERO_VERIFY_REGEX", "LUCIAZERO_
 // test file -- `cat test.sh`, `grep pytest README` -- is not running it.
 // LUCIAZERO_VERIFY_REGEX (extended regex) replaces it and keeps its own
 // meaning: matched against each line of the Bash tool command. When
-// LUCIAZERO_VERIFY_CMD is set (the repo's exact verify command, e.g.
-// "./test.sh"), only commands that ARE it or START with it count. The default
+// LUCIAZERO_VERIFY_CMD is set (the repo's exact verify commands, one per line,
+// e.g. "./test.sh --fast" and "./test.sh"), only commands that run one of them
+// count, after a `cd`, a wrapper or an assignment too (see exactVerify). The default
 // also knows `python -m unittest` and this repository's timing collector,
 // scripts/test-timings.sh, which runs a tier -- except with --report, which
 // only reads the samples kept so far; that case is carved out of the default
@@ -430,18 +432,28 @@ function noteShell(state, key, startMs, endMs) {
 // has seen yet -- at a project's first look, or one made outside any command
 // since the last -- still counts when the shell writes a file beside it: an
 // extra nudge again. Anything git cannot answer, a directory outside any work
-// tree among them, leaves the edit state as it was.
+// tree among them, leaves the edit state as it was, and the spans with it: a
+// git that fails or times out at one look has them again at the next.
 function shellEdits(state, cwd, project, key, run = null) {
   const file = path.join(state, "shell", key);
   const commands = shellSpans(file);
-  const keep = run === null ? [] : commands.filter(([, end]) => end + SHELL_SLACK_MS >= run.start);
-  if (keep.length) write(file, keep.map((span) => span.join(" ")).join("\n") + "\n");
-  else removeFile(file);
+  // what is looked at now is consumed once git has answered; a span another
+  // command of the session noted meanwhile stays
+  const consume = () => {
+    const keep = run === null ? [] : commands.filter(([, end]) => end + SHELL_SLACK_MS >= run.start);
+    const looked = new Set(commands.map((span) => span.join(" ")));
+    const rest = [...keep, ...shellSpans(file).filter((span) => !looked.has(span.join(" ")))];
+    if (rest.length) write(file, rest.map((span) => span.join(" ")).join("\n") + "\n");
+    else removeFile(file);
+  };
   const red = run !== null && run.failed && run.before;
   const during = red || (run !== null && run.after);
   const spans = during ? [...commands, [run.start, run.end]] : commands;
   const cap = run === null ? Infinity : during ? run.end + SHELL_SLACK_MS + 1 : run.start;
-  if (!spans.length && run === null) return;
+  if (!spans.length && run === null) {
+    consume();
+    return;
+  }
   const runFrom = mtime(path.join(state, "last_verify"));
   const ended = Number(readTrimmed(path.join(state, "last_verify_end")));
   const runTo = ended > 0 ? ended : runFrom;
@@ -454,6 +466,7 @@ function shellEdits(state, cwd, project, key, run = null) {
   if (!top) return;
   const status = gitOut(top, ["status", "--porcelain", "-z", "--untracked-files=all"]);
   if (status === null) return;
+  consume();
   const names = [];
   const fields = status.split("\0");
   for (let i = 0; i < fields.length; i++) {
@@ -938,9 +951,12 @@ function shell(first, rest, cmd, depth) {
   return [first, ...stdinBodies(cmd, depth)];
 }
 
-// What one simple command runs, as the strings the default regex is tried on.
-function runs(cmd, depth, from = 0) {
-  if (depth > 8) return [];
+// One simple command's words with its redirections dropped, and `k`, the
+// index of the program it runs once keywords, leading assignments and
+// wrappers (`timeout 600`, `env X=1`) are skipped. `command -v` runs nothing
+// (k is -1); `env -S` hands `split`, its string, to a shell (null when the
+// string is missing).
+function programAt(cmd, from = 0) {
   const w = [];
   for (let j = from; j < cmd.words.length; j++) {
     const t = cmd.words[j];
@@ -955,12 +971,12 @@ function runs(cmd, depth, from = 0) {
       k += 1;
     } else if (own(WRAPPERS, name)) {
       // `command -v pytest` asks where pytest is; it runs nothing
-      if (name === "command" && /^-[vV]$/.test(w[k + 1] || "")) return [];
+      if (name === "command" && /^-[vV]$/.test(w[k + 1] || "")) return { w, k: -1 };
       k += 1;
       while (k < w.length) {
         const f = w[k];
         if (name === "env" && (f === "-S" || f === "--split-string")) {
-          return k + 1 < w.length ? verifyRuns(w[k + 1], depth + 1) : [];
+          return { w, k, split: k + 1 < w.length ? w[k + 1] : null };
         }
         if (WRAPPERS[name].includes(f)) k += 2;
         else if (f.startsWith("-") || /^\d+(\.\d+)?[smhd]?$/.test(f) || assignment(f)) k += 1;
@@ -970,7 +986,15 @@ function runs(cmd, depth, from = 0) {
       break;
     }
   }
-  if (k >= w.length) return [];
+  return { w, k };
+}
+
+// What one simple command runs, as the strings the default regex is tried on.
+function runs(cmd, depth, from = 0) {
+  if (depth > 8) return [];
+  const { w, k, split } = programAt(cmd, from);
+  if (split !== undefined) return split === null ? [] : verifyRuns(split, depth + 1);
+  if (k < 0 || k >= w.length) return [];
   const rest = w.slice(k + 1);
   // the timing collector's --report only reads the samples kept so far
   if (w.slice(k).some((t) => programName(t) === "test-timings.sh") && rest.includes("--report")) return [];
@@ -1036,6 +1060,58 @@ function verifyRuns(text, depth = 0) {
 function defaultVerify(command) {
   const re = ere(DEFAULT_VERIFY_RE);
   return verifyRuns(command).some((run) => re.test(run));
+}
+
+// Exact mode: LUCIAZERO_VERIFY_CMD holds the repo's verify commands, one per
+// line (a fast tier and the full one). A simple command of the tool command is
+// a verify step when its words, past the wrappers and assignments `runs`
+// skips, begin with the words of a one-command line: `cd sub && ./test.sh
+// --fast`, `timeout 600 ./test.sh --fast` and `./test.sh --fast 2>&1 | tail`
+// count, `cat test.sh` and `echo ./test.sh --fast` do not. A tool command
+// that is a line, or starts with it and a space, counts as before; its first
+// commands, as many as the line has, are the steps. That keeps a line of
+// several commands (`npm run lint && npm test`) working.
+function exactVerify(command, configured) {
+  // A configured line keeps its own assignments and wrappers: with
+  // `LZ_REQUIRE_LINT=1 ./test.sh` configured, a bare `./test.sh` (which may
+  // skip the linter) does not count. Only what the run adds in front of the
+  // configured words is skipped, never what it leaves out of them.
+  const parts = (cmd) => {
+    const { w, k, split } = programAt(cmd);
+    return split !== undefined || k < 0 || k >= w.length ? null : { w, k };
+  };
+  const words = (cmd) => { const at = parts(cmd); return at ? at.w : []; };
+  const patterns = [];
+  let leading = 0;
+  for (const line of configured.split(/\r?\n/).map((text) => text.trim()).filter(Boolean)) {
+    let count = 1;
+    try {
+      const commands = lex(line, 0, false, 0).commands;
+      count = commands.length;
+      const pattern = count === 1 ? words(commands[0]) : [];
+      if (pattern.length) patterns.push(pattern);
+    } catch {}
+    if (command === line || command.startsWith(line + " ")) leading = Math.max(leading, count);
+  }
+  const matches = (cmd) => {
+    const at = parts(cmd);
+    if (!at) return false;
+    const { w, k } = at;
+    return patterns.some((p) => {
+      for (let s = 0; s <= k && s + p.length <= w.length; s++) {
+        if (p.every((t, i) => w[s + i] === t)) return true;
+      }
+      return false;
+    });
+  };
+  const step = (cmd, i) => i < leading || matches(cmd);
+  let isVerify = leading > 0;
+  if (!isVerify && patterns.length) {
+    try {
+      isVerify = lex(command, 0, false, 0).commands.some(matches);
+    } catch {}
+  }
+  return { isVerify, step };
 }
 
 // Programs that change no file in the work tree when a command runs one
@@ -1658,7 +1734,7 @@ function runStrict(state, cwd, command, timeout) {
         process.kill(-result.pid, "SIGKILL");
       } catch {}
     }
-    return { verdict: "error" };
+    return { verdict: "error", timedOut: result.error.code === "ETIMEDOUT" ? seconds : 0 };
   }
   // command not found / not executable: an internal error, not a red verify.
   // 126 and 127 are the POSIX shell's; 9009 is the ERRORLEVEL cmd.exe sets
@@ -1883,9 +1959,8 @@ function main(argv) {
       let step = () => false;
       if (command) {
         if (verifyCmd) {
-          // exact mode: the command must BE or START WITH the configured command
-          isVerify = command === verifyCmd || command.startsWith(verifyCmd + " ");
-          step = (cmd, i) => i < lex(verifyCmd, 0, false, 0).commands.length;
+          // exact mode: one of the configured commands runs (see exactVerify)
+          ({ isVerify, step } = exactVerify(command, verifyCmd));
         } else if (process.env.LUCIAZERO_VERIFY_REGEX) {
           // a regex of one's own keeps its documented meaning: any line
           isVerify = anyLine(command, verifyRe);
@@ -1959,6 +2034,8 @@ function main(argv) {
       // internal error — timeout, missing command, unparseable state — degrades
       // to the ordinary fail-open nudge below, never to a block.
       const strict = process.env.LUCIAZERO_STRICT_VERIFY_CMD || "";
+      // a strict run that was stopped decided nothing; the nudge says why
+      let strictNote = "";
       if (strict) {
         const startMs = Date.now();
         let outcome;
@@ -1988,6 +2065,9 @@ function main(argv) {
           return 2;
         }
         // error — fall through to the ordinary fail-open nudge
+        if (outcome.timedOut) {
+          strictNote = `The strict verify command '${strict}' timed out after ${outcome.timedOut} s and was stopped; that is no verdict. Raise LUCIAZERO_STRICT_TIMEOUT (seconds) if it needs longer.\n`;
+        }
       }
       // The nudge goes to the session whose edits are unverified, once each
       // however the sessions' stops interleave: one that made no edit stops
@@ -2007,7 +2087,7 @@ function main(argv) {
       if (nudge && !isFile(path.join(nudged, editorKey))) {
         if (mkdirs(nudged)) touch(path.join(nudged, editorKey));
         statLog("nudge", ctx);
-        process.stderr.write((red ? RED_TEXT : NUDGE_TEXT) + "\n");
+        process.stderr.write(strictNote + (red ? RED_TEXT : NUDGE_TEXT) + "\n");
         return 2;
       }
       // a genuinely clean stop logs a row; yes-but-already-nudged logs nothing

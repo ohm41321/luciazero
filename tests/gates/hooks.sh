@@ -197,6 +197,41 @@ echo '{"cwd":"/hook/test/exact","tool_input":{"command":"./test.sh -q"},"tool_re
   | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD='./test.sh' "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
 RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
 [ "${RC}" = 0 ] || { rm -rf "${HT}"; fail "exact-match mode missed the real verify command (rc=${RC})"; }
+# exact mode finds the configured command past a `cd`, a wrapper, an
+# assignment or a pipe, and takes one command per line (the full tier beside
+# the fast one); a command that only names it is still no run
+EXACT_FAST='./test.sh --fast'
+EXACT_BOTH="$(printf '%s\n%s' './test.sh --fast' './test.sh')"
+EI=0
+while IFS='@' read -r CONFIGURED CMD WANT; do
+  EI=$((EI + 1))
+  EJ='{"cwd":"/hook/test/exact-'"${EI}"'"}'
+  case "${CONFIGURED}" in
+    fast) CONFIGURED="${EXACT_FAST}" ;;
+    both) CONFIGURED="${EXACT_BOTH}" ;;
+    lint) CONFIGURED='LZ_REQUIRE_LINT=1 ./test.sh' ;;
+  esac
+  echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit
+  node -e 'process.stdout.write(JSON.stringify({cwd: process.argv[1], tool_input: {command: process.argv[2]}, tool_response: {exit_code: 0}}))' \
+    "/hook/test/exact-${EI}" "${CMD}" \
+    | TMPDIR="${HT}" LUCIAZERO_VERIFY_CMD="${CONFIGURED}" "${ROOT}/claude/hooks/luciazero-verify.cjs" bash
+  RC=0; echo "${EJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>/dev/null || RC=$?
+  [ "${RC}" = "${WANT}" ] || { rm -rf "${HT}"; fail "exact mode with '${CONFIGURED}' and \`${CMD}\` stopped rc=${RC}, want ${WANT}"; }
+done <<'CASES'
+fast@cd /hook/test && ./test.sh --fast@0
+fast@timeout 600 ./test.sh --fast@0
+fast@LZ_REQUIRE_LINT=1 ./test.sh --fast 2>&1 | tail -5@0
+fast@./test.sh --fast -x@0
+fast@echo ./test.sh --fast@2
+fast@cat ./test.sh --fast@2
+fast@./test.sh@2
+both@./test.sh@0
+both@cd /hook/test && ./test.sh --fast@0
+both@./test.sh.bak@2
+lint@./test.sh@2
+lint@cd /hook/test && LZ_REQUIRE_LINT=1 ./test.sh@0
+lint@env LZ_REQUIRE_LINT=1 ./test.sh@0
+CASES
 echo "ok  enforcement-pack hook state machine"
 
 # 4c1. a repository cannot reconfigure the hook from its committed settings:
@@ -435,6 +470,8 @@ RC=0; ERR="$(echo "${SJ}" | TMPDIR="${HT}" LUCIAZERO_STRICT_VERIFY_CMD='sleep 3'
   "${ROOT}/claude/hooks/luciazero-verify.cjs" stop 2>&1 >/dev/null)" || RC=$?
 [ "${RC}" = 2 ] || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout did not degrade to the nudge (rc=${RC})"; }
 grep -q 'Doctrine rule 1' <<<"${ERR}" || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout produced the wrong message: ${ERR}"; }
+grep -q 'timed out after 1 s.*LUCIAZERO_STRICT_TIMEOUT' <<<"${ERR}" \
+  || { rm -rf "${HT}" "${SPJ}"; fail "strict timeout did not say it timed out or name the knob: ${ERR}"; }
 # fail-open: command not found (shell 127) is an internal error, not a red
 # verify — must degrade to the nudge, never fabricate "RED" evidence
 echo "${SJ}" | TMPDIR="${HT}" "${ROOT}/claude/hooks/luciazero-verify.cjs" edit

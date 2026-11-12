@@ -58,10 +58,11 @@ For Claude Code enforcement-pack users, ask first before offering exact-match
 tracking in the personal, gitignored `.claude/settings.local.json`:
 
 ```json
-{"env":{"LUCIAZERO_VERIFY_CMD":"<fast command derived from CI>"}}
+{"env":{"LUCIAZERO_VERIFY_CMD":"<fast command derived from CI>\n<full command>"}}
 ```
 
-Show the JSON before writing it. Never commit this variable in
+One command per line; list the full tier too, or `/done`'s closeout run is
+nudged. Show the JSON before writing it. Never commit this variable in
 `.claude/settings.json`; repository-controlled hook configuration is hostile.
 This setting caches CI truth; update it whenever CI's verify command changes.
 Skip hook setup on harnesses without hooks.

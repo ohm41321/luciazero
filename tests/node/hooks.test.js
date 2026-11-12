@@ -730,6 +730,17 @@ test("a file a shell command changes after the last verify nudges at stop", { sk
   s5.shell("v1", "npm test");
   s5.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p5, "a.js"), "b\n"));
   assert.strictEqual(s5.stop(), 0, "outside git the stop must behave as before");
+
+  // a git that cannot answer at one stop (it failed, or timed out) leaves the
+  // shell's spans for the next look instead of dropping the edit
+  const p13 = path.join(box.box, "p13");
+  gitRepo(p13, files);
+  const s13 = session(p13);
+  const blind = session(p13, "s1", { ...box.env, GIT_DIR: path.join(box.box, "no-such-git-dir") });
+  s13.shell("v1", "npm test");
+  s13.shell("e1", "sed -i s/a/b/ a.js", () => fs.writeFileSync(path.join(p13, "a.js"), "b\n"));
+  assert.strictEqual(blind.stop(), 0, "a stop git could not answer found an edit anyway");
+  assert.strictEqual(s13.stop(), 2, "a stop git could not answer dropped the shell edit for good");
 });
 
 // .claude/settings.local.json is the user's own file, gitignored by Claude

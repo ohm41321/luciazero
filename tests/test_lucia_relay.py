@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 RELAY_PATH = ROOT / "skills/lucia-relay/scripts/relay.py"
 SPEC = importlib.util.spec_from_file_location("relay_under_test", RELAY_PATH)
 assert SPEC and SPEC.loader

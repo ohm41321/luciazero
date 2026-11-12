@@ -174,4 +174,4 @@ jobs:
       - name: Lucia Relay trust regressions
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python test_lucia_relay.py
+        run: python tests/test_lucia_relay.py

@@ -2,6 +2,8 @@
 
 serve          run the daemon in the foreground (writes endpoint.json + token)
 status         print what is waiting on whom, via the running daemon
+stop           stop the daemon this state directory records, by its pid and
+               start time
 client-config  print the exact mcp-add commands for Claude Code and Codex CLI
 approve        grant one single-use approval nonce for a sensitive operation
                (interactive terminal only; writes the store directly, never
@@ -62,7 +64,10 @@ from .statedir import (
     ensure_state_dir,
     load_or_create_token,
     read_endpoint,
+    SERVE_LOCK,
+    hold_serve_lock,
     read_token,
+    release_serve_lock,
     resolve_state_dir,
     restrict,
     write_endpoint,
@@ -133,10 +138,54 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"serve: cannot make the state directory private: {clean(exc)}", file=sys.stderr)
         return 2
+    # A taken lock is another `serve` of this state directory. Its record
+    # may not be written yet -- two started together, the winner still
+    # migrating -- and `_autostart_daemon` reads a loser's exit as the
+    # winner's endpoint being there, so the loser waits for one of two
+    # answers: the winner's live record, or the lock given back.
+    deadline = time.monotonic() + SERVE_LOCK_WAIT
+    try:
+        lock = hold_serve_lock(state_dir)
+        while lock is None:
+            existing = read_endpoint(state_dir)
+            if existing is not None and existing.get("pid") != os.getpid() and endpoint_alive(existing):
+                return _already_serving(existing)
+            if time.monotonic() >= deadline:
+                print(f"another process holds {state_dir / SERVE_LOCK} and recorded no endpoint within "
+                      f"{SERVE_LOCK_WAIT:.0f}s; a daemon may be starting or stuck there", file=sys.stderr)
+                return 2
+            time.sleep(0.1)
+            lock = hold_serve_lock(state_dir)
+    except OSError as exc:
+        print(f"serve: cannot take {state_dir / SERVE_LOCK}: {clean(exc)}", file=sys.stderr)
+        return 2
+    try:
+        return _serve_locked(args, state_dir)
+    finally:
+        release_serve_lock(lock)
+
+
+#: How long a `serve` that finds the lock taken waits for its holder to
+#: record an endpoint, or to let go of the lock, before it gives up. Covers a
+#: holder still migrating a large store, and one that is still exiting after
+#: removing its record. As long as `_autostart_daemon`'s own wait, which also
+#: goes on waiting while the lock is held.
+SERVE_LOCK_WAIT = 20.0
+
+
+def _already_serving(existing: dict[str, Any]) -> int:
+    print(f"a daemon already serves this state directory at {existing['url']} (pid {existing['pid']}); "
+          f"stop it first with: {watch.launcher()} stop", file=sys.stderr)
+    return 2
+
+
+def _serve_locked(args: argparse.Namespace, state_dir: Path) -> int:
+    """`serve` once this process holds the state directory's lock."""
+    # A daemon from before the lock does not take it; its record still says
+    # it is there.
     existing = read_endpoint(state_dir)
     if existing is not None and existing.get("pid") != os.getpid() and endpoint_alive(existing):
-        print(f"a daemon already serves this state directory at {existing['url']} (pid {existing['pid']}); stop it first", file=sys.stderr)
-        return 2
+        return _already_serving(existing)
     token = load_or_create_token(state_dir)
     with Store.open(db_path(state_dir)) as store:
         version = store.migrate()
@@ -230,6 +279,83 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"approvals pending: {int(status['approvals_pending'])} (unused nonces; each is bound to one task and operation)")
     if status["queued_deliveries"] > 0 or status["tasks"].get("open", 0) > 0:
         print("next: start the agent's session and run /lucia-bus (Codex: $lucia-bus)")
+    return 0
+
+
+#: How long `stop` waits for the daemon to remove its record and exit.
+STOP_TIMEOUT = 10.0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    """End the daemon that serves this state directory.
+
+    The pid comes from endpoint.json and is signalled only once the start
+    time recorded beside it still matches: after a crash or a reboot that pid
+    can belong to any process, and this command is the one place the bus ends
+    a process it did not start. So it fails closed where `endpoint_alive`
+    fails open -- a record without a start time, or a process table that
+    cannot be read, leaves the process alone and says how to end it by hand.
+
+    POSIX gets SIGTERM, which `serve` turns into a clean exit that removes its
+    own record. Windows delivers no SIGTERM from outside, and Ctrl+Break only
+    reaches a console the daemon shares, which an autostarted one has none of,
+    so there the process is terminated and this removes its record for it.
+    """
+    state_dir = resolve_state_dir(args.state_dir)
+    endpoint = read_endpoint(state_dir)
+    if endpoint is None:
+        print(f"stop: no daemon recorded in {state_dir}; nothing to stop")
+        return 0
+    pid = endpoint.get("pid")
+    if not endpoint_alive(endpoint):
+        clear_endpoint(state_dir, pid)
+        print(f"stop: the daemon recorded in {state_dir} (pid {clean(pid)}) had already exited; removed its record")
+        return 0
+    recorded = endpoint.get("process_started_at")
+    try:
+        current = procinfo.stable_started_at(pid)
+    except procinfo.ProcessError:
+        current = None
+    by_hand = f"taskkill /PID {pid}" if proctree.WINDOWS else f"kill {pid}"
+    if not isinstance(recorded, str) or current != recorded or not procinfo.owned(pid):
+        print(f"stop: cannot prove pid {pid} is still the daemon recorded in {state_dir} (its record has no "
+              "start time, or this process cannot read or signal it); nothing was signalled. "
+              f"If it is the daemon, end it yourself: {by_hand}", file=sys.stderr)
+        return 1
+    try:
+        if proctree.WINDOWS:
+            from . import winproc
+
+            winproc.kill(pid)
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        print(f"stop: cannot signal pid {pid}: {clean(exc)}", file=sys.stderr)
+        return 1
+    deadline = time.monotonic() + args.timeout
+    while True:
+        record = read_endpoint(state_dir)
+        if record is None or record.get("pid") != pid:
+            break  # it removed its own record on the way out
+        if not endpoint_alive(record):
+            clear_endpoint(state_dir, pid)  # ended without its cleanup, as on Windows
+            break
+        if time.monotonic() >= deadline:
+            print(f"stop: pid {pid} was asked to stop and still serves after {args.timeout:g}s; "
+                  f"see {state_dir / 'daemon.log'}, or end it yourself: {by_hand}", file=sys.stderr)
+            return 1
+        time.sleep(0.1)
+    print(f"stopped the daemon at {clean(endpoint['url'])} (pid {pid})")
+    try:
+        installed = any(service_mod.file_state(path) == "ours"
+                        for path in service_mod.plan(state_dir=args.state_dir).paths())
+    except service_mod.ServiceError:
+        installed = False
+    if installed:
+        # The service file is per user, not per state directory, so this
+        # cannot say the service serves this one; it says what to check.
+        print(f"  note: a background service is installed; if it serves {clean(str(state_dir))}, it starts "
+              f"the daemon again at your next login or after a failure. See: {watch.launcher()} service status")
     return 0
 
 
@@ -740,9 +866,9 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
     to `daemon.log`, its own session so it outlives this terminal -- and this
     process waits for `endpoint.json` rather than assuming it arrived.
 
-    Two terminals starting at once is not a race worth locking: `serve`
-    refuses a state directory a live daemon already owns, so the loser exits
-    and both callers read the winner's endpoint.
+    Two terminals starting at once need nothing here: `serve` takes the
+    state directory's lock, the loser waits for the winner's endpoint and
+    exits, and both callers read the winner's endpoint.
     """
     ensure_state_dir(state_dir)
     argv, env = service_mod.serve_command()
@@ -787,12 +913,18 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
         # exits because another one already owns this directory, and that
         # loser is not a failure -- the winner's endpoint is the answer both
         # callers wanted. `cmd_serve` refuses only once an endpoint is
-        # recorded, so the one re-read closes the window between the two.
+        # recorded (or after SERVE_LOCK_WAIT with none), so the one re-read
+        # closes the window between the two.
         code = daemon.poll()
         if code is not None:
             endpoint = _live_endpoint(state_dir)
             if endpoint is not None:
                 return endpoint
+            if _serve_lock_held(state_dir) and time.monotonic() < deadline:
+                # Ours lost the lock to a `serve` that has not recorded
+                # itself yet; that one's endpoint is still the answer.
+                time.sleep(0.05)
+                continue
             tail = _log_tail(state_dir)
             print(f"run: the daemon it started exited {code} without recording an endpoint; "
                   f"last of {state_dir / 'daemon.log'}:\n{tail or '  (nothing logged)'}",
@@ -804,6 +936,16 @@ def _autostart_daemon(state_dir: Path, *, timeout: float = 20.0) -> Optional[dic
     print(f"run: started a daemon but it did not record an endpoint within {timeout:.0f}s; "
           f"see {state_dir / 'daemon.log'}", file=sys.stderr)
     return None
+
+
+def _serve_lock_held(state_dir: Path) -> bool:
+    """Is another process serving, or starting to serve, this directory?"""
+    try:
+        fd = hold_serve_lock(state_dir)
+    except OSError:
+        return False
+    release_serve_lock(fd)
+    return fd is None
 
 
 def _live_endpoint(state_dir: Path) -> Optional[dict[str, Any]]:
@@ -1463,6 +1605,20 @@ def _service_plan(args: argparse.Namespace) -> "service_mod.Plan":
                             approve_with=getattr(args, "approve_with", "auto"))
 
 
+def _unmanaged_daemon(plan: "service_mod.Plan") -> Optional[dict[str, Any]]:
+    """The live daemon on the plan's state directory, unless it is the
+    service's own: installing over a running service restarts it, which is
+    what a reinstall is for."""
+    endpoint = _live_endpoint(plan.state_dir)
+    if endpoint is None:
+        return None
+    try:
+        report = service_mod.status(plan)
+    except service_mod.ServiceError:
+        return endpoint
+    return None if report["installed"] and report["active"] else endpoint
+
+
 def cmd_service(args: argparse.Namespace) -> int:
     """The daemon without a dedicated window.
 
@@ -1503,6 +1659,18 @@ def cmd_service(args: argparse.Namespace) -> int:
             print(f"  note    {note}")
     for step in (plan.install_steps if args.service_command == "install" else plan.uninstall_steps):
         print(f"  then    {' '.join(step.argv)}")
+    beside = _unmanaged_daemon(plan) if args.service_command == "install" else None
+    if beside is not None:
+        # Installed anyway, the service's daemon would find this one holding
+        # the state directory, exit, and be started again until the manager
+        # gave up, while install said it worked.
+        why = (f"a daemon the service did not start already serves {clean(str(plan.state_dir))} at "
+               f"{clean(beside['url'])} (pid {clean(beside['pid'])}), so the service's own would refuse "
+               f"to start beside it. Stop it first with: {watch.launcher()} stop")
+        if not args.dry_run:
+            print(f"service: {why}; nothing was written", file=sys.stderr)
+            return 2
+        print(f"  --      {why}")
     if args.dry_run:
         print("  --      dry run: nothing was written and nothing was started")
         return 0
@@ -1593,6 +1761,11 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--state-dir", default=None)
     status.add_argument("--json", action="store_true")
     status.set_defaults(func=cmd_status)
+    stop = sub.add_parser("stop", help="stop the daemon that serves this state directory")
+    stop.add_argument("--state-dir", default=None)
+    stop.add_argument("--timeout", type=float, default=STOP_TIMEOUT,
+                      help="seconds to wait for it to exit (default: %(default)s)")
+    stop.set_defaults(func=cmd_stop)
     config = sub.add_parser("client-config", help="print mcp-add commands for both CLIs")
     config.add_argument("--state-dir", default=None)
     config.set_defaults(func=cmd_client_config)

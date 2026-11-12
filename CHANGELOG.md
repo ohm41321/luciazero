@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-12
+
 ### Added
 
 - **`lucia stop`** (`luciazero-agentd stop`) ends the daemon a state

@@ -77,6 +77,9 @@ class Http:
 class ServerCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="agentd-mcp-")
+        # Cleanups, not tearDown, so a server a test starts and stops with
+        # addCleanup is stopped before the directory goes (see ClaimCase).
+        self.addCleanup(self._tmp.cleanup)
         self.db = str(Path(self._tmp.name) / "bus.sqlite3")
         with Store.open(self.db) as store:
             store.migrate()
@@ -84,11 +87,8 @@ class ServerCase(unittest.TestCase):
         # this suite is about protocol conformance, so it opts into the legacy
         # mode on purpose. tests/test_identity.py covers the default.
         self.server = BusServer(self.db, TOKEN, port=0, allow_unattributed=True).start()
+        self.addCleanup(self.server.stop)
         self.client = Http(self.server.url)
-
-    def tearDown(self) -> None:
-        self.server.stop()
-        self._tmp.cleanup()
 
 
 class NegotiationAndSessions(ServerCase):

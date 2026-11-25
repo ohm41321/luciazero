@@ -114,9 +114,17 @@ echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST
 # green, three mutated) are independent, so each gets its own copy of the
 # checkout and its own temp directory and they run concurrently; the
 # mutations are all applied before any run starts.
-TM="$(mktemp -d)"
+# What git ignores (video renders, node_modules, virtualenvs: about 1 GB on a
+# working machine, 2026-11-25) is stripped from the base before the four
+# copies; a clean CI checkout has none of it, so the discipline tier cannot
+# need it. mktmp, not mktemp: a signal or a fatal error still removes it.
+mktmp TM
 mkdir -p "${TM}/base" "${TM}/bin"
 cp -R "${ROOT}" "${TM}/base/repo"
+if git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "${ROOT}" ls-files -z -oi --exclude-standard --directory \
+    | (cd "${TM}/base/repo" && xargs -0 rm -rf)
+fi
 rm -rf "${TM}/base/repo/.git" "${TM}/base/repo/node_modules"
 printf '#!/bin/sh\nexit 0\n' > "${TM}/bin/shellcheck"
 chmod +x "${TM}/bin/shellcheck"
@@ -124,6 +132,7 @@ for RUN in green hook report skill; do
   mkdir -p "${TM}/${RUN}/tmp"
   cp -R "${TM}/base/repo" "${TM}/${RUN}/repo"
 done
+rm -rf "${TM}/base"
 mutate() { # mutate <run> <repo-relative file> <old> <new>  (exactly one occurrence)
   python3 - "${TM}/$1/repo/$2" "$3" "$4" <<'PY' || { rm -rf "${TM}"; fail "$1 mutation did not apply"; }
 import pathlib, sys
@@ -149,14 +158,23 @@ start_run() { # start_run <run>: the discipline tier in that run's copy, stderr 
   (cd "${TM}/$1/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
     PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/$1/tmp" ./test.sh --discipline >/dev/null 2>"${TM}/$1/err") &
 }
+# All four at once; LZ_TEST_PARALLEL=0 waits for each before the next, so a
+# serial diagnostic run stays serial here too.
+RC_green=0; RC_hook=0; RC_report=0; RC_skill=0
 start_run green; PID_green=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_green}" || RC_green=$?; fi
 start_run hook; PID_hook=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_hook}" || RC_hook=$?; fi
 start_run report; PID_report=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_report}" || RC_report=$?; fi
 start_run skill; PID_skill=$!
-RC_green=0; wait "${PID_green}" || RC_green=$?
-RC_hook=0; wait "${PID_hook}" || RC_hook=$?
-RC_report=0; wait "${PID_report}" || RC_report=$?
-RC_skill=0; wait "${PID_skill}" || RC_skill=$?
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_skill}" || RC_skill=$?; fi
+if [ "${LZ_TEST_PARALLEL:-1}" != 0 ]; then
+  wait "${PID_green}" || RC_green=$?
+  wait "${PID_hook}" || RC_hook=$?
+  wait "${PID_report}" || RC_report=$?
+  wait "${PID_skill}" || RC_skill=$?
+fi
 TIERS_BAD=""
 tiers_bad() { TIERS_BAD="${TIERS_BAD:+${TIERS_BAD}; }$1"; }
 no_leftovers() { # no_leftovers <run> <label>: that run's temp directory is empty again

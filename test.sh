@@ -115,7 +115,7 @@ stop_gates() { # stop_gates <pid>...: each one and every process under it
 # discover finds, so a module the glob misses cannot drop out unnoticed.
 # LZ_TEST_PARALLEL=0 runs the single discover process instead.
 agentd_suite() { # agentd_suite <log dir>: red modules' log tails on stderr
-  local LOGS="$1" F M I RC RED="" WANT GOT
+  local LOGS="$1" F M I RC RED="" WANT GOT JOBS
   local MODS=() MPIDS=()
   # No separate py_compile pass: importing the suite already proves syntax,
   # and py_compile writes __pycache__ regardless of PYTHONDONTWRITEBYTECODE.
@@ -131,7 +131,15 @@ agentd_suite() { # agentd_suite <log dir>: red modules' log tails on stderr
   # Ctrl-C would leave every module running after the suite has ended.
   trap 'stop_gates ${MPIDS[@]+"${MPIDS[@]}"}; wait; rm -rf "${LOGS}"; exit 130' INT
   trap 'stop_gates ${MPIDS[@]+"${MPIDS[@]}"}; wait; rm -rf "${LOGS}"; exit 143' TERM
+  # At most one module per CPU at a time (LZ_AGENTD_JOBS overrides): the
+  # nudge and adapters tests are known to flake under heavy load (AGENTS.md),
+  # and a 3-4 vCPU CI runner must not get all 17 modules at once.
+  JOBS="${LZ_AGENTD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+  case "${JOBS}" in
+    ''|*[!0-9]*|0) echo "agentd: LZ_AGENTD_JOBS must be a positive whole number, got '${JOBS}'" >&2; return 1 ;;
+  esac
   for F in "${ROOT}"/agentd/tests/test_*.py; do
+    while [ "$(jobs -pr | wc -l)" -ge "${JOBS}" ]; do sleep 0.1; done
     M="$(basename "${F}" .py)"
     MODS+=("${M}")
     # A background job starts with SIGINT ignored, Python keeps it ignored,

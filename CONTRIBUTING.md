@@ -32,8 +32,9 @@ through `bin/lib/installer.js`, the Node port that Windows runs, and fails on
 any difference in exit status, output or the resulting tree. The native
 Windows jobs run on an administrator account with no one at the desktop;
 what only a real machine can show is listed in
-[docs/windows-field-test.md](docs/windows-field-test.md). Use `LZ_TEST_PARALLEL=0` for a serial
-diagnostic run. Real behavioral eval runs are separate and manual:
+[docs/windows-field-test.md](docs/windows-field-test.md). The agentd gate runs its test modules in parallel, at most one per
+CPU (`LZ_AGENTD_JOBS=<n>` sets the limit). Use `LZ_TEST_PARALLEL=0` for a
+serial diagnostic run. Real behavioral eval runs are separate and manual:
 they invoke the selected Claude or Codex CLI and consume API credit or
 subscription quota.
 

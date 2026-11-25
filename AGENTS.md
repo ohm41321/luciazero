@@ -36,6 +36,17 @@
   without hooks. Codex has an exploratory ceiling-effect pilot, so neither
   "Codex not measured" nor a claim of demonstrated Codex uplift is accurate.
   Keep caveats with evidence; see `README.md` and `docs/benchmark.md`.
+- A background job of a non-interactive shell starts with SIGINT ignored,
+  and Python keeps the ignore: run as `( ... ) &` under Bash 3.2,
+  `test_identity.RunSetupSignals` fails 4 of 7. It passes in the
+  foreground, and under Bash 5 either way (2026-11-25). `trap - INT` in the
+  subshell cannot undo an inherited ignore. `agentd_suite` in `test.sh`
+  launches each module through a Python one-liner that restores `SIG_DFL`
+  before it execs unittest; keep that for any test run started with `&`.
+- A clone made from `git bundle create ... HEAD main` has no tags, and the
+  full tier's install gate then fails with `gate5: no ref v2.4.3 in the
+  clone`. To benchmark on another host, bundle `--tags` too, or fetch them
+  (2026-11-25).
 - Preserve the test suite's environment sanitation and service-root guard:
   uninstall fixtures must never resolve services under the real home directory.
 - Bash 3.2 can return zero on a syntax error in a sourced gate. Keep the

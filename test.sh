@@ -371,7 +371,7 @@ gate() { # gate <name>: source tests/gates/<name>.sh, timing it when asked
 
 gate syntax
 # The Agent Bus loop: the daemon suite, then the fake-provider gates the full
-# tier runs alone in its parallel stage (they share agentd/.last-store-run.log).
+# tier runs alone before its parallel stage (they write agentd/.last-store-run.log).
 if [ "${TIER}" = bus ]; then
   gate agentd
   gate agent-bus
@@ -405,9 +405,9 @@ if [ "${TIER}" = fast ]; then
   exit 0
 fi
 
-# The full-only gates. agent-bus runs first and alone: it writes
-# agentd/.last-store-run.log like the agentd gate and must never overlap
-# another writer. Then tiers, eval, packaging, install, codex-install and
+# The full-only gates. agent-bus runs first and alone: its three gates write
+# agentd/.last-store-run.log in turn, and no other gate may write it
+# meanwhile. Then tiers, eval, packaging, install, codex-install and
 # parity run at once — each owns its sandboxes and only reads the checkout (the suite
 # proves each is green in a clean subshell). Every one of the seven runs as a
 # background subshell that is waited for: a subshell in a || list would lose

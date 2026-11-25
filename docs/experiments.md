@@ -1,5 +1,78 @@
 # Experiment log
 
+## 2026-11-25 — parallel agentd modules and discipline-tier mutation runs
+
+question: the full tier took 194-304 s on macOS. Which gates set the wall
+time, and can they run faster without dropping a check?
+
+method: `scripts/test-timings.sh --full` on a clean clone of `abfe4dd` on
+two hosts: the Mac (Darwin arm64, 10 cores, Bash 3.2) and msi (Linux
+aarch64, 20 cores, Bash 5.2, shared with other work, load average 5-10
+during most runs). Then the same on the branch. On msi, ShellCheck 0.9.0
+was on PATH with `LZ_REQUIRE_LINT=1`.
+
+baseline: the full tier runs syntax, agentd, core, contracts, hooks, relay,
+bisect and evidence one after another, then agent-bus, then the six other
+full-only gates at once. Two gates set the wall time: agentd (101 s Mac,
+111 s msi), which runs alone, and tiers (113 s Mac, 94 s msi), the longest
+of the parallel stage.
+- agentd: one `unittest discover` process ran 682 tests at about 40% of one
+  CPU, so it spent most of its time waiting on child processes and
+  timeouts. The 17 modules run at once on msi took 20-21 s in 6 of 6 runs,
+  all 682 tests green, with load average 6.3-7.7.
+- tiers: section (b) ran `./test.sh --discipline` four times in a row (28 s
+  each on msi). Four copies run at once took 29 s.
+
+change: agentd runs one process per test module, at most one per CPU
+(`LZ_AGENTD_JOBS` overrides). The per-module "Ran N" counts must add up to
+what discover finds. The four discipline runs in tiers.sh run at once, each
+in its own copy. `LZ_TEST_PARALLEL=0` keeps both serial.
+
+result (full tier wall time, all green):
+
+| host | before (`abfe4dd`) | after (`44ce1bd`) | after review fixes (`2ac9931`) |
+|---|---|---|---|
+| msi | 245 s (agentd 111, tiers 94) | 146 s, 180 s (agentd 23-24, tiers 57-71) | 204 s, 244 s at load average 19-31 (not comparable) |
+| Mac | 276 s (agentd 101, tiers 113) | 199 s, 196 s (agentd 22-23, tiers 108-109) | 180 s, 177 s (agentd 20-21, tiers 72-73) |
+
+- On the Mac, before the review fixes, all of the gain came from agentd.
+  The parallel stage on 10 cores was CPU- and disk-bound: tiers, eval and
+  parity each took 103-111 s, and the four tiers copies each carried about
+  1 GB of git-ignored renders and dependencies. Dropping those from the
+  copies brought tiers to 72-73 s.
+- parity (98-99 s on the Mac, 75-124 s on msi) is now the longest gate.
+- The msi runs after the review fixes overlapped other heavy work on that
+  host (load average 19-31, hooks 42-57 s against 27 s before). They are
+  green, but their times say nothing about the change.
+- The agentd store tier alone with `LZ_AGENTD_JOBS=3` (a CI runner's size)
+  took 43 s on the Mac, against about 101 s serial.
+
+correctness checks: a module that fails turns the suite red and prints its
+log tail. A module outside the `test_*.py` glob fails the count check
+(`the modules ran 682 tests, discover finds 683`). SIGTERM stops every
+module and leaves no log directory. In tiers, a wrong expected FAIL line
+and a no-op mutation both still go red.
+
+footgun found: a background job of a non-interactive shell starts with
+SIGINT ignored, and Python keeps the ignore. Under Bash 3.2,
+`test_identity.RunSetupSignals` then failed 4 of 7. It passes in the
+foreground, and under Bash 5 on msi it passes either way. `trap - INT` in
+the subshell does not undo it, but a Python launcher that restores
+`SIG_DFL` before it execs unittest does.
+
+not measured: CI runners. The load-sensitive tests (`test_nudge`,
+`test_adapters`) did not flake in these runs. Watch CI history before
+saying the cap is enough.
+
+verdict: keep. The full tier is about 35% faster on the Mac (276 s to
+177-180 s) and was 27-40% faster on msi at comparable load (245 s to
+146-180 s). Every check still runs.
+
+also found: with `LZ_TEST_PARALLEL=0` exported, the full tier was always
+red, because the tiers gate's stub runs inherited it and its parallel-timing
+check then ran serially (`three stub gates sleeping 2 s each took 6 s in
+parallel`). That was already true at `abfe4dd`. The stub runs now unset it.
+
 ## 2026-11-03 — verify detector recall and edits the hook should not count (measurement only)
 
 question: now that the detector counts the program a command runs, which

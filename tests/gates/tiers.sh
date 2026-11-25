@@ -106,19 +106,35 @@ echo "ok  tiers source their gates in order (discipline stops at hooks); LZ_TEST
 # (b) The discipline tier bites: a copy of this checkout with one mutation in
 # the hook, the discipline report or a skill prompt must exit 1 from the
 # discipline tier with the failure that names it. A `shellcheck` shim keeps
-# the three runs to the checks under test; lint has its own coverage above.
+# the four runs to the checks under test; lint has its own coverage above.
 # Each mutation is applied by exact count, so a rewrite that misses its
 # target fails here instead of making the run vacuous. Every child runs
 # under a temp directory of its own, empty again afterwards: the gates
-# clean up on the green path and on the red one alike.
-TM="$(mktemp -d)"
-cp -R "${ROOT}" "${TM}/repo"
-rm -rf "${TM}/repo/.git" "${TM}/repo/node_modules"
-mkdir -p "${TM}/bin" "${TM}/tmp"
+# clean up on the green path and on the red one alike. The four runs (one
+# green, three mutated) are independent, so each gets its own copy of the
+# checkout and its own temp directory and they run concurrently; the
+# mutations are all applied before any run starts.
+# What git ignores (video renders, node_modules, virtualenvs: about 1 GB on a
+# working machine, 2026-11-25) is stripped from the base before the four
+# copies; a clean CI checkout has none of it, so the discipline tier cannot
+# need it. mktmp, not mktemp: a signal or a fatal error still removes it.
+mktmp TM
+mkdir -p "${TM}/base" "${TM}/bin"
+cp -R "${ROOT}" "${TM}/base/repo"
+if git -C "${ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "${ROOT}" ls-files -z -oi --exclude-standard --directory \
+    | (cd "${TM}/base/repo" && xargs -0 rm -rf)
+fi
+rm -rf "${TM}/base/repo/.git" "${TM}/base/repo/node_modules"
 printf '#!/bin/sh\nexit 0\n' > "${TM}/bin/shellcheck"
 chmod +x "${TM}/bin/shellcheck"
-mutate() { # mutate <repo-relative file> <old> <new>  (exactly one occurrence)
-  python3 - "${TM}/repo/$1" "$2" "$3" <<'PY'
+for RUN in green hook report skill; do
+  mkdir -p "${TM}/${RUN}/tmp"
+  cp -R "${TM}/base/repo" "${TM}/${RUN}/repo"
+done
+rm -rf "${TM}/base"
+mutate() { # mutate <run> <repo-relative file> <old> <new>  (exactly one occurrence)
+  python3 - "${TM}/$1/repo/$2" "$3" "$4" <<'PY' || { rm -rf "${TM}"; fail "$1 mutation did not apply"; }
 import pathlib, sys
 path, old, new = sys.argv[1:]
 p = pathlib.Path(path); s = p.read_text()
@@ -126,43 +142,68 @@ assert s.count(old) == 1, f"{path}: expected exactly one match for {old!r}, foun
 p.write_text(s.replace(old, new))
 PY
 }
-no_leftovers() { # no_leftovers <label>: the child's temp directory is empty again
-  [ -z "$(ls -A "${TM}/tmp")" ] \
-    || { local LEFT; LEFT="$(find "${TM}/tmp" -mindepth 1 -maxdepth 1 | sed 's#.*/##' | tr '\n' ' ')"; rm -rf "${TM}"; fail "$1 left temp directories behind: ${LEFT}"; }
-}
-expect_red() { # expect_red <label> <failure line the discipline tier must print>
-  local RC=0 ERR
-  ERR="$(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
-    PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline 2>&1 >/dev/null)" || RC=$?
-  [ "${RC}" = 1 ] || { rm -rf "${TM}"; fail "$1: discipline tier exited ${RC}, want 1"; }
-  grep -qF "$2" <<<"${ERR}" \
-    || { rm -rf "${TM}"; fail "$1: discipline tier went red for another reason: $(printf '%s\n' "${ERR}" | grep '^FAIL' | head -1)"; }
-  no_leftovers "$1"
-}
-restore() { cp "${ROOT}/$1" "${TM}/repo/$1"; }
-# green first: the unmodified copy passes and leaves its temp directory empty
-(cd "${TM}/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
-  PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/tmp" ./test.sh --discipline >/dev/null 2>&1) \
-  || { rm -rf "${TM}"; fail "the unmodified copy is red in the discipline tier"; }
-no_leftovers "a green discipline run"
 # hook: a prompt inside an open turn must not reset the turn (4c5). The
 # literal is the hook's own line, expansions and all.
 # shellcheck disable=SC2016
-mutate claude/hooks/luciazero-verify.cjs \
+mutate hook claude/hooks/luciazero-verify.cjs \
   '      if (isFile(path.join(telemetry, "turn_open"))) return 0;
 ' ''
-expect_red "hook mutation" "FAIL: a prompt inside an open turn reset turn_start_ms"
-restore claude/hooks/luciazero-verify.cjs
 # report: the schema-3 aggregate must be summed, not dropped (4c5b)
-mutate bin/discipline-report.js \
+mutate report bin/discipline-report.js \
   'telemetry.redundant_green_count += row.telemetry.redundant_green_count;' \
   'telemetry.redundant_green_count += 0;'
-expect_red "report mutation" "FAIL: discipline JSON report content wrong"
-restore bin/discipline-report.js
 # skill prompt: a behavioral clause /done is checked for must stay (4)
-mutate skills/done/SKILL.md 'never two' 'never three'
-expect_red "skill prompt mutation" "FAIL: remaining skill prompt budget or contract drift"
-restore skills/done/SKILL.md
+mutate skill skills/done/SKILL.md 'never two' 'never three'
+start_run() { # start_run <run>: the discipline tier in that run's copy, stderr kept beside it
+  (cd "${TM}/$1/repo" && env -u CI -u LZ_REQUIRE_LINT -u LZ_BASH32 -u LZ_TEST_TIMINGS \
+    PATH="${TM}/bin:${PATH}" TMPDIR="${TM}/$1/tmp" ./test.sh --discipline >/dev/null 2>"${TM}/$1/err") &
+}
+# All four at once; LZ_TEST_PARALLEL=0 waits for each before the next, so a
+# serial diagnostic run stays serial here too.
+RC_green=0; RC_hook=0; RC_report=0; RC_skill=0
+start_run green; PID_green=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_green}" || RC_green=$?; fi
+start_run hook; PID_hook=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_hook}" || RC_hook=$?; fi
+start_run report; PID_report=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_report}" || RC_report=$?; fi
+start_run skill; PID_skill=$!
+if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then wait "${PID_skill}" || RC_skill=$?; fi
+if [ "${LZ_TEST_PARALLEL:-1}" != 0 ]; then
+  wait "${PID_green}" || RC_green=$?
+  wait "${PID_hook}" || RC_hook=$?
+  wait "${PID_report}" || RC_report=$?
+  wait "${PID_skill}" || RC_skill=$?
+fi
+TIERS_BAD=""
+tiers_bad() { TIERS_BAD="${TIERS_BAD:+${TIERS_BAD}; }$1"; }
+no_leftovers() { # no_leftovers <run> <label>: that run's temp directory is empty again
+  local LEFT
+  if [ -n "$(ls -A "${TM}/$1/tmp")" ]; then
+    LEFT="$(find "${TM}/$1/tmp" -mindepth 1 -maxdepth 1 | sed 's#.*/##' | tr '\n' ' ')"
+    tiers_bad "$2 left temp directories behind: ${LEFT}"
+  fi
+}
+# green: the unmodified copy passes and leaves its temp directory empty
+if [ "${RC_green}" != 0 ]; then
+  tiers_bad "the unmodified copy is red in the discipline tier"
+fi
+no_leftovers green "a green discipline run"
+expect_red() { # expect_red <run> <label> <rc> <failure line the discipline tier must print>
+  if [ "$3" != 1 ]; then
+    tiers_bad "$2: discipline tier exited $3, want 1"
+  elif ! grep -qF "$4" "${TM}/$1/err"; then
+    tiers_bad "$2: discipline tier went red for another reason: $(grep '^FAIL' "${TM}/$1/err" | head -1)"
+  fi
+  no_leftovers "$1" "$2"
+}
+expect_red hook "hook mutation" "${RC_hook}" "FAIL: a prompt inside an open turn reset turn_start_ms"
+expect_red report "report mutation" "${RC_report}" "FAIL: discipline JSON report content wrong"
+expect_red skill "skill prompt mutation" "${RC_skill}" "FAIL: remaining skill prompt budget or contract drift"
+if [ -n "${TIERS_BAD}" ]; then
+  rm -rf "${TM}"
+  fail "${TIERS_BAD}"
+fi
 rm -rf "${TM}"
 echo "ok  discipline tier goes red on a hook, report or skill-prompt mutation; no temp directory outlives a run"
 
@@ -241,7 +282,7 @@ for G in tiers eval install; do echo 'sleep 2' >> "${TP}/repo/tests/gates/${G}.s
 par_full() { # par_full <label> [env assignments...]: run the stub full tier, keep both streams
   local LABEL="$1"; shift
   rm -f "${TP}/paths.log"
-  (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
+  (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS -u LZ_TEST_PARALLEL TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
     >"${TP}/${LABEL}.out" 2>"${TP}/${LABEL}.err")
 }
 gone_with_gates() { # gone_with_gates <label>: all seven stubs took a directory under the private TMPDIR; none is left
@@ -295,7 +336,7 @@ for G in tiers agent-bus eval packaging install codex-install parity; do stub "$
 { stub eval; printf 'touch "%s/started"\nsh -c '"'"'sleep 3; touch "%s/ran-on"'"'"'\n' "${TP}" "${TP}"; } \
   > "${TP}/repo/tests/gates/eval.sh"
 rm -f "${TP}/started" "${TP}/ran-on"
-(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" ./test.sh --full \
+(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS -u LZ_TEST_PARALLEL TMPDIR="${TP}/tmp" ./test.sh --full \
   >"${TP}/int.out" 2>"${TP}/int.err") &
 INT_PID=$!
 I=0

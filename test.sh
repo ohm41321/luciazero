@@ -99,14 +99,79 @@ if [ "${TIER}" = agent-bus-live ]; then
   exec "${ROOT}/scripts/agent-bus-live.sh" "$@"
 fi
 
+stop_gates() { # stop_gates <pid>...: each one and every process under it
+  local P C
+  for P in "$@"; do
+    for C in $(pgrep -P "${P}" 2>/dev/null || true); do stop_gates "${C}"; done
+    kill "${P}" 2>/dev/null || true
+  done
+}
+
+# The daemon unittest suite, one process per test module, all at once. The
+# suite spends most of its time waiting on child processes and timeouts (one
+# process used 40% of a CPU), so the modules together take about as long as
+# the slowest one: 111 s became 21 s on a 20-core Linux host, 2026-11-25
+# (docs/experiments.md). The per-module "Ran N" lines must add up to what
+# discover finds, so a module the glob misses cannot drop out unnoticed.
+# LZ_TEST_PARALLEL=0 runs the single discover process instead.
+agentd_suite() { # agentd_suite <log dir>: red modules' log tails on stderr
+  local LOGS="$1" F M I RC RED="" WANT GOT
+  local MODS=() MPIDS=()
+  # No separate py_compile pass: importing the suite already proves syntax,
+  # and py_compile writes __pycache__ regardless of PYTHONDONTWRITEBYTECODE.
+  if [ "${LZ_TEST_PARALLEL:-1}" = 0 ]; then
+    (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${LOGS}/all.log") \
+      || { tail -30 "${LOGS}/all.log" >&2; return 1; }
+    return 0
+  fi
+  WANT="$(cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -c \
+    'import unittest; print(unittest.TestLoader().discover("tests", top_level_dir=".").countTestCases())')" \
+    || { echo "agentd: discover could not load the suite" >&2; return 1; }
+  # Background jobs of a non-interactive shell ignore SIGINT: without this a
+  # Ctrl-C would leave every module running after the suite has ended.
+  trap 'stop_gates ${MPIDS[@]+"${MPIDS[@]}"}; wait; rm -rf "${LOGS}"; exit 130' INT
+  trap 'stop_gates ${MPIDS[@]+"${MPIDS[@]}"}; wait; rm -rf "${LOGS}"; exit 143' TERM
+  for F in "${ROOT}"/agentd/tests/test_*.py; do
+    M="$(basename "${F}" .py)"
+    MODS+=("${M}")
+    # A background job starts with SIGINT ignored, Python keeps it ignored,
+    # and the RunSetupSignals tests in test_identity then fail 4 of 7 under
+    # Bash 3.2 (macOS, 2026-11-25); `trap - INT` cannot undo an ignore the
+    # shell inherited. The launcher restores the default before it execs, and
+    # exec keeps the job's PID the test process, so stop_gates reaches it.
+    # shellcheck disable=SC2016
+    (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 exec python3 -c \
+      'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.executable, [sys.executable, "-m", "unittest", sys.argv[1]])' \
+      "tests.${M}" >/dev/null 2>"${LOGS}/${M}.log") &
+    MPIDS+=("$!")
+  done
+  I=0
+  for M in "${MODS[@]}"; do
+    RC=0
+    wait "${MPIDS[${I}]}" || RC=$?
+    [ "${RC}" -eq 0 ] || RED="${RED} ${M}"
+    I=$((I + 1))
+  done
+  trap - INT TERM
+  for M in ${RED}; do
+    echo "--- agentd tests.${M} (last 30 lines)" >&2
+    tail -30 "${LOGS}/${M}.log" >&2
+  done
+  [ -z "${RED}" ] || return 1
+  GOT="$(cat "${LOGS}"/*.log | sed -n 's/^Ran \([0-9][0-9]*\) tests* in .*/\1/p' | awk '{ n += $1 } END { print n + 0 }')"
+  if [ "${GOT}" != "${WANT}" ]; then
+    echo "agentd: the modules ran ${GOT} tests, discover finds ${WANT}" >&2
+    return 1
+  fi
+}
+
 # M1 exit gate: migrations, atomic claims, idempotent replays, append-only
 # history, and kill-at-commit crash tests. Python only; no provider CLI.
 agent_bus_store() {
-  # No separate py_compile pass: importing the suite already proves syntax,
-  # and py_compile writes __pycache__ regardless of PYTHONDONTWRITEBYTECODE.
-  (cd "${ROOT}/agentd" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -t . >/dev/null 2>"${ROOT}/agentd/.last-store-run.log") \
-    || { tail -30 "${ROOT}/agentd/.last-store-run.log" >&2; rm -f "${ROOT}/agentd/.last-store-run.log"; fail "agent bus M1 store suite"; }
-  rm -f "${ROOT}/agentd/.last-store-run.log"
+  local STORE_LOGS
+  STORE_LOGS="$(mktemp -d "${TMPDIR:-/tmp}/luciazero-agentd.XXXXXX")"
+  agentd_suite "${STORE_LOGS}" || { rm -rf "${STORE_LOGS}"; fail "agent bus M1 store suite"; }
+  rm -rf "${STORE_LOGS}"
   echo "ok  agent bus M1-M6 daemon suite (store, crash transitions, MCP conformance, daemon CLI, security fixtures, task graph and budgets, dispatch leases and recovery, e2e outcome assertion)"
 
   # `luciazero bus status` (Node, core package) against a real daemon on a
@@ -368,13 +433,7 @@ gate_bg() { # gate_bg <name> [<stdout file> <stderr file>]: start it; GATE_PID
   fi
   GATE_PID=$!
 }
-stop_gates() { # stop_gates <pid>...: each one and every process under it
-  local P C
-  for P in "$@"; do
-    for C in $(pgrep -P "${P}" 2>/dev/null || true); do stop_gates "${C}"; done
-    kill "${P}" 2>/dev/null || true
-  done
-}
+# stop_gates is defined above agent_bus_store, which uses it too.
 # A non-interactive shell starts its background jobs with SIGINT ignored, so
 # Ctrl-C would end only this shell -- whose EXIT trap deletes the sandbox and
 # the output buffers -- while the gates it started ran on for minutes. Stop

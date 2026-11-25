@@ -282,7 +282,7 @@ for G in tiers eval install; do echo 'sleep 2' >> "${TP}/repo/tests/gates/${G}.s
 par_full() { # par_full <label> [env assignments...]: run the stub full tier, keep both streams
   local LABEL="$1"; shift
   rm -f "${TP}/paths.log"
-  (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
+  (cd "${TP}/repo" && env -u LZ_TEST_TIMINGS -u LZ_TEST_PARALLEL TMPDIR="${TP}/tmp" "$@" ./test.sh --full \
     >"${TP}/${LABEL}.out" 2>"${TP}/${LABEL}.err")
 }
 gone_with_gates() { # gone_with_gates <label>: all seven stubs took a directory under the private TMPDIR; none is left
@@ -336,7 +336,7 @@ for G in tiers agent-bus eval packaging install codex-install parity; do stub "$
 { stub eval; printf 'touch "%s/started"\nsh -c '"'"'sleep 3; touch "%s/ran-on"'"'"'\n' "${TP}" "${TP}"; } \
   > "${TP}/repo/tests/gates/eval.sh"
 rm -f "${TP}/started" "${TP}/ran-on"
-(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS TMPDIR="${TP}/tmp" ./test.sh --full \
+(cd "${TP}/repo" && exec env -u LZ_TEST_TIMINGS -u LZ_TEST_PARALLEL TMPDIR="${TP}/tmp" ./test.sh --full \
   >"${TP}/int.out" 2>"${TP}/int.err") &
 INT_PID=$!
 I=0
